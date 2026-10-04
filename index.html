@@ -47,6 +47,12 @@
   .taakUit { white-space: pre-wrap; color: var(--zacht); font-size: 15px; }
   #log { color: var(--zacht); font-size: 14px; margin-top: 12px; }
   #leeg { color: var(--zacht); }
+  #veronicaZegt { flex-basis: 100%; font-size: 20px; font-weight: 700; }
+  #lnaUitleg { flex-basis: 100%; background: #fff3c4; color: #222; padding: 10px 12px; border-radius: 8px; font-size: 18px; }
+  #nieuwQrPaneel { position: fixed; inset: 0; z-index: 10; background: #fff; color: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center; }
+  #nieuwQrPaneel[hidden] { display: none; }
+  #nieuwQrPaneel button { color: #000; background: #eee; }
+  #nieuwQrBeeld svg { width: min(80vw, 60vh); height: auto; }
   #vSamen { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 0 0 12px; }
   .vSamen { background: var(--paneel); border: 2px solid var(--lijn); border-radius: 16px; padding: 10px; min-width: 0; }
   .vIcoon { font-size: 28px; } .vGetal { font-size: 30px; font-weight: 800; overflow-wrap: anywhere; } .vWat2 { color: var(--zacht); font-size: 15px; }
@@ -68,11 +74,14 @@
 <header>
   <h1>VERONICA</h1>
   <span id="pantserZin" aria-live="polite"></span>
+  <span id="veronicaZegt" aria-live="polite"></span>
+  <div id="lnaUitleg" role="alert" hidden></div>
   <button id="pantserKnop" aria-pressed="false">Pantser uit</button>
   <select id="vervangKeus" aria-label="Welk onderdeel vervangen"></select>
   <button id="vervangKnop">Vervang onderdeel</button>
   <button id="wakkerKnop" aria-pressed="false">Houd het scherm aan</button>
   <button id="volKnop">Volledig scherm</button>
+  <button id="nieuwQrKnop">📱 QR voor een nieuwe telefoon</button>
   <button id="noodstop">NOODSTOP</button>
 </header>
 <nav>
@@ -100,13 +109,13 @@
     <div id="takenLijst"></div>
   </section>
   <section id="scherm-koppel" hidden>
-    <p>Een keer koppelen: op de hoofdtelefoon staat bij Apparaten het vak "Veronica", met een adres, een code en een QR.</p>
+    <p>Een keer koppelen: tik op de baas-telefoon bij Apparaten, vak Veronica, op "Toon koppelcode voor Veronica" en scan die QR hier met de camera van de Chromebook.</p>
     <label for="kernAdres">Adres van de hoofdtelefoon</label>
     <input id="kernAdres" inputmode="url" autocomplete="off" placeholder="adres:8080">
     <label for="kernCode">Code (zes cijfers)</label>
     <input id="kernCode" inputmode="numeric" maxlength="6" autocomplete="off">
     <button id="koppelKnop">Overnemen</button>
-    <button id="qrKnop">QR scannen</button>
+    <button id="qrKnop">📷 Scan de koppelcode</button>
     <video id="qrVideo" hidden muted playsinline></video>
     <label for="qrTekst">Of plak de tekst van de QR</label>
     <textarea id="qrTekst"></textarea>
@@ -114,10 +123,20 @@
     <p id="koppelMelding" aria-live="polite"></p>
     <p class="eerlijk">Chrome vraagt de eerste keer of Veronica het lokale netwerk mag gebruiken. Zeg ja: anders kan ze de telefoons niet bereiken.
       Alles wat Veronica onthoudt staat alleen in deze browser.</p>
+      <button id="karakterKnop" aria-pressed="true">Karakter: aan</button>
+    <p class="eerlijk">Karakter aan: Veronica zegt kort wat ze doet en waarom. Zakelijk: alleen de feiten.</p>
   </section>
   <div id="log" aria-live="polite"></div>
 </main>
+<div id="nieuwQrPaneel" hidden role="dialog" aria-label="QR voor een nieuwe telefoon">
+  <h2>Scan dit met de nieuwe telefoon</h2>
+  <p>Open JARVIS op die telefoon en tik op <b>Scan om te koppelen</b>. Hij doet daarna vanzelf mee.</p>
+  <div id="nieuwQrBeeld"></div>
+  <p id="nieuwQrTijd"></p>
+  <button id="nieuwQrSluit">Sluiten</button>
+</div>
 <script src="kern.js"></script>
+<script src="qrcode.js"></script>
 <script src="meters.js"></script>
 <script src="veronica.js"></script>
 </body>

@@ -63,10 +63,13 @@
     stekkers: [],           // [{ naam, ip, rol }] (alleen lezen)
     stekkerMeting: {},      // ip -> { aan, watt, kwh, vandaag } (metingen met bron en tijd)
     kern: null, code: null, // de hoofdtelefoon (zijn JARVIS-adres) en zijn koppelcode
+    actieveKern: null,      // wie ze NU volgt: de hoofdtelefoon, of de waarnemend baas als die weg is
+    wilWakker: false,       // scherm aan gevraagd: na slaapstand vraagt ze het zelf opnieuw
     metingen: {},           // adres -> { health: {...}, status: {...}, gezien, jarvisNietTot }
     staten: {},             // adres -> { bereikbaar, bezig, uitTot, vervangen, hitteStand, laatstGebruikt }
     kernActiviteit: {},     // naam -> { tekst, label, t } (uit stand.json van de hoofdtelefoon)
     zonStroom: null,        // { rijen, staaf } (uit stand.json; Veronica rekent de zon niet zelf)
+    karakter: 'hulpdienst', // haar karakter (kern.js: veronicaZin); 'zakelijk' = zonder
     taken: [],
     aan: false,
     stromen: new Map(),     // adres -> { ctrl, taakId, reden }
@@ -117,20 +120,34 @@
     const vers = (x) => (x && nu() - x.t <= K.MAX_LEEFTIJD_MS ? x.waarde : null);
     s.hitteStand = K.ruweStand({ headroom: vers(st.headroom), temperatuur: vers(st.temperatuur), hitte: vers(st.hitte) });
   }
+  // Het JARVIS-adres dat ze nu volgt (stand.json, koppeltoken, het adres in de QR).
+  const kernNu = () => S.actieveKern || S.kern;
+  async function leesStand(adres) {
+    try {
+      const r = await haal(`${adres}/stand.json`, { headers: { 'X-Koppelcode': S.code } }, 2500);
+      return r.ok ? await r.json() : null;
+    } catch (e) { return null; }
+  }
   async function meetKern() {
     if (!S.kern || !S.code) return;
-    try {
-      const r = await haal(`${S.kern}/stand.json`, { headers: { 'X-Koppelcode': S.code } }, 2500);
-      if (!r.ok) return;
-      const d = await r.json();
-      const act = {};
-      for (const a of Array.isArray(d.activiteit) ? d.activiteit : []) {
-        if (a && a.telefoon && !a.klaar) act[a.telefoon] = { tekst: String(a.tekst || ''), label: String(a.label || ''), t: nu() };
-      }
-      S.kernActiviteit = act;
-      const zs = K.leesZonStroom(d.zonStroom, nu());
-      if (zs) S.zonStroom = zs;
-    } catch (e) { /* de hoofdtelefoon is weg: Veronica gaat gewoon door */ }
+    let adres = S.kern;
+    let d = await leesStand(S.kern);
+    if (!d) {
+      // De hoofdtelefoon is weg (hij is de deur uit): volg de rek-telefoon die baas is. Die
+      // kent de code van de hoofdtelefoon ook (de rij-code), dus er hoeft niets ingetypt.
+      const b = K.baasUitStatus(S.telefoons, S.metingen, nu(), S.kern);
+      if (b) { d = await leesStand(b.adres); if (d) adres = b.adres; }
+      if (d && S.actieveKern !== adres) logRegel(K.veronicaZin(S.karakter, 'volgt', { naam: b.naam }) || `Baas nu: ${b.naam}.`);
+    } else if (S.actieveKern && S.actieveKern !== S.kern) logRegel(K.veronicaZin(S.karakter, 'kernTerug'));
+    if (!d) return;   // niemand antwoordt: Veronica gaat gewoon door met wat ze weet
+    S.actieveKern = adres;
+    const act = {};
+    for (const a of Array.isArray(d.activiteit) ? d.activiteit : []) {
+      if (a && a.telefoon && !a.klaar) act[a.telefoon] = { tekst: String(a.tekst || ''), label: String(a.label || ''), t: nu() };
+    }
+    S.kernActiviteit = act;
+    const zs = K.leesZonStroom(d.zonStroom, nu());
+    if (zs) S.zonStroom = zs;
   }
   async function meetStekker(k) {
     try {
@@ -145,9 +162,67 @@
     meetBezig = true;
     try {
       await Promise.all(S.telefoons.map(meetTelefoon).concat([meetKern()], S.stekkers.map(meetStekker)));
+      await lnaTik();
+      karakterTik();
       tekenLive();
       werkTik();
     } finally { meetBezig = false; }
+  }
+
+  // ---- Toegang tot het lokale netwerk (Chrome) ----
+  let laatstBereikt = nu();
+  let lnaToestemming = null;
+  let lnaGevraagd = 0;
+  async function lnaTik() {
+    const bereikbaar = S.telefoons.filter((t) => staat(t.adres).bereikbaar).length;
+    if (bereikbaar) laatstBereikt = nu();
+    if (navigator.permissions && nu() - lnaGevraagd > 30000) {
+      lnaGevraagd = nu();
+      try { lnaToestemming = (await navigator.permissions.query({ name: 'local-network-access' })).state; } catch (e) { lnaToestemming = null; }   // oudere Chrome: kent deze naam niet
+    }
+    const u = K.lnaUitleg({ toestemming: lnaToestemming, online: navigator.onLine !== false, aantal: S.telefoons.length, bereikbaar, stilMs: nu() - laatstBereikt });
+    const vak = $('lnaUitleg');
+    if (vak.textContent !== u) vak.textContent = u;
+    vak.hidden = !u;
+  }
+
+  // ---- Wat Veronica zegt (kern.js: veronicaZin) ----
+  // Alleen bij een VERANDERING: een telefoon valt weg of komt terug, wordt te warm of weer koel.
+  // De eerste meting is de beginstand en geen nieuws.
+  function karakterTik() {
+    const tijd = nu();
+    const ventAan = S.stekkers.some((k) => k.rol === 'ventilator' && S.stekkerMeting[k.ip] && S.stekkerMeting[k.ip].aan
+      && S.stekkerMeting[k.ip].aan.waarde === true && tijd - S.stekkerMeting[k.ip].aan.t <= K.MAX_LEEFTIJD_MS);
+    for (const t of S.telefoons) {
+      const s = staat(t.adres);
+      const b = !!s.bereikbaar;
+      if (s.vorigB === undefined) s.vorigB = b;
+      else if (b !== s.vorigB) {
+        s.vorigB = b;
+        const anderen = S.telefoons.filter((x) => x !== t && staat(x.adres).bereikbaar && !staat(x.adres).vervangen).length;
+        logRegel(K.veronicaZin(S.karakter, b ? 'terug' : 'weg', { naam: t.naam, anderen }));
+      }
+      const heet = s.hitteStand === 'oranje' || s.hitteStand === 'rood';
+      if (s.vorigHeet === undefined) s.vorigHeet = heet;
+      else if (heet !== s.vorigHeet) {
+        s.vorigHeet = heet;
+        const st = meet(t.adres).status || {};
+        const temp = st.temperatuur && tijd - st.temperatuur.t <= K.MAX_LEEFTIJD_MS ? st.temperatuur.waarde : null;
+        logRegel(K.veronicaZin(S.karakter, heet ? 'heet' : 'koel', { naam: t.naam, temperatuur: temp, stand: s.hitteStand, ventilator: ventAan }));
+      }
+    }
+    const rustig = S.telefoons.length && S.telefoons.every((t) => staat(t.adres).bereikbaar && !['oranje', 'rood'].includes(staat(t.adres).hitteStand));
+    $('veronicaZegt').textContent = rustig ? K.veronicaZin(S.karakter, 'rustig') : (S.log[0] ? S.log[0].zin : '');
+  }
+  async function wisselKarakter() {
+    S.karakter = S.karakter === 'zakelijk' ? 'hulpdienst' : 'zakelijk';
+    await Opslag.schrijf('karakter', S.karakter);
+    tekenKarakter();
+    karakterTik();
+  }
+  function tekenKarakter() {
+    $('karakterKnop').textContent = `Karakter: ${S.karakter === 'zakelijk' ? 'zakelijk' : 'aan'}`;
+    $('karakterKnop').setAttribute('aria-pressed', String(S.karakter !== 'zakelijk'));
   }
 
   // ---- Live modus: een tegel per telefoon ----
@@ -347,6 +422,31 @@
     vak.replaceChildren(...delen);
   }
 
+  // ---- ZELF BIJWERKEN: altijd de nieuwste Veronica ----
+  // De service worker kijkt bij elke start, elk half uur en als je terugkomt naar het scherm of er
+  // een nieuwe versie op GitHub Pages staat. Is die er, dan neemt hij het meteen over; de pagina
+  // herlaadt ZODRA er niets loopt (de wachtrij staat in IndexedDB en blijft gewoon staan).
+  const Bijwerk = { wacht: false };
+  function herlaadAlsRustig() {
+    if (S.stromen.size === 0) { location.reload(); return; }
+    Bijwerk.wacht = true;
+    logRegel('Er staat een nieuwe Veronica klaar. Ik herlaad zodra het lopende werk klaar is.');
+  }
+  function zelfBijwerken() {
+    let eerder = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+      const kijk = () => { try { reg.update(); } catch (e) { /* offline: later */ } };
+      setInterval(kijk, 30 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kijk(); });
+    }).catch(() => {});
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      // De eerste keer (nog geen versie) is geen update.
+      if (!eerder) { eerder = true; return; }
+      herlaadAlsRustig();
+    });
+    setInterval(() => { if (Bijwerk.wacht && S.stromen.size === 0) location.reload(); }, 5000);
+  }
+
   // ---- Scherm meekijken: ongeveer een beeld per seconde, met de code van DIE telefoon ----
   async function schermWissel(t) {
     const sch = S.scherm[t.adres] = S.scherm[t.adres] || {};
@@ -486,7 +586,7 @@
     $('pantserKnop').textContent = 'Pantser uit';
     $('pantserKnop').setAttribute('aria-pressed', 'false');
     for (const st of S.stromen.values()) { st.reden = 'noodstop'; st.ctrl.abort(); }
-    logRegel('NOODSTOP: alles stilgezet.');
+    logRegel(K.veronicaZin(S.karakter, 'noodstop'));
     const uitslag = await Promise.all(S.telefoons.map(async (t) => {
       try {
         const r = await haal(`${t.adres}/v1/server/stop`, { method: 'POST', headers: kop(t) }, 3000);
@@ -535,12 +635,58 @@
     }
   }
   async function koppelMetQrTekst(tekst) {
-    const l = K.leesQr(tekst);
-    if (!l || !l.telefoons.length) { $('koppelMelding').textContent = 'Dat is geen QR van JARVIS voor Veronica.'; return false; }
+    let l = K.leesQr(tekst);
+    if (l && l.token) l = await koppelMetToken(l);
+    if (!l || !l.telefoons.length) { if (!$('koppelMelding').textContent || /Even/.test($('koppelMelding').textContent)) $('koppelMelding').textContent = 'Dat is geen QR van JARVIS voor Veronica.'; return false; }
     await bewaarLijst(l);
     $('koppelMelding').textContent = `Klaar: ${l.telefoons.length} ${l.telefoons.length === 1 ? 'telefoon' : 'telefoons'}.`;
     toonScherm('live');
     return true;
+  }
+  // Het eenmalige token uit de QR terugsturen; dan komen de code en de lijst EEN keer mee.
+  async function koppelMetToken(q) {
+    const vak = $('koppelMelding');
+    vak.textContent = 'Even…';
+    try {
+      const r = await haal(`${q.kern}/jarvis/koppel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: q.token, ik: { soort: 'veronica' } }) }, 5000);
+      if (r.status === 403 || r.status === 429) { vak.textContent = 'Deze QR is verlopen of al gebruikt. Laat JARVIS een nieuwe tonen.'; return null; }
+      if (!r.ok) { vak.textContent = `De hoofdtelefoon gaf ${r.status}.`; return null; }
+      const l = K.leesPakket(await r.json());
+      if (!l) { vak.textContent = 'Het antwoord klopt niet.'; return null; }
+      l.kern = q.kern;
+      return l;
+    } catch (e) { vak.textContent = 'Geen antwoord van de hoofdtelefoon. Zelfde netwerk, en toegang tot het lokale netwerk?'; return null; }
+  }
+  // VERONICA LAAT EEN QR ZIEN voor een nieuwe telefoon: eenmalig, vijf minuten. Daarvoor vraagt
+  // ze met de code een token bij de hoofdtelefoon; de code zelf staat NIET in de QR.
+  let qrKlok = null;
+  async function toonNieuweTelefoonQr() {
+    const vak = $('nieuwQrBeeld');
+    $('nieuwQrPaneel').hidden = false;
+    vak.textContent = 'Even…';
+    $('nieuwQrTijd').textContent = '';
+    if (!S.kern || !S.code) { vak.textContent = 'Koppel Veronica eerst met de hoofdtelefoon (Koppelen).'; return; }
+    let t = null;
+    try {
+      const r = await haal(`${kernNu()}/jarvis/koppeltoken`, { method: 'POST', headers: { 'X-Koppelcode': S.code } }, 4000);
+      if (r.ok) t = (await r.json()).t;
+    } catch (e) { t = null; }
+    const tekst = K.koppelQrTekst(kernNu(), t);
+    if (!tekst || typeof window.qrcode !== 'function') { vak.textContent = 'Nu geen QR: de hoofdtelefoon antwoordt niet.'; return; }
+    const q = window.qrcode(0, 'M');
+    q.addData(tekst);
+    q.make();
+    vak.innerHTML = q.createSvgTag(8, 16);   // alleen uit de QR-bibliotheek: vierkantjes, geen tekst van buiten
+    const tot = nu() + 5 * 60 * 1000;
+    clearInterval(qrKlok);
+    const zet = () => {
+      const rest = Math.max(0, Math.ceil((tot - nu()) / 1000));
+      $('nieuwQrTijd').textContent = rest > 0 ? `Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, '0')} geldig. Werkt een keer.` : 'Verlopen. Tik nog eens voor een nieuwe.';
+      if (!rest) { vak.replaceChildren(); clearInterval(qrKlok); }
+    };
+    zet();
+    qrKlok = setInterval(zet, 1000);
+    logRegel('QR voor een nieuwe telefoon getoond (vijf minuten, een keer).');
   }
   async function scanQr() {
     const vak = $('koppelMelding');
@@ -567,7 +713,18 @@
 
   // ---- Wakker blijven, volledig scherm ----
   async function wakker() {
-    if (S.wakeLock) { try { await S.wakeLock.release(); } catch (e) { /* al los */ } S.wakeLock = null; tekenWakker(); return; }
+    if (S.wakeLock || S.wilWakker) {
+      S.wilWakker = false; await Opslag.schrijf('wakker', false);
+      if (S.wakeLock) { try { await S.wakeLock.release(); } catch (e) { /* al los */ } }
+      S.wakeLock = null; tekenWakker(); return;
+    }
+    S.wilWakker = true; await Opslag.schrijf('wakker', true);
+    await vraagWakker();
+  }
+  // Het scherm aan houden. Na een slaapstand of een herstart laat Chrome het slot los; zolang je
+  // het gevraagd hebt, vraagt Veronica het zelf opnieuw zodra ze weer zichtbaar is.
+  async function vraagWakker() {
+    if (!S.wilWakker || S.wakeLock) { tekenWakker(); return; }
     if (!('wakeLock' in navigator)) { $('wakkerZin').textContent = 'Deze browser kan het scherm niet aan houden. Zet slapen uit in de instellingen van de Chromebook.'; return; }
     try {
       S.wakeLock = await navigator.wakeLock.request('screen');
@@ -576,7 +733,7 @@
     tekenWakker();
   }
   function tekenWakker() {
-    $('wakkerKnop').textContent = S.wakeLock ? 'Scherm blijft aan' : 'Houd het scherm aan';
+    $('wakkerKnop').textContent = S.wakeLock ? 'Scherm blijft aan' : (S.wilWakker ? 'Scherm aan (wacht op Chrome)' : 'Houd het scherm aan');
     $('wakkerKnop').setAttribute('aria-pressed', String(!!S.wakeLock));
   }
   function tekenLog() {
@@ -594,6 +751,8 @@
       S.stekkers = (await Opslag.lees('stekkers')) || [];
       S.kern = (await Opslag.lees('kern')) || null;
       S.code = (await Opslag.lees('code')) || null;
+      S.karakter = (await Opslag.lees('karakter')) === 'zakelijk' ? 'zakelijk' : 'hulpdienst';
+      S.wilWakker = (await Opslag.lees('wakker')) === true;
       S.taken = ((await Opslag.alleTaken()) || []).sort((a, b) => a.sinds - b.sinds);
       // Wat bezig was toen Veronica dichtging, gaat terug in de wachtrij.
       for (const x of S.taken) if (x.status === 'bezig') { x.status = 'wacht'; x.telefoon = null; await Opslag.taak(x); }
@@ -605,11 +764,15 @@
     $('volKnop').addEventListener('click', () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); });
     $('koppelKnop').addEventListener('click', koppelMetCode);
     $('qrKnop').addEventListener('click', scanQr);
+    $('karakterKnop').addEventListener('click', wisselKarakter);
+    $('nieuwQrKnop').addEventListener('click', toonNieuweTelefoonQr);
+    $('nieuwQrSluit').addEventListener('click', () => { $('nieuwQrPaneel').hidden = true; clearInterval(qrKlok); $('nieuwQrBeeld').replaceChildren(); });
     $('qrPlakKnop').addEventListener('click', () => koppelMetQrTekst($('qrTekst').value));
     $('taakKnop').addEventListener('click', () => { voegTakenToe($('taakTekst').value); $('taakTekst').value = ''; });
     for (const s of ['live', 'wachtrij', 'koppel']) $(`tab-${s}`).addEventListener('click', () => toonScherm(s));
     toonScherm('live');   // de Live modus is altijd het startscherm
-    tekenWakker();
+    tekenKarakter();
+    vraagWakker();
     tekenLive();
     vulVervang();
     meetRonde();
@@ -620,7 +783,16 @@
       if (nu() - laatst >= wacht) { laatst = nu(); meetRonde(); vulVervang(); }
     }, 1000);
     setInterval(schermTik, 1000);
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    // VANZELF WEER VERBINDEN na een slaapstand of als het wifi terug is: alles staat in de opslag
+    // van de browser (telefoons, code, wachtrij), dus ze hoeft alleen meteen weer te kijken.
+    const weerWakker = () => {
+      for (const m of Object.values(S.metingen)) m.jarvisNietTot = 0;
+      laatst = nu(); meetRonde(); vraagWakker();
+    };
+    window.addEventListener('online', weerWakker);
+    window.addEventListener('pageshow', weerWakker);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') weerWakker(); });
+    if ('serviceWorker' in navigator) zelfBijwerken();
   }
   function vulVervang() {
     const keus = $('vervangKeus');
@@ -629,6 +801,6 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
+  window.__veronica = { kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
   start();
 }());

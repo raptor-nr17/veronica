@@ -1,9 +1,14 @@
 // Veronica start ook zonder internet: de app zelf komt uit deze cache. Verzoeken naar de
 // telefoons gaan NOOIT via de cache (die moeten echt en vers zijn).
-const VERSIE = 'veronica-1.2.0';
-const BESTANDEN = ['./index.html', './kern.js', './meters.js', './veronica.js', './manifest.webmanifest', './icoon-192.png', './icoon-512.png'];
+// DE VERSIE IS EEN VINGERAFDRUK VAN DE BESTANDEN (sha256, eerste 12 tekens). Verandert er iets,
+// dan verandert deze naam, en laadt elke Chromebook vanzelf de nieuwe versie. Een test in de
+// privé-repo eist dat hij klopt (check_veronica.js zegt welke waarde hij moet hebben).
+const VERSIE = 'veronica-11f5f6d37d5e';
+const BESTANDEN = ['./index.html', './kern.js', './qrcode.js', './meters.js', './veronica.js', './manifest.webmanifest', './icoon-192.png', './icoon-512.png'];
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSIE).then((c) => c.addAll(BESTANDEN)
+  // cache: 'reload' = echt van de server, niet uit de browsercache (anders kan een nieuwe versie
+  // met oude bestanden starten).
+  e.waitUntil(caches.open(VERSIE).then((c) => c.addAll(BESTANDEN.map((u) => new Request(u, { cache: 'reload' })))
     // De map zelf ('./') alleen als de server daar de pagina geeft (GitHub Pages doet dat).
     .then(() => fetch('./').then((r) => (r.ok ? c.put('./', r) : null)).catch(() => null)))
     .then(() => self.skipWaiting()));

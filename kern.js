@@ -95,6 +95,7 @@
       headroom: meting(getal(b.headroom), bron, t),
       stroom: meting(typeof s.stand === 'string' ? (STROOM[s.stand] || s.stand) : null, bron, t),
       magRekenen: meting(typeof s.magRekenen === 'boolean' ? s.magRekenen : null, bron, t),
+      rol: meting(x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, bron, t),
     };
   }
   const hitteNaam = (n) => (Number.isInteger(n) && n >= 0 && n < HITTE.length ? HITTE[n] : 'onbekend');
@@ -172,7 +173,26 @@
     let d;
     try { d = JSON.parse(String(tekst || '')); } catch (e) { return null; }
     if (!d || d.veronica !== 1) return null;
+    // Sinds JARVIS 1.9.1: geen vaste code in de QR, alleen het adres en een EENMALIG token
+    // (vijf minuten, een keer). Daarmee haalt Veronica de code en de lijst op.
+    if (typeof d.t === 'string') {
+      const kern = normaalAdres(d.kern, JARVIS_POORT);
+      return kern && TOKEN_RE.test(d.t) ? { token: d.t, kern, telefoons: [], stekkers: [], code: null } : null;
+    }
     return leesVertrouwd(d);
+  }
+  const TOKEN_RE = /^[0-9a-f]{32}$/;
+  // Het antwoord op een token: { code, bundel }. Terug: de lijst MET de code, of null.
+  function leesPakket(d) {
+    if (!d || !/^\d{6}$/.test(String(d.code || '')) || !d.bundel || !Array.isArray(d.bundel.telefoons)) return null;
+    const l = leesVertrouwd(d.bundel);
+    l.code = String(d.code);
+    return l;
+  }
+  // De QR die Veronica laat zien voor een NIEUWE telefoon (JARVIS: "Scan om te koppelen").
+  function koppelQrTekst(kern, t) {
+    const a = normaalAdres(kern, JARVIS_POORT);
+    return a && TOKEN_RE.test(String(t || '')) ? JSON.stringify({ jk: 1, a, t }) : null;
   }
 
   // ---- Local Network Access (Chrome): zeg dat het verzoek naar het eigen netwerk gaat ----
@@ -181,6 +201,19 @@
     try { host = new URL(url).hostname; } catch (e) { return {}; }
     if (/^127\./.test(host) || host === 'localhost') return { targetAddressSpace: 'loopback' };
     return isEigenNet(host) ? { targetAddressSpace: 'local' } : {};
+  }
+
+  // Chrome (142+) vraagt een keer of deze pagina het lokale netwerk mag gebruiken. Is dat
+  // geweigerd, of komt er van GEEN ENKELE telefoon antwoord terwijl de Chromebook wel online is,
+  // dan zegt Veronica hoe je het terugzet. Terug: de uitleg, of '' als er niets mis lijkt.
+  function lnaUitleg(i) {
+    const o = i || {};
+    const terug = 'Zet het terug: klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
+    if (o.toestemming === 'denied') return `Chrome laat Veronica de telefoons niet bereiken: toegang tot het lokale netwerk is geweigerd. ${terug}`;
+    if (o.online && o.aantal > 0 && o.bereikbaar === 0 && o.stilMs >= 30000) {
+      return `Geen enkele telefoon antwoordt. Staan ze aan en op hetzelfde wifi? Heeft Chrome gevraagd om het lokale netwerk en zei je nee, dan: ${terug}`;
+    }
+    return '';
   }
 
   // ---- Wie krijgt het volgende stukje werk? ----
@@ -283,8 +316,52 @@
     return { rijen, staaf, accuPer, zon: zonStand };
   }
 
+  // ---- HET KARAKTER VAN VERONICA: de nuchtere hulpdienst ----
+  // Een eigen karakter (niet uit een film): kalm, beschermend, kort en kordaat. Ze zegt WAT ze
+  // doet en WAAROM. Alleen voor haar eigen meldingen; nooit voor antwoorden van een model, en
+  // het verandert niets aan wat er gebeurt. Getallen blijven precies zoals ze gemeten zijn.
+  // stand: 'hulpdienst' (standaard) of 'zakelijk'. d = de feiten.
+  const KARAKTERS = ['hulpdienst', 'zakelijk'];
+  function graden(t) { return typeof t === 'number' && Number.isFinite(t) ? `${String(Math.round(t * 10) / 10).replace('.', ',')} graden` : null; }
+  function veronicaZin(stand, wat, d) {
+    const x = d || {};
+    const hd = stand !== 'zakelijk';
+    switch (wat) {
+      case 'weg': return hd
+        ? (x.anderen > 0 ? `${x.naam} is weg. Ik houd de rij draaiende tot hij terug is.` : `${x.naam} is weg. Er rekent nu niemand. Het werk wacht veilig in de rij.`)
+        : `${x.naam} is niet bereikbaar.`;
+      case 'terug': return hd ? `${x.naam} is terug. Hij krijgt weer werk.` : `${x.naam} is weer bereikbaar.`;
+      case 'heet': {
+        const g = graden(x.temperatuur);
+        if (!hd) return `${x.naam}: ${g ? `${g}, ` : ''}${x.stand}. Krijgt geen nieuw werk.`;
+        return `${g ? `${g} op de ${x.naam}` : `${x.naam} is te warm`}. ${x.ventilator ? 'Ventilator aan, werk gepauzeerd.' : 'Werk gepauzeerd.'}`;
+      }
+      case 'koel': return hd ? `${x.naam} is weer koel. Het werk gaat door.` : `${x.naam} is weer koel.`;
+      case 'noodstop': return hd ? 'Noodstop. Alles staat stil. Het werk wacht veilig in de rij.' : 'NOODSTOP: alles stilgezet.';
+      case 'rustig': return hd ? 'Alles rustig. Ik kijk mee.' : '';
+      case 'volgt': return hd ? `De hoofdtelefoon is weg. ${x.naam} is nu de baas; ik kijk via hem mee.` : `Hoofdtelefoon onbereikbaar. Baas nu: ${x.naam}.`;
+      case 'kernTerug': return hd ? 'De hoofdtelefoon is terug. Hij is weer de baas.' : 'Hoofdtelefoon weer bereikbaar.';
+      default: return '';
+    }
+  }
+
+  // DE THUISPOST: de hoofdtelefoon gaat de deur uit, Veronica blijft naast het rek. Is de hoofdtelefoon
+  // weg, dan volgt ze de rek-telefoon die ZELF zegt dat hij nu baas is (rol in /jarvis/status,
+  // vers). Nooit gegokt: zonder verse rol 'baas' geen vervanger. Terug: { adres, naam } of null.
+  function baasUitStatus(telefoons, metingen, t, kern) {
+    const lijst = Array.isArray(telefoons) ? telefoons : [];
+    const kandidaten = lijst.filter((x) => x && x.jarvis && x.jarvis !== kern).filter((x) => {
+      const st = metingen && metingen[x.adres] && metingen[x.adres].status;
+      return st && st.rol && st.rol.waarde === 'baas' && t - st.rol.t <= MAX_LEEFTIJD_MS;
+    });
+    // Twee bazen tegelijk (gesplitst netwerk): dezelfde vaste keus als leider.js, het laagste adres.
+    kandidaten.sort((a, b) => String(a.jarvis).localeCompare(String(b.jarvis)));
+    return kandidaten.length ? { adres: kandidaten[0].jarvis, naam: kandidaten[0].naam } : null;
+  }
+
   return {
-    leesZonStroom,
+    KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg,
+    leesZonStroom, leesPakket, koppelQrTekst,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,
     isEigenNet, normaalAdres, leesVertrouwd, leesQr, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
