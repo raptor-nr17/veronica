@@ -58,6 +58,10 @@
   #log { color: var(--zacht); font-size: 14px; margin-top: 12px; }
   #leeg { color: var(--zacht); }
   #veronicaZegt { flex-basis: 100%; font-size: 20px; font-weight: 700; }
+  #spraakZin { flex-basis: 100%; color: var(--zacht); font-size: 17px; }
+  #micKnop { font-size: 24px; } #micKnop[aria-pressed="true"] { background: #45d8ff; color: #000; }
+  #noodstopBevestig { background: var(--rood); border-color: var(--rood); color: #fff; font-weight: 800; }
+  #noodstopBevestig[hidden] { display: none; }
   #lnaUitleg, #vindUitleg { flex-basis: 100%; background: #fff3c4; color: #222; padding: 10px 12px; border-radius: 8px; font-size: 18px; }
   #nieuwQrPaneel { position: fixed; inset: 0; z-index: 10; background: #fff; color: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center; }
   #nieuwQrPaneel[hidden] { display: none; }
@@ -87,6 +91,10 @@
   <span id="veronicaZegt" aria-live="polite"></span>
   <div id="lnaUitleg" role="alert" hidden></div>
   <div id="vindUitleg" role="status" hidden></div>
+  <button id="heyKnop">Hé Veronica</button>
+  <button id="micKnop" aria-pressed="false" aria-label="Spreek een opdracht in">🎤</button>
+  <button id="noodstopBevestig" hidden>Bevestig noodstop</button>
+  <span id="spraakZin" aria-live="polite"></span>
   <button id="roepKnop">📣 Roep de rij op</button>
   <button id="pantserKnop" aria-pressed="false">Pantser uit</button>
   <select id="vervangKeus" aria-label="Welk onderdeel vervangen"></select>
@@ -138,6 +146,18 @@
     <p class="eerlijk">Chrome vraagt de eerste keer of Veronica het lokale netwerk mag gebruiken. Zeg ja: anders kan ze de telefoons niet bereiken.
       Alles wat Veronica onthoudt staat alleen in deze browser.</p>
       <button id="karakterKnop" aria-pressed="true">Karakter: aan</button>
+    <h2>Spraak</h2>
+    <button id="spraakKnop" aria-pressed="true">Spraak: aan</button>
+    <label for="stemKeus">Stem</label>
+    <select id="stemKeus"></select>
+    <label for="spraakTempo">Tempo</label>
+    <select id="spraakTempo"><option value="0.85">Rustig</option><option value="1">Gewoon</option><option value="1.15">Vlot</option></select>
+    <label for="spraakVolume">Volume</label>
+    <input id="spraakVolume" type="range" min="0" max="1" step="0.1" value="1">
+    <label for="eigenaarNaam">Hoe mag ik je noemen? (komt vanzelf uit JARVIS)</label>
+    <input id="eigenaarNaam" autocomplete="off" maxlength="30">
+    <button id="spraakProef">Zeg de stand</button>
+    <p class="eerlijk">Luisteren gaat eerst via de Gemma op een telefoon (offline, op je eigen netwerk). Lukt dat niet, dan via Google: dat gaat online. Ze praat pas na je eerste tik (zo wil de browser het). In de stille uren zegt ze alleen een noodstop of te heet.</p>
     <button id="wandAutoKnop" aria-pressed="true">Wandstand vanzelf: aan</button>
     <p class="eerlijk">De wandstand laat alleen de kaarten zien, groot. Vanzelf na twee minuten zonder muis of toetsen. Echt volledig scherm komt na de eerste tik (zo wil de browser het).</p>
     <p id="ntfyStand"></p>

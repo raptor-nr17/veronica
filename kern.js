@@ -155,7 +155,12 @@
       if (!m || !isEigenNet(m[1]) || stekkers.some((s) => s.ip === m[0])) continue;
       stekkers.push({ naam: String(k.naam || 'Stekker').slice(0, 40), ip: m[0], rol: k.rol === 'laden' ? 'laden' : 'ventilator' });
     }
-    return { telefoons: uit, stekkers, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy) };
+    return { telefoons: uit, stekkers, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar) };
+  }
+  // Hoe Veronica de eigenaar aanspreekt: de naam uit JARVIS (alleen met de code). Alleen letters.
+  function leesEigenaar(n) {
+    const t = String(n || '').replace(/[^\p{L} '-]/gu, '').trim().slice(0, 30);
+    return t || null;
   }
   function leesNtfy(n) {
     if (!n || !Ntfy.geldigOnderwerp(n.onderwerp)) return null;
@@ -364,6 +369,55 @@
     return { SERVER, REM_MS, SOORTEN, STIL_KEUZES, maakOnderwerp, geldigOnderwerp, schoon, inStilleUren, prioriteit, magSturen, verzoek, pollUrl, leesRecent, abonneerLink };
   }());
 
+  // ---- SPRAAK (1.9.4): wat Veronica verstaat, zonder AI ----
+  // Vaste opdrachten met vaste woorden. Al het andere is een vraag voor de rij. Een noodstop
+  // vraagt altijd eerst "ja"; zonder bevestiging gebeurt er niets.
+  function begrijp(tekst) {
+    const t = String(tekst || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.,!?;:]/g, ' ').replace(/\s+/g, ' ').trim()
+      .replace(/^(he|hey|hoi|hallo|ok|oke)?\s*veronica\b\s*/, '').trim();
+    if (!t) return { soort: 'leeg', tekst: '' };
+    if (/^(ja|jazeker|ja graag|doe maar|bevestig|bevestigd)$/.test(t)) return { soort: 'ja', tekst: t };
+    if (/^(nee|niet|stop maar|laat maar|annuleer|annuleren)$/.test(t)) return { soort: 'nee', tekst: t };
+    if (/\b(noodstop|alles stoppen|stop alles|alles stop)\b/.test(t)) return { soort: 'noodstop', tekst: t };
+    if (/\b(roep|oproepen|wek)\b.*\b(rij|iedereen|telefoons|ze)\b|\brij oproepen\b/.test(t)) return { soort: 'roep', tekst: t };
+    if (/\bwandstand\b.*\b(uit|weg|stop)\b|\b(stop|sluit)\b.*\bwandstand\b/.test(t)) return { soort: 'wand-uit', tekst: t };
+    if (/\bwandstand\b|\bvolledig scherm\b/.test(t)) return { soort: 'wand-aan', tekst: t };
+    if (/\b(status|rapport)\b|^(stand|hoe gaat het|hoe staat het( ervoor)?|alles goed|hoe is het)\b/.test(t)) return { soort: 'status', tekst: t };
+    return { soort: 'vraag', tekst: String(tekst || '').replace(/^\s*(h[eé]y?|hoi|hallo|ok[eé]?)?\s*veronica[\s,!.:]*/i, '').trim() };
+  }
+  // Mag ze NU hardop praten? Spraak aan, en in de stille uren (dezelfde als ntfy) alleen een
+  // noodstop of ROOD.
+  function magSpreken(o) {
+    const x = o || {};
+    if (!x.aan) return false;
+    if (x.stil && !['noodstop', 'rood'].includes(x.soort)) return false;
+    return true;
+  }
+  // 16 kHz mono, 16 bits: WAV voor de Gemma (OlliteRT /v1/audio/transcriptions).
+  function wavVan(monster, rate) {
+    const n = monster.length;
+    const b = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(b);
+    const s = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVE'); s(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    s(36, 'data'); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) { const x = Math.max(-1, Math.min(1, monster[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+    return new Uint8Array(b);
+  }
+  const dagdeel = (uur) => (uur < 6 ? 'Goedenavond' : uur < 12 ? 'Goedemorgen' : uur < 18 ? 'Goedemiddag' : 'Goedenavond');
+  // De stand in een paar korte zinnen (feiten uit de metingen, niets geraden).
+  function statusFeiten(i) {
+    const o = i || {};
+    const zinnen = [`${o.bereikbaar} van ${o.totaal} ${o.totaal === 1 ? 'telefoon' : 'telefoons'} bereikbaar.`];
+    if (o.warmste) zinnen.push(`Warmste: ${o.warmste.naam}, ${String(Math.round(o.warmste.temp * 10) / 10).replace('.', ',')} graden.`);
+    if (o.wacht) zinnen.push(`${o.wacht} ${o.wacht === 1 ? 'vraag wacht' : 'vragen wachten'}.`);
+    if (o.heet) zinnen.push(`${o.heet} te warm.`);
+    return zinnen.join(' ');
+  }
+
   // ---- De prestatiekaart: rol, en hoe oud de laatste meting is ----
   // Dezelfde woorden als JARVIS (PLEK_NAAM in app.js); de test vergelijkt ze.
   const PLEK_NAAM = { mobiel: '👖 Mobiel (kern)', rek: '🧊🔌 Rek (helper)' };
@@ -513,6 +567,22 @@
       case 'noodstop': return hd ? 'Noodstop. Alles staat stil. Het werk wacht veilig in de rij.' : 'NOODSTOP: alles stilgezet.';
       case 'rustig': return hd ? 'Alles rustig. Ik kijk mee.' : '';
       case 'volgt': return hd ? `De hoofdtelefoon is weg. ${x.naam} is nu de baas; ik kijk via hem mee.` : `Hoofdtelefoon onbereikbaar. Baas nu: ${x.naam}.`;
+      case 'begroeting': return hd
+        ? `${dagdeel(x.uur)}${x.naam ? `, ${x.naam}` : ''}. Ik ben er. ${x.feiten || ''}`.trim()
+        : `Veronica gestart. ${x.feiten || ''}`.trim();
+      case 'status': return hd
+        ? `${x.rustig ? 'Alles rustig' : 'Ik let op'}${x.naam ? `, ${x.naam}` : ''}. ${x.feiten || ''}`.trim()
+        : (x.feiten || '');
+      case 'luister': return hd ? 'Ja?' : 'Ik luister.';
+      case 'nietVerstaan': return hd ? 'Dat verstond ik niet. Zeg het nog eens, kort.' : 'Niet verstaan.';
+      case 'noodstopVraag': return hd ? 'Noodstop? Zeg ja, of tik op Bevestig. Anders doe ik niets.' : 'Noodstop: bevestig met ja.';
+      case 'noodstopAf': return hd ? 'Geen noodstop. Alles loopt door.' : 'Noodstop geannuleerd.';
+      case 'vraagInRij': return hd ? 'Je vraag staat in de rij. Ik lees het antwoord voor.' : 'Vraag in de rij.';
+      case 'vraagWacht': return hd ? 'Je vraag staat in de rij. Het pantser staat uit, dus hij wacht.' : 'Vraag in de rij; pantser uit.';
+      case 'roepOp': return hd ? `Rij opgeroepen. ${x.ja} ${x.ja === 1 ? 'meldde zich' : 'meldden zich'}.${x.nee ? ` ${x.nee} niet.` : ''}` : `Opgeroepen: ${x.ja} ja, ${x.nee || 0} nee.`;
+      case 'wandAan': return hd ? 'Wandstand. Ik hou ze in de gaten.' : 'Wandstand aan.';
+      case 'wandUit': return hd ? 'Wandstand uit.' : 'Wandstand uit.';
+      case 'online': return hd ? 'Geen Gemma vrij om te luisteren. Ik luister via Google. Dat gaat online.' : 'Luisteren via Google (online).';
       case 'accu': return hd ? `${x.naam} heeft nog ${x.procent}% accu en laadt niet. Hij krijgt geen nieuw werk.` : `${x.naam}: ${x.procent}% accu, laadt niet.`;
       case 'stil': return hd ? 'De rij ligt al tien minuten stil. Er wacht werk, niemand pakt het op.' : 'Rij stil: werk wacht, niemand bezig (10 min).';
       case 'proef': return hd ? 'Dit is een proef van Veronica. Zo ziet een waarschuwing eruit.' : 'Proefmelding van Veronica.';
@@ -536,7 +606,7 @@
   }
 
   return {
-    PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
+    begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,

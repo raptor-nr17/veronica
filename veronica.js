@@ -68,6 +68,8 @@
     ntfy: null,             // { onderwerp, aan, stil } van de hoofdtelefoon (alleen met de code)
     kernGezien: 0,          // wanneer de hoofdtelefoon zelf voor het laatst antwoordde (thuis = lokaal melden)
     stilSinds: null,        // sinds wanneer er werk wacht zonder dat iemand het oppakt
+    spraak: { aan: true, stem: '', tempo: 1, volume: 1 },   // voorlezen (speechSynthesis)
+    eigenaar: null,         // hoe ze je aanspreekt (de naam uit JARVIS, of zelf ingevuld)
     wilWakker: false,       // scherm aan gevraagd: na slaapstand vraagt ze het zelf opnieuw
     metingen: {},           // adres -> { health: {...}, status: {...}, gezien, jarvisNietTot }
     staten: {},             // adres -> { bereikbaar, bezig, uitTot, vervangen, hitteStand, laatstGebruikt }
@@ -316,6 +318,179 @@
     return { ja: [...ja], nee: [...nee] };
   }
 
+  // ---- SPRAAK UIT: voorlezen (speechSynthesis, nl-NL) ----
+  // Chrome laat een pagina pas praten na de eerste tik; wat daarvoor komt (de begroeting) wacht
+  // tot dan. In de stille uren (dezelfde als ntfy) alleen een noodstop of ROOD.
+  const Spr = { wacht: [], vraagId: null, noodstopT: 0, luistert: false, opname: null };
+  const kanSpreken = () => !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
+  function stemmen() { return kanSpreken() ? window.speechSynthesis.getVoices().filter((v) => /^nl/i.test(v.lang)) : []; }
+  function spreek(zin, soort) {
+    const tekst = String(zin || '').trim();
+    if (!tekst || !kanSpreken()) return false;
+    const stil = !!(S.ntfy && K.Ntfy.inStilleUren(new Date(), S.ntfy.stil));
+    if (!K.magSpreken({ aan: S.spraak.aan, stil, soort })) return false;
+    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) { Spr.wacht.push([tekst, soort]); return false; }
+    const u = new window.SpeechSynthesisUtterance(tekst.slice(0, 600));
+    u.lang = 'nl-NL';
+    u.rate = S.spraak.tempo;
+    u.volume = S.spraak.volume;
+    const stem = stemmen().find((v) => v.name === S.spraak.stem);
+    if (stem) u.voice = stem;
+    window.speechSynthesis.speak(u);
+    $('spraakZin').textContent = `🔊 ${tekst}`;
+    return true;
+  }
+  function statusNu() {
+    const tijd = nu();
+    const bereik = S.telefoons.filter((t) => staat(t.adres).bereikbaar).length;
+    const heet = S.telefoons.filter((t) => ['oranje', 'rood'].includes(staat(t.adres).hitteStand)).length;
+    const warm = S.telefoons.map((t) => ({ naam: t.naam, d: meterStand(meet(t.adres), staat(t.adres), tijd) }))
+      .filter((x) => x.d.temperatuur.waarde !== null && x.d.temperatuur.ms <= 60000).sort((a, b) => b.d.temperatuur.waarde - a.d.temperatuur.waarde)[0];
+    const feiten = K.statusFeiten({ bereikbaar: bereik, totaal: S.telefoons.length, warmste: warm ? { naam: warm.naam, temp: warm.d.temperatuur.waarde } : null,
+      wacht: S.taken.filter((x) => x.status === 'wacht').length, heet });
+    return { feiten, rustig: bereik === S.telefoons.length && !heet };
+  }
+  async function bewaarSpraak() { await Opslag.schrijf('spraak', S.spraak); tekenSpraak(); }
+  function tekenSpraak() {
+    $('spraakKnop').textContent = `Spraak: ${S.spraak.aan ? 'aan' : 'uit'}`;
+    $('spraakKnop').setAttribute('aria-pressed', String(S.spraak.aan));
+    $('spraakVolume').value = String(S.spraak.volume);
+    $('spraakTempo').value = String(S.spraak.tempo);
+    const keus = $('stemKeus');
+    const lijst = stemmen();
+    const namen = lijst.map((v) => v.name).join('|');
+    if (keus.dataset.namen !== namen) {
+      keus.dataset.namen = namen;
+      keus.replaceChildren(el('option', '', lijst.length ? 'Standaard Nederlandse stem' : 'Geen Nederlandse stem gevonden'), ...lijst.map((v) => { const o = el('option', '', v.name); o.value = v.name; return o; }));
+      keus.firstChild.value = '';
+    }
+    keus.value = S.spraak.stem;
+    $('eigenaarNaam').value = S.eigenaar || '';
+  }
+
+  // ---- SPRAAK IN: luisteren ----
+  // Eerst OFFLINE via de Gemma op een telefoon (OlliteRT /v1/audio/transcriptions, 16 kHz WAV,
+  // language=nl). Lukt dat niet (geen telefoon vrij, of OlliteRT kent het niet), dan de spraak-
+  // herkenning van Chrome. Die gaat ONLINE via Google: dat staat er dan ook bij.
+  async function luister(hey) {
+    if (Spr.luistert) { if (Spr.opname) Spr.opname.stop(); return; }   // tweede tik = klaar met praten
+    if (hey) spreek(K.veronicaZin(S.karakter, 'luister'), 'luister');
+    const t = K.kiesTelefoon(S.telefoons, S.staten, nu());
+    if (t && navigator.mediaDevices && window.MediaRecorder) {
+      const tekst = await luisterViaGemma(t);
+      if (tekst !== null) return verwerkSpraak(tekst, 'Gemma');
+    }
+    return luisterViaChrome();
+  }
+  async function neemOp(maxMs) {
+    const stroom = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const rec = new window.MediaRecorder(stroom);
+    const stukken = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) stukken.push(e.data); };
+    Spr.luistert = true; Spr.opname = rec;
+    $('micKnop').setAttribute('aria-pressed', 'true');
+    $('spraakZin').textContent = '🎤 Ik luister… (tik nog eens als je klaar bent)';
+    const klaar = new Promise((r) => { rec.onstop = r; });
+    rec.start();
+    const klok = setTimeout(() => { if (rec.state !== 'inactive') rec.stop(); }, maxMs);
+    await klaar;
+    clearTimeout(klok);
+    stroom.getTracks().forEach((x) => x.stop());
+    Spr.luistert = false; Spr.opname = null;
+    $('micKnop').setAttribute('aria-pressed', 'false');
+    return new Blob(stukken, { type: rec.mimeType || 'audio/webm' });
+  }
+  // Opname -> 16 kHz mono -> WAV (kern.js: wavVan).
+  async function naarWav(blob) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+    ctx.close && ctx.close();
+    const off = new window.OfflineAudioContext(1, Math.max(1, Math.ceil(buf.duration * 16000)), 16000);
+    const bron = off.createBufferSource();
+    bron.buffer = buf; bron.connect(off.destination); bron.start();
+    const uit = await off.startRendering();
+    return K.wavVan(uit.getChannelData(0), 16000);
+  }
+  async function luisterViaGemma(t) {
+    let wav;
+    try { wav = await naarWav(await neemOp(8000)); } catch (e) { $('spraakZin').textContent = 'Geen microfoon (of geen toestemming).'; return null; }
+    return transcribeer(t, wav);
+  }
+  async function transcribeer(t, wav) {
+    const fd = new FormData();
+    fd.append('file', new Blob([wav], { type: 'audio/wav' }), 'spraak.wav');
+    const m = meet(t.adres);
+    fd.append('model', (m.health && m.health.model && m.health.model.waarde) || 'gemma');
+    fd.append('language', 'nl');
+    fd.append('response_format', 'json');
+    try {
+      const r = await haal(`${t.adres}/v1/audio/transcriptions`, { method: 'POST', headers: kop(t), body: fd }, 30000);
+      if (!r.ok) return null;
+      const d = await r.json();
+      return typeof (d && d.text) === 'string' ? d.text : null;
+    } catch (e) { return null; }
+  }
+  function luisterViaChrome() {
+    const Herken = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Herken) { $('spraakZin').textContent = 'Luisteren kan hier niet: geen Gemma vrij en deze browser kent geen spraakherkenning.'; return null; }
+    spreek(K.veronicaZin(S.karakter, 'online'), 'luister');
+    $('spraakZin').textContent = '🎤 Ik luister via Google (online)…';
+    return new Promise((klaar) => {
+      // Altijd een einde: een resultaat, een fout, het einde van de herkenning, of na 12 s.
+      let klaarAl = false;
+      const eind = (w) => { if (klaarAl) return; klaarAl = true; clearTimeout(klok); klaar(w); };
+      const niets = () => { $('spraakZin').textContent = 'Luisteren lukte niet. Tik nog eens op de microfoon.'; eind(null); };
+      const klok = setTimeout(() => { try { h.abort && h.abort(); } catch (e) { /* al klaar */ } niets(); }, 12000);
+      const h = new Herken();
+      h.lang = 'nl-NL'; h.interimResults = false; h.maxAlternatives = 1;
+      h.onresult = (e) => { const tekst = e.results && e.results[0] && e.results[0][0] ? e.results[0][0].transcript : ''; if (!klaarAl) { klaarAl = true; clearTimeout(klok); klaar(verwerkSpraak(tekst, 'Google (online)')); } };
+      h.onerror = niets;
+      h.onend = () => { if (!klaarAl) niets(); };
+      try { h.start(); } catch (e) { niets(); }
+    });
+  }
+  // Wat er gezegd is: een vaste opdracht (zonder AI), of een vraag voor de rij.
+  async function verwerkSpraak(tekst, via) {
+    const b = K.begrijp(tekst);
+    $('spraakZin').textContent = `🎤 ${via ? `(${via}) ` : ''}Ik hoorde: "${String(tekst || '').slice(0, 120)}"`;
+    const zeg = (wat, d, soort) => spreek(K.veronicaZin(S.karakter, wat, Object.assign({ naam: S.eigenaar }, d || {})), soort || wat);
+    // Een noodstop wacht op ja (vijftien seconden).
+    if (Spr.noodstopT && nu() - Spr.noodstopT < 15000 && (b.soort === 'ja' || b.soort === 'nee')) {
+      Spr.noodstopT = 0; $('noodstopBevestig').hidden = true;
+      if (b.soort === 'ja') { await noodstop(); return 'noodstop'; }
+      zeg('noodstopAf'); return 'noodstop-af';
+    }
+    switch (b.soort) {
+      case 'leeg': case 'ja': case 'nee': zeg('nietVerstaan'); return 'niet-verstaan';
+      case 'status': { const st = statusNu(); zeg('status', st); return 'status'; }
+      case 'roep': { const r = await roepOp(true); zeg('roepOp', { ja: r ? r.ja.length : 0, nee: r ? r.nee.length : 0 }); return 'roep'; }
+      case 'wand-aan': zetWand(true, 'knop'); zeg('wandAan'); return 'wand-aan';
+      case 'wand-uit': zetWand(false); zeg('wandUit'); return 'wand-uit';
+      case 'noodstop':
+        Spr.noodstopT = nu();
+        $('noodstopBevestig').hidden = false;
+        setTimeout(() => { if (nu() - Spr.noodstopT >= 15000) $('noodstopBevestig').hidden = true; }, 15100);
+        zeg('noodstopVraag', null, 'noodstop');
+        return 'noodstop-vraag';
+      default: {
+        await voegTakenToe(b.tekst);
+        const taak = S.taken[S.taken.length - 1];
+        Spr.vraagId = taak ? taak.id : null;
+        zeg(S.aan ? 'vraagInRij' : 'vraagWacht');
+        return 'vraag';
+      }
+    }
+  }
+  // Het antwoord op een gesproken vraag: letterlijk wat de Gemma zei, zonder karakter.
+  function antwoordTik() {
+    if (!Spr.vraagId) return;
+    const taak = S.taken.find((x) => x.id === Spr.vraagId);
+    if (!taak || (taak.status !== 'klaar' && taak.status !== 'fout')) return;
+    Spr.vraagId = null;
+    if (taak.status === 'klaar' && taak.uitkomst) spreek(String(taak.uitkomst).replace(/[#*_`>]+/g, ' ').slice(0, 600), 'antwoord');
+  }
+
   // ---- Wat Veronica zegt (kern.js: veronicaZin) ----
   // Alleen bij een VERANDERING: een telefoon valt weg of komt terug, wordt te warm of weer koel.
   // De eerste meting is de beginstand en geen nieuws.
@@ -333,7 +508,7 @@
         const zin = K.veronicaZin(S.karakter, b ? 'terug' : 'weg', { naam: t.naam, anderen });
         logRegel(zin);
         // De hoofdtelefoon die de deur uit gaat is geen nieuws voor de man die hem bij zich heeft.
-        if (!b && !t.kern) waarschuw('weg', K.veronicaZin('hulpdienst', 'weg', { naam: t.naam, anderen }));
+        if (!b && !t.kern) { waarschuw('weg', K.veronicaZin('hulpdienst', 'weg', { naam: t.naam, anderen })); spreek(zin, 'weg'); }
       }
       const heet = s.hitteStand === 'oranje' || s.hitteStand === 'rood';
       if (s.vorigHeet === undefined) s.vorigHeet = heet;
@@ -342,7 +517,10 @@
         const st = meet(t.adres).status || {};
         const temp = st.temperatuur && tijd - st.temperatuur.t <= K.MAX_LEEFTIJD_MS ? st.temperatuur.waarde : null;
         logRegel(K.veronicaZin(S.karakter, heet ? 'heet' : 'koel', { naam: t.naam, temperatuur: temp, stand: s.hitteStand, ventilator: ventAan }));
-        if (heet) waarschuw('heet', K.veronicaZin('hulpdienst', 'heet', { naam: t.naam, temperatuur: temp, stand: s.hitteStand, ventilator: ventAan }), s.hitteStand === 'rood');
+        if (heet) {
+          waarschuw('heet', K.veronicaZin('hulpdienst', 'heet', { naam: t.naam, temperatuur: temp, stand: s.hitteStand, ventilator: ventAan }), s.hitteStand === 'rood');
+          spreek(K.veronicaZin(S.karakter, 'heet', { naam: t.naam, temperatuur: temp, stand: s.hitteStand, ventilator: ventAan }), s.hitteStand === 'rood' ? 'rood' : 'heet');
+        }
       }
       // Accu laag en hij laadt niet (alleen een verse meting telt).
       const st2 = meet(t.adres).status || {};
@@ -432,6 +610,47 @@
     return wrap;
   }
   // De samenvatting bovenaan de Live modus.
+  // ---- BIJWERKEN OP DE PLEK (1.9.4) ----
+  // Vroeger werd elke 2 s alles vervangen (replaceChildren): opengeklapte "Alle getallen" klapten
+  // dicht en een schermbeeld laadde opnieuw, de pagina werd even korter en de scrollpositie sprong
+  // terug. Nu blijft elk element staan; alleen tekst, attributen en wat er echt anders is,
+  // veranderen. Kinderen met een sleutel (data-adres, data-ip, data-samen) worden op sleutel
+  // gekoppeld, de rest op volgorde. Een opengeklapt <details> blijft open.
+  const SLEUTELS = ['adres', 'ip', 'samen', 'sleutel'];
+  const sleutelVan = (n) => { if (n.nodeType !== 1) return null; for (const k of SLEUTELS) if (n.dataset && n.dataset[k]) return `${k}:${n.dataset[k]}`; return null; };
+  function morph(oud, nieuw) {
+    if (oud.nodeType !== nieuw.nodeType || oud.nodeName !== nieuw.nodeName) { oud.replaceWith(nieuw); return nieuw; }
+    if (oud.nodeType === 3) { if (oud.nodeValue !== nieuw.nodeValue) oud.nodeValue = nieuw.nodeValue; return oud; }
+    if (oud.nodeType !== 1) return oud;
+    for (const a of [...oud.attributes]) if (!nieuw.hasAttribute(a.name) && !(oud.nodeName === 'DETAILS' && a.name === 'open')) oud.removeAttribute(a.name);
+    for (const a of [...nieuw.attributes]) if (oud.getAttribute(a.name) !== a.value) oud.setAttribute(a.name, a.value);
+    morphKinderen(oud, [...nieuw.childNodes]);
+    return oud;
+  }
+  function morphKinderen(vak, nieuwe) {
+    const oude = [...vak.childNodes];
+    const opSleutel = new Map();
+    for (const n of oude) { const k = sleutelVan(n); if (k) opSleutel.set(k, n); }
+    const gebruikt = new Set();
+    let vrij = 0;
+    const plek = [];
+    for (const n of nieuwe) {
+      const k = sleutelVan(n);
+      let oud = k ? opSleutel.get(k) : null;
+      if (!k) { while (vrij < oude.length && (sleutelVan(oude[vrij]) || gebruikt.has(oude[vrij]))) vrij++; oud = vrij < oude.length ? oude[vrij++] : null; }
+      if (oud) { gebruikt.add(oud); plek.push(morph(oud, n)); } else plek.push(n);
+    }
+    for (const n of oude) if (!gebruikt.has(n) && n.parentNode === vak) n.remove();
+    // In de juiste volgorde zetten; een knoop die al op zijn plek staat, blijft staan.
+    plek.forEach((n, i) => { if (vak.childNodes[i] !== n) vak.insertBefore(n, vak.childNodes[i] || null); });
+  }
+  // En voor de zekerheid: de scrollpositie houden, wat er ook gebeurt.
+  function metScroll(fn) {
+    const x = window.scrollX; const y = window.scrollY;
+    fn();
+    if (window.scrollY !== y) window.scrollTo(x, y);
+  }
+
   function tekenSamen(tijd) {
     const OUD = 60000;
     const st = S.telefoons.map((t) => ({ t, d: meterStand(meet(t.adres), staat(t.adres), tijd) }));
@@ -442,13 +661,13 @@
     const z = S.zonStroom && S.zonStroom.zon;
     const duur = (ms) => { const mm = Math.round(ms / 60000); return mm >= 60 ? `${Math.floor(mm / 60)} u ${mm % 60} min` : `${mm} min`; };
     const tegel = (icoon, getal, wat, sleutel) => { const v = el('div', 'vSamen'); v.dataset.samen = sleutel; v.append(el('div', 'vIcoon', icoon), el('div', 'vGetal', getal), el('div', 'vWat2', wat)); return v; };
-    $('vSamen').replaceChildren(
+    morphKinderen($('vSamen'), [
       tegel('📱', String(S.telefoons.length), `telefoons · ${bereik} bereikbaar`, 'telefoons'),
       tegel('⚡', snel.length ? String(Math.round(snel.reduce((a, x) => a + x.d.snelheid.waarde, 0) * 10) / 10).replace('.', ',') : 'geen meting', 'tokens/s samen', 'snelheid'),
       tegel('🌡️', warm ? `${String(Math.round(warm.d.temperatuur.waarde * 10) / 10).replace('.', ',')} °C` : 'geen meting', warm ? `warmste: ${warm.t.naam}` : 'warmste telefoon', 'warmste'),
       tegel('🔌', stek.length ? stek.map((x) => (x.aan === true ? 'aan' : x.aan === false ? 'uit' : '?')).join(' · ') : 'geen', stek.length ? stek.map((x) => x.naam).join(' · ') : 'geen stekker', 'stekkers'),
       tegel('☀️', !z ? 'onbekend' : z.geen ? 'geen zon' : z.open ? 'open' : 'dicht', !z || z.geen ? 'zonvenster' : z.open ? `zonvenster · nog ${duur(z.nogMs || 0)}` : (z.totOpenMs ? `zonvenster · opent over ${duur(z.totOpenMs)}` : 'zonvenster'), 'zon'),
-    );
+    ]);
   }
   function tekenLive() {
     const vak = $('tegels');
@@ -456,7 +675,7 @@
     const n = S.telefoons.filter((t) => staat(t.adres).bereikbaar && !staat(t.adres).vervangen).length;
     $('pantserZin').textContent = `${S.aan ? 'Pantser aan' : 'Pantser uit'} · ${n} van ${S.telefoons.length} bereikbaar · wachtrij ${S.taken.filter((x) => x.status === 'wacht').length}`;
     const tijd = nu();
-    vak.replaceChildren(...S.telefoons.map((t) => {
+    metScroll(() => morphKinderen(vak, S.telefoons.map((t) => {
       const m = meet(t.adres);
       const s = staat(t.adres);
       // De PRESTATIEKAART, zoals op de telefoon: naam, rol, vier meters, de accu. Is de nieuwste
@@ -504,9 +723,9 @@
       const sch = S.scherm[t.adres] || {};
       const knoppen = el('div', 'tKnoppen');
       const kb = el('button', 'klein-knop', sch.aan ? 'Scherm meekijken: aan' : 'Scherm meekijken: uit');
-      kb.addEventListener('click', () => schermWissel(t));
+      kb.dataset.actie = 'scherm';
       knoppen.appendChild(kb);
-      if (s.vervangen) { const w = el('button', 'klein-knop', 'Weer erbij'); w.addEventListener('click', () => { s.vervangen = false; logRegel(`${t.naam} doet weer mee.`); tekenLive(); werkTik(); }); knoppen.appendChild(w); }
+      if (s.vervangen) { const w = el('button', 'klein-knop', 'Weer erbij'); w.dataset.actie = 'weer'; knoppen.appendChild(w); }
       tegel.appendChild(knoppen);
       if (sch.aan) {
         const img = el('img', 'tScherm');
@@ -516,9 +735,9 @@
         tegel.appendChild(el('div', 'tBron', sch.zin || ''));
       }
       return tegel;
-    }));
+    })));
     // De stekkers (alleen lezen): aan/uit, watt en kWh, elk met bron en leeftijd.
-    $('stekkerTegels').replaceChildren(...S.stekkers.map((k) => {
+    metScroll(() => morphKinderen($('stekkerTegels'), S.stekkers.map((k) => {
       const m = S.stekkerMeting[k.ip] || {};
       const tegel = el('section', 'tegel stekker');
       tegel.dataset.ip = k.ip;
@@ -534,7 +753,7 @@
       }
       tegel.appendChild(dl);
       return tegel;
-    }));
+    })));
     $('stekkerKop').hidden = !S.stekkers.length;
     tekenSamen(tijd);
     tekenZonStroom(tijd);
@@ -546,7 +765,7 @@
   function tekenZonStroom(tijd) {
     const vak = $('zonStroom');
     const zs = S.zonStroom;
-    if (!zs) { vak.replaceChildren(el('p', 'eerlijk', 'Zon en stroom: onbekend. Dat komt van de hoofdtelefoon (koppelen met de code).')); return; }
+    if (!zs) { morphKinderen(vak, [el('p', 'eerlijk', 'Zon en stroom: onbekend. Dat komt van de hoofdtelefoon (koppelen met de code).')]); return; }
     const dl = el('dl', 'tCijfers');
     for (const r of zs.rijen) {
       const v = K.vakje(r.m, tijd);
@@ -571,7 +790,7 @@
     const st = el('div', `zsStaaf${v.oud ? ' oud' : ''}`, v.onbekend ? 'Dagstaaf: onbekend' : v.tekst);
     if (v.bron) st.appendChild(el('span', 'bron', ` · ${v.bron}`));
     delen.push(st);
-    vak.replaceChildren(...delen);
+    metScroll(() => morphKinderen(vak, delen));
   }
 
   // ---- ZELF BIJWERKEN: altijd de nieuwste Veronica ----
@@ -707,7 +926,7 @@
   }
   function tekenWachtrij() {
     const lijst = $('takenLijst');
-    lijst.replaceChildren(...S.taken.slice().reverse().slice(0, 50).map((x) => {
+    morphKinderen(lijst, S.taken.slice().reverse().slice(0, 50).map((x) => {
       const d = el('div', `taak ${x.status}`);
       d.dataset.id = x.id;
       d.appendChild(el('div', 'taakKop', `${x.status === 'klaar' ? '✓' : x.status === 'bezig' ? '…' : x.status === 'fout' ? '✗' : '·'} ${x.tekst.slice(0, 80)}${x.telefoon ? ` (${x.telefoon})` : ''}`));
@@ -739,6 +958,7 @@
     $('pantserKnop').setAttribute('aria-pressed', 'false');
     for (const st of S.stromen.values()) { st.reden = 'noodstop'; st.ctrl.abort(); }
     logRegel(K.veronicaZin(S.karakter, 'noodstop'));
+    spreek(K.veronicaZin(S.karakter, 'noodstop'), 'noodstop');
     waarschuw('noodstop', K.veronicaZin('hulpdienst', 'noodstop'), true);
     const uitslag = await Promise.all(S.telefoons.map(async (t) => {
       try {
@@ -761,6 +981,7 @@
     S.bekend = K.voegBekendToe(S.bekend, [l.kern].concat(l.alt || [], l.bekend || [], l.telefoons.map((t) => t.jarvis)));
     await Opslag.schrijf('bekend', S.bekend);
     if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); tekenNtfy(); }
+    if (l.eigenaar && !S.eigenaarZelf) { S.eigenaar = l.eigenaar; await Opslag.schrijf('eigenaar', S.eigenaar); }
     await Opslag.schrijf('telefoons', S.telefoons);
     await Opslag.schrijf('kern', S.kern);
     await Opslag.schrijf('code', S.code);
@@ -936,7 +1157,7 @@
   }
   function tekenLog() {
     const v = $('log');
-    if (v) v.replaceChildren(...S.log.slice(0, 12).map((x) => el('div', '', `${K.klokZin(x.t)} · ${x.zin}`)));
+    if (v) metScroll(() => morphKinderen(v, S.log.slice(0, 12).map((x) => el('div', '', `${K.klokZin(x.t)} · ${x.zin}`))));
   }
   function toonScherm(naam) {
     for (const s of ['live', 'wachtrij', 'koppel']) { $(`scherm-${s}`).hidden = s !== naam; $(`tab-${s}`).setAttribute('aria-pressed', String(s === naam)); }
@@ -952,6 +1173,9 @@
       S.bekend = (await Opslag.lees('bekend')) || [];
       S.ntfy = K.leesNtfy(await Opslag.lees('ntfy'));
       Wand.auto = (await Opslag.lees('wandAuto')) !== false;
+      S.spraak = Object.assign(S.spraak, (await Opslag.lees('spraak')) || {});
+      S.eigenaar = K.leesEigenaar(await Opslag.lees('eigenaar'));
+      S.eigenaarZelf = (await Opslag.lees('eigenaarZelf')) === true;
       S.karakter = (await Opslag.lees('karakter')) === 'zakelijk' ? 'zakelijk' : 'hulpdienst';
       S.wilWakker = (await Opslag.lees('wakker')) === true;
       S.taken = ((await Opslag.alleTaken()) || []).sort((a, b) => a.sinds - b.sinds);
@@ -968,10 +1192,39 @@
     $('karakterKnop').addEventListener('click', wisselKarakter);
     $('roepKnop').addEventListener('click', () => roepOp(true));
     $('wandKnop').addEventListener('click', () => zetWand(!Wand.aan, 'knop'));
+    // De knoppen op de tegels: een luisteraar voor allemaal (de tegels blijven staan, de
+    // telefoon wordt bij de tik opgezocht).
+    $('tegels').addEventListener('click', (e) => {
+      const knop = e.target && e.target.closest ? e.target.closest('button[data-actie]') : null;
+      const tegel = knop ? knop.closest('.tegel') : null;
+      const t = tegel ? S.telefoons.find((x) => x.adres === tegel.dataset.adres) : null;
+      if (!t) return;
+      if (knop.dataset.actie === 'scherm') schermWissel(t);
+      if (knop.dataset.actie === 'weer') { staat(t.adres).vervangen = false; logRegel(`${t.naam} doet weer mee.`); tekenLive(); werkTik(); }
+    });
     $('wandUit').addEventListener('click', (e) => { e.stopPropagation(); Wand.stilT = nu(); zetWand(false); });
     $('wandAutoKnop').addEventListener('click', wisselWandAuto);
+    $('micKnop').addEventListener('click', () => luister(false));
+    $('heyKnop').addEventListener('click', () => luister(true));
+    $('noodstopBevestig').addEventListener('click', () => { Spr.noodstopT = 0; $('noodstopBevestig').hidden = true; noodstop(); });
+    $('spraakKnop').addEventListener('click', () => { S.spraak.aan = !S.spraak.aan; if (!S.spraak.aan && kanSpreken()) window.speechSynthesis.cancel(); bewaarSpraak(); });
+    $('spraakVolume').addEventListener('input', () => { S.spraak.volume = Math.max(0, Math.min(1, Number($('spraakVolume').value) || 0)); bewaarSpraak(); });
+    $('spraakTempo').addEventListener('change', () => { S.spraak.tempo = Number($('spraakTempo').value) || 1; bewaarSpraak(); });
+    $('stemKeus').addEventListener('change', () => { S.spraak.stem = $('stemKeus').value; bewaarSpraak(); });
+    $('spraakProef').addEventListener('click', () => { const st = statusNu(); spreek(K.veronicaZin(S.karakter, 'status', Object.assign({ naam: S.eigenaar }, st)), 'proef'); });
+    $('eigenaarNaam').addEventListener('change', async () => {
+      S.eigenaar = K.leesEigenaar($('eigenaarNaam').value);
+      S.eigenaarZelf = !!S.eigenaar;
+      await Opslag.schrijf('eigenaar', S.eigenaar); await Opslag.schrijf('eigenaarZelf', S.eigenaarZelf);
+    });
+    if (kanSpreken()) window.speechSynthesis.onvoiceschanged = tekenSpraak;
+    // Wat moest wachten op de eerste tik (de begroeting), komt nu.
+    document.addEventListener('pointerdown', () => { const w = Spr.wacht.splice(0); setTimeout(() => w.forEach(([z, s]) => spreek(z, s)), 50); }, { once: true });
     // Wie iets aanraakt, is er: de klok voor "vanzelf" begint opnieuw. In de wandstand maakt de
     // eerste tik het scherm echt vol (dat mag een browser alleen na een tik).
+    // Ook scrollen telt als "er is iemand": anders springt de wandstand aan tijdens het lezen.
+    window.addEventListener('scroll', () => { Wand.stilT = nu(); }, { passive: true });
+    document.addEventListener('touchmove', () => { Wand.stilT = nu(); }, { passive: true });
     for (const soort of ['pointerdown', 'keydown', 'wheel']) {
       document.addEventListener(soort, (e) => {
         Wand.stilT = nu();
@@ -990,6 +1243,7 @@
     toonScherm('live');   // de Live modus is altijd het startscherm
     tekenKarakter();
     tekenNtfy();
+    tekenSpraak();
     $('wandAutoKnop').textContent = `Wandstand vanzelf: ${Wand.auto ? 'aan' : 'uit'}`;
     $('wandAutoKnop').setAttribute('aria-pressed', String(Wand.auto));
     vraagWakker();
@@ -1006,6 +1260,9 @@
     }, 1000);
     setInterval(schermTik, 1000);
     setInterval(wandTik, 1000);
+    setInterval(antwoordTik, 1000);
+    // De begroeting: kort, met de stand (na de eerste meting).
+    setTimeout(() => { const st = statusNu(); spreek(K.veronicaZin(S.karakter, 'begroeting', Object.assign({ naam: S.eigenaar, uur: new Date().getHours() }, st)), 'begroeting'); }, 4000);
     // VANZELF WEER VERBINDEN na een slaapstand of als het wifi terug is: alles staat in de opslag
     // van de browser (telefoons, code, wachtrij), dus ze hoeft alleen meteen weer te kijken.
     const weerWakker = () => {
@@ -1025,6 +1282,6 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
+  window.__veronica = { Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
   start();
 }());
