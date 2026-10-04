@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#04070c">
+<meta name="referrer" content="no-referrer">
+<title>Veronica</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icoon-192.png">
+<style>
+  :root { --nacht: #04070c; --paneel: #0b121c; --lijn: #17304a; --tekst: #e8f3ff; --zacht: #8fa8bf; --oud: #5d6b78; --rood: #e5484d; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--nacht); color: var(--tekst); font: 18px/1.4 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--lijn); position: sticky; top: 0; background: var(--nacht); z-index: 2; }
+  header h1 { font-size: 24px; margin: 0 12px 0 0; letter-spacing: 1px; }
+  #pantserZin { color: var(--zacht); margin-right: auto; }
+  button { font: inherit; color: var(--tekst); background: var(--paneel); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; cursor: pointer; }
+  button[aria-pressed="true"] { border-color: #45d8ff; }
+  #noodstop { background: var(--rood); border-color: var(--rood); color: #fff; font-weight: 800; font-size: 22px; padding: 12px 22px; }
+  nav { display: flex; gap: 8px; padding: 8px 16px; }
+  main { padding: 8px 16px 24px; }
+  .eerlijk { color: var(--zacht); font-size: 15px; margin: 4px 0 10px; }
+  #tegels { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .tegel { background: var(--paneel); border: 3px solid var(--lijn); border-radius: 18px; padding: 12px; min-width: 0; }
+  .tKop { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .tKop h2 { margin: 0; font-size: 22px; }
+  .tAdres { color: var(--zacht); font-size: 14px; }
+  .badge { font-size: 13px; border: 1px solid #7cc4ff; border-radius: 8px; padding: 0 6px; color: #7cc4ff; }
+  .tBereik, .tTaak { font-size: 15px; margin-top: 4px; }
+  .oud { color: var(--oud); }
+  .tLive { white-space: pre-wrap; background: #08101a; border-radius: 10px; padding: 8px; max-height: 160px; overflow: auto; font: 15px/1.35 ui-monospace, monospace; margin: 6px 0 2px; }
+  .tBron { color: var(--zacht); font-size: 12px; }
+  .tCijfers { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 8px 0; font-size: 15px; }
+  .tCijfers dt { color: var(--zacht); }
+  .tCijfers dd { margin: 0; overflow-wrap: anywhere; }
+  .tCijfers dd .bron { display: block; color: var(--zacht); font-size: 11px; }
+  .tCijfers dd.oud .waarde, .tCijfers dd.oud .bron { color: var(--oud); }
+  .tCijfers dd.onbekend .waarde { color: var(--oud); font-style: italic; }
+  .tKnoppen { display: flex; gap: 6px; flex-wrap: wrap; }
+  .klein-knop { font-size: 14px; padding: 6px 10px; }
+  .tScherm { width: 100%; max-height: 360px; object-fit: contain; border-radius: 10px; margin-top: 6px; background: #000; }
+  textarea, input, select { font: inherit; color: var(--tekst); background: #08101a; border: 1px solid var(--lijn); border-radius: 10px; padding: 8px; width: 100%; }
+  textarea { min-height: 120px; }
+  .taak { border-bottom: 1px solid var(--lijn); padding: 6px 0; }
+  .taak.fout .taakKop { color: var(--rood); }
+  .taakUit { white-space: pre-wrap; color: var(--zacht); font-size: 15px; }
+  #log { color: var(--zacht); font-size: 14px; margin-top: 12px; }
+  #leeg { color: var(--zacht); }
+  #vSamen { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 0 0 12px; }
+  .vSamen { background: var(--paneel); border: 2px solid var(--lijn); border-radius: 16px; padding: 10px; min-width: 0; }
+  .vIcoon { font-size: 28px; } .vGetal { font-size: 30px; font-weight: 800; overflow-wrap: anywhere; } .vWat2 { color: var(--zacht); font-size: 15px; }
+  .vMeters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
+  .vMeter { text-align: center; min-width: 0; } .vMeter svg { width: 100%; height: auto; }
+  .vWat { font-weight: 700; } .vOud { color: var(--zacht); font-size: 12px; }
+  .vAccu { font-size: 20px; font-weight: 700; } .vAccu.leert { color: var(--zacht); font-weight: 400; }
+  .tMeer summary { cursor: pointer; color: var(--zacht); }
+  @media (max-width: 520px) { .vMeters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .zsPaneel { background: var(--paneel); border: 3px solid var(--lijn); border-radius: 18px; padding: 12px; }
+  .zsBalk { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: var(--lijn); margin: 8px 0 4px; }
+  .zsBalk.oud { opacity: .45; }
+  .zsZon { background: #f2c94c; } .zsBuiten { background: #5b7bd5; } .zsOnbekend { background: var(--oud); }
+  .zsStaaf .bron { color: var(--zacht); font-size: 12px; }
+  #qrVideo { width: 100%; max-width: 420px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>VERONICA</h1>
+  <span id="pantserZin" aria-live="polite"></span>
+  <button id="pantserKnop" aria-pressed="false">Pantser uit</button>
+  <select id="vervangKeus" aria-label="Welk onderdeel vervangen"></select>
+  <button id="vervangKnop">Vervang onderdeel</button>
+  <button id="wakkerKnop" aria-pressed="false">Houd het scherm aan</button>
+  <button id="volKnop">Volledig scherm</button>
+  <button id="noodstop">NOODSTOP</button>
+</header>
+<nav>
+  <button id="tab-live" aria-pressed="true">Live</button>
+  <button id="tab-wachtrij" aria-pressed="false">Wachtrij</button>
+  <button id="tab-koppel" aria-pressed="false">Koppelen</button>
+</nav>
+<main>
+  <p class="eerlijk" id="wakkerZin">Veronica werkt alleen zolang deze computer aan is en niet slaapt. Tik op "Houd het scherm aan", of zet slapen uit.
+    Elk getal komt van een meting: eronder staat de bron en hoe oud hij is. Ouder dan 10 seconden is grijs. Niet gemeten = onbekend.</p>
+  <section id="scherm-live">
+    <p id="leeg">Nog geen telefoons. Tik op Koppelen en neem de vertrouwde telefoons over van de hoofdtelefoon.</p>
+    <div id="vSamen"></div>
+    <div id="tegels"></div>
+    <h2 id="stekkerKop" hidden>Stekkers</h2>
+    <div id="tegels-stekkers"><div id="stekkerTegels" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px"></div></div>
+    <h2>Zon en stroom</h2>
+    <div id="zonStroom" class="zsPaneel"></div>
+  </section>
+  <section id="scherm-wachtrij" hidden>
+    <label for="taakTekst">Vragen voor het pantser (een per regel)</label>
+    <textarea id="taakTekst"></textarea>
+    <button id="taakKnop">In de wachtrij</button>
+    <p class="eerlijk">De wachtrij staat op deze computer. Tik op Pantser aan om hem te laten lopen. Valt een telefoon weg, dan gaat zijn vraag naar een andere.</p>
+    <div id="takenLijst"></div>
+  </section>
+  <section id="scherm-koppel" hidden>
+    <p>Een keer koppelen: op de hoofdtelefoon staat bij Apparaten het vak "Veronica", met een adres, een code en een QR.</p>
+    <label for="kernAdres">Adres van de hoofdtelefoon</label>
+    <input id="kernAdres" inputmode="url" autocomplete="off" placeholder="adres:8080">
+    <label for="kernCode">Code (zes cijfers)</label>
+    <input id="kernCode" inputmode="numeric" maxlength="6" autocomplete="off">
+    <button id="koppelKnop">Overnemen</button>
+    <button id="qrKnop">QR scannen</button>
+    <video id="qrVideo" hidden muted playsinline></video>
+    <label for="qrTekst">Of plak de tekst van de QR</label>
+    <textarea id="qrTekst"></textarea>
+    <button id="qrPlakKnop">Overnemen uit de tekst</button>
+    <p id="koppelMelding" aria-live="polite"></p>
+    <p class="eerlijk">Chrome vraagt de eerste keer of Veronica het lokale netwerk mag gebruiken. Zeg ja: anders kan ze de telefoons niet bereiken.
+      Alles wat Veronica onthoudt staat alleen in deze browser.</p>
+  </section>
+  <div id="log" aria-live="polite"></div>
+</main>
+<script src="kern.js"></script>
+<script src="meters.js"></script>
+<script src="veronica.js"></script>
+</body>
+</html>
