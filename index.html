@@ -48,7 +48,7 @@
   #log { color: var(--zacht); font-size: 14px; margin-top: 12px; }
   #leeg { color: var(--zacht); }
   #veronicaZegt { flex-basis: 100%; font-size: 20px; font-weight: 700; }
-  #lnaUitleg { flex-basis: 100%; background: #fff3c4; color: #222; padding: 10px 12px; border-radius: 8px; font-size: 18px; }
+  #lnaUitleg, #vindUitleg { flex-basis: 100%; background: #fff3c4; color: #222; padding: 10px 12px; border-radius: 8px; font-size: 18px; }
   #nieuwQrPaneel { position: fixed; inset: 0; z-index: 10; background: #fff; color: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center; }
   #nieuwQrPaneel[hidden] { display: none; }
   #nieuwQrPaneel button { color: #000; background: #eee; }
@@ -76,6 +76,8 @@
   <span id="pantserZin" aria-live="polite"></span>
   <span id="veronicaZegt" aria-live="polite"></span>
   <div id="lnaUitleg" role="alert" hidden></div>
+  <div id="vindUitleg" role="status" hidden></div>
+  <button id="roepKnop">📣 Roep de rij op</button>
   <button id="pantserKnop" aria-pressed="false">Pantser uit</button>
   <select id="vervangKeus" aria-label="Welk onderdeel vervangen"></select>
   <button id="vervangKnop">Vervang onderdeel</button>
@@ -124,6 +126,8 @@
     <p class="eerlijk">Chrome vraagt de eerste keer of Veronica het lokale netwerk mag gebruiken. Zeg ja: anders kan ze de telefoons niet bereiken.
       Alles wat Veronica onthoudt staat alleen in deze browser.</p>
       <button id="karakterKnop" aria-pressed="true">Karakter: aan</button>
+    <p id="ntfyStand"></p>
+    <button id="ntfyProef">Stuur een proefmelding</button>
     <p class="eerlijk">Karakter aan: Veronica zegt kort wat ze doet en waarom. Zakelijk: alleen de feiten.</p>
   </section>
   <div id="log" aria-live="polite"></div>

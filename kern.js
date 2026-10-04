@@ -155,7 +155,50 @@
       if (!m || !isEigenNet(m[1]) || stekkers.some((s) => s.ip === m[0])) continue;
       stekkers.push({ naam: String(k.naam || 'Stekker').slice(0, 40), ip: m[0], rol: k.rol === 'laden' ? 'laden' : 'ventilator' });
     }
-    return { telefoons: uit, stekkers, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null };
+    return { telefoons: uit, stekkers, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy) };
+  }
+  function leesNtfy(n) {
+    if (!n || !Ntfy.geldigOnderwerp(n.onderwerp)) return null;
+    return { onderwerp: n.onderwerp, aan: n.aan !== false, stil: Ntfy.STIL_KEUZES.includes(n.stil) ? n.stil : '23:00-07:00' };
+  }
+  // De vindladder van JARVIS (roddel): elk lid met zijn laatst bekende adressen. Veronica
+  // onthoudt daarvan de JARVIS-adressen, nieuwste eerst. Alleen het eigen netwerk.
+  const MAX_BEKEND = 16;
+  function leesLeden(leden) {
+    const uit = [];
+    const lijst = (Array.isArray(leden) ? leden : []).slice(0, 24);
+    for (let r = 0; r < 8; r++) {
+      for (const l of lijst) {
+        const a = l && Array.isArray(l.adressen) ? l.adressen[r] : null;
+        if (!a) continue;
+        const adres = normaalAdres(`${a.host}:${Number.isInteger(a.poort) ? a.poort : JARVIS_POORT}`, JARVIS_POORT);
+        if (adres && !uit.includes(adres)) uit.push(adres);
+      }
+    }
+    return uit.slice(0, MAX_BEKEND);
+  }
+  // Na een netwerkwissel vraagt Veronica rond: wie ze nu volgt, de hoofdtelefoon, elke
+  // telefoon, en alles wat ze ooit hoorde. Uniek, in die volgorde.
+  function rondvraagLijst(s) {
+    const o = s || {};
+    const uit = [];
+    const zet = (a) => { if (a && !uit.includes(a)) uit.push(a); };
+    zet(o.actieveKern); zet(o.kern);
+    for (const t of o.telefoons || []) zet(t && t.jarvis);
+    for (const a of o.bekend || []) zet(a);
+    return uit;
+  }
+  // Onthouden: nieuwe adressen voorop, hoogstens MAX_BEKEND.
+  function voegBekendToe(bekend, nieuw) {
+    const uit = [];
+    for (const a of (nieuw || []).concat(bekend || [])) { const n = normaalAdres(a, JARVIS_POORT); if (n && !uit.includes(n)) uit.push(n); }
+    return uit.slice(0, MAX_BEKEND);
+  }
+  // Na een minuut niemand: zeg wat de mens kan doen (een keer scannen), zonder te gokken.
+  function vindUitleg(i) {
+    const o = i || {};
+    if (!o.gekoppeld || o.bereikbaar > 0 || !(o.stilMs >= 60000)) return '';
+    return `Ik vind niemand meer (${o.geprobeerd} adressen geprobeerd). Staan de telefoons aan en zit deze computer op hetzelfde wifi, het liefst de hotspot van de hoofdtelefoon? Lukt het niet: laat de baas "Toon koppelcode voor Veronica" zien en scan die een keer.`;
   }
 
   // Tasmota Status 8 (energie) en Power: alleen wat er staat.
@@ -177,7 +220,9 @@
     // (vijf minuten, een keer). Daarmee haalt Veronica de code en de lijst op.
     if (typeof d.t === 'string') {
       const kern = normaalAdres(d.kern, JARVIS_POORT);
-      return kern && TOKEN_RE.test(d.t) ? { token: d.t, kern, telefoons: [], stekkers: [], code: null } : null;
+      // Meer adressen (alt): dezelfde telefoon op het andere netwerk, en de anderen.
+      const alt = (Array.isArray(d.alt) ? d.alt : []).slice(0, 6).map((a) => normaalAdres(a, JARVIS_POORT)).filter((a) => a && a !== kern);
+      return kern && TOKEN_RE.test(d.t) ? { token: d.t, kern, alt: [...new Set(alt)], telefoons: [], stekkers: [], code: null } : null;
     }
     return leesVertrouwd(d);
   }
@@ -215,6 +260,109 @@
     }
     return '';
   }
+
+
+  // ---- WAARSCHUWEN (ntfy): dezelfde regels als JARVIS (www/waarschuw.js; een test vergelijkt ze) ----
+  // Het geheime onderwerp komt van de hoofdtelefoon (met de code); het staat niet in deze code.
+  const Ntfy = (function () {
+
+    const SERVER = 'https://ntfy.sh';
+    const REM_MS = 15 * 60 * 1000;
+    const ONDERWERP_RE = /^jv[a-z0-9]{30}$/;
+    const SOORTEN = {
+      heet: { prio: 4, tag: 'thermometer' },
+      weg: { prio: 3, tag: 'warning' },
+      noodstop: { prio: 5, tag: 'rotating_light' },
+      accu: { prio: 3, tag: 'battery' },
+      stil: { prio: 3, tag: 'zzz' },
+      proef: { prio: 2, tag: 'white_check_mark' },
+    };
+    const STIL_KEUZES = ['uit', '22:00-08:00', '23:00-07:00'];
+
+    // 32 tekens: "jv" en 30 uit a-z0-9, uit echte toevalsbytes (crypto.getRandomValues).
+    function maakOnderwerp(bytes) {
+      const abc = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      if (!bytes || bytes.length < 30) throw new Error('toeval nodig');
+      let t = 'jv';
+      for (let i = 0; i < 30; i++) t += abc[bytes[i] % 36];
+      return t;
+    }
+    const geldigOnderwerp = (t) => ONDERWERP_RE.test(String(t || ''));
+
+    // Geen IP-adres, geen e-mailadres, geen poort; kort.
+    function schoon(tekst) {
+      return String(tekst || '')
+        .replace(/https?:\/\/\S+/gi, '')
+        .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\b/g, '')
+        .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '')
+        .replace(/\s*\(\s*\)/g, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 200);
+    }
+
+    // Stille uren: "23:00-07:00" (over middernacht) of "uit".
+    function inStilleUren(datum, stil) {
+      const m = /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(String(stil || ''));
+      if (!m) return false;
+      const min = datum.getHours() * 60 + datum.getMinutes();
+      const van = Number(m[1]) * 60 + Number(m[2]);
+      const tot = Number(m[3]) * 60 + Number(m[4]);
+      return van <= tot ? min >= van && min < tot : min >= van || min < tot;
+    }
+    function prioriteit(soort, dringend, stil) {
+      if (dringend || soort === 'noodstop') return 5;
+      if (stil) return 1;
+      return (SOORTEN[soort] || SOORTEN.weg).prio;
+    }
+
+    // De rem. laatst = { soort: ms } van deze afzender; recent = de soorten die de laatste
+    // vijftien minuten al op het onderwerp stonden (van wie dan ook). Een proef mag altijd.
+    function magSturen(i) {
+      const o = i || {};
+      if (!geldigOnderwerp(o.onderwerp)) return { mag: false, reden: 'geen onderwerp (koppel eerst met de hoofdtelefoon)' };
+      if (o.uit) return { mag: false, reden: 'waarschuwen staat uit' };
+      if (!SOORTEN[o.soort]) return { mag: false, reden: 'onbekende soort' };
+      if (o.soort === 'proef') return { mag: true, reden: 'proef' };
+      const t = o.laatst && o.laatst[o.soort];
+      if (typeof t === 'number' && o.nu - t < REM_MS) return { mag: false, reden: `rem: ${o.soort} al gemeld (${Math.round((o.nu - t) / 60000)} min geleden)` };
+      if (o.recent && o.recent.has && o.recent.has(o.soort)) return { mag: false, reden: `rem: ${o.soort} staat er al (van een ander)` };
+      return { mag: true, reden: '' };
+    }
+
+    // Het verzoek: JSON naar de server (ntfy "publish as JSON"). Zonder Content-Type-kop, zodat
+    // een browser (Veronica) geen CORS-voorvraag hoeft te doen.
+    function verzoek(o) {
+      const s = SOORTEN[o.soort] || SOORTEN.weg;
+      return {
+        method: 'POST',
+        url: SERVER,
+        data: JSON.stringify({
+          topic: o.onderwerp,
+          title: o.titel || 'JARVIS',
+          message: schoon(o.tekst),
+          priority: prioriteit(o.soort, o.dringend, o.stil),
+          tags: [s.tag, `soort-${o.soort}`],
+        }),
+      };
+    }
+    const pollUrl = (onderwerp) => `${SERVER}/${onderwerp}/json?poll=1&since=15m`;
+    // De ntfy-geschiedenis (een JSON-bericht per regel): welke soorten stonden er al?
+    function leesRecent(tekst) {
+      const uit = new Set();
+      for (const r of String(tekst || '').split('\n')) {
+        let d;
+        try { d = JSON.parse(r); } catch (e) { continue; }
+        if (!d || d.event !== 'message' || !Array.isArray(d.tags)) continue;
+        for (const t of d.tags) { const m = /^soort-([a-z]+)$/.exec(String(t)); if (m) uit.add(m[1]); }
+      }
+      return uit;
+    }
+    // Abonneren op je telefoon: de ntfy-app opent dit adres en vraagt "abonneren?".
+    const abonneerLink = (onderwerp) => (geldigOnderwerp(onderwerp) ? `ntfy://ntfy.sh/${onderwerp}` : null);
+
+    return { SERVER, REM_MS, SOORTEN, STIL_KEUZES, maakOnderwerp, geldigOnderwerp, schoon, inStilleUren, prioriteit, magSturen, verzoek, pollUrl, leesRecent, abonneerLink };
+  }());
 
   // ---- Wie krijgt het volgende stukje werk? ----
   // staten: { adres: { bereikbaar, bezig, uitTot, vervangen, hitteStand } }. De kern
@@ -340,6 +488,9 @@
       case 'noodstop': return hd ? 'Noodstop. Alles staat stil. Het werk wacht veilig in de rij.' : 'NOODSTOP: alles stilgezet.';
       case 'rustig': return hd ? 'Alles rustig. Ik kijk mee.' : '';
       case 'volgt': return hd ? `De hoofdtelefoon is weg. ${x.naam} is nu de baas; ik kijk via hem mee.` : `Hoofdtelefoon onbereikbaar. Baas nu: ${x.naam}.`;
+      case 'accu': return hd ? `${x.naam} heeft nog ${x.procent}% accu en laadt niet. Hij krijgt geen nieuw werk.` : `${x.naam}: ${x.procent}% accu, laadt niet.`;
+      case 'stil': return hd ? 'De rij ligt al tien minuten stil. Er wacht werk, niemand pakt het op.' : 'Rij stil: werk wacht, niemand bezig (10 min).';
+      case 'proef': return hd ? 'Dit is een proef van Veronica. Zo ziet een waarschuwing eruit.' : 'Proefmelding van Veronica.';
       case 'kernTerug': return hd ? 'De hoofdtelefoon is terug. Hij is weer de baas.' : 'Hoofdtelefoon weer bereikbaar.';
       default: return '';
     }
@@ -360,7 +511,7 @@
   }
 
   return {
-    KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg,
+    Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,

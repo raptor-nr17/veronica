@@ -64,6 +64,10 @@
     stekkerMeting: {},      // ip -> { aan, watt, kwh, vandaag } (metingen met bron en tijd)
     kern: null, code: null, // de hoofdtelefoon (zijn JARVIS-adres) en zijn koppelcode
     actieveKern: null,      // wie ze NU volgt: de hoofdtelefoon, of de waarnemend baas als die weg is
+    bekend: [],             // alle JARVIS-adressen die ze ooit hoorde (de vindladder), nieuwste eerst
+    ntfy: null,             // { onderwerp, aan, stil } van de hoofdtelefoon (alleen met de code)
+    kernGezien: 0,          // wanneer de hoofdtelefoon zelf voor het laatst antwoordde (thuis = lokaal melden)
+    stilSinds: null,        // sinds wanneer er werk wacht zonder dat iemand het oppakt
     wilWakker: false,       // scherm aan gevraagd: na slaapstand vraagt ze het zelf opnieuw
     metingen: {},           // adres -> { health: {...}, status: {...}, gezien, jarvisNietTot }
     staten: {},             // adres -> { bereikbaar, bezig, uitTot, vervangen, hitteStand, laatstGebruikt }
@@ -132,14 +136,19 @@
     if (!S.kern || !S.code) return;
     let adres = S.kern;
     let d = await leesStand(S.kern);
+    let via = null;
+    // De hoofdtelefoon is weg (hij is de deur uit): eerst wie ze al volgde, dan de rek-telefoon
+    // die ZELF zegt dat hij baas is. Die kent de code van de hoofdtelefoon ook (de rij-code).
+    if (!d && S.actieveKern && S.actieveKern !== S.kern) { d = await leesStand(S.actieveKern); if (d) adres = S.actieveKern; }
     if (!d) {
-      // De hoofdtelefoon is weg (hij is de deur uit): volg de rek-telefoon die baas is. Die
-      // kent de code van de hoofdtelefoon ook (de rij-code), dus er hoeft niets ingetypt.
       const b = K.baasUitStatus(S.telefoons, S.metingen, nu(), S.kern);
-      if (b) { d = await leesStand(b.adres); if (d) adres = b.adres; }
-      if (d && S.actieveKern !== adres) logRegel(K.veronicaZin(S.karakter, 'volgt', { naam: b.naam }) || `Baas nu: ${b.naam}.`);
-    } else if (S.actieveKern && S.actieveKern !== S.kern) logRegel(K.veronicaZin(S.karakter, 'kernTerug'));
-    if (!d) return;   // niemand antwoordt: Veronica gaat gewoon door met wat ze weet
+      if (b) { d = await leesStand(b.adres); if (d) { adres = b.adres; via = b.naam; } }
+    }
+    if (!d) { await rondvragen(); return; }   // niemand antwoordt: rondvragen, en doorgaan met wat ze weet
+    stilSinds = nu();
+    if (adres === S.kern) S.kernGezien = nu();
+    if (adres === S.kern && S.actieveKern && S.actieveKern !== S.kern) logRegel(K.veronicaZin(S.karakter, 'kernTerug'));
+    else if (via && S.actieveKern !== adres) logRegel(K.veronicaZin(S.karakter, 'volgt', { naam: via }) || `Baas nu: ${via}.`);
     S.actieveKern = adres;
     const act = {};
     for (const a of Array.isArray(d.activiteit) ? d.activiteit : []) {
@@ -148,6 +157,45 @@
     S.kernActiviteit = act;
     const zs = K.leesZonStroom(d.zonStroom, nu());
     if (zs) S.zonStroom = zs;
+  }
+  // RONDVRAGEN (na een netwerkwissel, of als de hoofdtelefoon en de baas zwijgen): elk adres dat
+  // ze kent, tot er iemand antwoordt. Die geeft (met de code) de lijst van nu: telefoons, leden en
+  // hun adressen. Hoogstens eens per vijftien seconden, vier tegelijk.
+  let rondT = 0;
+  let stilSinds = nu();
+  async function rondvragen(dwing) {
+    if (!S.code || (!dwing && nu() - rondT < 15000)) return;
+    rondT = nu();
+    const lijst = K.rondvraagLijst(S);
+    let gevonden = null;
+    for (let i = 0; i < lijst.length && !gevonden; i += 4) {
+      const uit = await Promise.all(lijst.slice(i, i + 4).map(async (a) => {
+        try { const r = await haal(`${a}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': S.code } }, 2000); return r.ok ? { a, d: await r.json() } : null; } catch (e) { return null; }
+      }));
+      gevonden = uit.find(Boolean) || null;
+    }
+    const v = $('vindUitleg');
+    if (!gevonden) {
+      const u = K.vindUitleg({ gekoppeld: !!S.code, bereikbaar: 0, stilMs: nu() - stilSinds, geprobeerd: lijst.length });
+      if (v) { v.textContent = u; v.hidden = !u; }
+      return;
+    }
+    stilSinds = nu();
+    if (v) v.hidden = true;
+    const l = K.leesVertrouwd(gevonden.d);
+    if (l.telefoons.length) {
+      S.telefoons = l.telefoons;
+      await Opslag.schrijf('telefoons', S.telefoons);
+      // De hoofdtelefoon kan een nieuw adres hebben (een hotspot kiest vaak een ander subnet).
+      const kern = l.telefoons.find((t) => t.kern);
+      if (kern && kern.jarvis !== S.kern) { S.kern = kern.jarvis; await Opslag.schrijf('kern', S.kern); }
+    }
+    S.bekend = K.voegBekendToe(S.bekend, [gevonden.a].concat(l.bekend, l.kern ? [l.kern] : []));
+    await Opslag.schrijf('bekend', S.bekend);
+    if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); }
+    if (S.actieveKern !== gevonden.a) logRegel(`Gevonden via ${gevonden.a.slice(7)}. Ik kijk weer mee.`);
+    S.actieveKern = gevonden.a;
+    vulVervang();
   }
   async function meetStekker(k) {
     try {
@@ -186,6 +234,88 @@
     vak.hidden = !u;
   }
 
+  // ---- WAARSCHUWEN: thuis lokaal via JARVIS, anders via ntfy (kern.js: Ntfy) ----
+  // Thuis (de hoofdtelefoon antwoordde de laatste 30 s): een melding van Android op de
+  // hoofdtelefoon zelf, via /jarvis/roep. Anders (hij is onderweg, op mobiele data): ntfy.
+  // Hoogstens een melding per soort per vijftien minuten; gedeeld met de rek-baas via de
+  // geschiedenis van het onderwerp. Geen IP-adressen in de tekst (Ntfy.schoon).
+  const NtS = { laatst: {} };
+  async function waarschuw(soort, tekst, dringend) {
+    const tijd = nu();
+    const schone = K.Ntfy.schoon(tekst);
+    if (!schone) return { gestuurd: false, reden: 'leeg' };
+    if (soort !== 'proef' && typeof NtS.laatst[soort] === 'number' && tijd - NtS.laatst[soort] < K.Ntfy.REM_MS) return { gestuurd: false, reden: 'rem' };
+    if (soort !== 'proef' && S.kern && S.code && tijd - S.kernGezien < 30000) {
+      try {
+        const r = await haal(`${S.kern}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'melding', van: 'veronica', tekst: schone }) }, 3000);
+        if (r.ok) { NtS.laatst[soort] = tijd; logRegel(`Gemeld op de hoofdtelefoon (thuis): ${schone}`); return { gestuurd: true, manier: 'thuis' }; }
+      } catch (e) { /* dan via ntfy */ }
+    }
+    const n = S.ntfy || {};
+    const basis = { onderwerp: n.onderwerp, uit: n.aan === false, soort, nu: tijd, laatst: NtS.laatst };
+    let m = K.Ntfy.magSturen(basis);
+    if (!m.mag) return { gestuurd: false, reden: m.reden };
+    if (soort !== 'proef') {
+      let recent = new Set();
+      try { const r = await haal(K.Ntfy.pollUrl(n.onderwerp), {}, 5000); if (r.ok) recent = K.Ntfy.leesRecent(await r.text()); } catch (e) { /* alleen de eigen rem */ }
+      m = K.Ntfy.magSturen(Object.assign({}, basis, { recent }));
+      if (!m.mag) return { gestuurd: false, reden: m.reden };
+    }
+    const v = K.Ntfy.verzoek({ onderwerp: n.onderwerp, soort, tekst: schone, titel: 'Veronica', dringend: !!dringend, stil: K.Ntfy.inStilleUren(new Date(tijd), n.stil) });
+    try {
+      const r = await haal(v.url, { method: 'POST', body: v.data }, 8000);
+      if (!r.ok) return { gestuurd: false, reden: `ntfy gaf ${r.status}` };
+      NtS.laatst[soort] = tijd;
+      logRegel(`Waarschuwing naar je telefoon: ${schone}`);
+      return { gestuurd: true, manier: 'ntfy' };
+    } catch (e) { return { gestuurd: false, reden: 'geen internet' }; }
+  }
+  function tekenNtfy() {
+    const v = $('ntfyStand');
+    if (!v) return;
+    const n = S.ntfy;
+    v.textContent = !n ? 'Waarschuwingen naar je telefoon: nog niet ingesteld (dat doe je op de hoofdtelefoon, Beheer).'
+      : `Waarschuwingen naar je telefoon: ${n.aan ? 'aan' : 'uit'}. Stille uren: ${n.stil === 'uit' ? 'geen' : n.stil}. Thuis gaat het via de hoofdtelefoon zelf.`;
+  }
+
+  // ---- ROEP DE RIJ OP: elk bekend adres, "meld je", en de ledenlijst ----
+  // Een browser kan niet roepen op het netwerk (geen UDP, geen mDNS) en geen slapende of
+  // gesloten app wakker maken. Wel: elk adres dat ze kent vragen (fetch, met targetAddressSpace),
+  // en een JARVIS die draait vragen zich te melden (/jarvis/roep): die zoekt dan opnieuw, roept
+  // zelf, en zet zijn OlliteRT aan als die uit stond.
+  let roepT = 0;
+  async function roepOp(handmatig) {
+    if (!S.code) { if (handmatig) logRegel('Koppel eerst met de hoofdtelefoon.'); return null; }
+    roepT = nu();
+    const lijst = K.rondvraagLijst(S);
+    const naamVan = (a) => (S.telefoons.find((t) => t.jarvis === a) || {}).naam || a.slice(7);
+    const ja = new Set();
+    const nee = new Set();
+    for (let i = 0; i < lijst.length; i += 4) {
+      await Promise.all(lijst.slice(i, i + 4).map(async (a) => {
+        try {
+          const r = await haal(`${a}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'roep', van: 'veronica' }) }, 2500);
+          if (!r.ok) { nee.add(naamVan(a)); return; }
+          ja.add(naamVan(a));
+          const v = await haal(`${a}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': S.code } }, 2500);
+          if (v.ok) {
+            const l = K.leesVertrouwd(await v.json());
+            S.bekend = K.voegBekendToe(S.bekend, [a].concat(l.bekend));
+            if (l.ntfy) S.ntfy = l.ntfy;
+          }
+        } catch (e) { nee.add(naamVan(a)); }
+      }));
+    }
+    for (const n of ja) nee.delete(n);
+    await Opslag.schrijf('bekend', S.bekend);
+    if (S.ntfy) await Opslag.schrijf('ntfy', S.ntfy);
+    const zin = `Rij opgeroepen: ${ja.size} ${ja.size === 1 ? 'meldde zich' : 'meldden zich'}${nee.size ? `; geen antwoord van ${[...nee].slice(0, 5).join(', ')}` : ''}.`;
+    logRegel(zin);
+    tekenNtfy();
+    meetRonde();
+    return { ja: [...ja], nee: [...nee] };
+  }
+
   // ---- Wat Veronica zegt (kern.js: veronicaZin) ----
   // Alleen bij een VERANDERING: een telefoon valt weg of komt terug, wordt te warm of weer koel.
   // De eerste meting is de beginstand en geen nieuws.
@@ -200,7 +330,10 @@
       else if (b !== s.vorigB) {
         s.vorigB = b;
         const anderen = S.telefoons.filter((x) => x !== t && staat(x.adres).bereikbaar && !staat(x.adres).vervangen).length;
-        logRegel(K.veronicaZin(S.karakter, b ? 'terug' : 'weg', { naam: t.naam, anderen }));
+        const zin = K.veronicaZin(S.karakter, b ? 'terug' : 'weg', { naam: t.naam, anderen });
+        logRegel(zin);
+        // De hoofdtelefoon die de deur uit gaat is geen nieuws voor de man die hem bij zich heeft.
+        if (!b && !t.kern) waarschuw('weg', K.veronicaZin('hulpdienst', 'weg', { naam: t.naam, anderen }));
       }
       const heet = s.hitteStand === 'oranje' || s.hitteStand === 'rood';
       if (s.vorigHeet === undefined) s.vorigHeet = heet;
@@ -209,8 +342,25 @@
         const st = meet(t.adres).status || {};
         const temp = st.temperatuur && tijd - st.temperatuur.t <= K.MAX_LEEFTIJD_MS ? st.temperatuur.waarde : null;
         logRegel(K.veronicaZin(S.karakter, heet ? 'heet' : 'koel', { naam: t.naam, temperatuur: temp, stand: s.hitteStand, ventilator: ventAan }));
+        if (heet) waarschuw('heet', K.veronicaZin('hulpdienst', 'heet', { naam: t.naam, temperatuur: temp, stand: s.hitteStand, ventilator: ventAan }), s.hitteStand === 'rood');
+      }
+      // Accu laag en hij laadt niet (alleen een verse meting telt).
+      const st2 = meet(t.adres).status || {};
+      const vers = (x) => (x && tijd - x.t <= K.MAX_LEEFTIJD_MS ? x.waarde : null);
+      const pct = vers(st2.batterij);
+      const laag = typeof pct === 'number' && pct <= 15 && vers(st2.laadt) === false;
+      if (s.vorigLaag === undefined) s.vorigLaag = laag;
+      else if (laag !== s.vorigLaag) {
+        s.vorigLaag = laag;
+        if (laag) { logRegel(K.veronicaZin(S.karakter, 'accu', { naam: t.naam, procent: pct })); waarschuw('accu', K.veronicaZin('hulpdienst', 'accu', { naam: t.naam, procent: pct })); }
       }
     }
+    // De rij ligt stil: er wacht werk, het pantser staat aan, en niemand pakt het op.
+    const wacht = S.taken.some((x) => x.status === 'wacht');
+    const bezig = S.taken.some((x) => x.status === 'bezig');
+    if (!S.aan || !wacht || bezig) S.stilSinds = null;
+    else if (S.stilSinds === null) S.stilSinds = tijd;
+    else if (tijd - S.stilSinds >= 10 * 60 * 1000) { S.stilSinds = tijd; logRegel(K.veronicaZin(S.karakter, 'stil')); waarschuw('stil', K.veronicaZin('hulpdienst', 'stil')); }
     const rustig = S.telefoons.length && S.telefoons.every((t) => staat(t.adres).bereikbaar && !['oranje', 'rood'].includes(staat(t.adres).hitteStand));
     $('veronicaZegt').textContent = rustig ? K.veronicaZin(S.karakter, 'rustig') : (S.log[0] ? S.log[0].zin : '');
   }
@@ -587,6 +737,7 @@
     $('pantserKnop').setAttribute('aria-pressed', 'false');
     for (const st of S.stromen.values()) { st.reden = 'noodstop'; st.ctrl.abort(); }
     logRegel(K.veronicaZin(S.karakter, 'noodstop'));
+    waarschuw('noodstop', K.veronicaZin('hulpdienst', 'noodstop'), true);
     const uitslag = await Promise.all(S.telefoons.map(async (t) => {
       try {
         const r = await haal(`${t.adres}/v1/server/stop`, { method: 'POST', headers: kop(t) }, 3000);
@@ -605,6 +756,9 @@
     await Opslag.schrijf('stekkers', S.stekkers);
     if (l.kern) S.kern = l.kern;
     if (l.code) S.code = l.code;
+    S.bekend = K.voegBekendToe(S.bekend, [l.kern].concat(l.alt || [], l.bekend || [], l.telefoons.map((t) => t.jarvis)));
+    await Opslag.schrijf('bekend', S.bekend);
+    if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); tekenNtfy(); }
     await Opslag.schrijf('telefoons', S.telefoons);
     await Opslag.schrijf('kern', S.kern);
     await Opslag.schrijf('code', S.code);
@@ -647,15 +801,21 @@
   async function koppelMetToken(q) {
     const vak = $('koppelMelding');
     vak.textContent = 'Even…';
-    try {
-      const r = await haal(`${q.kern}/jarvis/koppel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: q.token, ik: { soort: 'veronica' } }) }, 5000);
-      if (r.status === 403 || r.status === 429) { vak.textContent = 'Deze QR is verlopen of al gebruikt. Laat JARVIS een nieuwe tonen.'; return null; }
-      if (!r.ok) { vak.textContent = `De hoofdtelefoon gaf ${r.status}.`; return null; }
-      const l = K.leesPakket(await r.json());
-      if (!l) { vak.textContent = 'Het antwoord klopt niet.'; return null; }
-      l.kern = q.kern;
-      return l;
-    } catch (e) { vak.textContent = 'Geen antwoord van de hoofdtelefoon. Zelfde netwerk, en toegang tot het lokale netwerk?'; return null; }
+    // Eerst het adres uit de QR, dan de andere adressen erin (hetzelfde toestel op het andere netwerk).
+    for (const adres of [q.kern].concat(q.alt || [])) {
+      try {
+        const r = await haal(`${adres}/jarvis/koppel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: q.token, ik: { soort: 'veronica' } }) }, 5000);
+        if (r.status === 403 || r.status === 429) { vak.textContent = 'Deze QR is verlopen of al gebruikt. Laat JARVIS een nieuwe tonen.'; return null; }
+        if (!r.ok) { vak.textContent = `De hoofdtelefoon gaf ${r.status}.`; return null; }
+        const l = K.leesPakket(await r.json());
+        if (!l) { vak.textContent = 'Het antwoord klopt niet.'; return null; }
+        l.kern = adres;
+        l.alt = (q.alt || []).concat(q.kern);
+        return l;
+      } catch (e) { /* dit adres niet: het volgende */ }
+    }
+    vak.textContent = 'Geen antwoord van de hoofdtelefoon. Zelfde netwerk, en toegang tot het lokale netwerk?';
+    return null;
   }
   // VERONICA LAAT EEN QR ZIEN voor een nieuwe telefoon: eenmalig, vijf minuten. Daarvoor vraagt
   // ze met de code een token bij de hoofdtelefoon; de code zelf staat NIET in de QR.
@@ -751,6 +911,8 @@
       S.stekkers = (await Opslag.lees('stekkers')) || [];
       S.kern = (await Opslag.lees('kern')) || null;
       S.code = (await Opslag.lees('code')) || null;
+      S.bekend = (await Opslag.lees('bekend')) || [];
+      S.ntfy = K.leesNtfy(await Opslag.lees('ntfy'));
       S.karakter = (await Opslag.lees('karakter')) === 'zakelijk' ? 'zakelijk' : 'hulpdienst';
       S.wilWakker = (await Opslag.lees('wakker')) === true;
       S.taken = ((await Opslag.alleTaken()) || []).sort((a, b) => a.sinds - b.sinds);
@@ -765,6 +927,11 @@
     $('koppelKnop').addEventListener('click', koppelMetCode);
     $('qrKnop').addEventListener('click', scanQr);
     $('karakterKnop').addEventListener('click', wisselKarakter);
+    $('roepKnop').addEventListener('click', () => roepOp(true));
+    $('ntfyProef').addEventListener('click', async () => {
+      const r = await waarschuw('proef', K.veronicaZin('hulpdienst', 'proef'));
+      logRegel(r.gestuurd ? 'Proefmelding verstuurd. Kijk op je telefoon.' : `Proefmelding niet verstuurd: ${r.reden}.`);
+    });
     $('nieuwQrKnop').addEventListener('click', toonNieuweTelefoonQr);
     $('nieuwQrSluit').addEventListener('click', () => { $('nieuwQrPaneel').hidden = true; clearInterval(qrKlok); $('nieuwQrBeeld').replaceChildren(); });
     $('qrPlakKnop').addEventListener('click', () => koppelMetQrTekst($('qrTekst').value));
@@ -772,6 +939,7 @@
     for (const s of ['live', 'wachtrij', 'koppel']) $(`tab-${s}`).addEventListener('click', () => toonScherm(s));
     toonScherm('live');   // de Live modus is altijd het startscherm
     tekenKarakter();
+    tekenNtfy();
     vraagWakker();
     tekenLive();
     vulVervang();
@@ -781,15 +949,18 @@
     setInterval(() => {
       const wacht = document.visibilityState === 'visible' ? 2000 : 10000;
       if (nu() - laatst >= wacht) { laatst = nu(); meetRonde(); vulVervang(); }
+      // Automatisch de rij oproepen: elke tien minuten (en meteen als het wifi terug is).
+      if (S.code && nu() - roepT > 10 * 60 * 1000) roepOp(false);
     }, 1000);
     setInterval(schermTik, 1000);
     // VANZELF WEER VERBINDEN na een slaapstand of als het wifi terug is: alles staat in de opslag
     // van de browser (telefoons, code, wachtrij), dus ze hoeft alleen meteen weer te kijken.
     const weerWakker = () => {
       for (const m of Object.values(S.metingen)) m.jarvisNietTot = 0;
+      rondT = 0;   // een ander netwerk: meteen rondvragen mag
       laatst = nu(); meetRonde(); vraagWakker();
     };
-    window.addEventListener('online', weerWakker);
+    window.addEventListener('online', () => { roepT = 0; weerWakker(); });
     window.addEventListener('pageshow', weerWakker);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') weerWakker(); });
     if ('serviceWorker' in navigator) zelfBijwerken();
@@ -801,6 +972,6 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
+  window.__veronica = { roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
   start();
 }());
