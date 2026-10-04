@@ -364,6 +364,31 @@
     return { SERVER, REM_MS, SOORTEN, STIL_KEUZES, maakOnderwerp, geldigOnderwerp, schoon, inStilleUren, prioriteit, magSturen, verzoek, pollUrl, leesRecent, abonneerLink };
   }());
 
+  // ---- De prestatiekaart: rol, en hoe oud de laatste meting is ----
+  // Dezelfde woorden als JARVIS (PLEK_NAAM in app.js); de test vergelijkt ze.
+  const PLEK_NAAM = { mobiel: '👖 Mobiel (kern)', rek: '🧊🔌 Rek (helper)' };
+  function rolZin(t, status, tijd) {
+    const r = status && status.rol && tijd - status.rol.t <= MAX_LEEFTIJD_MS ? status.rol.waarde : null;
+    const delen = [];
+    if (r === 'baas') delen.push('👑 Baas');
+    else if (r === 'werker') delen.push('Werker');
+    if (t && PLEK_NAAM[t.plek]) delen.push(PLEK_NAAM[t.plek]);
+    return delen.join(' · ') || 'rol onbekend';
+  }
+  // De nieuwste meting van OlliteRT (snelheid en benutting: het hart van de kaart), of null als
+  // er nooit een was. Een batterij die JARVIS nog meldt, maakt een stille OlliteRT niet vers.
+  function jongsteMeting(m) {
+    let j = typeof (m && m.gezien) === 'number' ? m.gezien : null;
+    for (const v of Object.values((m && m.health) || {})) if (v && typeof v.t === 'number' && (j === null || v.t > j)) j = v.t;
+    return j;
+  }
+  // '' = vers; anders de zin voor een grijze kaart.
+  function oudZin(jongste, tijd) {
+    if (jongste === null || jongste === undefined) return 'nog geen meting';
+    const ms = tijd - jongste;
+    return ms > MAX_LEEFTIJD_MS ? `laatste meting ${leeftijdZin(ms)}` : '';
+  }
+
   // ---- Wie krijgt het volgende stukje werk? ----
   // staten: { adres: { bereikbaar, bezig, uitTot, vervangen, hitteStand } }. De kern
   // (de hoofdtelefoon) als laatste, zoals in het pantser. Heet (oranje/rood) = niets.
@@ -511,7 +536,7 @@
   }
 
   return {
-    Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
+    PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,

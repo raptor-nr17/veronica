@@ -21,7 +21,17 @@
   nav { display: flex; gap: 8px; padding: 8px 16px; }
   main { padding: 8px 16px 24px; }
   .eerlijk { color: var(--zacht); font-size: 15px; margin: 4px 0 10px; }
-  #tegels { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  #tegels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+  .tegel.oud { filter: grayscale(1); opacity: .7; }
+  .tegel.oud .tBereik { font-size: 18px; font-weight: 700; }
+  .tRol { font-size: 16px; color: var(--zacht); margin-top: 2px; }
+  #wandBalk { display: none; }
+  body.wand header, body.wand nav, body.wand #wakkerZin, body.wand .tAdres, body.wand .tTaak, body.wand .tLive, body.wand .tBron,
+  body.wand .tMeer, body.wand .tKnoppen, body.wand .tScherm, body.wand #stekkerKop, body.wand #tegels-stekkers, body.wand #zonKop, body.wand #zonStroom { display: none; }
+  body.wand #wandBalk { display: flex; gap: 16px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--lijn); }
+  #wandKlok { font-size: 34px; font-weight: 800; } #wandZin { font-size: 22px; font-weight: 700; margin-right: auto; }
+  body.wand #tegels { grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; }
+  body.wand .tKop h2 { font-size: 32px; } body.wand .tRol { font-size: 20px; } body.wand .vAccu { font-size: 24px; }
   .tegel { background: var(--paneel); border: 3px solid var(--lijn); border-radius: 18px; padding: 12px; min-width: 0; }
   .tKop { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
   .tKop h2 { margin: 0; font-size: 22px; }
@@ -83,9 +93,11 @@
   <button id="vervangKnop">Vervang onderdeel</button>
   <button id="wakkerKnop" aria-pressed="false">Houd het scherm aan</button>
   <button id="volKnop">Volledig scherm</button>
+  <button id="wandKnop" aria-pressed="false">🖥 Wandstand</button>
   <button id="nieuwQrKnop">📱 QR voor een nieuwe telefoon</button>
   <button id="noodstop">NOODSTOP</button>
 </header>
+<div id="wandBalk"><span id="wandKlok"></span><span id="wandZin"></span><button id="wandUit">← Terug</button></div>
 <nav>
   <button id="tab-live" aria-pressed="true">Live</button>
   <button id="tab-wachtrij" aria-pressed="false">Wachtrij</button>
@@ -100,7 +112,7 @@
     <div id="tegels"></div>
     <h2 id="stekkerKop" hidden>Stekkers</h2>
     <div id="tegels-stekkers"><div id="stekkerTegels" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px"></div></div>
-    <h2>Zon en stroom</h2>
+    <h2 id="zonKop">Zon en stroom</h2>
     <div id="zonStroom" class="zsPaneel"></div>
   </section>
   <section id="scherm-wachtrij" hidden>
@@ -126,6 +138,8 @@
     <p class="eerlijk">Chrome vraagt de eerste keer of Veronica het lokale netwerk mag gebruiken. Zeg ja: anders kan ze de telefoons niet bereiken.
       Alles wat Veronica onthoudt staat alleen in deze browser.</p>
       <button id="karakterKnop" aria-pressed="true">Karakter: aan</button>
+    <button id="wandAutoKnop" aria-pressed="true">Wandstand vanzelf: aan</button>
+    <p class="eerlijk">De wandstand laat alleen de kaarten zien, groot. Vanzelf na twee minuten zonder muis of toetsen. Echt volledig scherm komt na de eerste tik (zo wil de browser het).</p>
     <p id="ntfyStand"></p>
     <button id="ntfyProef">Stuur een proefmelding</button>
     <p class="eerlijk">Karakter aan: Veronica zegt kort wat ze doet en waarom. Zakelijk: alleen de feiten.</p>

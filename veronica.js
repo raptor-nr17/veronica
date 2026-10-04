@@ -459,17 +459,19 @@
     vak.replaceChildren(...S.telefoons.map((t) => {
       const m = meet(t.adres);
       const s = staat(t.adres);
-      const tegel = el('section', 'tegel');
+      // De PRESTATIEKAART, zoals op de telefoon: naam, rol, vier meters, de accu. Is de nieuwste
+      // meting ouder dan 10 s, dan wordt de hele kaart grijs, met hoe oud.
+      const oud = K.oudZin(K.jongsteMeting(m), tijd);
+      const tegel = el('section', `tegel${oud ? ' oud' : ''}`);
       tegel.dataset.adres = t.adres;
-      if (s.hitteStand) tegel.style.borderColor = KLEUR[s.hitteStand];
+      if (s.hitteStand && !oud) tegel.style.borderColor = KLEUR[s.hitteStand];
       const kopRij = el('div', 'tKop');
       kopRij.append(el('h2', '', t.naam), el('span', 'tAdres', t.adres.replace('http://', '')));
-      if (t.kern) kopRij.appendChild(el('span', 'badge', 'kern'));
-      if (t.plek) kopRij.appendChild(el('span', `badge plek-${t.plek}`, t.plek === 'mobiel' ? '👖 mobiel' : '🧊🔌 rek'));
       tegel.appendChild(kopRij);
+      tegel.appendChild(el('div', 'tRol', K.rolZin(t, m.status, tijd)));
       tegel.appendChild(meterRij(t, m, s, tijd));
-      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar ? 'bereikbaar' : (m.gezien ? `geen antwoord · laatst gezien ${K.klokZin(m.gezien)}` : 'nog niet bereikt');
-      tegel.appendChild(el('div', `tBereik${s.bereikbaar ? '' : ' oud'}`, bereik));
+      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`;
+      tegel.appendChild(el('div', `tBereik${s.bereikbaar && !oud ? '' : ' oud'}`, bereik));
       // De taak, en de tekst die NU binnenkomt (eigen werk, of wat de hoofdtelefoon meldt).
       const eigen = S.stromen.get(t.adres);
       const taak = eigen ? S.taken.find((x) => x.id === eigen.taakId) : null;
@@ -871,6 +873,42 @@
     vak.textContent = 'Geen QR gezien.';
   }
 
+  // ---- DE WANDSTAND: alleen de prestatiekaarten, groot, volledig scherm ----
+  // Met de knop, of VANZELF na twee minuten zonder muis of toetsen op het Live-scherm (de
+  // thuispost naast het rek). Echt volledig scherm mag een browser alleen na een tik of toets;
+  // die eerste tik doet het dan. "← Terug" (of Esc) gaat terug.
+  const Wand = { aan: false, auto: true, stilT: nu() };
+  function volScherm() {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+  }
+  function zetWand(aan, waarom) {
+    Wand.aan = !!aan;
+    document.body.classList.toggle('wand', Wand.aan);
+    $('wandKnop').setAttribute('aria-pressed', String(Wand.aan));
+    if (Wand.aan) {
+      toonScherm('live');
+      if (waarom === 'knop') volScherm();
+      vraagWakker();
+      logRegel(waarom === 'vanzelf' ? 'Wandstand: twee minuten niets aangeraakt.' : 'Wandstand aan.');
+    } else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    tekenWand();
+  }
+  function tekenWand() {
+    if (!Wand.aan) return;
+    $('wandKlok').textContent = K.klokZin(nu()).slice(0, 5);
+    $('wandZin').textContent = $('veronicaZegt').textContent || $('pantserZin').textContent;
+  }
+  async function wisselWandAuto() {
+    Wand.auto = !Wand.auto;
+    await Opslag.schrijf('wandAuto', Wand.auto);
+    $('wandAutoKnop').textContent = `Wandstand vanzelf: ${Wand.auto ? 'aan' : 'uit'}`;
+    $('wandAutoKnop').setAttribute('aria-pressed', String(Wand.auto));
+  }
+  function wandTik() {
+    if (Wand.aan) { tekenWand(); return; }
+    if (Wand.auto && S.telefoons.length && !$('scherm-live').hidden && $('nieuwQrPaneel').hidden && nu() - Wand.stilT >= 120000) zetWand(true, 'vanzelf');
+  }
+
   // ---- Wakker blijven, volledig scherm ----
   async function wakker() {
     if (S.wakeLock || S.wilWakker) {
@@ -913,6 +951,7 @@
       S.code = (await Opslag.lees('code')) || null;
       S.bekend = (await Opslag.lees('bekend')) || [];
       S.ntfy = K.leesNtfy(await Opslag.lees('ntfy'));
+      Wand.auto = (await Opslag.lees('wandAuto')) !== false;
       S.karakter = (await Opslag.lees('karakter')) === 'zakelijk' ? 'zakelijk' : 'hulpdienst';
       S.wilWakker = (await Opslag.lees('wakker')) === true;
       S.taken = ((await Opslag.alleTaken()) || []).sort((a, b) => a.sinds - b.sinds);
@@ -928,6 +967,17 @@
     $('qrKnop').addEventListener('click', scanQr);
     $('karakterKnop').addEventListener('click', wisselKarakter);
     $('roepKnop').addEventListener('click', () => roepOp(true));
+    $('wandKnop').addEventListener('click', () => zetWand(!Wand.aan, 'knop'));
+    $('wandUit').addEventListener('click', (e) => { e.stopPropagation(); Wand.stilT = nu(); zetWand(false); });
+    $('wandAutoKnop').addEventListener('click', wisselWandAuto);
+    // Wie iets aanraakt, is er: de klok voor "vanzelf" begint opnieuw. In de wandstand maakt de
+    // eerste tik het scherm echt vol (dat mag een browser alleen na een tik).
+    for (const soort of ['pointerdown', 'keydown', 'wheel']) {
+      document.addEventListener(soort, (e) => {
+        Wand.stilT = nu();
+        if (Wand.aan && soort === 'pointerdown' && !(e.target && e.target.id === 'wandUit')) volScherm();
+      }, { passive: true });
+    }
     $('ntfyProef').addEventListener('click', async () => {
       const r = await waarschuw('proef', K.veronicaZin('hulpdienst', 'proef'));
       logRegel(r.gestuurd ? 'Proefmelding verstuurd. Kijk op je telefoon.' : `Proefmelding niet verstuurd: ${r.reden}.`);
@@ -940,6 +990,8 @@
     toonScherm('live');   // de Live modus is altijd het startscherm
     tekenKarakter();
     tekenNtfy();
+    $('wandAutoKnop').textContent = `Wandstand vanzelf: ${Wand.auto ? 'aan' : 'uit'}`;
+    $('wandAutoKnop').setAttribute('aria-pressed', String(Wand.auto));
     vraagWakker();
     tekenLive();
     vulVervang();
@@ -953,6 +1005,7 @@
       if (S.code && nu() - roepT > 10 * 60 * 1000) roepOp(false);
     }, 1000);
     setInterval(schermTik, 1000);
+    setInterval(wandTik, 1000);
     // VANZELF WEER VERBINDEN na een slaapstand of als het wifi terug is: alles staat in de opslag
     // van de browser (telefoons, code, wachtrij), dus ze hoeft alleen meteen weer te kijken.
     const weerWakker = () => {
@@ -972,6 +1025,6 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
+  window.__veronica = { Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
   start();
 }());
