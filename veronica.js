@@ -128,6 +128,23 @@
     } finally { clearTimeout(klok); }
   }
   const kop = (t) => (t.sleutel ? { Authorization: `Bearer ${t.sleutel}` } : {});
+  // 1.9.13 (punt 7): een vraag die misging, en dan nakijken WAT er mis is: is de telefoon er wel?
+  // t0 = wanneer de vraag begon, ms = hoe lang hij mocht duren.
+  async function waaromGeenAntwoord(adres, t0, ms) {
+    const hoofd = nu() - t0 >= ms - 250 ? 'traag' : 'snel';
+    let proef = 'traag';
+    const p = K.proefAdres(adres);
+    if (p) {
+      const t1 = nu();
+      try { await haal(p, { mode: 'no-cors' }, 2500); proef = 'snel'; } catch (e) { proef = nu() - t1 < 2000 ? 'snel' : 'traag'; }
+    }
+    return K.geenAntwoordZin(hoofd, proef);
+  }
+  function zegKoppel(tekst, slecht) {
+    const vak = $('koppelMelding');
+    vak.textContent = tekst;
+    vak.classList.toggle('slecht', !!slecht);
+  }
 
   // ---- Meten ----
   async function meetTelefoon(t) {
@@ -832,6 +849,7 @@
     logRegel('Er staat een nieuwe Veronica klaar. Ik herlaad zodra het lopende werk klaar is.');
   }
   function zelfBijwerken() {
+    if (!navigator.serviceWorker) return;   // geen service worker (gewone http-pagina): dan ook geen bijwerken
     let eerder = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
       const kijk = () => { try { reg.update(); } catch (e) { /* offline: later */ } };
@@ -1014,6 +1032,7 @@
     await Opslag.schrijf('telefoons', S.telefoons);
     await Opslag.schrijf('kern', S.kern);
     await Opslag.schrijf('code', S.code);
+    tekenKoppelStand();
     logRegel(`${S.telefoons.length} vertrouwde ${S.telefoons.length === 1 ? 'telefoon' : 'telefoons'} overgenomen.`);
     tekenLive();
     meetRonde();
@@ -1025,6 +1044,7 @@
     if (!kern) { vak.textContent = 'Dat adres ken ik niet. Typ het adres dat de hoofdtelefoon bij Apparaten, Veronica toont.'; return; }
     if (!/^\d{6}$/.test(code)) { vak.textContent = 'De code is zes cijfers.'; return; }
     vak.textContent = 'Even kijken…';
+    const t0 = nu();
     try {
       const r = await haal(`${kern}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': code } }, 4000);
       if (r.status === 401) { vak.textContent = 'Die code klopt niet.'; return; }
@@ -1037,7 +1057,7 @@
       vak.textContent = `Klaar: ${l.telefoons.length} ${l.telefoons.length === 1 ? 'telefoon' : 'telefoons'}.`;
       toonScherm('live');
     } catch (e) {
-      vak.textContent = 'Geen antwoord. Zit deze computer op hetzelfde netwerk, en heeft Chrome toegang tot het lokale netwerk gekregen?';
+      zegKoppel(await waaromGeenAntwoord(kern, t0, 4000), true);
     }
   }
   async function koppelMetQrTekst(tekst) {
@@ -1045,7 +1065,7 @@
     if (l && l.token) l = await koppelMetToken(l);
     if (!l || !l.telefoons.length) { if (!$('koppelMelding').textContent || /Even/.test($('koppelMelding').textContent)) $('koppelMelding').textContent = 'Dat is geen QR van JARVIS voor Veronica.'; return false; }
     await bewaarLijst(l);
-    $('koppelMelding').textContent = `Klaar: ${l.telefoons.length} ${l.telefoons.length === 1 ? 'telefoon' : 'telefoons'}.`;
+    zegKoppel(`Klaar: ${l.telefoons.length} ${l.telefoons.length === 1 ? 'telefoon' : 'telefoons'}.`, false);
     toonScherm('live');
     return true;
   }
@@ -1055,18 +1075,19 @@
     vak.textContent = 'Even…';
     // Eerst het adres uit de QR, dan de andere adressen erin (hetzelfde toestel op het andere netwerk).
     for (const adres of [q.kern].concat(q.alt || [])) {
+      const t0 = nu();
       try {
         const r = await haal(`${adres}/jarvis/koppel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: q.token, ik: { soort: 'veronica' } }) }, 5000);
-        if (r.status === 403 || r.status === 429) { vak.textContent = 'Deze QR is verlopen of al gebruikt. Laat JARVIS een nieuwe tonen.'; return null; }
+        if (r.status === 403 || r.status === 429) { zegKoppel('Deze QR is verlopen of al gebruikt. Tik in JARVIS op "Nieuwe koppelcode voor Veronica" en scan opnieuw.', true); return null; }
         if (!r.ok) { vak.textContent = `De hoofdtelefoon gaf ${r.status}.`; return null; }
         const l = K.leesPakket(await r.json());
         if (!l) { vak.textContent = 'Het antwoord klopt niet.'; return null; }
         l.kern = adres;
         l.alt = (q.alt || []).concat(q.kern);
         return l;
-      } catch (e) { /* dit adres niet: het volgende */ }
+      } catch (e) { if (adres === q.kern) q.eersteDuur = nu() - t0; /* dit adres niet: het volgende */ }
     }
-    vak.textContent = 'Geen antwoord van de hoofdtelefoon. Zelfde netwerk, en toegang tot het lokale netwerk?';
+    zegKoppel(await waaromGeenAntwoord(q.kern, nu() - (q.eersteDuur || 0), 5000), true);
     return null;
   }
   // VERONICA LAAT EEN QR ZIEN voor een nieuwe telefoon: eenmalig, vijf minuten. Daarvoor vraagt
@@ -1083,18 +1104,19 @@
     tijd.textContent = '';
     if (!S.kern || !S.code) {
       vak.textContent = opKoppel
-        ? 'Nog niet gekoppeld. Open JARVIS op de baas-telefoon, tik op Apparaten: in het vak Veronica staat de QR meteen. Scan die hierboven.'
+        ? 'Eerst Veronica koppelen: tik hierboven op Scan de koppelcode.'
         : 'Koppel Veronica eerst met de hoofdtelefoon (Koppelen).';
       return;
     }
-    let t = null;
+    let t = null, waarom = null;
+    const t0 = nu();
     try {
       const r = await haal(`${kernNu()}/jarvis/koppeltoken`, { method: 'POST', headers: { 'X-Koppelcode': S.code } }, 4000);
       if (r.ok) t = (await r.json()).t;
-    } catch (e) { t = null; }
+    } catch (e) { t = null; waarom = await waaromGeenAntwoord(kernNu(), t0, 4000); }
     const tekst = K.koppelQrTekst(kernNu(), t);
     if (typeof window.qrcode !== 'function') { vak.textContent = 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).'; return; }
-    if (!tekst) { vak.textContent = 'Nu geen QR: de hoofdtelefoon antwoordt niet. Staat JARVIS aan op de baas-telefoon, en zit deze Chromebook op hetzelfde netwerk?'; return; }
+    if (!tekst) { vak.textContent = `Nu geen QR. ${waarom || 'De hoofdtelefoon gaf geen koppelcode.'}`; return; }
     const q = window.qrcode(0, 'M');
     q.addData(tekst);
     q.make();
@@ -1146,10 +1168,17 @@
     const lees = maakQrLezer(video);
     const stop = () => { stroom.getTracks().forEach((x) => x.stop()); video.hidden = true; };
     const eind = nu() + 60000;
+    // 1.9.13 (punt 6): ELKE GELEZEN QR MAAR EEN KEER VERSTUREN. De QR blijft in beeld, en elke 300 ms
+    // werd hetzelfde eenmalige token opnieuw gestuurd; was het eerste al aangekomen, dan zei de tweede
+    // "verlopen of al gebruikt". Een nieuwe QR (JARVIS: Nieuwe koppelcode) wordt wel weer gelezen.
+    const gestuurd = new Set();
     while (nu() < eind) {
       try {
         const tekst = await lees();
-        if (tekst && await koppelMetQrTekst(tekst)) { stop(); return; }
+        if (tekst && !gestuurd.has(tekst)) {
+          gestuurd.add(tekst);
+          if (await koppelMetQrTekst(tekst)) { stop(); return; }
+        }
       } catch (e) { /* volgende beeld */ }
       await new Promise((r) => setTimeout(r, 300));
     }
@@ -1253,10 +1282,25 @@
     } catch (e) { /* geen internet: geen getal */ }
   }
 
+  // 1.9.13: WAT ER TE ZIEN IS HANGT AF VAN OF VERONICA AL GEKOPPELD IS.
+  //  - niet gekoppeld: geen knop "QR voor een nieuwe telefoon" bovenaan (die gaf een wit, doodlopend
+  //    scherm zonder QR, en daar liep het op 11 oktober op vast); op Koppelen ALLEEN "Veronica
+  //    koppelen", bovenaan, met de grote scanknop;
+  //  - wel gekoppeld: de knop bovenaan, en op Koppelen eerst de QR voor een nieuwe telefoon.
+  function gekoppeld() { return !!(S.kern && S.code); }
+  function tekenKoppelStand() {
+    const ja = gekoppeld();
+    $('nieuwQrKnop').hidden = !ja;
+    $('nieuwBlok').hidden = !ja;
+    const sectie = $('scherm-koppel');
+    if (ja) sectie.insertBefore($('nieuwBlok'), $('zelfBlok'));
+    else sectie.insertBefore($('zelfBlok'), $('nieuwBlok'));
+  }
   function toonScherm(naam) {
     for (const s of ['live', 'wachtrij', 'koppel']) { $(`scherm-${s}`).hidden = s !== naam; $(`tab-${s}`).setAttribute('aria-pressed', String(s === naam)); }
     // 1.9.6: op Koppelen staat de QR voor een nieuwe telefoon er meteen (geen extra tik).
-    if (naam === 'koppel' && !$('koppelQrBeeld').querySelector('svg')) toonNieuweTelefoonQr('koppel');
+    if (naam === 'koppel') tekenKoppelStand();
+    if (naam === 'koppel' && gekoppeld() && !$('koppelQrBeeld').querySelector('svg')) toonNieuweTelefoonQr('koppel');
     if (naam === 'koppel') tekenUpdatePlek();
   }
 
@@ -1267,6 +1311,7 @@
       S.stekkers = (await Opslag.lees('stekkers')) || [];
       S.kern = (await Opslag.lees('kern')) || null;
       S.code = (await Opslag.lees('code')) || null;
+      tekenKoppelStand();
       S.updateRepo = (await Opslag.lees('updateRepo')) || null;
       S.bekend = (await Opslag.lees('bekend')) || [];
       S.ntfy = K.leesNtfy(await Opslag.lees('ntfy'));
@@ -1333,7 +1378,7 @@
       const r = await waarschuw('proef', K.veronicaZin('hulpdienst', 'proef'));
       logRegel(r.gestuurd ? 'Proefmelding verstuurd. Kijk op je telefoon.' : `Proefmelding niet verstuurd: ${r.reden}.`);
     });
-    $('nieuwQrKnop').addEventListener('click', () => toonNieuweTelefoonQr('paneel'));
+    $('nieuwQrKnop').addEventListener('click', () => { if (gekoppeld()) toonNieuweTelefoonQr('paneel'); else toonScherm('koppel'); });
     $('koppelQrNieuw').addEventListener('click', () => toonNieuweTelefoonQr('koppel'));
     $('nieuwQrSluit').addEventListener('click', () => { $('nieuwQrPaneel').hidden = true; clearInterval(qrKlok); $('nieuwQrBeeld').replaceChildren(); });
     $('qrPlakKnop').addEventListener('click', () => koppelMetQrTekst($('qrTekst').value));

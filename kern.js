@@ -221,6 +221,20 @@
       vandaag: meting(getal(e.Today), 'Tasmota Status 8', t),
     };
   }
+  // 1.9.13 (punt 7): "GEEN ANTWOORD" ZIJN TWEE VERSCHILLENDE DINGEN. Op 11 oktober was de telefoon er wel
+  // (een andere poort weigerde binnen 22 ms), maar JARVIS antwoordde niet. Dat moet je anders oplossen
+  // dan een telefoon die niet op het netwerk zit.
+  //  hoofd: hoe de vraag aan JARVIS misging: 'traag' (geen antwoord binnen de tijd) of 'snel' (meteen fout);
+  //  proef: een vraag aan een poort waar niets luistert ('snel' = het toestel is er, 'traag' = niets).
+  function geenAntwoordZin(hoofd, proef) {
+    if (hoofd === 'snel') return 'De telefoon is gevonden, maar JARVIS luistert daar niet. Open JARVIS op die telefoon. Staat hij wel aan, geef Chrome dan toegang tot het lokale netwerk (het slotje links van het adres).';
+    if (proef === 'snel') return 'De telefoon is gevonden, maar JARVIS antwoordt niet. Open JARVIS op die telefoon en kijk op Apparaten bij "Bereikbaar voor Veronica".';
+    return 'De telefoon is niet te vinden op dit netwerk. Staat hij aan, en zit hij op hetzelfde wifi als deze Chromebook?';
+  }
+  // Het adres van de proef: dezelfde telefoon, poort 8081 (daar luistert JARVIS nooit).
+  function proefAdres(adres) {
+    try { const u = new URL(adres); if (!/^https?:$/.test(u.protocol)) return null; u.port = '8081'; u.pathname = '/'; u.search = ''; return u.toString(); } catch (e) { return null; }
+  }
   function leesQr(tekst) {
     let d;
     try { d = JSON.parse(String(tekst || '')); } catch (e) { return null; }
@@ -614,6 +628,6 @@
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesQr, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesVertrouwd, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

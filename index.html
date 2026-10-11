@@ -17,6 +17,10 @@
   #pantserZin { color: var(--zacht); margin-right: auto; }
   button { font: inherit; color: var(--tekst); background: var(--paneel); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; cursor: pointer; }
   button[aria-pressed="true"] { border-color: #45d8ff; }
+  /* 1.9.13: de scanknop groot en meteen in beeld; de melding direct eronder en groot. */
+  button.groot { display: block; width: 100%; max-width: 520px; font-size: 24px; font-weight: 700; padding: 18px 20px; margin: 10px 0; border-color: #45d8ff; }
+  .groteMelding { font-size: 22px; font-weight: 700; min-height: 1.4em; margin: 8px 0 14px; }
+  .groteMelding.slecht { color: #ffb4b6; }
   #noodstop { background: var(--rood); border-color: var(--rood); color: #fff; font-weight: 800; font-size: 22px; padding: 12px 22px; }
   nav { display: flex; gap: 8px; padding: 8px 16px; }
   main { padding: 8px 16px 24px; }
@@ -133,25 +137,33 @@
     <div id="takenLijst"></div>
   </section>
   <section id="scherm-koppel" hidden>
-    <h2>QR voor een nieuwe telefoon</h2>
-    <p>Open JARVIS op de nieuwe telefoon, tik op <b>Scan om te koppelen</b> en houd hem voor deze QR.</p>
-    <div id="koppelQrBeeld" class="qrWit"></div>
-    <p id="koppelQrTijd"></p>
-    <button id="koppelQrNieuw">Nieuwe QR</button>
-    <p id="updatePlekStand" class="eerlijk"></p>
-    <h2>Veronica zelf koppelen</h2>
-    <p>Een keer: open JARVIS op de baas-telefoon en tik op Apparaten. In het vak Veronica staat de QR meteen. Scan die hier met de camera van de Chromebook.</p>
-    <label for="kernAdres">Adres van de hoofdtelefoon</label>
-    <input id="kernAdres" inputmode="url" autocomplete="off" placeholder="adres:8080">
-    <label for="kernCode">Code (zes cijfers)</label>
-    <input id="kernCode" inputmode="numeric" maxlength="6" autocomplete="off">
-    <button id="koppelKnop">Overnemen</button>
-    <button id="qrKnop">📷 Scan de koppelcode</button>
-    <video id="qrVideo" hidden muted playsinline></video>
-    <label for="qrTekst">Of plak de tekst van de QR</label>
-    <textarea id="qrTekst"></textarea>
-    <button id="qrPlakKnop">Overnemen uit de tekst</button>
-    <p id="koppelMelding" aria-live="polite"></p>
+    <!-- 1.9.13: TWEE BLOKKEN. Niet gekoppeld: ALLEEN "Veronica koppelen", bovenaan, met een grote scanknop
+         (de QR voor een nieuwe telefoon kan dan toch niet). Wel gekoppeld: eerst de QR voor een nieuwe
+         telefoon, daaronder opnieuw koppelen. tekenKoppelStand() zet de volgorde. -->
+    <div id="zelfBlok">
+      <h2>Veronica koppelen</h2>
+      <p>Open JARVIS op de baas-telefoon en tik op <b>Apparaten</b>. Daar staat de QR voor Veronica. Tik hieronder op <b>Scan de koppelcode</b> en houd de telefoon voor de camera van deze Chromebook.</p>
+      <button id="qrKnop" class="groot">📷 Scan de koppelcode</button>
+      <p id="koppelMelding" class="groteMelding" aria-live="polite"></p>
+      <video id="qrVideo" hidden muted playsinline></video>
+      <h3>Of met het adres en de code</h3>
+      <label for="kernAdres">Adres van de hoofdtelefoon</label>
+      <input id="kernAdres" inputmode="url" autocomplete="off" placeholder="adres:8080">
+      <label for="kernCode">Code (zes cijfers)</label>
+      <input id="kernCode" inputmode="numeric" maxlength="6" autocomplete="off">
+      <button id="koppelKnop">Overnemen</button>
+      <label for="qrTekst">Of plak de tekst van de QR</label>
+      <textarea id="qrTekst"></textarea>
+      <button id="qrPlakKnop">Overnemen uit de tekst</button>
+    </div>
+    <div id="nieuwBlok">
+      <h2>QR voor een nieuwe telefoon</h2>
+      <p>Open JARVIS op de nieuwe telefoon, tik op <b>Scan om te koppelen</b> en houd hem voor deze QR.</p>
+      <div id="koppelQrBeeld" class="qrWit"></div>
+      <p id="koppelQrTijd"></p>
+      <button id="koppelQrNieuw">Nieuwe QR</button>
+      <p id="updatePlekStand" class="eerlijk"></p>
+    </div>
     <p class="eerlijk">Chrome vraagt de eerste keer of Veronica het lokale netwerk mag gebruiken. Zeg ja: anders kan ze de telefoons niet bereiken.
       Alles wat Veronica onthoudt staat alleen in deze browser.</p>
       <button id="karakterKnop" aria-pressed="true">Karakter: aan</button>
