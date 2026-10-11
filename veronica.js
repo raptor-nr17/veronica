@@ -57,6 +57,33 @@
     weg(id) { return this.doe('wachtrij', 'readwrite', (s) => s.delete(id)); },
   };
 
+  // ---- DE KLUIS (1.9.7): de leessleutel van de privé updateplek van JARVIS ----
+  // Versleuteld in IndexedDB: AES-GCM met een sleutel die de browser zelf maakt en NIET kan
+  // uitvoeren (extractable: false). Wie de opslag kopieert, heeft alleen versleutelde bytes.
+  // Hij komt met de lijst van de baas (alleen met de code); Veronica gebruikt hem om te zien welke
+  // JARVIS-versie de nieuwste is, en bewaart hem zodat hij er ook is als de baas opnieuw begint.
+  const Kluis = {
+    async sleutel() {
+      let k = await Opslag.lees('kluis-sleutel');
+      if (!k) {
+        k = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+        await Opslag.schrijf('kluis-sleutel', k);
+      }
+      return k;
+    },
+    async zet(naam, tekst) {
+      if (!tekst) { await Opslag.schrijf(naam, null); return; }
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await this.sleutel(), new TextEncoder().encode(tekst));
+      await Opslag.schrijf(naam, { iv, data });
+    },
+    async lees(naam) {
+      const v = await Opslag.lees(naam);
+      if (!v || !v.iv || !v.data) return null;
+      try { return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: v.iv }, await this.sleutel(), v.data)); } catch (e) { return null; }
+    },
+  };
+
   // ---- De toestand ----
   const S = {
     telefoons: [],          // [{ naam, adres, jarvis, kern, sleutel }]
@@ -195,6 +222,7 @@
     S.bekend = K.voegBekendToe(S.bekend, [gevonden.a].concat(l.bekend, l.kern ? [l.kern] : []));
     await Opslag.schrijf('bekend', S.bekend);
     if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); }
+    await neemUpdateSleutelOver(l.updateSleutel, l.updateRepo);
     if (S.actieveKern !== gevonden.a) logRegel(`Gevonden via ${gevonden.a.slice(7)}. Ik kijk weer mee.`);
     S.actieveKern = gevonden.a;
     vulVervang();
@@ -981,6 +1009,7 @@
     S.bekend = K.voegBekendToe(S.bekend, [l.kern].concat(l.alt || [], l.bekend || [], l.telefoons.map((t) => t.jarvis)));
     await Opslag.schrijf('bekend', S.bekend);
     if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); tekenNtfy(); }
+    await neemUpdateSleutelOver(l.updateSleutel, l.updateRepo);
     if (l.eigenaar && !S.eigenaarZelf) { S.eigenaar = l.eigenaar; await Opslag.schrijf('eigenaar', S.eigenaar); }
     await Opslag.schrijf('telefoons', S.telefoons);
     await Opslag.schrijf('kern', S.kern);
@@ -1042,56 +1071,90 @@
   }
   // VERONICA LAAT EEN QR ZIEN voor een nieuwe telefoon: eenmalig, vijf minuten. Daarvoor vraagt
   // ze met de code een token bij de hoofdtelefoon; de code zelf staat NIET in de QR.
+  // 1.9.6: OOK OP HET SCHERM KOPPELEN, meteen zichtbaar (daar stond eerst alleen een scan-knop).
+  // Dezelfde functie tekent in het grote paneel (knop bovenaan) of in het vak op Koppelen.
   let qrKlok = null;
-  async function toonNieuweTelefoonQr() {
-    const vak = $('nieuwQrBeeld');
-    $('nieuwQrPaneel').hidden = false;
+  async function toonNieuweTelefoonQr(waar) {
+    const opKoppel = waar === 'koppel';
+    const vak = $(opKoppel ? 'koppelQrBeeld' : 'nieuwQrBeeld');
+    const tijd = $(opKoppel ? 'koppelQrTijd' : 'nieuwQrTijd');
+    if (!opKoppel) $('nieuwQrPaneel').hidden = false;
     vak.textContent = 'Even…';
-    $('nieuwQrTijd').textContent = '';
-    if (!S.kern || !S.code) { vak.textContent = 'Koppel Veronica eerst met de hoofdtelefoon (Koppelen).'; return; }
+    tijd.textContent = '';
+    if (!S.kern || !S.code) {
+      vak.textContent = opKoppel
+        ? 'Nog niet gekoppeld. Open JARVIS op de baas-telefoon, tik op Apparaten: in het vak Veronica staat de QR meteen. Scan die hierboven.'
+        : 'Koppel Veronica eerst met de hoofdtelefoon (Koppelen).';
+      return;
+    }
     let t = null;
     try {
       const r = await haal(`${kernNu()}/jarvis/koppeltoken`, { method: 'POST', headers: { 'X-Koppelcode': S.code } }, 4000);
       if (r.ok) t = (await r.json()).t;
     } catch (e) { t = null; }
     const tekst = K.koppelQrTekst(kernNu(), t);
-    if (!tekst || typeof window.qrcode !== 'function') { vak.textContent = 'Nu geen QR: de hoofdtelefoon antwoordt niet.'; return; }
+    if (typeof window.qrcode !== 'function') { vak.textContent = 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).'; return; }
+    if (!tekst) { vak.textContent = 'Nu geen QR: de hoofdtelefoon antwoordt niet. Staat JARVIS aan op de baas-telefoon, en zit deze Chromebook op hetzelfde netwerk?'; return; }
     const q = window.qrcode(0, 'M');
     q.addData(tekst);
     q.make();
     vak.innerHTML = q.createSvgTag(8, 16);   // alleen uit de QR-bibliotheek: vierkantjes, geen tekst van buiten
+    const svg = vak.querySelector('svg');
+    if (svg) { svg.classList.add('qr-plaatje'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'QR-code voor een nieuwe telefoon'); }
     const tot = nu() + 5 * 60 * 1000;
     clearInterval(qrKlok);
     const zet = () => {
       const rest = Math.max(0, Math.ceil((tot - nu()) / 1000));
-      $('nieuwQrTijd').textContent = rest > 0 ? `Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, '0')} geldig. Werkt een keer.` : 'Verlopen. Tik nog eens voor een nieuwe.';
+      tijd.textContent = rest > 0 ? `Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, '0')} geldig. Werkt een keer.` : 'Verlopen. Tik nog eens voor een nieuwe.';
       if (!rest) { vak.replaceChildren(); clearInterval(qrKlok); }
     };
     zet();
     qrKlok = setInterval(zet, 1000);
     logRegel('QR voor een nieuwe telefoon getoond (vijf minuten, een keer).');
   }
+  // 1.9.12: TWEE LEZERS. De ingebouwde van Chrome (BarcodeDetector) bestaat alleen op ChromeOS, macOS
+  // en Android. Daarbuiten -- of als hij faalt -- leest jsQR het beeld zelf. Vroeger stond er dan
+  // "Deze browser kan hier geen QR lezen", en daarmee kon je Veronica niet koppelen.
+  function maakQrLezer(video) {
+    let ingebouwd = null;
+    try { if ('BarcodeDetector' in window) ingebouwd = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { ingebouwd = null; }
+    const doek = document.createElement('canvas');
+    return async function lees() {
+      if (ingebouwd) {
+        try { const c = await ingebouwd.detect(video); return c.length ? c[0].rawValue : null; } catch (e) { ingebouwd = null; }
+      }
+      if (typeof window.jsQR !== 'function') return null;
+      const w = video.videoWidth, h = video.videoHeight;
+      if (!w || !h) return null;
+      doek.width = w; doek.height = h;
+      const x = doek.getContext('2d', { willReadFrequently: true });
+      x.drawImage(video, 0, 0, w, h);
+      const r = window.jsQR(x.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+      return r ? r.data : null;
+    };
+  }
   async function scanQr() {
     const vak = $('koppelMelding');
-    if (!('BarcodeDetector' in window) || !navigator.mediaDevices) { vak.textContent = 'Deze browser kan hier geen QR lezen. Gebruik het adres en de code.'; return; }
+    if ((!('BarcodeDetector' in window) && typeof window.jsQR !== 'function') || !navigator.mediaDevices) { vak.textContent = 'Deze browser kan hier geen QR lezen. Gebruik het adres en de code.'; return; }
     let stroom;
-    try { stroom = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); } catch (e) { vak.textContent = 'Geen camera (of geen toestemming).'; return; }
+    try { stroom = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); } catch (e) { vak.textContent = 'Geen camera (of geen toestemming). Klik links van het adres op het slotje en zet Camera op Toestaan, of gebruik het adres en de code.'; return; }
     const video = $('qrVideo');
     video.hidden = false;
     video.srcObject = stroom;
     await video.play();
-    const lezer = new window.BarcodeDetector({ formats: ['qr_code'] });
+    vak.textContent = 'Houd de QR van JARVIS voor de camera.';
+    const lees = maakQrLezer(video);
     const stop = () => { stroom.getTracks().forEach((x) => x.stop()); video.hidden = true; };
     const eind = nu() + 60000;
     while (nu() < eind) {
       try {
-        const codes = await lezer.detect(video);
-        if (codes.length && await koppelMetQrTekst(codes[0].rawValue)) { stop(); return; }
+        const tekst = await lees();
+        if (tekst && await koppelMetQrTekst(tekst)) { stop(); return; }
       } catch (e) { /* volgende beeld */ }
       await new Promise((r) => setTimeout(r, 300));
     }
     stop();
-    vak.textContent = 'Geen QR gezien.';
+    vak.textContent = 'Geen QR gezien. Houd de QR stil en dichterbij, of gebruik het adres en de code.';
   }
 
   // ---- DE WANDSTAND: alleen de prestatiekaarten, groot, volledig scherm ----
@@ -1159,8 +1222,42 @@
     const v = $('log');
     if (v) metScroll(() => morphKinderen(v, S.log.slice(0, 12).map((x) => el('div', '', `${K.klokZin(x.t)} · ${x.zin}`))));
   }
+  // ---- De updateplek van JARVIS (1.9.7) ----
+  // Geen sleutel = een zin, geen fout. Met sleutel: hoogstens eens per uur, alleen als je op
+  // Koppelen kijkt, de nieuwste versie navragen (een verzoek naar api.github.com).
+  const UpdV = { gekoppeld: false, nieuwste: null, gevraagd: 0 };
+  async function neemUpdateSleutelOver(t, repo) {
+    if (repo && repo !== S.updateRepo) { S.updateRepo = repo; await Opslag.schrijf('updateRepo', repo); }
+    const geldig = K.leesUpdateSleutel(t);
+    if (!geldig || geldig === await Kluis.lees('updateSleutel')) return;
+    await Kluis.zet('updateSleutel', geldig);
+    UpdV.gekoppeld = true;
+    logRegel('Updateplek van JARVIS gekoppeld (van de baas).');
+    tekenUpdatePlek();
+  }
+  async function tekenUpdatePlek() {
+    const vak = $('updatePlekStand');
+    if (!vak) return;
+    const t = await Kluis.lees('updateSleutel');
+    UpdV.gekoppeld = !!t;
+    if (!t) { vak.textContent = 'Updateplek van JARVIS: niet gekoppeld. Die komt vanzelf mee als Veronica gekoppeld is met een baas die hem heeft.'; return; }
+    vak.textContent = `Updateplek van JARVIS: gekoppeld.${UpdV.nieuwste ? ` Nieuwste versie: ${UpdV.nieuwste}.` : ''}`;
+    if (nu() - UpdV.gevraagd < 60 * 60 * 1000 || !S.updateRepo) return;
+    UpdV.gevraagd = nu();
+    try {
+      const r = await fetch(`https://api.github.com/repos/${S.updateRepo}/releases/latest`, { headers: { Authorization: `Bearer ${t}`, Accept: 'application/vnd.github+json' } });
+      if (!r.ok) return;
+      const j = await r.json();
+      const v = /^v?(\d+\.\d+\.\d+)$/.exec(String(j.tag_name || ''));
+      if (v) { UpdV.nieuwste = v[1]; vak.textContent = `Updateplek van JARVIS: gekoppeld. Nieuwste versie: ${v[1]}.`; }
+    } catch (e) { /* geen internet: geen getal */ }
+  }
+
   function toonScherm(naam) {
     for (const s of ['live', 'wachtrij', 'koppel']) { $(`scherm-${s}`).hidden = s !== naam; $(`tab-${s}`).setAttribute('aria-pressed', String(s === naam)); }
+    // 1.9.6: op Koppelen staat de QR voor een nieuwe telefoon er meteen (geen extra tik).
+    if (naam === 'koppel' && !$('koppelQrBeeld').querySelector('svg')) toonNieuweTelefoonQr('koppel');
+    if (naam === 'koppel') tekenUpdatePlek();
   }
 
   // ---- Start ----
@@ -1170,6 +1267,7 @@
       S.stekkers = (await Opslag.lees('stekkers')) || [];
       S.kern = (await Opslag.lees('kern')) || null;
       S.code = (await Opslag.lees('code')) || null;
+      S.updateRepo = (await Opslag.lees('updateRepo')) || null;
       S.bekend = (await Opslag.lees('bekend')) || [];
       S.ntfy = K.leesNtfy(await Opslag.lees('ntfy'));
       Wand.auto = (await Opslag.lees('wandAuto')) !== false;
@@ -1235,7 +1333,8 @@
       const r = await waarschuw('proef', K.veronicaZin('hulpdienst', 'proef'));
       logRegel(r.gestuurd ? 'Proefmelding verstuurd. Kijk op je telefoon.' : `Proefmelding niet verstuurd: ${r.reden}.`);
     });
-    $('nieuwQrKnop').addEventListener('click', toonNieuweTelefoonQr);
+    $('nieuwQrKnop').addEventListener('click', () => toonNieuweTelefoonQr('paneel'));
+    $('koppelQrNieuw').addEventListener('click', () => toonNieuweTelefoonQr('koppel'));
     $('nieuwQrSluit').addEventListener('click', () => { $('nieuwQrPaneel').hidden = true; clearInterval(qrKlok); $('nieuwQrBeeld').replaceChildren(); });
     $('qrPlakKnop').addEventListener('click', () => koppelMetQrTekst($('qrTekst').value));
     $('taakKnop').addEventListener('click', () => { voegTakenToe($('taakTekst').value); $('taakTekst').value = ''; });
@@ -1282,6 +1381,6 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
+  window.__veronica = { Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
   start();
 }());

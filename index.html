@@ -67,6 +67,8 @@
   #nieuwQrPaneel[hidden] { display: none; }
   #nieuwQrPaneel button { color: #000; background: #eee; }
   #nieuwQrBeeld svg { width: min(80vw, 60vh); height: auto; }
+  .qrWit { background: #fff; color: #000; display: inline-block; padding: 8px; border-radius: 10px; max-width: 100%; }
+  .qrWit svg { width: min(70vw, 340px); height: auto; display: block; }
   #vSamen { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 0 0 12px; }
   .vSamen { background: var(--paneel); border: 2px solid var(--lijn); border-radius: 16px; padding: 10px; min-width: 0; }
   .vIcoon { font-size: 28px; } .vGetal { font-size: 30px; font-weight: 800; overflow-wrap: anywhere; } .vWat2 { color: var(--zacht); font-size: 15px; }
@@ -131,7 +133,14 @@
     <div id="takenLijst"></div>
   </section>
   <section id="scherm-koppel" hidden>
-    <p>Een keer koppelen: tik op de baas-telefoon bij Apparaten, vak Veronica, op "Toon koppelcode voor Veronica" en scan die QR hier met de camera van de Chromebook.</p>
+    <h2>QR voor een nieuwe telefoon</h2>
+    <p>Open JARVIS op de nieuwe telefoon, tik op <b>Scan om te koppelen</b> en houd hem voor deze QR.</p>
+    <div id="koppelQrBeeld" class="qrWit"></div>
+    <p id="koppelQrTijd"></p>
+    <button id="koppelQrNieuw">Nieuwe QR</button>
+    <p id="updatePlekStand" class="eerlijk"></p>
+    <h2>Veronica zelf koppelen</h2>
+    <p>Een keer: open JARVIS op de baas-telefoon en tik op Apparaten. In het vak Veronica staat de QR meteen. Scan die hier met de camera van de Chromebook.</p>
     <label for="kernAdres">Adres van de hoofdtelefoon</label>
     <input id="kernAdres" inputmode="url" autocomplete="off" placeholder="adres:8080">
     <label for="kernCode">Code (zes cijfers)</label>
@@ -175,6 +184,9 @@
 </div>
 <script src="kern.js"></script>
 <script src="qrcode.js"></script>
+<!-- 1.9.12: de QR-LEZER (jsQR, Apache-2.0, dezelfde als in JARVIS). Chrome heeft alleen op ChromeOS, macOS en
+     Android een ingebouwde QR-lezer; op Windows en Linux niet. Zonder deze lezer deed "Scan" daar niets. -->
+<script src="jsQR.js"></script>
 <script src="meters.js"></script>
 <script src="veronica.js"></script>
 </body>

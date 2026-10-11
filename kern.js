@@ -155,13 +155,17 @@
       if (!m || !isEigenNet(m[1]) || stekkers.some((s) => s.ip === m[0])) continue;
       stekkers.push({ naam: String(k.naam || 'Stekker').slice(0, 40), ip: m[0], rol: k.rol === 'laden' ? 'laden' : 'ventilator' });
     }
-    return { telefoons: uit, stekkers, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar) };
+    return { telefoons: uit, stekkers, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null };
   }
   // Hoe Veronica de eigenaar aanspreekt: de naam uit JARVIS (alleen met de code). Alleen letters.
   function leesEigenaar(n) {
     const t = String(n || '').replace(/[^\p{L} '-]/gu, '').trim().slice(0, 30);
     return t || null;
   }
+  // 1.9.7: de LEESSLEUTEL van de privé updateplek van JARVIS (alleen lezen, een repo). Komt mee in
+  // de lijst van de baas, alleen met de code. Alles wat er niet als een GitHub-token uitziet: null.
+  const UPDATE_SLEUTEL_RE = /^(github_pat_[A-Za-z0-9_]{20,255}|ghp_[A-Za-z0-9]{36})$/;
+  function leesUpdateSleutel(t) { return typeof t === 'string' && UPDATE_SLEUTEL_RE.test(t) ? t : null; }
   function leesNtfy(n) {
     if (!n || !Ntfy.geldigOnderwerp(n.onderwerp)) return null;
     return { onderwerp: n.onderwerp, aan: n.aan !== false, stil: Ntfy.STIL_KEUZES.includes(n.stil) ? n.stil : '23:00-07:00' };
@@ -203,7 +207,7 @@
   function vindUitleg(i) {
     const o = i || {};
     if (!o.gekoppeld || o.bereikbaar > 0 || !(o.stilMs >= 60000)) return '';
-    return `Ik vind niemand meer (${o.geprobeerd} adressen geprobeerd). Staan de telefoons aan en zit deze computer op hetzelfde wifi, het liefst de hotspot van de hoofdtelefoon? Lukt het niet: laat de baas "Toon koppelcode voor Veronica" zien en scan die een keer.`;
+    return `Ik vind niemand meer (${o.geprobeerd} adressen geprobeerd). Staan de telefoons aan en zit deze computer op hetzelfde wifi, het liefst de hotspot van de hoofdtelefoon? Lukt het niet: open op de baas Apparaten (daar staat de QR voor Veronica) en scan die een keer.`;
   }
 
   // Tasmota Status 8 (energie) en Power: alleen wat er staat.
@@ -607,7 +611,7 @@
 
   return {
     begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
-    leesZonStroom, leesPakket, koppelQrTekst,
+    leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,
     isEigenNet, normaalAdres, leesVertrouwd, leesQr, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
