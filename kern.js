@@ -510,6 +510,34 @@
     if (t && PLEK_NAAM[t.plek]) delen.push(PLEK_NAAM[t.plek]);
     return delen.join(' · ') || 'rol onbekend';
   }
+  // 1.9.14 (stap a, 12 oktober): HET REK IN EEN OOGOPSLAG. Elke rektelefoon ligt op een eigen ventilator;
+  // hier is te zien of dat genoeg koelt. Per rektelefoon de temperatuur en de accu (alleen verse metingen), en een zin.
+  // De grenzen zijn die van de ventilator in JARVIS: aan vanaf 35 graden; vanaf 38 is het te warm.
+  const REK_WARM = 35, REK_HEET = 38;
+  // 1.9.14: de reserve (de schuif): 30 of 50, standaard 50. Zelfde getallen als stroom.js in JARVIS.
+  const RESERVES = [30, 50];
+  function reserveZin(r) {
+    return r === 30 ? 'Stopt met rekenen bij 30%. De rest is voor de nacht. Meer rekenen, minder reserve: alleen met een goede accu.'
+      : 'Stopt met rekenen bij 50%. De rest is voor de nacht.';
+  }
+  function rekOverzicht(rij, maxMs) {
+    const rek = (rij || []).filter((r) => r && r.plek === 'rek');
+    if (!rek.length) return null;
+    const getal = (x) => String(Math.round(x * 10) / 10).replace('.', ',');
+    const regels = rek.map((r) => {
+      const temp = typeof r.temp === 'number' && r.tempMs !== null && r.tempMs <= maxMs ? r.temp : null;
+      const accu = typeof r.accu === 'number' && r.accuMs !== null && r.accuMs <= maxMs ? Math.round(r.accu) : null;
+      const stand = temp === null ? 'onbekend' : temp >= REK_HEET ? 'heet' : temp >= REK_WARM ? 'warm' : 'koel';
+      return { naam: r.naam, temp, accu, stand,
+        tekst: `${r.naam} · ${temp === null ? 'temperatuur onbekend' : `${getal(temp)} °C`} · ${accu === null ? 'accu onbekend' : `🔋 ${accu}%${r.laadt ? ' (laadt)' : ''}`}${r.rust === true ? ' · 😴 rust tot de zon' : r.rust === false ? ' · ⚙️ rekent' : ''}` };
+    });
+    const gemeten = regels.filter((r) => r.temp !== null).sort((a, b) => b.temp - a.temp);
+    if (!gemeten.length) return { stand: 'onbekend', zin: 'Rek: nog geen temperatuur gemeten.', regels };
+    const w = gemeten[0];
+    if (w.temp >= REK_HEET) return { stand: 'heet', zin: `Rek te warm: ${w.naam} is ${getal(w.temp)} °C. De ventilator koelt niet genoeg.`, regels };
+    if (w.temp >= REK_WARM) return { stand: 'warm', zin: `Rek wordt warm: ${w.naam} is ${getal(w.temp)} °C. De ventilator hoort nu aan te staan.`, regels };
+    return { stand: 'koel', zin: `Rek koel genoeg: de warmste is ${getal(w.temp)} °C.`, regels };
+  }
   // De nieuwste meting van OlliteRT (snelheid en benutting: het hart van de kaart), of null als
   // er nooit een was. Een batterij die JARVIS nog meldt, maakt een stille OlliteRT niet vers.
   function jongsteMeting(m) {
@@ -581,6 +609,7 @@
     const duur = (ms) => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)} u ${m % 60} min` : `${m} min`; };
     const rijen = [];
     const accuPer = {};                       // naam -> de accu-zin (voor de tegel)
+    const rustPer = {};                       // 1.9.14: naam -> true (rust tot de zon) / false (rekent)
     const z = d.zon;
     const zonStand = { open: !!z.open, nogMs: g(z.nogMs), totOpenMs: g(z.totOpenMs), geen: !z.venster, t: ontvangen };
     const zb = `${tekst(z.bron) || 'zonneklok'} · via de hoofdtelefoon`;
@@ -613,6 +642,7 @@
       if (!t) continue;
       const icoon = ICOON[t.plek] ? `${ICOON[t.plek]} ` : '';
       if (tekst(t.accu) && tekst(t.naam)) accuPer[tekst(t.naam)] = tekst(t.accu);
+      if (typeof t.rust === 'boolean' && tekst(t.naam)) rustPer[tekst(t.naam)] = t.rust;
       if (tekst(t.accu)) rijen.push({ label: `Accu ${icoon}${tekst(t.naam) || ''}`, m: meting(`${tekst(t.accu)}${tekst(t.zon) ? ` · ${tekst(t.zon)}` : ''}`, t.plek === 'mobiel' ? 'eigen metingen, via de hoofdtelefoon (mobiel: apart)' : 'eigen metingen, via de hoofdtelefoon', ontvangen) });
       rijen.push({ label: `${icoon}${tekst(t.naam) || 'telefoon'}`, m: bij(t.leeftijdMs) === null ? null
         : meting(`${g(t.procent) !== null ? `${t.procent}%` : '% onbekend'} · ${t.laadt === true ? 'laadt' : t.laadt === false ? 'laadt niet' : 'laden onbekend'} · ${g(t.temperatuur) !== null ? graad(t.temperatuur) : 'temperatuur onbekend'}`, `${tekst(t.bron) || 'JARVIS'}, via de hoofdtelefoon`, bij(t.leeftijdMs)) });
@@ -621,7 +651,7 @@
     const st = d.staaf;
     const staaf = st && g(st.zon) !== null && g(st.buiten) !== null
       ? meting({ zon: st.zon, buiten: st.buiten, onbekend: g(st.onbekend) || 0 }, `${tekst(st.bron) || 'Tasmota'}, via de hoofdtelefoon`, ontvangen) : null;
-    return { rijen, staaf, accuPer, zon: zonStand };
+    return { rijen, staaf, accuPer, rustPer, reserve: RESERVES.includes(d.reserve) ? d.reserve : null, geenZon: d.geenZon === true, zon: zonStand };
   }
 
   // ---- HET KARAKTER VAN VERONICA: de nuchtere hulpdienst ----
@@ -692,6 +722,6 @@
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

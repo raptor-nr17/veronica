@@ -698,6 +698,48 @@
     if (window.scrollY !== y) window.scrollTo(x, y);
   }
 
+  // 1.9.14 (stap a): het rek, per rektelefoon temperatuur en accu, en of de ventilator genoeg koelt.
+  function tekenRek(st) {
+    const rustPer = (S.zonStroom && S.zonStroom.rustPer) || {};
+    const o = K.rekOverzicht(st.map((x) => ({ naam: x.t.naam, plek: x.t.plek, temp: x.d.temperatuur.waarde, tempMs: x.d.temperatuur.ms,
+      accu: x.d.batterij.waarde, accuMs: x.d.batterij.ms, laadt: x.d.batterij.laadt, rust: rustPer[x.t.naam] })), 60000);
+    const blok = $('rekBlok');
+    blok.hidden = !o;
+    if (!o) return;
+    blok.className = o.stand;
+    $('rekZin').textContent = o.zin;
+    morphKinderen($('rekRegels'), o.regels.map((r) => { const li = el('li', `rek-${r.stand}`, r.tekst); li.dataset.sleutel = r.naam; return li; }));
+    tekenReserve();
+  }
+  // 1.9.14: DE RESERVE-SCHUIF. Wat de baas zegt geldt (S.zonStroom.reserve); net getikt = de keuze tot de baas
+  // het bevestigt. Veronica stuurt alleen het verzoek (/jarvis/roep, met de code); de baas zet het en geeft het
+  // aan de rektelefoons door.
+  const ResV = { gekozen: null, t: 0 };
+  function reserveNu() {
+    const vanBaas = S.zonStroom && K.RESERVES.includes(S.zonStroom.reserve) ? S.zonStroom.reserve : null;
+    if (ResV.gekozen !== null && (vanBaas === ResV.gekozen || nu() - ResV.t > 120000)) ResV.gekozen = null;
+    return ResV.gekozen !== null ? ResV.gekozen : vanBaas !== null ? vanBaas : 50;
+  }
+  function tekenReserve() {
+    const r = reserveNu();
+    document.querySelectorAll('#reserveSchuif [data-reserve]').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.reserve) === r)));
+    const wacht = ResV.gekozen !== null ? ' (doorgegeven, de baas neemt het over)' : '';
+    $('reserveZin').textContent = `${K.reserveZin(r)}${wacht}${S.zonStroom && S.zonStroom.geenZon ? ' Vandaag geen zon: wie rust, blijft rusten.' : ''}`;
+  }
+  async function kiesReserve(r) {
+    if (!K.RESERVES.includes(r) || !S.code) return;
+    ResV.gekozen = r; ResV.t = nu();
+    tekenReserve();
+    try {
+      const a = await haal(`${kernNu()}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'reserve', waarde: r, van: 'veronica' }) }, 3000);
+      if (!a.ok) throw new Error(String(a.status));
+      logRegel(`Reserve ${r}% doorgegeven aan de baas.`);
+    } catch (e) {
+      ResV.gekozen = null;
+      logRegel('De reserve kon niet naar de baas: geen antwoord. Probeer het zo nog eens.');
+      tekenReserve();
+    }
+  }
   function tekenSamen(tijd) {
     const OUD = 60000;
     const st = S.telefoons.map((t) => ({ t, d: meterStand(meet(t.adres), staat(t.adres), tijd) }));
@@ -708,6 +750,7 @@
     const z = S.zonStroom && S.zonStroom.zon;
     const duur = (ms) => { const mm = Math.round(ms / 60000); return mm >= 60 ? `${Math.floor(mm / 60)} u ${mm % 60} min` : `${mm} min`; };
     const tegel = (icoon, getal, wat, sleutel) => { const v = el('div', 'vSamen'); v.dataset.samen = sleutel; v.append(el('div', 'vIcoon', icoon), el('div', 'vGetal', getal), el('div', 'vWat2', wat)); return v; };
+    tekenRek(st);
     morphKinderen($('vSamen'), [
       tegel('📱', String(S.telefoons.length), `telefoons · ${bereik} bereikbaar`, 'telefoons'),
       tegel('⚡', snel.length ? String(Math.round(snel.reduce((a, x) => a + x.d.snelheid.waarde, 0) * 10) / 10).replace('.', ',') : 'geen meting', 'tokens/s samen', 'snelheid'),
@@ -1542,6 +1585,7 @@
     });
     $('nieuwQrKnop').addEventListener('click', () => { if (gekoppeld()) toonNieuweTelefoonQr('paneel'); else toonScherm('koppel'); });
     $('koppelQrNieuw').addEventListener('click', () => toonNieuweTelefoonQr('koppel'));
+    document.querySelectorAll('#reserveSchuif [data-reserve]').forEach((b) => b.addEventListener('click', () => kiesReserve(Number(b.dataset.reserve))));   // 1.9.14
     $('nieuwQrSluit').addEventListener('click', () => { $('nieuwQrPaneel').hidden = true; clearInterval(qrKlok); $('nieuwQrBeeld').replaceChildren(); });
     $('qrPlakKnop').addEventListener('click', () => koppelMetQrTekst($('qrTekst').value));
     $('taakKnop').addEventListener('click', () => { voegTakenToe($('taakTekst').value); $('taakTekst').value = ''; });

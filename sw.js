@@ -3,7 +3,7 @@
 // DE VERSIE IS EEN VINGERAFDRUK VAN DE BESTANDEN (sha256, eerste 12 tekens). Verandert er iets,
 // dan verandert deze naam, en laadt elke Chromebook vanzelf de nieuwe versie. Een test in de
 // privé-repo eist dat hij klopt (check_veronica.js zegt welke waarde hij moet hebben).
-const VERSIE = 'veronica-300de9aa7dfd';
+const VERSIE = 'veronica-6d0019f4f346';
 const BESTANDEN = ['./index.html', './kern.js', './qrcode.js', './jsQR.js', './meters.js', './veronica.js', './manifest.webmanifest', './icoon-192.png', './icoon-512.png'];
 self.addEventListener('install', (e) => {
   // cache: 'reload' = echt van de server, niet uit de browsercache (anders kan een nieuwe versie
