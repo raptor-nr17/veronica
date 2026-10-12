@@ -73,6 +73,10 @@
   #nieuwQrBeeld svg { width: min(80vw, 60vh); height: auto; }
   .qrWit { background: #fff; color: #000; display: inline-block; padding: 8px; border-radius: 10px; max-width: 100%; }
   .qrWit svg { width: min(70vw, 340px); height: auto; display: block; }
+  #koppelKaarten { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 14px; align-items: start; margin-bottom: 14px; }
+  .koppelKaart { border: 1px solid var(--lijn); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+  .koppelKaart h2 { margin-top: 0; }
+  .koppelKaart .qrWit svg { width: min(80vw, 300px); }
   #vSamen { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 0 0 12px; }
   .vSamen { background: var(--paneel); border: 2px solid var(--lijn); border-radius: 16px; padding: 10px; min-width: 0; }
   .vIcoon { font-size: 28px; } .vGetal { font-size: 30px; font-weight: 800; overflow-wrap: anywhere; } .vWat2 { color: var(--zacht); font-size: 15px; }
@@ -137,32 +141,58 @@
     <div id="takenLijst"></div>
   </section>
   <section id="scherm-koppel" hidden>
-    <!-- 1.9.13: TWEE BLOKKEN. Niet gekoppeld: ALLEEN "Veronica koppelen", bovenaan, met een grote scanknop
-         (de QR voor een nieuwe telefoon kan dan toch niet). Wel gekoppeld: eerst de QR voor een nieuwe
-         telefoon, daaronder opnieuw koppelen. tekenKoppelStand() zet de volgorde. -->
-    <div id="zelfBlok">
-      <h2>Veronica koppelen</h2>
-      <p>Open JARVIS op de baas-telefoon en tik op <b>Apparaten</b>. Daar staat de QR voor Veronica. Tik hieronder op <b>Scan de koppelcode</b> en houd de telefoon voor de camera van deze Chromebook.</p>
-      <button id="qrKnop" class="groot">📷 Scan de koppelcode</button>
-      <p id="koppelMelding" class="groteMelding" aria-live="polite"></p>
-      <video id="qrVideo" hidden muted playsinline></video>
-      <h3>Of met het adres en de code</h3>
-      <label for="kernAdres">Adres van de hoofdtelefoon</label>
-      <input id="kernAdres" inputmode="url" autocomplete="off" placeholder="adres:8080">
-      <label for="kernCode">Code (zes cijfers)</label>
-      <input id="kernCode" inputmode="numeric" maxlength="6" autocomplete="off">
-      <button id="koppelKnop">Overnemen</button>
-      <label for="qrTekst">Of plak de tekst van de QR</label>
-      <textarea id="qrTekst"></textarea>
-      <button id="qrPlakKnop">Overnemen uit de tekst</button>
-    </div>
-    <div id="nieuwBlok">
-      <h2>QR voor een nieuwe telefoon</h2>
-      <p>Open JARVIS op de nieuwe telefoon, tik op <b>Scan om te koppelen</b> en houd hem voor deze QR.</p>
-      <div id="koppelQrBeeld" class="qrWit"></div>
-      <p id="koppelQrTijd"></p>
-      <button id="koppelQrNieuw">Nieuwe QR</button>
-      <p id="updatePlekStand" class="eerlijk"></p>
+    <!-- 1.9.14 (12 oktober): ALLE QR'S NAAST ELKAAR, elk met een kop in gewone taal.
+         1) "Scan mij met JARVIS": niet gekoppeld = de QR van Veronica zelf (eenmalige sleutel); wel gekoppeld = de QR
+            voor de volgende telefoon. Na elke gelukte scan vanzelf een verse QR, met de teller eronder.
+         2) "JARVIS op een nieuwe telefoon zetten": de privé downloadlink uit de postbus (komt van JARVIS).
+         3) "Andere manieren": de telefoon laat de QR zien en Veronica scant, of adres en code. -->
+    <div id="koppelKaarten">
+      <div class="koppelKaart" id="kaartScan">
+        <h2>Scan mij met JARVIS</h2>
+        <p>Open JARVIS op de telefoon, tik op <b>Scan om te koppelen</b> en houd hem voor deze QR. Daarna staat er vanzelf een nieuwe QR voor de volgende telefoon.</p>
+        <div id="zelfQr">
+          <div id="veronicaQrBeeld" class="qrWit"></div>
+          <p id="veronicaQrZin" class="groteMelding"><b>Scan mij met JARVIS</b></p>
+          <p id="veronicaQrTijd"></p>
+          <p id="veronicaZoekStand" class="groteMelding" aria-live="polite"></p>
+          <div id="veronicaAdresBlok" hidden>
+            <label for="veronicaAdres">Ik kan het adres van deze Chromebook niet vinden. Vul het adres van de telefoon in (JARVIS, Apparaten):</label>
+            <input id="veronicaAdres" inputmode="url" autocomplete="off" placeholder="adres:8080">
+          </div>
+        </div>
+        <div id="nieuwBlok">
+          <div id="koppelQrBeeld" class="qrWit"></div>
+          <p class="groteMelding"><b>Scan mij met JARVIS</b></p>
+          <p id="koppelQrTijd"></p>
+          <button id="koppelQrNieuw">Nieuwe QR</button>
+        </div>
+        <p id="scanMelding" class="groteMelding" aria-live="polite"></p>
+        <p id="gekoppeldTeller" class="groteMelding" aria-live="polite"></p>
+        <p id="updatePlekStand" class="eerlijk"></p>
+      </div>
+      <div class="koppelKaart" id="kaartDownload">
+        <h2>JARVIS op een nieuwe telefoon zetten</h2>
+        <p>Scan deze QR met de gewone camera van de nieuwe telefoon. Dan haalt hij JARVIS binnen. Open JARVIS daarna en scan de QR hiernaast.</p>
+        <div id="downloadQrBeeld" class="qrWit"></div>
+        <p id="downloadStand" class="eerlijk"></p>
+      </div>
+      <div class="koppelKaart" id="zelfBlok">
+        <h2>Andere manieren</h2>
+        <h3>De telefoon laat de QR zien</h3>
+        <p>Open JARVIS op de baas-telefoon en tik op <b>Apparaten</b>. Daar staat de QR voor Veronica. Tik hieronder op <b>Scan de koppelcode</b> en houd de telefoon voor de camera van deze Chromebook.</p>
+        <button id="qrKnop">📷 Scan de koppelcode</button>
+        <p id="koppelMelding" class="groteMelding" aria-live="polite"></p>
+        <video id="qrVideo" hidden muted playsinline></video>
+        <h3>Met het adres en de code</h3>
+        <label for="kernAdres">Adres van de hoofdtelefoon</label>
+        <input id="kernAdres" inputmode="url" autocomplete="off" placeholder="adres:8080">
+        <label for="kernCode">Code (zes cijfers)</label>
+        <input id="kernCode" inputmode="numeric" maxlength="6" autocomplete="off">
+        <button id="koppelKnop">Overnemen</button>
+        <label for="qrTekst">Of plak de tekst van de QR</label>
+        <textarea id="qrTekst"></textarea>
+        <button id="qrPlakKnop">Overnemen uit de tekst</button>
+      </div>
     </div>
     <p class="eerlijk">Chrome vraagt de eerste keer of Veronica het lokale netwerk mag gebruiken. Zeg ja: anders kan ze de telefoons niet bereiken.
       Alles wat Veronica onthoudt staat alleen in deze browser.</p>

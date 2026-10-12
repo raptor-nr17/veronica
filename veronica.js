@@ -141,9 +141,11 @@
     return K.geenAntwoordZin(hoofd, proef);
   }
   function zegKoppel(tekst, slecht) {
-    const vak = $('koppelMelding');
-    vak.textContent = tekst;
-    vak.classList.toggle('slecht', !!slecht);
+    // 1.9.14: dezelfde zin ook in de eerste kaart, waar je kijkt terwijl je scant.
+    for (const vak of [$('koppelMelding'), $('scanMelding')]) {
+      vak.textContent = tekst;
+      vak.classList.toggle('slecht', !!slecht);
+    }
   }
 
   // ---- Meten ----
@@ -1027,6 +1029,7 @@
     S.bekend = K.voegBekendToe(S.bekend, [l.kern].concat(l.alt || [], l.bekend || [], l.telefoons.map((t) => t.jarvis)));
     await Opslag.schrijf('bekend', S.bekend);
     if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); tekenNtfy(); }
+    if (l.nieuweTelefoon) { S.download = l.nieuweTelefoon; await Opslag.schrijf('download', S.download); }
     await neemUpdateSleutelOver(l.updateSleutel, l.updateRepo);
     if (l.eigenaar && !S.eigenaarZelf) { S.eigenaar = l.eigenaar; await Opslag.schrijf('eigenaar', S.eigenaar); }
     await Opslag.schrijf('telefoons', S.telefoons);
@@ -1090,6 +1093,108 @@
     zegKoppel(await waaromGeenAntwoord(q.kern, nu() - (q.eersteDuur || 0), 5000), true);
     return null;
   }
+  // ---- 1.9.14: VERONICA TOONT ZELF DE QR (12 oktober: "Veronica moet een QR code laten zien") ----
+  // Niet gekoppeld: meteen een grote QR met een EENMALIGE sleutel (vijf minuten, een keer). JARVIS scant hem en
+  // vertrouwt de sleutel op zijn eigen server. Veronica zoekt de telefoon dan zelf: haar eigen adres (een
+  // WebRTC-kandidaat) en de adressen in hetzelfde net op poort 8080, een paar tegelijk. Ze stuurt NOOIT de sleutel,
+  // alleen een bewijs (HMAC), en het antwoord komt versleuteld terug. Lukt het eigen adres niet: een veld voor het
+  // adres van de telefoon. De code staat nooit in de QR.
+  const VQ = { sleutel: null, vorige: null, tot: 0, klok: null, zoekt: false, eigenIp: undefined };
+  function eigenAdres() {
+    return new Promise((klaar) => {
+      let pc = null, klaarGemeld = false;
+      const eind = (ip) => { if (klaarGemeld) return; klaarGemeld = true; try { if (pc) pc.close(); } catch (e) { /* al dicht */ } klaar(ip); };
+      const wacht = setTimeout(() => eind(null), 3000);
+      try {
+        pc = new RTCPeerConnection({ iceServers: [] });
+        pc.createDataChannel('veronica');
+        pc.onicecandidate = (e) => { const ip = e && e.candidate ? K.eigenAdresUitKandidaat(e.candidate.candidate) : null; if (ip) { clearTimeout(wacht); eind(ip); } };
+        pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => { clearTimeout(wacht); eind(null); });
+      } catch (e) { clearTimeout(wacht); eind(null); }
+    });
+  }
+  function tekenVeronicaQr() {
+    VQ.vorige = VQ.sleutel;
+    VQ.sleutel = K.nieuweSleutel();
+    VQ.tot = nu() + K.VERONICA_QR_MS;
+    const vak = $('veronicaQrBeeld'), tekst = K.veronicaQrTekst(VQ.sleutel);
+    if (typeof window.qrcode !== 'function') { vak.textContent = 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).'; return; }
+    const q = window.qrcode(0, 'M');
+    q.addData(tekst);
+    q.make();
+    vak.innerHTML = q.createSvgTag(10, 16);   // alleen uit de QR-bibliotheek: vierkantjes, geen tekst van buiten
+    const svg = vak.querySelector('svg');
+    if (svg) { svg.classList.add('qr-plaatje'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'QR-code: scan mij met JARVIS'); }
+    clearInterval(VQ.klok);
+    const zet = () => {
+      if (gekoppeld()) { clearInterval(VQ.klok); return; }
+      const rest = Math.max(0, Math.ceil((VQ.tot - nu()) / 1000));
+      $('veronicaQrTijd').textContent = `Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, '0')} geldig. Werkt een keer.`;
+      if (!rest) tekenVeronicaQr();   // vanzelf een nieuwe
+    };
+    zet();
+    VQ.klok = setInterval(zet, 1000);
+  }
+  // Een adres proberen met een sleutel: het bewijs erheen, het versleutelde antwoord openen.
+  async function probeerVeronica(adres, s) {
+    const n = K.nieuweSleutel();
+    const p = await K.veronicaBewijs(s, n);
+    const r = await haal(`${adres}/jarvis/veronica`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ n, p }) }, 1500);
+    if (r.status !== 200) return { status: r.status };
+    const d = await r.json();
+    const l = K.leesPakket(JSON.parse(await K.veronicaOpen(s, d.iv, d.data)));
+    if (!l) return { status: 'onleesbaar' };
+    l.kern = adres;
+    return { lijst: l };
+  }
+  async function zoekRonde(adressen) {
+    let i = 0, gevonden = null;
+    const werker = async () => {
+      while (!gevonden && i < adressen.length) {
+        const adres = adressen[i++];
+        try {
+          let u = await probeerVeronica(adres, VQ.sleutel);
+          // Net een nieuwe QR, en de telefoon kent de vorige nog: die mag ook (een keer, dezelfde vijf minuten).
+          if (u.status === 403 && VQ.vorige) u = await probeerVeronica(adres, VQ.vorige);
+          if (u.lijst) gevonden = u.lijst;
+        } catch (e) { /* geen telefoon op dit adres */ }
+      }
+    };
+    await Promise.all(Array.from({ length: 16 }, werker));
+    return gevonden;
+  }
+  async function zoekTelefoon() {
+    if (VQ.zoekt) return;
+    VQ.zoekt = true;
+    try {
+      if (VQ.eigenIp === undefined) VQ.eigenIp = await eigenAdres();
+      $('veronicaAdresBlok').hidden = !!VQ.eigenIp;
+      while (!gekoppeld() && !$('scherm-koppel').hidden) {
+        const veld = K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
+        const adressen = (veld ? [veld] : []).concat(VQ.eigenIp ? K.subnetAdressen(VQ.eigenIp) : []);
+        if (!adressen.length) { $('veronicaZoekStand').textContent = 'Vul hieronder het adres van de telefoon in.'; await slaap(2000); continue; }
+        $('veronicaZoekStand').textContent = VQ.eigenIp ? `Ik zoek de telefoon op het wifi (${VQ.eigenIp.split('.').slice(0, 3).join('.')}.x)…` : 'Ik probeer het adres…';
+        const l = await zoekRonde(adressen);
+        if (l) {
+          VQ.vorige = null; VQ.sleutel = null; clearInterval(VQ.klok);
+          await bewaarLijst(l);
+          $('veronicaZoekStand').textContent = '';
+          zegKoppel(`Klaar: ${l.telefoons.length} ${l.telefoons.length === 1 ? 'telefoon' : 'telefoons'}. Scan deze QR met de volgende telefoon.`, false);
+          logRegel('Gekoppeld vanaf de QR van Veronica.');
+          toonScherm('koppel');
+          return;
+        }
+        await slaap(3000);
+      }
+    } finally { VQ.zoekt = false; }
+  }
+  const slaap = (ms) => new Promise((z) => setTimeout(z, ms));
+  function startVeronicaQr() {
+    if (gekoppeld()) return;
+    if (!VQ.sleutel || nu() >= VQ.tot) tekenVeronicaQr();
+    zoekTelefoon();
+  }
+
   // VERONICA LAAT EEN QR ZIEN voor een nieuwe telefoon: eenmalig, vijf minuten. Daarvoor vraagt
   // ze met de code een token bij de hoofdtelefoon; de code zelf staat NIET in de QR.
   // 1.9.6: OOK OP HET SCHERM KOPPELEN, meteen zichtbaar (daar stond eerst alleen een scan-knop).
@@ -1104,7 +1209,7 @@
     tijd.textContent = '';
     if (!S.kern || !S.code) {
       vak.textContent = opKoppel
-        ? 'Eerst Veronica koppelen: tik hierboven op Scan de koppelcode.'
+        ? 'Eerst Veronica koppelen: scan de QR van Veronica met JARVIS.'
         : 'Koppel Veronica eerst met de hoofdtelefoon (Koppelen).';
       return;
     }
@@ -1292,15 +1397,71 @@
     const ja = gekoppeld();
     $('nieuwQrKnop').hidden = !ja;
     $('nieuwBlok').hidden = !ja;
-    const sectie = $('scherm-koppel');
-    if (ja) sectie.insertBefore($('nieuwBlok'), $('zelfBlok'));
-    else sectie.insertBefore($('zelfBlok'), $('nieuwBlok'));
+    $('zelfQr').hidden = ja;   // 1.9.14: dezelfde kaart; zonder koppeling de QR van Veronica zelf
+    $('gekoppeldTeller').textContent = ja ? K.gekoppeldZin(S.telefoons) : '';
+    tekenDownload();
+  }
+  // 1.9.14: KAART 2, "JARVIS op een nieuwe telefoon zetten". De link komt van JARVIS (de ondertekende link uit
+  // de postbus, privé, hoogstens zeven dagen). Geen link of verlopen = geen QR, en een eerlijke zin.
+  function tekenDownload() {
+    const vak = $('downloadQrBeeld'), stand = $('downloadStand');
+    const d = S.download, verlopen = !!(d && d.tot && Date.parse(d.tot) < nu());
+    if (!d || verlopen || typeof window.qrcode !== 'function') {
+      vak.replaceChildren();
+      vak.hidden = true;
+      stand.textContent = !gekoppeld() ? 'Deze QR komt zodra Veronica een telefoon kent: de link komt van JARVIS.'
+        : verlopen ? 'De downloadlink is verlopen. Open JARVIS op de baas-telefoon even: dan komt er vanzelf een nieuwe.'
+          : !d ? 'Nog geen downloadlink. Koppel JARVIS eerst aan de postbus (scan in JARVIS de code van de beheerpagina); dan komt hij hier vanzelf.'
+            : 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).';
+      return;
+    }
+    if (vak.dataset.apk !== d.apk) {
+      const q = window.qrcode(0, 'L');
+      q.addData(d.apk);
+      q.make();
+      vak.innerHTML = q.createSvgTag(4, 16);   // alleen uit de QR-bibliotheek: vierkantjes, geen tekst van buiten
+      const svg = vak.querySelector('svg');
+      if (svg) { svg.classList.add('qr-plaatje'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'QR-code: JARVIS downloaden'); }
+      vak.dataset.apk = d.apk;
+    }
+    vak.hidden = false;
+    stand.textContent = `${d.tot ? `Deze link werkt tot ${new Date(d.tot).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long' })}. ` : ''}Alleen voor je eigen telefoons: deel hem niet.`;
+  }
+  // 1.9.14: MEERDERE TELEFOONS ACHTER ELKAAR. Zolang Koppelen open staat kijkt Veronica elke vijf seconden bij
+  // de baas of er een telefoon bij is gekomen. Zo ja: de naam in de teller, en meteen een verse QR (de oude is
+  // gebruikt). Alleen op dit scherm, dus geen doorlopend verkeer.
+  let volgKlok = null;
+  async function volgNieuweTelefoons() {
+    if ($('scherm-koppel').hidden || !gekoppeld()) { clearInterval(volgKlok); volgKlok = null; return; }
+    let l = null;
+    try {
+      const r = await haal(`${kernNu()}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': S.code } }, 3000);
+      if (r.ok) l = K.leesVertrouwd(await r.json());
+    } catch (e) { return; }
+    if (!l) return;
+    if (l.nieuweTelefoon && (!S.download || S.download.apk !== l.nieuweTelefoon.apk)) { S.download = l.nieuweTelefoon; await Opslag.schrijf('download', S.download); }
+    const namen = l.telefoons.length ? K.nieuweNamen(S.telefoons, l.telefoons) : [];
+    if (namen.length) {
+      S.telefoons = l.telefoons;
+      await Opslag.schrijf('telefoons', S.telefoons);
+      zegKoppel(`Erbij: ${namen.join(', ')}. Scan de nieuwe QR met de volgende telefoon.`, false);
+      logRegel(`Gekoppeld: ${namen.join(', ')}.`);
+      tekenLive();
+      toonNieuweTelefoonQr('koppel');
+    }
+    tekenKoppelStand();
+  }
+  function startVolgen() {
+    if (volgKlok || !gekoppeld()) return;
+    volgKlok = setInterval(volgNieuweTelefoons, 5000);
   }
   function toonScherm(naam) {
     for (const s of ['live', 'wachtrij', 'koppel']) { $(`scherm-${s}`).hidden = s !== naam; $(`tab-${s}`).setAttribute('aria-pressed', String(s === naam)); }
     // 1.9.6: op Koppelen staat de QR voor een nieuwe telefoon er meteen (geen extra tik).
     if (naam === 'koppel') tekenKoppelStand();
     if (naam === 'koppel' && gekoppeld() && !$('koppelQrBeeld').querySelector('svg')) toonNieuweTelefoonQr('koppel');
+    if (naam === 'koppel' && !gekoppeld()) startVeronicaQr();   // 1.9.14
+    if (naam === 'koppel' && gekoppeld()) startVolgen();
     if (naam === 'koppel') tekenUpdatePlek();
   }
 
@@ -1311,6 +1472,7 @@
       S.stekkers = (await Opslag.lees('stekkers')) || [];
       S.kern = (await Opslag.lees('kern')) || null;
       S.code = (await Opslag.lees('code')) || null;
+      S.download = K.leesNieuweTelefoon(await Opslag.lees('download'));
       tekenKoppelStand();
       S.updateRepo = (await Opslag.lees('updateRepo')) || null;
       S.bekend = (await Opslag.lees('bekend')) || [];
@@ -1384,7 +1546,8 @@
     $('qrPlakKnop').addEventListener('click', () => koppelMetQrTekst($('qrTekst').value));
     $('taakKnop').addEventListener('click', () => { voegTakenToe($('taakTekst').value); $('taakTekst').value = ''; });
     for (const s of ['live', 'wachtrij', 'koppel']) $(`tab-${s}`).addEventListener('click', () => toonScherm(s));
-    toonScherm('live');   // de Live modus is altijd het startscherm
+    // De Live modus is het startscherm -- behalve als Veronica nog nergens mee gekoppeld is: dan meteen de QR (1.9.14).
+    toonScherm(gekoppeld() ? 'live' : 'koppel');
     tekenKarakter();
     tekenNtfy();
     tekenSpraak();

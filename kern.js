@@ -155,7 +155,29 @@
       if (!m || !isEigenNet(m[1]) || stekkers.some((s) => s.ip === m[0])) continue;
       stekkers.push({ naam: String(k.naam || 'Stekker').slice(0, 40), ip: m[0], rol: k.rol === 'laden' ? 'laden' : 'ventilator' });
     }
-    return { telefoons: uit, stekkers, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null };
+    return { telefoons: uit, stekkers, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon) };
+  }
+  // 1.9.14: de downloadlink voor een nieuwe telefoon (QR "JARVIS op een nieuwe telefoon zetten"). Alleen een
+  // ondertekend adres in de postbus (zelfde regel als de werker in JARVIS); al het andere: null.
+  const POSTBUS_HOST = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.s3\.[a-z]{2}-[a-z]{3}\.scw\.cloud$/;
+  function leesNieuweTelefoon(n) {
+    if (!n || typeof n.apk !== 'string' || n.apk.length > 2000) return null;
+    let u;
+    try { u = new URL(n.apk); } catch (e) { return null; }
+    if (u.protocol !== 'https:' || u.port || u.username || u.password || !POSTBUS_HOST.test(u.hostname)) return null;
+    const tot = typeof n.tot === 'string' && !Number.isNaN(Date.parse(n.tot)) ? n.tot : null;
+    return { apk: u.href, tot };
+  }
+  // "Gekoppeld: telefoon A, rektelefoon 1" -- de namen in de volgorde van de lijst, zonder dubbele.
+  function gekoppeldZin(telefoons) {
+    const namen = [];
+    for (const t of Array.isArray(telefoons) ? telefoons : []) { const n = String((t && t.naam) || '').trim(); if (n && !namen.includes(n)) namen.push(n); }
+    return namen.length ? `Gekoppeld: ${namen.join(', ')}` : 'Nog niets gekoppeld.';
+  }
+  // Welke namen zijn er NIEUW bij (na een scan)? Op naam en adres.
+  function nieuweNamen(oud, nieuw) {
+    const al = new Set((oud || []).map((t) => t.adres));
+    return (nieuw || []).filter((t) => !al.has(t.adres)).map((t) => t.naam);
   }
   // Hoe Veronica de eigenaar aanspreekt: de naam uit JARVIS (alleen met de code). Alleen letters.
   function leesEigenaar(n) {
@@ -261,6 +283,47 @@
   function koppelQrTekst(kern, t) {
     const a = normaalAdres(kern, JARVIS_POORT);
     return a && TOKEN_RE.test(String(t || '')) ? JSON.stringify({ jk: 1, a, t }) : null;
+  }
+
+  // ---- 1.9.14: KOPPELEN VANAF VERONICA (12 oktober: "Veronica moet een QR code laten zien") ----
+  // Veronica toont een QR met een EENMALIGE sleutel (128 bits toeval); JARVIS scant hem en vertrouwt de sleutel
+  // vijf minuten op zijn eigen server. Daarna zoekt Veronica de telefoon zelf op haar eigen netwerk.
+  // De sleutel gaat NOOIT over het netwerk: alleen een bewijs (HMAC over een willekeurig getal), en het antwoord
+  // komt VERSLEUTELD terug (AES-GCM). Zelfde regels als JarvisWebServer.java; een test vergelijkt ze.
+  const SLEUTEL_RE = /^[0-9a-f]{32}$/;
+  const VERONICA_QR_MS = 5 * 60 * 1000;
+  function veronicaQrTekst(s) { return SLEUTEL_RE.test(String(s || '')) ? JSON.stringify({ vk: 1, s }) : null; }
+  // Een WebRTC-kandidaat ("candidate:... a.b.c.d ...") -> het eigen adres op het wifi, of null.
+  function eigenAdresUitKandidaat(regel) {
+    const ips = String(regel || '').match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/g) || [];
+    for (const ip of ips) if (ip.split('.').every((d) => +d <= 255) && isEigenNet(ip) && !/^127\./.test(ip) && !/^169\.254\./.test(ip)) return ip;
+    return null;
+  }
+  // Alle adressen in hetzelfde /24-net, behalve het eigen, op poort 8080 -- de dichtstbijzijnde eerst.
+  function subnetAdressen(ip) {
+    if (!ip || !isEigenNet(ip)) return [];
+    const d = ip.split('.').map(Number), eigen = d[3], uit = [];
+    for (let x = 1; x <= 254; x++) if (x !== eigen) uit.push(x);
+    uit.sort((a, b) => Math.abs(a - eigen) - Math.abs(b - eigen) || a - b);
+    return uit.map((x) => `http://${d[0]}.${d[1]}.${d[2]}.${x}:${JARVIS_POORT}`);
+  }
+  const hexNaar = (h) => new Uint8Array(String(h).match(/../g).map((x) => parseInt(x, 16)));
+  const naarHex = (b) => Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, '0')).join('');
+  const tekstBytes = (t) => new TextEncoder().encode(t);
+  function cryptoNu(c) { return c || (typeof crypto !== 'undefined' ? crypto : null); }
+  function nieuweSleutel(c) { const b = new Uint8Array(16); cryptoNu(c).getRandomValues(b); return naarHex(b); }
+  // Het bewijs dat Veronica de sleutel kent, zonder hem te sturen: HMAC-SHA256(sleutel, "veronica-koppel:" + n).
+  async function veronicaBewijs(s, n, c) {
+    const sub = cryptoNu(c).subtle;
+    const k = await sub.importKey('raw', hexNaar(s), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return naarHex(await sub.sign('HMAC', k, tekstBytes('veronica-koppel:' + n)));
+  }
+  // Het antwoord van de telefoon openen: AES-GCM met SHA-256("veronica-sleutel:" + sleutel). Geen sleutel = onleesbaar.
+  async function veronicaOpen(s, iv, data, c) {
+    const sub = cryptoNu(c).subtle;
+    const raw = await sub.digest('SHA-256', tekstBytes('veronica-sleutel:' + s));
+    const k = await sub.importKey('raw', raw, { name: 'AES-GCM' }, false, ['decrypt']);
+    return new TextDecoder().decode(await sub.decrypt({ name: 'AES-GCM', iv: hexNaar(iv) }, k, hexNaar(data)));
   }
 
   // ---- Local Network Access (Chrome): zeg dat het verzoek naar het eigen netwerk gaat ----
@@ -626,8 +689,9 @@
   return {
     begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
+    SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));
