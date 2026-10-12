@@ -715,6 +715,28 @@
   // het bevestigt. Veronica stuurt alleen het verzoek (/jarvis/roep, met de code); de baas zet het en geeft het
   // aan de rektelefoons door.
   const ResV = { gekozen: null, t: 0 };
+  // 1.9.15: de handknop van een stekker, net getikt (tot de baas het bevestigt, of twee minuten).
+  const HandV = { gekozen: {}, t: {} };
+  async function kiesHand(naam, stand) {
+    if (!S.code || !['auto', 'aan', 'uit'].includes(stand)) return;
+    HandV.gekozen[naam] = stand; HandV.t[naam] = nu();
+    tekenLive();
+    try {
+      const a = await haal(`${kernNu()}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'stekker', naam, stand, van: 'veronica' }) }, 3000);
+      if (!a.ok) throw new Error(String(a.status));
+      logRegel(`${naam}: ${stand === 'auto' ? 'automatisch' : `met de hand ${stand}`} doorgegeven aan de baas.`);
+    } catch (e) {
+      delete HandV.gekozen[naam];
+      logRegel(`${naam}: de handknop kon niet naar de baas (geen antwoord). Probeer het zo nog eens.`);
+      tekenLive();
+    }
+  }
+  function ruimHandOp() {
+    for (const naam of Object.keys(HandV.gekozen)) {
+      const vanBaas = S.zonStroom && S.zonStroom.handPer ? S.zonStroom.handPer[naam] : null;
+      if (vanBaas === HandV.gekozen[naam] || nu() - HandV.t[naam] > 120000) delete HandV.gekozen[naam];
+    }
+  }
   function reserveNu() {
     const vanBaas = S.zonStroom && K.RESERVES.includes(S.zonStroom.reserve) ? S.zonStroom.reserve : null;
     if (ResV.gekozen !== null && (vanBaas === ResV.gekozen || nu() - ResV.t > 120000)) ResV.gekozen = null;
@@ -826,7 +848,8 @@
       }
       return tegel;
     })));
-    // De stekkers (alleen lezen): aan/uit, watt en kWh, elk met bron en leeftijd.
+    // De stekkers: aan/uit, watt en kWh, elk met bron en leeftijd, en (1.9.15) de handknop.
+    ruimHandOp();
     metScroll(() => morphKinderen($('stekkerTegels'), S.stekkers.map((k) => {
       const m = S.stekkerMeting[k.ip] || {};
       const tegel = el('section', 'tegel stekker');
@@ -842,6 +865,21 @@
         dl.append(el('dt', '', label), dd);
       }
       tegel.appendChild(dl);
+      // 1.9.15: DE HANDKNOP. Automatisch, Aan of Uit; met de hand gaat altijd voor. Veronica stuurt het verzoek naar
+      // de baas (/jarvis/roep, met de code); de baas schakelt. De stand hier is wat de baas zegt.
+      const hand = HandV.gekozen[k.naam] || (S.zonStroom && S.zonStroom.handPer && S.zonStroom.handPer[k.naam]) || null;
+      const rij = el('div', 'tKnoppen vHand');
+      for (const [stand, tekst] of [['auto', 'Automatisch'], ['aan', 'Aan'], ['uit', 'Uit']]) {
+        const b = el('button', `vHand-${stand}`, tekst);
+        b.dataset.hand = stand;
+        b.dataset.stekker = k.naam;
+        b.setAttribute('aria-pressed', String(hand === stand));
+        rij.appendChild(b);
+      }
+      tegel.appendChild(rij);
+      tegel.appendChild(el('div', 'tBron', hand === null ? 'Handknop: onbekend (de baas meldt het nog niet).'
+        : hand === 'auto' ? (k.rol === 'laden' ? "Automatisch: alleen in de zonuren, 's nachts nooit." : 'Automatisch: aan vanaf 35 °C, uit als alles 33 °C of koeler is.')
+          : `Met de hand ${hand}: dat gaat voor, tot je Automatisch kiest.${HandV.gekozen[k.naam] ? ' (doorgegeven)' : ''}`));
       return tegel;
     })));
     $('stekkerKop').hidden = !S.stekkers.length;
@@ -1585,6 +1623,10 @@
     });
     $('nieuwQrKnop').addEventListener('click', () => { if (gekoppeld()) toonNieuweTelefoonQr('paneel'); else toonScherm('koppel'); });
     $('koppelQrNieuw').addEventListener('click', () => toonNieuweTelefoonQr('koppel'));
+    $('stekkerTegels').addEventListener('click', (e) => {   // 1.9.15: de handknop
+      const b = e.target && e.target.closest ? e.target.closest('button[data-hand]') : null;
+      if (b) kiesHand(b.dataset.stekker, b.dataset.hand);
+    });
     document.querySelectorAll('#reserveSchuif [data-reserve]').forEach((b) => b.addEventListener('click', () => kiesReserve(Number(b.dataset.reserve))));   // 1.9.14
     $('nieuwQrSluit').addEventListener('click', () => { $('nieuwQrPaneel').hidden = true; clearInterval(qrKlok); $('nieuwQrBeeld').replaceChildren(); });
     $('qrPlakKnop').addEventListener('click', () => koppelMetQrTekst($('qrTekst').value));

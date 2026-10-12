@@ -148,7 +148,7 @@
         sleutel: typeof ruw.sleutel === 'string' ? ruw.sleutel.slice(0, 200) : '',
       });
     }
-    // De stekkers (Tasmota): Veronica LEEST alleen (watt, kWh, aan/uit); sturen doet JARVIS.
+    // De stekkers (Tasmota): Veronica LEEST de watts; schakelen doet JARVIS (ook de handknop van Veronica gaat via JARVIS).
     const stekkers = [];
     for (const k of Array.isArray(x.stekkers) ? x.stekkers : []) {
       const m = /^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?$/.exec(String((k && k.ip) || '').trim());
@@ -610,6 +610,8 @@
     const rijen = [];
     const accuPer = {};                       // naam -> de accu-zin (voor de tegel)
     const rustPer = {};                       // 1.9.14: naam -> true (rust tot de zon) / false (rekent)
+    const handPer = {};                       // 1.9.15: stekkernaam -> 'auto' | 'aan' | 'uit' (de handknop)
+    for (const s of Array.isArray(d.stekkers) ? d.stekkers : []) if (s && tekst(s.naam) && ['auto', 'aan', 'uit'].includes(s.hand)) handPer[tekst(s.naam)] = s.hand;
     const z = d.zon;
     const zonStand = { open: !!z.open, nogMs: g(z.nogMs), totOpenMs: g(z.totOpenMs), geen: !z.venster, t: ontvangen };
     const zb = `${tekst(z.bron) || 'zonneklok'} · via de hoofdtelefoon`;
@@ -651,7 +653,7 @@
     const st = d.staaf;
     const staaf = st && g(st.zon) !== null && g(st.buiten) !== null
       ? meting({ zon: st.zon, buiten: st.buiten, onbekend: g(st.onbekend) || 0 }, `${tekst(st.bron) || 'Tasmota'}, via de hoofdtelefoon`, ontvangen) : null;
-    return { rijen, staaf, accuPer, rustPer, reserve: RESERVES.includes(d.reserve) ? d.reserve : null, geenZon: d.geenZon === true, zon: zonStand };
+    return { rijen, staaf, accuPer, rustPer, handPer, reserve: RESERVES.includes(d.reserve) ? d.reserve : null, geenZon: d.geenZon === true, zon: zonStand };
   }
 
   // ---- HET KARAKTER VAN VERONICA: de nuchtere hulpdienst ----
