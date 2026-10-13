@@ -299,6 +299,42 @@
     for (const ip of ips) if (ip.split('.').every((d) => +d <= 255) && isEigenNet(ip) && !/^127\./.test(ip) && !/^169\.254\./.test(ip)) return ip;
     return null;
   }
+  // 1.9.17 (de eerste echte proef, 13 oktober): op een Chromebook gaf WebRTC het adres van de interne Android/Linux-laag
+  // van ChromeOS (100.115.92.x) -- NIET het wifi van het huis. Daar staat de telefoon nooit. Dus: alleen echte
+  // thuisnetten (192.168.x, 10.x, 172.16-31.x), alle gevonden adressen, en als vangnet de gangbare thuisnetten.
+  const GANGBARE_NETTEN = ['192.168.1', '192.168.0', '192.168.2', '192.168.178', '10.0.0'];
+  function isThuisNet(ip) {
+    const d = String(ip || '').split('.').map(Number);
+    if (d.length !== 4 || d.some((x) => !Number.isInteger(x) || x < 0 || x > 255)) return false;
+    return d[0] === 10 || (d[0] === 192 && d[1] === 168) || (d[0] === 172 && d[1] >= 16 && d[1] <= 31);
+  }
+  function thuisAdressenUitKandidaten(regels) {
+    const uit = [];
+    for (const r of regels || []) for (const ip of String(r || '').match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/g) || []) if (isThuisNet(ip) && !uit.includes(ip)) uit.push(ip);
+    return uit;
+  }
+  // Het zoekplan: eerst adressen die ze al kent, dan de eigen thuisnetten, dan de gangbare (vangnet). gok = er was
+  // geen eigen thuisnet; dan zegt ze dat ook.
+  function zoekPlan(eigen, bekend) {
+    const eigenNetten = [];
+    for (const ip of eigen || []) { const n = ip.split('.').slice(0, 3).join('.'); if (isThuisNet(ip) && !eigenNetten.includes(n)) eigenNetten.push(n); }
+    const netten = eigenNetten.concat(GANGBARE_NETTEN.filter((n) => !eigenNetten.includes(n)));
+    const adressen = [];
+    const voeg = (a) => { if (a && !adressen.includes(a)) adressen.push(a); };
+    for (const a of bekend || []) { const x = normaalAdres(a, JARVIS_POORT); if (x && isThuisNet(x.slice(7).split(':')[0])) voeg(x); }
+    for (const n of netten) {
+      const mijn = (eigen || []).find((ip) => ip.startsWith(n + '.'));
+      for (const a of subnetAdressen(mijn || `${n}.0`)) voeg(a);
+    }
+    return { eigenNetten, netten, adressen, gok: !eigenNetten.length };
+  }
+  function zoekZin(plan) {
+    const lijst = (ns) => ns.map((n) => `${n}.x`).join(', ');
+    return plan.gok
+      ? `Ik zie het wifi van deze computer niet (alleen het interne net van ChromeOS). Ik zoek de telefoon op de gangbare thuisnetten (${lijst(plan.netten)})…`
+      : `Ik zoek de telefoon op je wifi (${lijst(plan.eigenNetten)}), en daarna op de gangbare thuisnetten…`;
+  }
+  const NOG_NIET_ZIN = 'Nog niet gevonden. Kijk op de telefoon: staat wifi aan, op hetzelfde netwerk als deze computer? En staat in JARVIS bij Apparaten "Bereikbaar voor Veronica: ja"? Ik blijf zoeken. Weet je het adres van de telefoon (JARVIS, Apparaten), dan mag je het hieronder invullen.';
   // Alle adressen in hetzelfde /24-net, behalve het eigen, op poort 8080 -- de dichtstbijzijnde eerst.
   function subnetAdressen(ip) {
     if (!ip || !isEigenNet(ip)) return [];
@@ -322,6 +358,39 @@
   async function veronicaOpen(s, iv, data, c) {
     const sub = cryptoNu(c).subtle;
     const raw = await sub.digest('SHA-256', tekstBytes('veronica-sleutel:' + s));
+    const k = await sub.importKey('raw', raw, { name: 'AES-GCM' }, false, ['decrypt']);
+    return new TextDecoder().decode(await sub.decrypt({ name: 'AES-GCM', iv: hexNaar(iv) }, k, hexNaar(data)));
+  }
+
+  // ---- DE BRIEVENBUS (13 oktober): het adres van de telefoon, zonder raden ----
+  // Na de scan legt JARVIS zijn eigen adres op het wifi versleuteld klaar op ntfy.sh (koppel.js, briefVerzoek).
+  // Het onderwerp is een hash van de sleutel uit de QR, de inhoud is versleuteld met diezelfde sleutel. Zo
+  // vindt Veronica de telefoon ook als deze computer zijn eigen wifi niet kan zien (Chromebook).
+  const BRIEF_SERVER = 'https://ntfy.sh';
+  async function briefOnderwerp(s, c) {
+    return 'vb' + naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes('veronica-brief:' + s))).slice(0, 30);
+  }
+  const briefPollUrl = (onderwerp, sindsS) => `${BRIEF_SERVER}/${onderwerp}/json?poll=1&since=${Math.max(0, Math.floor(sindsS))}`;
+  // De regels van ntfy (een JSON-bericht per regel) -> de adressen ("http://a.b.c.d:poort"), alleen op een
+  // thuisnet. Een bericht dat niet met deze sleutel open gaat, telt niet.
+  async function leesBrief(s, tekst, c) {
+    const uit = [];
+    for (const regel of String(tekst || '').split('\n')) {
+      let m;
+      try { m = JSON.parse(regel); } catch (e) { continue; }
+      let b, d;
+      try { b = JSON.parse(m.message); d = JSON.parse(await veronicaOpenMet(s, b.iv, b.data, 'veronica-adres:', c)); } catch (e) { continue; }
+      const poort = Number(d && d.p) || JARVIS_POORT;
+      for (const ip of (d && Array.isArray(d.a) ? d.a : [])) {
+        const a = `http://${ip}:${poort}`;
+        if (isThuisNet(String(ip)) && !uit.includes(a)) uit.push(a);
+      }
+    }
+    return uit;
+  }
+  async function veronicaOpenMet(s, iv, data, voor, c) {
+    const sub = cryptoNu(c).subtle;
+    const raw = await sub.digest('SHA-256', tekstBytes(voor + s));
     const k = await sub.importKey('raw', raw, { name: 'AES-GCM' }, false, ['decrypt']);
     return new TextDecoder().decode(await sub.decrypt({ name: 'AES-GCM', iv: hexNaar(iv) }, k, hexNaar(data)));
   }
@@ -721,9 +790,9 @@
   return {
     begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
-    SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
+    SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

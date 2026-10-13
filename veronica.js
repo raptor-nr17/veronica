@@ -925,7 +925,7 @@
   // De service worker kijkt bij elke start, elk half uur en als je terugkomt naar het scherm of er
   // een nieuwe versie op GitHub Pages staat. Is die er, dan neemt hij het meteen over; de pagina
   // herlaadt ZODRA er niets loopt (de wachtrij staat in IndexedDB en blijft gewoon staan).
-  const Bijwerk = { wacht: false };
+  const Bijwerk = { wacht: false, nieuw: false };
   function herlaadAlsRustig() {
     if (S.stromen.size === 0) { location.reload(); return; }
     Bijwerk.wacht = true;
@@ -936,6 +936,14 @@
     let eerder = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
       const kijk = () => { try { reg.update(); } catch (e) { /* offline: later */ } };
+      // Een nieuwe versie neemt pas over als de oude even NIETS doet. Het zoeken naar een telefoon (honderden
+      // verzoeken) houdt hem anders eindeloos bezig: dan pauzeert het zoeken (zoekRonde) tot de herlaadbeurt.
+      reg.addEventListener('updatefound', () => {
+        const w = reg.installing;
+        if (!navigator.serviceWorker.controller || !w) return;
+        Bijwerk.nieuw = true;
+        w.addEventListener('statechange', () => { if (w.state === 'redundant') Bijwerk.nieuw = false; });   // mislukt: gewoon verder zoeken
+      });
       setInterval(kijk, 30 * 60 * 1000);
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kijk(); });
     }).catch(() => {});
@@ -1180,24 +1188,28 @@
   // WebRTC-kandidaat) en de adressen in hetzelfde net op poort 8080, een paar tegelijk. Ze stuurt NOOIT de sleutel,
   // alleen een bewijs (HMAC), en het antwoord komt versleuteld terug. Lukt het eigen adres niet: een veld voor het
   // adres van de telefoon. De code staat nooit in de QR.
-  const VQ = { sleutel: null, vorige: null, tot: 0, klok: null, zoekt: false, eigenIp: undefined };
-  function eigenAdres() {
+  const VQ = { sleutel: null, vorige: null, tot: 0, klok: null, zoekt: false, eigen: undefined, extra: [], zoekKlok: null, briefSinds: 0, briefLaatst: 0, briefBezig: false, briefGezien: new Set() };
+  // 1.9.17: ALLE kandidaten verzamelen (niet de eerste), en alleen echte thuisnetten houden: op een Chromebook is
+  // de eerste vaak 100.115.92.x, het interne net van ChromeOS (de eerste echte proef, 13 oktober).
+  function eigenAdressen() {
     return new Promise((klaar) => {
       let pc = null, klaarGemeld = false;
-      const eind = (ip) => { if (klaarGemeld) return; klaarGemeld = true; try { if (pc) pc.close(); } catch (e) { /* al dicht */ } klaar(ip); };
-      const wacht = setTimeout(() => eind(null), 3000);
+      const regels = [];
+      const eind = () => { if (klaarGemeld) return; klaarGemeld = true; try { if (pc) pc.close(); } catch (e) { /* al dicht */ } klaar(K.thuisAdressenUitKandidaten(regels)); };
+      const wacht = setTimeout(eind, 2500);
       try {
         pc = new RTCPeerConnection({ iceServers: [] });
         pc.createDataChannel('veronica');
-        pc.onicecandidate = (e) => { const ip = e && e.candidate ? K.eigenAdresUitKandidaat(e.candidate.candidate) : null; if (ip) { clearTimeout(wacht); eind(ip); } };
-        pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => { clearTimeout(wacht); eind(null); });
-      } catch (e) { clearTimeout(wacht); eind(null); }
+        pc.onicecandidate = (e) => { if (e && e.candidate) regels.push(e.candidate.candidate); else { clearTimeout(wacht); eind(); } };
+        pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => { clearTimeout(wacht); eind(); });
+      } catch (e) { clearTimeout(wacht); eind(); }
     });
   }
   function tekenVeronicaQr() {
     VQ.vorige = VQ.sleutel;
     VQ.sleutel = K.nieuweSleutel();
     VQ.tot = nu() + K.VERONICA_QR_MS;
+    if (!VQ.vorige) VQ.briefSinds = Math.floor(Date.now() / 1000) - 60;
     const vak = $('veronicaQrBeeld'), tekst = K.veronicaQrTekst(VQ.sleutel);
     if (typeof window.qrcode !== 'function') { vak.textContent = 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).'; return; }
     const q = window.qrcode(0, 'M');
@@ -1231,8 +1243,8 @@
   async function zoekRonde(adressen) {
     let i = 0, gevonden = null;
     const werker = async () => {
-      while (!gevonden && i < adressen.length) {
-        const adres = adressen[i++];
+      while (!gevonden && !Bijwerk.nieuw && (VQ.extra.length || i < adressen.length)) {
+        const adres = VQ.extra.length ? VQ.extra.shift() : adressen[i++];   // een ingevuld adres gaat voor
         try {
           let u = await probeerVeronica(adres, VQ.sleutel);
           // Net een nieuwe QR, en de telefoon kent de vorige nog: die mag ook (een keer, dezelfde vijf minuten).
@@ -1244,17 +1256,54 @@
     await Promise.all(Array.from({ length: 16 }, werker));
     return gevonden;
   }
+  // DE BRIEVENBUS (13 oktober): na de scan legt JARVIS zijn adres versleuteld klaar (kern.js, leesBrief). Elke vier
+  // seconden kijken zolang de QR er staat; een adres uit de brief gaat VOOR alles wat Veronica zelf zou raden.
+  async function kijkBrief() {
+    if (VQ.briefBezig || !VQ.sleutel || nu() - VQ.briefLaatst < 4000) return;
+    VQ.briefBezig = true; VQ.briefLaatst = nu();
+    try {
+      for (const s of [VQ.sleutel, VQ.vorige].filter(Boolean)) {
+        const stop = new AbortController();
+        const klok = setTimeout(() => stop.abort(), 6000);
+        let tekst = '';
+        try {
+          const r = await fetch(K.briefPollUrl(await K.briefOnderwerp(s), VQ.briefSinds), { signal: stop.signal, cache: 'no-store' });
+          if (r.ok) tekst = await r.text();
+        } catch (e) { /* geen internet: Veronica zoekt zelf verder */ } finally { clearTimeout(klok); }
+        for (const a of await K.leesBrief(s, tekst)) {
+          if (VQ.briefGezien.has(a)) continue;
+          VQ.briefGezien.add(a);
+          VQ.extra.unshift(a);
+          $('veronicaZoekStand').textContent = 'De telefoon heeft zijn adres doorgegeven. Ik maak verbinding...';
+        }
+      }
+    } finally { VQ.briefBezig = false; }
+  }
   async function zoekTelefoon() {
     if (VQ.zoekt) return;
     VQ.zoekt = true;
     try {
-      if (VQ.eigenIp === undefined) VQ.eigenIp = await eigenAdres();
-      $('veronicaAdresBlok').hidden = !!VQ.eigenIp;
+      if (VQ.eigen === undefined) VQ.eigen = await eigenAdressen();
+      const begin = nu();
+      VQ.extra = [];
+      let laatsteVeld = null;
+      // Ook MIDDEN in een ronde (een ronde over vijf netten duurt een paar minuten): na dertig seconden de uitleg,
+      // en een ingevuld adres meteen proberen.
+      VQ.zoekKlok = setInterval(() => {
+        kijkBrief();
+        if (nu() - begin > 30000 && !gekoppeld() && !VQ.briefGezien.size) { $('veronicaAdresBlok').hidden = false; $('veronicaZoekStand').textContent = K.NOG_NIET_ZIN; }
+        const v = K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
+        if (v && v !== laatsteVeld) { laatsteVeld = v; VQ.extra.push(v); }
+      }, 1000);
       while (!gekoppeld() && !$('scherm-koppel').hidden) {
         const veld = K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
-        const adressen = (veld ? [veld] : []).concat(VQ.eigenIp ? K.subnetAdressen(VQ.eigenIp) : []);
-        if (!adressen.length) { $('veronicaZoekStand').textContent = 'Vul hieronder het adres van de telefoon in.'; await slaap(2000); continue; }
-        $('veronicaZoekStand').textContent = VQ.eigenIp ? `Ik zoek de telefoon op het wifi (${VQ.eigenIp.split('.').slice(0, 3).join('.')}.x)…` : 'Ik probeer het adres…';
+        const plan = K.zoekPlan(VQ.eigen, S.bekend);
+        if (veld) laatsteVeld = veld;
+        const adressen = (veld ? [veld] : []).concat(plan.adressen.filter((a) => a !== veld));
+        // Na dertig seconden: wat je kunt doen, en het adresveld (niet verplicht: ze blijft zoeken).
+        const lang = nu() - begin > 30000 && !VQ.briefGezien.size;
+        $('veronicaAdresBlok').hidden = !lang;
+        if (!VQ.briefGezien.size) $('veronicaZoekStand').textContent = lang ? K.NOG_NIET_ZIN : K.zoekZin(plan);
         const l = await zoekRonde(adressen);
         if (l) {
           VQ.vorige = null; VQ.sleutel = null; clearInterval(VQ.klok);
@@ -1267,7 +1316,7 @@
         }
         await slaap(3000);
       }
-    } finally { VQ.zoekt = false; }
+    } finally { VQ.zoekt = false; clearInterval(VQ.zoekKlok); }
   }
   const slaap = (ms) => new Promise((z) => setTimeout(z, ms));
   function startVeronicaQr() {
