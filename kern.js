@@ -344,8 +344,8 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.20';
-  const WACHT_ZIN = 'Scan deze QR met JARVIS (Apparaten, Scan om te koppelen). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
+  const VERONICA_VERSIE = '1.9.21';
+  const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
   function koppelStand(i) {
     const o = i || {};
     const brief = (o.briefAdressen || []).length > 0;
@@ -638,6 +638,14 @@
   // ---- De prestatiekaart: rol, en hoe oud de laatste meting is ----
   // Dezelfde woorden als JARVIS (PLEK_NAAM in app.js); de test vergelijkt ze.
   const PLEK_NAAM = { mobiel: '👖 Mobiel (kern)', rek: '🧊🔌 Rek (helper)' };
+  // 1.9.21 (451): VAN BAAS WISSELEN met een knop. Alleen een telefoon met JARVIS (t.jarvis) kan baas worden; de lijst
+  // houdt precies EEN kern. Een onbekend adres verandert niets.
+  function wisselKern(telefoons, adres) {
+    const lijst = Array.isArray(telefoons) ? telefoons : [];
+    const doel = lijst.find((t) => t && t.adres === adres);
+    if (!doel || !doel.jarvis) return lijst;
+    return lijst.map((t) => Object.assign({}, t, { kern: t.adres === adres }));
+  }
   function rolZin(t, status, tijd) {
     const r = status && status.rol && tijd - status.rol.t <= MAX_LEEFTIJD_MS ? status.rol.waarde : null;
     const delen = [];
@@ -855,7 +863,7 @@
   }
 
   return {
-    begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
+    begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,

@@ -810,6 +810,30 @@
       tegel('☀️', !z ? 'onbekend' : z.geen ? 'geen zon' : z.open ? 'open' : 'dicht', !z || z.geen ? 'zonvenster' : z.open ? `zonvenster · nog ${duur(z.nogMs || 0)}` : (z.totOpenMs ? `zonvenster · opent over ${duur(z.totOpenMs)}` : 'zonvenster'), 'zon'),
     ]);
   }
+  // 1.9.21 (451): DE BAAS WISSELEN MET EEN KNOP. Eerst de nieuwe baas roepen ('word-baas'); antwoordt die niet, dan
+  // verandert er niets. Daarna de oude ('word-werker'). Beide met de code van de rij: een werker laat die ook binnen.
+  // De nieuwe baas neemt die code over als zijn eigen code, dus Veronica hoeft niets opnieuw te koppelen.
+  async function maakBaas(t) {
+    if (!S.code || !t || !t.jarvis || t.kern) return;
+    if (typeof window.confirm === 'function' && !window.confirm(`${t.naam} de baas maken?`)) return;
+    const oud = S.telefoons.find((x) => x.kern) || null;
+    let ok = false;
+    try {
+      const r = await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'word-baas', van: 'veronica' }) }, 3000);
+      ok = r.ok;
+    } catch (e) { ok = false; }
+    if (!ok) { logRegel(`${t.naam} antwoordt niet. ${oud ? `${oud.naam} blijft de baas.` : 'Er verandert niets.'}`); return; }
+    if (oud && oud.jarvis) {
+      try { await haal(`${oud.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'word-werker', baas: t.naam, van: 'veronica' }) }, 3000); } catch (e) { /* de verkeersleider regelt het ook */ }
+    }
+    S.telefoons = K.wisselKern(S.telefoons, t.adres);
+    S.kern = t.jarvis;
+    await Opslag.schrijf('telefoons', S.telefoons);
+    await Opslag.schrijf('kern', S.kern);
+    logRegel(`${t.naam} is nu de baas.${oud ? ` ${oud.naam} doet mee als werker.` : ''}`);
+    tekenLive();
+    tekenKoppelStand();
+  }
   function tekenLive() {
     const vak = $('tegels');
     $('leeg').hidden = S.telefoons.length > 0;
@@ -867,6 +891,8 @@
       kb.dataset.actie = 'scherm';
       knoppen.appendChild(kb);
       if (s.vervangen) { const w = el('button', 'klein-knop', 'Weer erbij'); w.dataset.actie = 'weer'; knoppen.appendChild(w); }
+      // 1.9.21 (451): van baas wisselen. Koppelen regelt het vanzelf (de eerste telefoon is de baas); dit is voor later.
+      if (t.jarvis && !t.kern) { const b = el('button', 'klein-knop', 'Maak dit de baas'); b.dataset.actie = 'baas'; knoppen.appendChild(b); }
       tegel.appendChild(knoppen);
       if (sch.aan) {
         const img = el('img', 'tScherm');
@@ -1774,6 +1800,7 @@
       const t = tegel ? S.telefoons.find((x) => x.adres === tegel.dataset.adres) : null;
       if (!t) return;
       if (knop.dataset.actie === 'scherm') schermWissel(t);
+      if (knop.dataset.actie === 'baas') maakBaas(t);
       if (knop.dataset.actie === 'weer') { staat(t.adres).vervangen = false; logRegel(`${t.naam} doet weer mee.`); tekenLive(); werkTik(); }
     });
     $('wandUit').addEventListener('click', (e) => { e.stopPropagation(); Wand.stilT = nu(); zetWand(false); });
