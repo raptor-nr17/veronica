@@ -344,7 +344,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.19';
+  const VERONICA_VERSIE = '1.9.20';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (Apparaten, Scan om te koppelen). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
   function koppelStand(i) {
     const o = i || {};
@@ -456,12 +456,29 @@
   // Chrome (142+) vraagt een keer of deze pagina het lokale netwerk mag gebruiken. Is dat
   // geweigerd, of komt er van GEEN ENKELE telefoon antwoord terwijl de Chromebook wel online is,
   // dan zegt Veronica hoe je het terugzet. Terug: de uitleg, of '' als er niets mis lijkt.
+  // 450 (het echte huis, 18:55): de baas zette ZICHZELF in zijn lijst op een adres van een tweede verbinding (10.x)
+  // in plaats van op het wifi. Veronica bereikte hem wel op het wifi-adres. Regel: het adres waarop de baas BEWEZEN
+  // antwoordde wint van wat hij over zichzelf zegt. Alleen voor de baas zelf (kern); andere telefoons ongemoeid.
+  function herstelKernAdres(telefoons, bewezen) {
+    const m = /^http:\/\/([^:/]+)/.exec(String(bewezen || ''));
+    if (!m) return telefoons || [];
+    const host = m[1];
+    const zet = (adres) => String(adres || '').replace(/^http:\/\/[^:/]+/, `http://${host}`);
+    return (telefoons || []).map((t) => (t && t.kern && !String(t.jarvis || '').startsWith(`http://${host}:`)
+      ? Object.assign({}, t, { adres: zet(t.adres), jarvis: zet(t.jarvis), hersteld: true }) : t));
+  }
   function lnaUitleg(i) {
     const o = i || {};
     const terug = 'Zet het terug: klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
     if (o.toestemming === 'denied') return `Chrome laat Veronica de telefoons niet bereiken: toegang tot het lokale netwerk is geweigerd. ${terug}`;
     if (o.online && o.aantal > 0 && o.bereikbaar === 0 && o.stilMs >= 30000) {
-      return `Geen enkele telefoon antwoordt. Staan ze aan en op hetzelfde wifi? Heeft Chrome gevraagd om het lokale netwerk en zei je nee, dan: ${terug}`;
+      // 450: de baas antwoordt WEL (stand.json), alleen zijn rekentelefoons niet: dan ligt het niet aan Chrome.
+      if (typeof o.baasMs === 'number' && o.baasMs < 30000) {
+        return 'De baas antwoordt, maar de rekentelefoons niet op het adres dat hij doorgeeft. Werk JARVIS bij op de baas en de telefoons (1.9.20 of nieuwer), en kijk of wifi aan staat op elke telefoon.';
+      }
+      return o.toestemming === 'granted'
+        ? 'Geen enkele telefoon antwoordt. Staan ze aan, staat JARVIS open, en zitten ze op hetzelfde wifi als deze computer?'
+        : `Geen enkele telefoon antwoordt. Staan ze aan en op hetzelfde wifi? Heeft Chrome gevraagd om het lokale netwerk en zei je nee, dan: ${terug}`;
     }
     return '';
   }
@@ -838,7 +855,7 @@
   }
 
   return {
-    begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
+    begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,

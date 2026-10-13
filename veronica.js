@@ -194,6 +194,8 @@
     }
     if (!d) { await rondvragen(); return; }   // niemand antwoordt: rondvragen, en doorgaan met wat ze weet
     stilSinds = nu();
+    S.baasGezien = nu();   // 450: de baas antwoordt (voor de uitleg als zijn telefoons niet antwoorden)
+    await lijstTik(adres);
     if (adres === S.kern) S.kernGezien = nu();
     if (adres === S.kern && S.actieveKern && S.actieveKern !== S.kern) logRegel(K.veronicaZin(S.karakter, 'kernTerug'));
     else if (via && S.actieveKern !== adres) logRegel(K.veronicaZin(S.karakter, 'volgt', { naam: via }) || `Baas nu: ${via}.`);
@@ -231,6 +233,9 @@
     stilSinds = nu();
     if (v) v.hidden = true;
     const l = K.leesVertrouwd(gevonden.d);
+    // 450: antwoordde de baas zelf (zijn oude adres), dan is DAT zijn adres -- niet wat hij over zichzelf zegt.
+    const kernOud = l.telefoons.find((t) => t.kern);
+    if (kernOud && S.kern && gevonden.a === S.kern) l.telefoons = K.herstelKernAdres(l.telefoons, gevonden.a);
     if (l.telefoons.length) {
       S.telefoons = l.telefoons;
       await Opslag.schrijf('telefoons', S.telefoons);
@@ -266,6 +271,29 @@
     } finally { meetBezig = false; }
   }
 
+  // 450: DE LIJST VAN DE BAAS, ook op Live. Een telefoon die bij de baas is aangemeld (met zijn koppel-QR, niet die
+  // van Veronica) kwam vroeger pas in Veronica als die lijst opnieuw werd opgehaald -- alleen op Koppelen, of als niemand
+  // antwoordde. Nu hoogstens eens per minuut, alleen als de baas toch al antwoordt (een verzoek).
+  let lijstT = 0;
+  async function lijstTik(adres) {
+    if (!S.code || nu() - lijstT < 60000) return;
+    lijstT = nu();
+    let l = null;
+    try {
+      const r = await haal(`${adres}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': S.code } }, 3000);
+      if (r.ok) l = K.leesVertrouwd(await r.json());
+    } catch (e) { return; }
+    if (!l || !l.telefoons.length) return;
+    l.telefoons = K.herstelKernAdres(l.telefoons, adres);
+    const namen = K.nieuweNamen(S.telefoons, l.telefoons);
+    const oud = JSON.stringify(S.telefoons.map((t) => [t.naam, t.adres]));
+    if (oud === JSON.stringify(l.telefoons.map((t) => [t.naam, t.adres]))) return;
+    S.telefoons = l.telefoons;
+    await Opslag.schrijf('telefoons', S.telefoons);
+    if (namen.length) logRegel(`Nieuw bij de baas: ${namen.join(', ')}.`);
+    tekenLive();
+  }
+
   // ---- Toegang tot het lokale netwerk (Chrome) ----
   let laatstBereikt = nu();
   let lnaToestemming = null;
@@ -277,7 +305,8 @@
       lnaGevraagd = nu();
       try { lnaToestemming = (await navigator.permissions.query({ name: 'local-network-access' })).state; } catch (e) { lnaToestemming = null; }   // oudere Chrome: kent deze naam niet
     }
-    const u = K.lnaUitleg({ toestemming: lnaToestemming, online: navigator.onLine !== false, aantal: S.telefoons.length, bereikbaar, stilMs: nu() - laatstBereikt });
+    const u = K.lnaUitleg({ toestemming: lnaToestemming, online: navigator.onLine !== false, aantal: S.telefoons.length, bereikbaar, stilMs: nu() - laatstBereikt,
+      baasMs: S.baasGezien ? nu() - S.baasGezien : null });
     const vak = $('lnaUitleg');
     if (vak.textContent !== u) vak.textContent = u;
     vak.hidden = !u;
@@ -1110,6 +1139,7 @@
 
   // ---- Koppelen: de vertrouwde lijst EEN keer overnemen van de hoofdtelefoon ----
   async function bewaarLijst(l) {
+    if (l.kern) l.telefoons = K.herstelKernAdres(l.telefoons, l.kern);   // 450: het adres dat antwoordde
     S.telefoons = l.telefoons;
     S.stekkers = l.stekkers || [];
     await Opslag.schrijf('stekkers', S.stekkers);
@@ -1675,6 +1705,7 @@
       if (r.ok) l = K.leesVertrouwd(await r.json());
     } catch (e) { return; }
     if (!l) return;
+    l.telefoons = K.herstelKernAdres(l.telefoons, kernNu());   // 450
     if (l.nieuweTelefoon && (!S.download || S.download.apk !== l.nieuweTelefoon.apk)) { S.download = l.nieuweTelefoon; await Opslag.schrijf('download', S.download); }
     const namen = l.telefoons.length ? K.nieuweNamen(S.telefoons, l.telefoons) : [];
     if (namen.length) {
@@ -1707,6 +1738,8 @@
       S.telefoons = (await Opslag.lees('telefoons')) || [];
       S.stekkers = (await Opslag.lees('stekkers')) || [];
       S.kern = (await Opslag.lees('kern')) || null;
+      // 450: een eerder bewaarde lijst met de baas op een fout adres (10.x): meteen goedzetten op het adres van de baas.
+      if (S.kern) S.telefoons = K.herstelKernAdres(S.telefoons, S.kern);
       S.code = (await Opslag.lees('code')) || null;
       S.download = K.leesNieuweTelefoon(await Opslag.lees('download'));
       tekenKoppelStand();
