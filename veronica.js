@@ -1188,15 +1188,21 @@
   // WebRTC-kandidaat) en de adressen in hetzelfde net op poort 8080, een paar tegelijk. Ze stuurt NOOIT de sleutel,
   // alleen een bewijs (HMAC), en het antwoord komt versleuteld terug. Lukt het eigen adres niet: een veld voor het
   // adres van de telefoon. De code staat nooit in de QR.
-  const VQ = { sleutel: null, vorige: null, tot: 0, klok: null, zoekt: false, eigen: undefined, extra: [], zoekKlok: null, briefSinds: 0, briefLaatst: 0, briefBezig: false, briefGezien: new Set(), briefEerst: 0, briefFouten: 0 };
+  const VQ = { sleutel: null, vorige: null, tot: 0, klok: null, zoekt: false, eigen: undefined, extra: [], zoekKlok: null, briefSinds: 0, briefLaatst: 0, briefBezig: false, briefGezien: new Set(), briefEerst: 0, briefFouten: 0, briefStand: null, stroom: null, zelfZoeken: false,
+    // 449: wat Veronica ziet, voor het blok "Wat zie ik" (een schermfoto zegt dan alles).
+    diag: { kandidaten: [], eigenBron: null, briefLaatst: 0, poging: null, gescand: 0 } };
   // 1.9.17: ALLE kandidaten verzamelen (niet de eerste), en alleen echte thuisnetten houden: op een Chromebook is
   // de eerste vaak 100.115.92.x, het interne net van ChromeOS (de eerste echte proef, 13 oktober).
-  function eigenAdressen() {
+  // 449 (het echte huis, 13 oktober): de kandidaten komen niet altijd allemaal in een ronde (de ene keer wel
+  // 192.168.68.x, de andere keer niet). Nu tot drie rondes, ALLE kandidaten samen, en het laatst gevonden thuisnet
+  // ONTHOUDEN voor als het een keer niet lukt.
+  const EIGEN_SLEUTEL = 'veronica.eigenNet';
+  function iceRonde(ms) {
     return new Promise((klaar) => {
       let pc = null, klaarGemeld = false;
       const regels = [];
-      const eind = () => { if (klaarGemeld) return; klaarGemeld = true; try { if (pc) pc.close(); } catch (e) { /* al dicht */ } klaar(K.thuisAdressenUitKandidaten(regels)); };
-      const wacht = setTimeout(eind, 2500);
+      const eind = () => { if (klaarGemeld) return; klaarGemeld = true; try { if (pc) pc.close(); } catch (e) { /* al dicht */ } klaar(regels); };
+      const wacht = setTimeout(eind, ms);
       try {
         pc = new RTCPeerConnection({ iceServers: [] });
         pc.createDataChannel('veronica');
@@ -1204,6 +1210,25 @@
         pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => { clearTimeout(wacht); eind(); });
       } catch (e) { clearTimeout(wacht); eind(); }
     });
+  }
+  async function eigenAdressen() {
+    const regels = [];
+    for (let ronde = 0; ronde < 3; ronde++) {
+      regels.push(...await iceRonde(3500));
+      if (K.thuisAdressenUitKandidaten(regels).length) break;
+    }
+    VQ.diag.kandidaten = Array.from(new Set(regels.map((r) => (/ ([0-9a-f.:]+|[0-9a-z-]+\.local) \d+ typ/i.exec(r) || [])[1]).filter(Boolean)));
+    let uit = K.thuisAdressenUitKandidaten(regels);
+    VQ.diag.eigenBron = uit.length ? 'gevonden' : null;
+    if (uit.length) {
+      try { localStorage.setItem(EIGEN_SLEUTEL, JSON.stringify({ t: Date.now(), adressen: uit })); } catch (e) { /* alleen voor nu */ }
+    } else {
+      try {
+        const o = JSON.parse(localStorage.getItem(EIGEN_SLEUTEL) || 'null');
+        if (o && Array.isArray(o.adressen)) { uit = o.adressen.filter((a) => K.isThuisNet(String(a))); if (uit.length) VQ.diag.eigenBron = 'onthouden'; }
+      } catch (e) { /* niets onthouden */ }
+    }
+    return uit;
   }
   function tekenVeronicaQr() {
     VQ.vorige = VQ.sleutel;
@@ -1232,7 +1257,9 @@
   async function probeerVeronica(adres, s) {
     const n = K.nieuweSleutel();
     const p = await K.veronicaBewijs(s, n);
-    const r = await haal(`${adres}/jarvis/veronica`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ n, p }) }, 1500);
+    // 449: text/plain = een "eenvoudig" verzoek, ZONDER OPTIONS-voorvraag. Die voorvraag bleef in het echte huis
+    // hangen (pending) en hield de zoekronde op. JARVIS leest het lijf toch zonder naar het soort te kijken.
+    const r = await haal(`${adres}/jarvis/veronica`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ n, p }) }, VQ.briefGezien.has(adres) ? 4000 : 1500);
     if (r.status !== 200) return { status: r.status };
     const d = await r.json();
     const l = K.leesPakket(JSON.parse(await K.veronicaOpen(s, d.iv, d.data)));
@@ -1245,61 +1272,131 @@
     const werker = async () => {
       while (!gevonden && !Bijwerk.nieuw && (VQ.extra.length || i < adressen.length)) {
         const adres = VQ.extra.length ? VQ.extra.shift() : adressen[i++];   // een ingevuld adres gaat voor
+        const belangrijk = VQ.briefGezien.has(adres) || adres === K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
+        VQ.diag.gescand += 1;
         try {
           let u = await probeerVeronica(adres, VQ.sleutel);
           // Net een nieuwe QR, en de telefoon kent de vorige nog: die mag ook (een keer, dezelfde vijf minuten).
           if (u.status === 403 && VQ.vorige) u = await probeerVeronica(adres, VQ.vorige);
           if (u.lijst) gevonden = u.lijst;
-        } catch (e) { /* geen telefoon op dit adres */ }
-      }
-    };
-    await Promise.all(Array.from({ length: 16 }, werker));
-    return gevonden;
-  }
-  // DE BRIEVENBUS (13 oktober): na de scan legt JARVIS zijn adres versleuteld klaar (kern.js, leesBrief). Elke vier
-  // seconden kijken zolang de QR er staat; een adres uit de brief gaat VOOR alles wat Veronica zelf zou raden.
-  async function kijkBrief() {
-    if (VQ.briefBezig || !VQ.sleutel || nu() - VQ.briefLaatst < 4000) return;
-    VQ.briefBezig = true; VQ.briefLaatst = nu();
-    try {
-      for (const s of [VQ.sleutel, VQ.vorige].filter(Boolean)) {
-        const stop = new AbortController();
-        const klok = setTimeout(() => stop.abort(), 6000);
-        let tekst = '';
-        try {
-          const r = await fetch(K.briefPollUrl(await K.briefOnderwerp(s), VQ.briefSinds), { signal: stop.signal, cache: 'no-store' });
-          if (r.ok) { tekst = await r.text(); VQ.briefFouten = 0; } else VQ.briefFouten++;
-        } catch (e) { VQ.briefFouten++; /* geen internet: Veronica zoekt zelf verder */ } finally { clearTimeout(klok); }
-        for (const a of await K.leesBrief(s, tekst)) {
-          if (VQ.briefGezien.has(a)) continue;
-          VQ.briefGezien.add(a);
-          VQ.extra.unshift(a);
-          if (!VQ.briefEerst) VQ.briefEerst = nu();
+          if (belangrijk) VQ.diag.poging = { adres, t: nu(), uitkomst: u.lijst ? 'gekoppeld' : `antwoord ${u.status}` };
+        } catch (e) {
+          /* geen telefoon op dit adres */
+          if (belangrijk) VQ.diag.poging = { adres, t: nu(), uitkomst: e && e.name === 'AbortError' ? 'geen antwoord (te lang gewacht)' : 'geen verbinding (netwerkfout)' };
         }
       }
-    } finally { VQ.briefBezig = false; }
+    };
+    await Promise.all(Array.from({ length: 6 }, werker));   // 449: hoogstens zes tegelijk (Chrome heeft een grens)
+    return gevonden;
+  }
+  // DE BRIEVENBUS (13 oktober): na de scan legt JARVIS zijn adres versleuteld klaar (kern.js, leesBrief).
+  // 449: EEN doorlopende verbinding voor de huidige en de vorige sleutel samen, in plaats van elke vier seconden een
+  // vraag. Met vragen kreeg Veronica in het echte huis na een paar minuten "429" van ntfy.sh (ongeveer twaalf vragen
+  // per minuut per internetadres), noemde dat "niet te bereiken", en de telefoon -- zelfde internetadres -- kon zijn
+  // eigen brief er niet meer in kwijt. Nu: een verbinding per vijf minuten (bij een nieuwe QR). Een 429 heet "druk".
+  function briefStroom() {
+    if (!VQ.sleutel) return;
+    const sleutels = [VQ.sleutel, VQ.vorige].filter(Boolean);
+    const sleutelTekst = sleutels.join('|');
+    const oud = VQ.stroom;
+    if (oud && oud.sleutelTekst === sleutelTekst && (oud.loopt || nu() < oud.wachtTot)) return;
+    if (oud && oud.loopt) oud.ctrl.abort();
+    const st = VQ.stroom = { sleutelTekst, loopt: true, ctrl: new AbortController(), wachtTot: 0 };
+    (async () => {
+      let fout = null;
+      try {
+        const onderwerpen = await Promise.all(sleutels.map((x) => K.briefOnderwerp(x)));
+        const r = await fetch(K.briefStroomUrl(onderwerpen, VQ.briefSinds), { signal: st.ctrl.signal, cache: 'no-store' });
+        if (r.status === 429) fout = 'druk';
+        else if (!r.ok) fout = 'weg';
+        else {
+          VQ.briefStand = 'verbonden'; VQ.briefFouten = 0;
+          if (r.body && r.body.getReader) {
+            const lezer = r.body.getReader(), dec = new TextDecoder();
+            let rest = '';
+            for (;;) {
+              const { value, done } = await lezer.read();
+              if (done) break;
+              rest += dec.decode(value, { stream: true });
+              const regels = rest.split('\n');
+              rest = regels.pop();
+              for (const regel of regels) await briefRegel(regel, sleutels);
+            }
+            if (rest.trim()) await briefRegel(rest, sleutels);
+          } else {
+            for (const regel of (await r.text()).split('\n')) await briefRegel(regel, sleutels);
+          }
+        }
+      } catch (e) { if (!st.ctrl.signal.aborted) fout = 'weg'; }
+      st.loopt = false;
+      if (st.ctrl.signal.aborted) return;
+      if (fout === 'druk') { VQ.briefStand = 'druk'; st.wachtTot = nu() + 30000; }
+      else if (fout) { VQ.briefFouten += 1; VQ.briefStand = 'weg'; st.wachtTot = nu() + 10000; }
+      else st.wachtTot = nu() + 1000;   // de verbinding ging dicht (zelden bij ntfy): over een seconde weer open
+    })();
+  }
+  function stopBriefStroom() { if (VQ.stroom && VQ.stroom.loopt) VQ.stroom.ctrl.abort(); VQ.stroom = null; }
+  async function briefRegel(regel, sleutels) {
+    let m;
+    try { m = JSON.parse(regel); } catch (e) { return; }
+    if (!m || (m.event && m.event !== 'message')) return;   // open/keepalive: geen brief
+    VQ.diag.briefLaatst = nu();
+    for (const s of sleutels) {
+      for (const a of await K.leesBrief(s, regel)) {
+        if (VQ.briefGezien.has(a)) continue;
+        VQ.briefGezien.add(a);
+        VQ.extra.unshift(a);
+        if (!VQ.briefEerst) VQ.briefEerst = nu();
+      }
+    }
   }
   // 13 oktober: de zin onder de QR komt uit EEN plek (kern.js, koppelStand), voor elke manier van vastlopen.
   function toonZoekStand(begin) {
     const st = K.koppelStand({ msSinds: nu() - begin, plan: VQ.plan, briefAdressen: [...VQ.briefGezien], briefMsSinds: VQ.briefEerst ? nu() - VQ.briefEerst : 0,
-      briefFouten: VQ.briefFouten, online: navigator.onLine !== false, toestemming: lnaToestemming });
+      briefFouten: VQ.briefFouten, briefStand: VQ.briefStand, zelfZoeken: !!VQ.zelfZoeken, eigenNetten: (VQ.eigen || []).map(K.netVan), online: navigator.onLine !== false, toestemming: lnaToestemming });
+    tekenDiag();
     const vak = $('veronicaZoekStand');
     if (vak.textContent !== st.zin) vak.textContent = st.zin;
     $('veronicaAdresBlok').hidden = !st.adresVeld;
   }
+  // 449: "Wat zie ik" -- alles wat Veronica weet, zonder geheimen (geen sleutel, geen inhoud van de brief).
+  const klokTijd = (t) => (t ? new Date(t).toLocaleTimeString('nl-NL') : 'nog niets');
+  function tekenDiag() {
+    const vak = $('koppelDiagLijst');
+    if (!vak) return;
+    const d = VQ.diag, p = d.poging;
+    const rijen = [
+      ['Eigen adressen', (VQ.eigen && VQ.eigen.length ? VQ.eigen.join(', ') : 'geen thuisadres gevonden') + (d.eigenBron === 'onthouden' ? ' (onthouden van vorige keer)' : '')],
+      ['Alle kandidaten', d.kandidaten.length ? d.kandidaten.join(', ') : 'geen'],
+      ['Brievenbus', { verbonden: 'verbonden', druk: 'te druk (429), wacht even', weg: 'niet bereikbaar' }[VQ.briefStand] || 'nog niet verbonden'],
+      ['Laatste bericht van de brievenbus', klokTijd(d.briefLaatst)],
+      ['Adres dat de telefoon doorgaf', VQ.briefGezien.size ? [...VQ.briefGezien].map((a) => a.replace('http://', '')).join(', ') : 'nog geen'],
+      ['Laatste verbindingspoging', p ? `${p.adres.replace('http://', '')}: ${p.uitkomst} (${klokTijd(p.t)})` : 'nog geen'],
+      ['Adressen geprobeerd', String(d.gescand)],
+    ];
+    const sleutel = JSON.stringify(rijen);
+    if (vak.dataset.stand === sleutel) return;
+    vak.dataset.stand = sleutel;
+    vak.replaceChildren(...rijen.flatMap((r) => [el('dt', '', r[0]), el('dd', '', r[1])]));   // alleen tekst, nooit html
+  }
+  // 449 (het echte huis, 13 oktober, gemeten door Cowork): Veronica zocht ZELF honderden adressen af terwijl de QR er
+  // stond. Die hingen allemaal (adressen die niet bestaan), Chrome heeft een grens aan gelijktijdige verbindingen, en
+  // daardoor kwam de brievenbus niet meer door -- "ntfy.sh is nu niet te bereiken". Nu, in deze volgorde:
+  //  1. eerst het eigen adres, voordat er iets anders loopt;
+  //  2. dan ALLEEN de brievenbus;
+  //  3. komt er een adres binnen: alleen DAT adres (en een ingevuld adres);
+  //  4. blind zoeken alleen na de knop "Zoek zelf", hoogstens zes tegelijk, het eigen net eerst.
   async function zoekTelefoon() {
     if (VQ.zoekt) return;
     VQ.zoekt = true;
     try {
-      if (VQ.eigen === undefined) VQ.eigen = await eigenAdressen();
+      if (VQ.eigen === undefined || !VQ.eigen.length) VQ.eigen = await eigenAdressen();
       const begin = nu();
       VQ.extra = []; VQ.briefEerst = 0; VQ.briefFouten = 0; VQ.plan = null;
-      if (navigator.permissions) { try { lnaToestemming = (await navigator.permissions.query({ name: 'local-network-access' })).state; } catch (e) { /* oudere Chrome */ } }
+      briefStroom();
       let laatsteVeld = null;
-      // Ook MIDDEN in een ronde (een ronde over vijf netten duurt een paar minuten): na dertig seconden de uitleg,
-      // en een ingevuld adres meteen proberen.
       VQ.zoekKlok = setInterval(() => {
-        kijkBrief();
+        briefStroom();
         if (!gekoppeld()) toonZoekStand(begin);
         const v = K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
         if (v && v !== laatsteVeld) { laatsteVeld = v; VQ.extra.push(v); }
@@ -1308,14 +1405,12 @@
         const veld = K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
         const plan = K.zoekPlan(VQ.eigen, S.bekend);
         if (veld) laatsteVeld = veld;
-        // Een adres uit de brief elke ronde VOORAAN (13 oktober): eerst stond het alleen een keer in de wachtrij, en
-        // weigerde de eerste poging (Chrome vroeg nog om het lokale netwerk), dan kwam het niet meer terug.
-        const voor = (veld ? [veld] : []).concat([...VQ.briefGezien]).filter((a, i, l) => l.indexOf(a) === i);
-        const adressen = voor.concat(plan.adressen.filter((a) => !voor.includes(a)));
-        // Na dertig seconden: wat je kunt doen, en het adresveld (niet verplicht: ze blijft zoeken).
         VQ.plan = plan;
+        // Wat er IS: een ingevuld adres en het adres uit de brief. Pas na "Zoek zelf" de rest.
+        const voor = (veld ? [veld] : []).concat([...VQ.briefGezien]).filter((a, i, l) => l.indexOf(a) === i);
+        const adressen = VQ.zelfZoeken ? voor.concat(plan.adressen.filter((a) => !voor.includes(a))) : voor;
         toonZoekStand(begin);
-        const l = await zoekRonde(adressen);
+        const l = adressen.length || VQ.extra.length ? await zoekRonde(adressen) : null;
         if (l) {
           VQ.vorige = null; VQ.sleutel = null; clearInterval(VQ.klok);
           await bewaarLijst(l);
@@ -1325,9 +1420,9 @@
           toonScherm('koppel');
           return;
         }
-        await slaap(3000);
+        await slaap(adressen.length ? 3000 : 1000);
       }
-    } finally { VQ.zoekt = false; clearInterval(VQ.zoekKlok); }
+    } finally { VQ.zoekt = false; clearInterval(VQ.zoekKlok); stopBriefStroom(); }
   }
   const slaap = (ms) => new Promise((z) => setTimeout(z, ms));
   function startVeronicaQr() {
@@ -1677,6 +1772,13 @@
         if (Wand.aan && soort === 'pointerdown' && !(e.target && e.target.id === 'wandUit')) volScherm();
       }, { passive: true });
     }
+    // 449: de noodweg, uitdrukkelijk. De brievenbus blijft gewoon open en houdt voorrang (hoogstens zes tegelijk).
+    $('zoekZelfKnop').addEventListener('click', () => {
+      VQ.zelfZoeken = true;
+      $('zoekZelfKnop').disabled = true;
+      $('zoekZelfKnop').textContent = 'Ik zoek zelf op het wifi...';
+    });
+    $('veronicaVersie').textContent = `Veronica ${K.VERONICA_VERSIE}`;
     $('ntfyProef').addEventListener('click', async () => {
       const r = await waarschuw('proef', K.veronicaZin('hulpdienst', 'proef'));
       logRegel(r.gestuurd ? 'Proefmelding verstuurd. Kijk op je telefoon.' : `Proefmelding niet verstuurd: ${r.reden}.`);

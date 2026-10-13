@@ -53,6 +53,8 @@
   .tCijfers dd.onbekend .waarde { color: var(--oud); font-style: italic; }
   .tKnoppen { display: flex; gap: 6px; flex-wrap: wrap; }
   .klein-knop { font-size: 14px; padding: 6px 10px; }
+  #koppelDiag { margin-top: 12px; font-size: 15px; } #koppelDiag summary { cursor: pointer; font-weight: 600; }
+  #koppelDiagLijst dt { font-weight: 600; margin-top: 6px; } #koppelDiagLijst dd { margin: 0 0 0 0; word-break: break-all; }
   .tScherm { width: 100%; max-height: 360px; object-fit: contain; border-radius: 10px; margin-top: 6px; background: #000; }
   textarea, input, select { font: inherit; color: var(--tekst); background: #08101a; border: 1px solid var(--lijn); border-radius: 10px; padding: 8px; width: 100%; }
   textarea { min-height: 120px; }
@@ -170,11 +172,17 @@
           <div id="veronicaQrBeeld" class="qrWit"></div>
           <p id="veronicaQrZin" class="groteMelding"><b>Scan mij met JARVIS</b></p>
           <p id="veronicaQrTijd"></p>
+          <p id="veronicaVersie"></p>
           <p id="veronicaZoekStand" class="groteMelding" aria-live="polite"></p>
+          <button type="button" id="zoekZelfKnop" class="klein-knop">Zoek zelf op het wifi (noodweg)</button>
           <div id="veronicaAdresBlok" hidden>
-            <label for="veronicaAdres">Ik kan het adres van deze Chromebook niet vinden. Vul het adres van de telefoon in (JARVIS, Apparaten):</label>
+            <label for="veronicaAdres">Weet je het adres van de telefoon? (JARVIS, Apparaten) Vul het hier in:</label>
             <input id="veronicaAdres" inputmode="url" autocomplete="off" placeholder="adres:8080">
           </div>
+          <details id="koppelDiag"><summary>Wat zie ik</summary>
+            <p>Lukt het niet? Maak een schermfoto van dit blok; dan is te zien waar het vastzit.</p>
+            <dl id="koppelDiagLijst"></dl>
+          </details>
         </div>
         <div id="nieuwBlok">
           <div id="koppelQrBeeld" class="qrWit"></div>

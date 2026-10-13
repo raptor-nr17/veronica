@@ -302,7 +302,9 @@
   // 1.9.17 (de eerste echte proef, 13 oktober): op een Chromebook gaf WebRTC het adres van de interne Android/Linux-laag
   // van ChromeOS (100.115.92.x) -- NIET het wifi van het huis. Daar staat de telefoon nooit. Dus: alleen echte
   // thuisnetten (192.168.x, 10.x, 172.16-31.x), alle gevonden adressen, en als vangnet de gangbare thuisnetten.
-  const GANGBARE_NETTEN = ['192.168.1', '192.168.0', '192.168.2', '192.168.178', '10.0.0'];
+  // 449 (13 oktober, het echte huis): 192.168.68 is het standaardnet van een veelgebruikt mesh-systeem. Vooraan na .1: een
+  // mesh is gewoon, en dan is dat het wifi waar de Chromebook en de telefoon op zitten.
+  const GANGBARE_NETTEN = ['192.168.1', '192.168.68', '192.168.0', '192.168.2', '192.168.178', '10.0.0'];
   function isThuisNet(ip) {
     const d = String(ip || '').split('.').map(Number);
     if (d.length !== 4 || d.some((x) => !Number.isInteger(x) || x < 0 || x > 255)) return false;
@@ -341,12 +343,21 @@
   // Terug: { zin, adresVeld } -- adresVeld = het veld voor het adres met de hand tonen.
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
+  // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
+  const VERONICA_VERSIE = '1.9.19';
+  const WACHT_ZIN = 'Scan deze QR met JARVIS (Apparaten, Scan om te koppelen). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
   function koppelStand(i) {
     const o = i || {};
     const brief = (o.briefAdressen || []).length > 0;
     if (o.toestemming === 'denied') return { zin: GEEN_LNA_ZIN, adresVeld: false };
     if (brief && o.briefMsSinds >= BRIEF_WACHT_MS) {
       const adres = String(o.briefAdressen[0]).replace(/^http:\/\//, '');
+      // 449: de telefoon zit op een ANDER net dan deze computer (router plus mesh). Dan helpt zoeken niet: zeg het.
+      const eigen = (o.eigenNetten || []).filter(Boolean);
+      const telNetten = o.briefAdressen.map(netVan).filter(Boolean);
+      if (eigen.length && telNetten.length && !telNetten.some((n) => eigen.includes(n))) {
+        return { zin: `De telefoon zit op een ANDER netwerk (${telNetten[0]}.x) dan deze computer (${eigen[0]}.x). Dat gebeurt vaak met een router en een mesh-systeem met elk een eigen wifi. Zet de telefoon op HETZELFDE wifi als deze computer (kijk bij Wifi op allebei welke naam er staat), en scan dan opnieuw.`, adresVeld: true, anderNet: true };
+      }
       return { zin: `De telefoon gaf zijn adres door (${adres}), maar ik kom er niet bij. Kijk na: zit deze computer op HETZELFDE wifi als de telefoon (geen gastnetwerk)? Vroeg Chrome om het lokale netwerk? Dan Toestaan. Staat in JARVIS bij Apparaten "Bereikbaar voor Veronica: ja"? Ik blijf het proberen.`, adresVeld: true };
     }
     if (brief) return { zin: 'De telefoon heeft zijn adres doorgegeven. Ik maak verbinding...', adresVeld: false };
@@ -354,11 +365,21 @@
     if (o.online === false) {
       return { zin: `Deze computer heeft geen internet, dus de telefoon kan zijn adres niet doorgeven. Ik zoek hem zelf op het wifi.${lang ? ' Weet je het adres van de telefoon (JARVIS, Apparaten), vul het dan hieronder in.' : ''}`, adresVeld: lang };
     }
-    if (!lang) return { zin: zoekZin(o.plan || { gok: true, netten: [] }), adresVeld: false };
-    const voor = o.briefFouten >= BRIEF_FOUTEN
+    // 449: ZONDER "Zoek zelf" raadt Veronica niets (het raden verstopte in het echte huis de browser, en dan kwam de
+    // brievenbus niet meer door). Dan zegt ze waar ze op wacht.
+    if (!lang) return { zin: o.zelfZoeken ? zoekZin(o.plan || { gok: true, netten: [] }) : WACHT_ZIN, adresVeld: false };
+    const voor = o.briefStand === 'druk'
+      ? 'De brievenbus op internet (ntfy.sh) krijgt nu te veel vragen vanaf dit internetadres; ik wacht even en kijk dan opnieuw. Ik zoek intussen zelf. '
+      : o.briefFouten >= BRIEF_FOUTEN
       ? 'De brievenbus op internet (ntfy.sh) is nu niet te bereiken, dus ik zoek zelf. '
       : 'Nog geen bericht van de telefoon. Heeft JARVIS de QR gescand en zei hij "Veronica mag nu koppelen"? Zo niet: scan opnieuw. ';
+    if (!o.zelfZoeken) return { zin: `${voor}Lukt het niet? Tik op "Zoek zelf", of vul het adres van de telefoon hieronder in (JARVIS, Apparaten).`, adresVeld: true };
     return { zin: voor + NOG_NIET_ZIN, adresVeld: true };
+  }
+  // 449: het /24-net van een adres ("http://a.b.c.d:8080" of "a.b.c.d" -> "a.b.c"), of null.
+  function netVan(adres) {
+    const m = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}/.exec(String(adres || ''));
+    return m ? `${m[1]}.${m[2]}.${m[3]}` : null;
   }
   // Alle adressen in hetzelfde /24-net, behalve het eigen, op poort 8080 -- de dichtstbijzijnde eerst.
   function subnetAdressen(ip) {
@@ -395,6 +416,10 @@
   async function briefOnderwerp(s, c) {
     return 'vb' + naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes('veronica-brief:' + s))).slice(0, 30);
   }
+  // 449: EEN doorlopende verbinding voor ALLE onderwerpen tegelijk (ntfy: "a,b"), in plaats van elke vier seconden
+  // vragen. ntfy.sh staat ongeveer 12 vragen per minuut per internetadres toe, en de telefoon thuis deelt dat adres:
+  // met vragen kreeg Veronica na een paar minuten "429" -- en de telefoon kon zijn eigen brief niet meer kwijt.
+  const briefStroomUrl = (onderwerpen, sindsS) => `${BRIEF_SERVER}/${onderwerpen.join(',')}/json?since=${Math.max(0, Math.floor(sindsS))}`;
   const briefPollUrl = (onderwerp, sindsS) => `${BRIEF_SERVER}/${onderwerp}/json?poll=1&since=${Math.max(0, Math.floor(sindsS))}`;
   // De regels van ntfy (een JSON-bericht per regel) -> de adressen ("http://a.b.c.d:poort"), alleen op een
   // thuisnet. Een bericht dat niet met deze sleutel open gaat, telt niet.
@@ -815,9 +840,9 @@
   return {
     begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
-    SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
+    SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));
