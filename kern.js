@@ -335,6 +335,31 @@
       : `Ik zoek de telefoon op je wifi (${lijst(plan.eigenNetten)}), en daarna op de gangbare thuisnetten…`;
   }
   const NOG_NIET_ZIN = 'Nog niet gevonden. Kijk op de telefoon: staat wifi aan, op hetzelfde netwerk als deze computer? En staat in JARVIS bij Apparaten "Bereikbaar voor Veronica: ja"? Ik blijf zoeken. Weet je het adres van de telefoon (JARVIS, Apparaten), dan mag je het hieronder invullen.';
+  // 13 oktober (startklaar voor het rek): WAT ER OP HET KOPPELSCHERM STAAT terwijl Veronica zoekt. EEN plek, zodat
+  // elke manier van vastlopen een eigen, gewone zin krijgt in plaats van "Ik maak verbinding..." zonder einde.
+  // o: { msSinds, plan, briefAdressen: [...], briefMsSinds, briefFouten, online, toestemming }
+  // Terug: { zin, adresVeld } -- adresVeld = het veld voor het adres met de hand tonen.
+  const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
+  const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
+  function koppelStand(i) {
+    const o = i || {};
+    const brief = (o.briefAdressen || []).length > 0;
+    if (o.toestemming === 'denied') return { zin: GEEN_LNA_ZIN, adresVeld: false };
+    if (brief && o.briefMsSinds >= BRIEF_WACHT_MS) {
+      const adres = String(o.briefAdressen[0]).replace(/^http:\/\//, '');
+      return { zin: `De telefoon gaf zijn adres door (${adres}), maar ik kom er niet bij. Kijk na: zit deze computer op HETZELFDE wifi als de telefoon (geen gastnetwerk)? Vroeg Chrome om het lokale netwerk? Dan Toestaan. Staat in JARVIS bij Apparaten "Bereikbaar voor Veronica: ja"? Ik blijf het proberen.`, adresVeld: true };
+    }
+    if (brief) return { zin: 'De telefoon heeft zijn adres doorgegeven. Ik maak verbinding...', adresVeld: false };
+    const lang = o.msSinds >= ZOEK_LANG_MS;
+    if (o.online === false) {
+      return { zin: `Deze computer heeft geen internet, dus de telefoon kan zijn adres niet doorgeven. Ik zoek hem zelf op het wifi.${lang ? ' Weet je het adres van de telefoon (JARVIS, Apparaten), vul het dan hieronder in.' : ''}`, adresVeld: lang };
+    }
+    if (!lang) return { zin: zoekZin(o.plan || { gok: true, netten: [] }), adresVeld: false };
+    const voor = o.briefFouten >= BRIEF_FOUTEN
+      ? 'De brievenbus op internet (ntfy.sh) is nu niet te bereiken, dus ik zoek zelf. '
+      : 'Nog geen bericht van de telefoon. Heeft JARVIS de QR gescand en zei hij "Veronica mag nu koppelen"? Zo niet: scan opnieuw. ';
+    return { zin: voor + NOG_NIET_ZIN, adresVeld: true };
+  }
   // Alle adressen in hetzelfde /24-net, behalve het eigen, op poort 8080 -- de dichtstbijzijnde eerst.
   function subnetAdressen(ip) {
     if (!ip || !isEigenNet(ip)) return [];
@@ -793,6 +818,6 @@
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

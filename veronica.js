@@ -1188,7 +1188,7 @@
   // WebRTC-kandidaat) en de adressen in hetzelfde net op poort 8080, een paar tegelijk. Ze stuurt NOOIT de sleutel,
   // alleen een bewijs (HMAC), en het antwoord komt versleuteld terug. Lukt het eigen adres niet: een veld voor het
   // adres van de telefoon. De code staat nooit in de QR.
-  const VQ = { sleutel: null, vorige: null, tot: 0, klok: null, zoekt: false, eigen: undefined, extra: [], zoekKlok: null, briefSinds: 0, briefLaatst: 0, briefBezig: false, briefGezien: new Set() };
+  const VQ = { sleutel: null, vorige: null, tot: 0, klok: null, zoekt: false, eigen: undefined, extra: [], zoekKlok: null, briefSinds: 0, briefLaatst: 0, briefBezig: false, briefGezien: new Set(), briefEerst: 0, briefFouten: 0 };
   // 1.9.17: ALLE kandidaten verzamelen (niet de eerste), en alleen echte thuisnetten houden: op een Chromebook is
   // de eerste vaak 100.115.92.x, het interne net van ChromeOS (de eerste echte proef, 13 oktober).
   function eigenAdressen() {
@@ -1268,16 +1268,24 @@
         let tekst = '';
         try {
           const r = await fetch(K.briefPollUrl(await K.briefOnderwerp(s), VQ.briefSinds), { signal: stop.signal, cache: 'no-store' });
-          if (r.ok) tekst = await r.text();
-        } catch (e) { /* geen internet: Veronica zoekt zelf verder */ } finally { clearTimeout(klok); }
+          if (r.ok) { tekst = await r.text(); VQ.briefFouten = 0; } else VQ.briefFouten++;
+        } catch (e) { VQ.briefFouten++; /* geen internet: Veronica zoekt zelf verder */ } finally { clearTimeout(klok); }
         for (const a of await K.leesBrief(s, tekst)) {
           if (VQ.briefGezien.has(a)) continue;
           VQ.briefGezien.add(a);
           VQ.extra.unshift(a);
-          $('veronicaZoekStand').textContent = 'De telefoon heeft zijn adres doorgegeven. Ik maak verbinding...';
+          if (!VQ.briefEerst) VQ.briefEerst = nu();
         }
       }
     } finally { VQ.briefBezig = false; }
+  }
+  // 13 oktober: de zin onder de QR komt uit EEN plek (kern.js, koppelStand), voor elke manier van vastlopen.
+  function toonZoekStand(begin) {
+    const st = K.koppelStand({ msSinds: nu() - begin, plan: VQ.plan, briefAdressen: [...VQ.briefGezien], briefMsSinds: VQ.briefEerst ? nu() - VQ.briefEerst : 0,
+      briefFouten: VQ.briefFouten, online: navigator.onLine !== false, toestemming: lnaToestemming });
+    const vak = $('veronicaZoekStand');
+    if (vak.textContent !== st.zin) vak.textContent = st.zin;
+    $('veronicaAdresBlok').hidden = !st.adresVeld;
   }
   async function zoekTelefoon() {
     if (VQ.zoekt) return;
@@ -1285,13 +1293,14 @@
     try {
       if (VQ.eigen === undefined) VQ.eigen = await eigenAdressen();
       const begin = nu();
-      VQ.extra = [];
+      VQ.extra = []; VQ.briefEerst = 0; VQ.briefFouten = 0; VQ.plan = null;
+      if (navigator.permissions) { try { lnaToestemming = (await navigator.permissions.query({ name: 'local-network-access' })).state; } catch (e) { /* oudere Chrome */ } }
       let laatsteVeld = null;
       // Ook MIDDEN in een ronde (een ronde over vijf netten duurt een paar minuten): na dertig seconden de uitleg,
       // en een ingevuld adres meteen proberen.
       VQ.zoekKlok = setInterval(() => {
         kijkBrief();
-        if (nu() - begin > 30000 && !gekoppeld() && !VQ.briefGezien.size) { $('veronicaAdresBlok').hidden = false; $('veronicaZoekStand').textContent = K.NOG_NIET_ZIN; }
+        if (!gekoppeld()) toonZoekStand(begin);
         const v = K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
         if (v && v !== laatsteVeld) { laatsteVeld = v; VQ.extra.push(v); }
       }, 1000);
@@ -1299,11 +1308,13 @@
         const veld = K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
         const plan = K.zoekPlan(VQ.eigen, S.bekend);
         if (veld) laatsteVeld = veld;
-        const adressen = (veld ? [veld] : []).concat(plan.adressen.filter((a) => a !== veld));
+        // Een adres uit de brief elke ronde VOORAAN (13 oktober): eerst stond het alleen een keer in de wachtrij, en
+        // weigerde de eerste poging (Chrome vroeg nog om het lokale netwerk), dan kwam het niet meer terug.
+        const voor = (veld ? [veld] : []).concat([...VQ.briefGezien]).filter((a, i, l) => l.indexOf(a) === i);
+        const adressen = voor.concat(plan.adressen.filter((a) => !voor.includes(a)));
         // Na dertig seconden: wat je kunt doen, en het adresveld (niet verplicht: ze blijft zoeken).
-        const lang = nu() - begin > 30000 && !VQ.briefGezien.size;
-        $('veronicaAdresBlok').hidden = !lang;
-        if (!VQ.briefGezien.size) $('veronicaZoekStand').textContent = lang ? K.NOG_NIET_ZIN : K.zoekZin(plan);
+        VQ.plan = plan;
+        toonZoekStand(begin);
         const l = await zoekRonde(adressen);
         if (l) {
           VQ.vorige = null; VQ.sleutel = null; clearInterval(VQ.klok);
