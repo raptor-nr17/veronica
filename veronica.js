@@ -367,13 +367,18 @@
     roepT = nu();
     const lijst = K.rondvraagLijst(S);
     const naamVan = (a) => (S.telefoons.find((t) => t.jarvis === a) || {}).naam || a.slice(7);
+    // 452: een adres dat bij GEEN bekende telefoon hoort (een oud adres uit het geheugen, zoals het tweede netwerk van
+    // een telefoon) mag niet als "geen antwoord van <telefoon>" klinken. Dat telt apart als "oud adres".
+    const isTelefoon = (a) => S.telefoons.some((t) => t.jarvis === a);
     const ja = new Set();
     const nee = new Set();
+    const oud = new Set();
+    const oudAdres = [];
     for (let i = 0; i < lijst.length; i += 4) {
       await Promise.all(lijst.slice(i, i + 4).map(async (a) => {
         try {
-          const r = await haal(`${a}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'roep', van: 'veronica' }) }, 2500);
-          if (!r.ok) { nee.add(naamVan(a)); return; }
+          const r = await haal(`${a}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'roep', van: 'veronica', handmatig: handmatig === true }) }, 2500);
+          if (!r.ok) { if (!isTelefoon(a)) oudAdres.push(a); (isTelefoon(a) ? nee : oud).add(naamVan(a)); return; }
           ja.add(naamVan(a));
           const v = await haal(`${a}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': S.code } }, 2500);
           if (v.ok) {
@@ -381,13 +386,19 @@
             S.bekend = K.voegBekendToe(S.bekend, [a].concat(l.bekend));
             if (l.ntfy) S.ntfy = l.ntfy;
           }
-        } catch (e) { nee.add(naamVan(a)); }
+        } catch (e) { if (!isTelefoon(a)) oudAdres.push(a); (isTelefoon(a) ? nee : oud).add(naamVan(a)); }
       }));
     }
     for (const n of ja) nee.delete(n);
+    // Een telefoon die ergens anders WEL antwoordde, is niet "weg" omdat een oud adres van hem stil bleef.
+    if (ja.size && S.telefoons.length && !nee.size) {
+      // Alles bekend antwoordt: de oude adressen uit het geheugen opruimen, dan kost het volgende roepen geen 2,5 s per stuk.
+      S.bekend = S.bekend.filter((a) => !oudAdres.includes(a) || a === S.kern);
+      oud.clear();
+    }
     await Opslag.schrijf('bekend', S.bekend);
     if (S.ntfy) await Opslag.schrijf('ntfy', S.ntfy);
-    const zin = `Rij opgeroepen: ${ja.size} ${ja.size === 1 ? 'meldde zich' : 'meldden zich'}${nee.size ? `; geen antwoord van ${[...nee].slice(0, 5).join(', ')}` : ''}.`;
+    const zin = `Rij opgeroepen: ${ja.size} ${ja.size === 1 ? 'meldde zich' : 'meldden zich'}${nee.size ? `; geen antwoord van ${[...nee].slice(0, 5).join(', ')}` : ''}${oud.size ? `; ${oud.size} oud adres${oud.size === 1 ? '' : 'sen'} uit het geheugen gaf geen antwoord (dat is meestal een tweede netwerk van een telefoon en niet erg)` : ''}.`;
     logRegel(zin);
     tekenNtfy();
     meetRonde();
@@ -853,6 +864,10 @@
       kopRij.append(el('h2', '', t.naam), el('span', 'tAdres', t.adres.replace('http://', '')));
       tegel.appendChild(kopRij);
       tegel.appendChild(el('div', 'tRol', K.rolZin(t, m.status, tijd)));
+      // 452: welke JARVIS draait er, en loopt hij achter? Alleen als de telefoon zijn versie vers meldde.
+      const vz = m.status && m.status.versie && tijd - m.status.versie.t <= K.MAX_LEEFTIJD_MS
+        ? K.versieZin(m.status.versie.waarde, K.nieuwsteVersie(S.telefoons.map((x) => ((meet(x.adres).status || {}).versie || {}).waarde)), m.status.rol && m.status.rol.waarde) : null;
+      if (vz) tegel.appendChild(el('div', `tVersie${vz.achter ? ' achter' : ''}`, vz.tekst));
       tegel.appendChild(meterRij(t, m, s, tijd));
       const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`;
       tegel.appendChild(el('div', `tBereik${s.bereikbaar && !oud ? '' : ' oud'}`, bereik));

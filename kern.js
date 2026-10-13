@@ -96,7 +96,27 @@
       stroom: meting(typeof s.stand === 'string' ? (STROOM[s.stand] || s.stand) : null, bron, t),
       magRekenen: meting(typeof s.magRekenen === 'boolean' ? s.magRekenen : null, bron, t),
       rol: meting(x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, bron, t),
+      versie: meting(typeof x.versie === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(x.versie) ? x.versie : null, bron, t),
     };
+  }
+  // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
+  // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
+  // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
+  const JARVIS_NIEUWSTE = '1.9.22';
+  function vergelijkVersie(a, b) {
+    const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+    for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
+    return 0;
+  }
+  function nieuwsteVersie(versies) {
+    return (versies || []).concat([JARVIS_NIEUWSTE]).filter((v) => typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v)).reduce((m, v) => (vergelijkVersie(v, m) > 0 ? v : m));
+  }
+  // Terug: { tekst, achter } of null (versie onbekend: niets zeggen, niets verzinnen).
+  function versieZin(versie, nieuwste, rol) {
+    if (typeof versie !== 'string' || !/^\d+\.\d+\.\d+$/.test(versie)) return null;
+    if (vergelijkVersie(versie, nieuwste) >= 0) return { tekst: `JARVIS ${versie}`, achter: false };
+    const wacht = rol === 'baas' ? ' De baas wacht daarbij tot de werkers klaar zijn.' : '';
+    return { tekst: `JARVIS ${versie}: loopt achter op ${nieuwste}. Hij werkt zichzelf vanzelf bij zodra hij aan de lader ligt en niets doet (hij kijkt elke zes uur; sneller kan met Instellingen, Kijk of er een nieuwe versie is).${wacht}`, achter: true };
   }
   const hitteNaam = (n) => (Number.isInteger(n) && n >= 0 && n < HITTE.length ? HITTE[n] : 'onbekend');
 
@@ -344,7 +364,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.21';
+  const VERONICA_VERSIE = '1.9.22';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
   function koppelStand(i) {
     const o = i || {};
@@ -863,7 +883,7 @@
   }
 
   return {
-    begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
+    begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
