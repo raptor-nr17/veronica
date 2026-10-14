@@ -119,6 +119,7 @@
     scherm: {},             // adres -> { code, url, aan }
     log: [],
     testUitslag: {},
+    installQr: {},
     wakeLock: null,
   };
   const staat = (adres) => (S.staten[adres] = S.staten[adres] || {});
@@ -168,6 +169,16 @@
       return K.leesHealth(await r.json(), nu());
     } catch (e) { return null; }
   }
+  // 460: is er een VERSE melding van JARVIS op die telefoon? Een oude melding bewijst niets: de telefoon kan er sindsdien uit zijn.
+  const jarvisVers = (st, tijd) => !!st && Object.values(st).some((x) => x && typeof x.t === 'number' && tijd - x.t <= K.MAX_LEEFTIJD_MS);
+  // 460: een JARVIS van voor 1.9.25 kan niet zeggen WELKE van de drie het is (niet geinstalleerd / server niet gestart / geen model).
+  function oudeJarvisZin(status) {
+    const v = status && status.versie && status.versie.waarde;
+    const oud = typeof v === 'string' && K.vergelijkVersie(v, '1.9.25') < 0;
+    const gem = status && status.gemma && status.gemma.waarde && status.gemma.waarde.ollite;
+    if (gem && gem.zin) return gem.zin;
+    return oud ? `Deze JARVIS (versie ${v}) kan nog niet zeggen welke van de drie het is: OlliteRT niet geïnstalleerd, de server niet gestart, of geen model geladen. Na de update naar 1.9.25 (aan de lader, scherm uit) staat hier precies wat het is.` : 'Is OlliteRT geïnstalleerd, staat de server aan en is er een model geladen?';
+  }
   async function meetTelefoon(t) {
     let m = meet(t.adres);
     let s = staat(t.adres);
@@ -183,7 +194,7 @@
       } catch (e) { m.jarvisNietTot = nu() + 60000; }   // geen JARVIS (of even weg): een minuut niet vragen
     }
     // 457: het adres zwijgt maar JARVIS antwoordt -> de andere adressen proberen, hoogstens vier tegelijk.
-    if (s.bereikbaar === false && m.status) {
+    if (s.bereikbaar === false && jarvisVers(m.status, nu())) {
       const kand = K.alternatieveAdressen(t, m.status);
       for (let i = 0; i < kand.length && s.bereikbaar === false; i += 3) {
         const uit = await Promise.all(kand.slice(i, i + 3).map(async (a) => ({ a, h: await gezondAdres(t, a) })));
@@ -205,7 +216,7 @@
       }
       if (s.bereikbaar === false) {
         const sl = `${t.naam}|zwijgt`;
-        if (!adresGelogd.has(sl)) { adresGelogd.add(sl); logRegel(`${t.naam}: JARVIS antwoordt wel, maar het rekenprogramma (OlliteRT) niet op ${kand.length ? 'de adressen die ik probeerde' : 'dit adres'}. Is OlliteRT aan en staat de server aan?`); }
+        if (!adresGelogd.has(sl)) { adresGelogd.add(sl); logRegel(`${t.naam}: JARVIS antwoordt wel, maar OlliteRT niet op ${kand.length ? 'de adressen die ik probeerde' : 'dit adres'}. ${oudeJarvisZin(m.status)}`); }
       } else adresGelogd.delete(`${t.naam}|zwijgt`);
     }
     const st = m.status || {};
@@ -1002,7 +1013,9 @@
       // 458: weet JARVIS op die telefoon wat er met OlliteRT is, dan zegt Veronica dat, in plaats van "geen antwoord".
       const olGm = m.status && m.status.gemma && tijd - m.status.gemma.t <= K.MAX_LEEFTIJD_MS ? m.status.gemma.waarde : null;
       const olZin = olGm && olGm.ollite && olGm.ollite.toestand !== 'klaar' && olGm.ollite.toestand !== 'onbekend' ? olGm.ollite.zin : null;
-      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : (!s.bereikbaar && olZin ? olZin : `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`);
+      const jarvisOnbekendeReden = !s.bereikbaar && !olZin && jarvisVers(m.status, tijd) ? `JARVIS antwoordt wel, maar OlliteRT niet. ${oudeJarvisZin(m.status)}` : null;
+      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : (!s.bereikbaar && olZin ? olZin : (jarvisOnbekendeReden || `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`));
+      const installeerKans = !s.bereikbaar && (!olGm || !olGm.ollite || olGm.ollite.toestand === 'niet-geinstalleerd' || olGm.ollite.toestand === 'onbekend');
       tegel.appendChild(el('div', `tBereik${s.bereikbaar && !oud ? '' : ' oud'}`, bereik));
       // De taak, en de tekst die NU binnenkomt (eigen werk, of wat de hoofdtelefoon meldt).
       const eigen = S.stromen.get(t.adres);
@@ -1049,10 +1062,23 @@
       {
         const gm2 = m.status && m.status.gemma && tijd - m.status.gemma.t <= K.MAX_LEEFTIJD_MS ? m.status.gemma.waarde : null;
         if (t.jarvis && gm2 && gm2.ollite && gm2.ollite.kanStarten) { const b = el('button', 'klein-knop', 'Open OlliteRT'); b.dataset.actie = 'olliteStart'; b.title = 'JARVIS opent de OlliteRT-app op die telefoon. De server aanzetten doe je daar zelf, tenzij OlliteRT hem vanzelf start.'; knoppen.appendChild(b); }
+        if (installeerKans && t.jarvis) { const ib = el('button', 'klein-knop', S.installQr[t.adres] ? 'OlliteRT installeren: verberg' : 'OlliteRT installeren'); ib.dataset.actie = 'installeer'; ib.title = 'Laat een QR zien naar de officiële pagina van OlliteRT. Jij downloadt zelf; Veronica en JARVIS downloaden niets.'; knoppen.appendChild(ib); }
         const tb = el('button', 'klein-knop', 'Test deze telefoon'); tb.dataset.actie = 'test'; tb.title = 'Stuurt een korte vraag en laat het antwoord en de tijd zien'; knoppen.appendChild(tb);
       }
       tegel.appendChild(knoppen);
       if (S.testUitslag[t.adres]) tegel.appendChild(el('div', 'tBron', S.testUitslag[t.adres].zin));
+      if (S.installQr[t.adres] && window.qrcode) {
+        // 460: een QR naar de OFFICIELE pagina van OlliteRT. Geen download, geen eigen kopie: jij scant, kiest de nieuwste versie en installeert zelf.
+        const blok = el('div', 'tInstall');
+        const vak = el('div', 'qr-vak');
+        const q = window.qrcode(0, 'M'); q.addData(K.OLLITERT_PAGINA); q.make();
+        vak.innerHTML = q.createSvgTag(5, 12);   // alleen uit de QR-bibliotheek: vierkantjes, geen tekst van buiten
+        const svg = vak.querySelector('svg');
+        if (svg) { svg.classList.add('qr-plaatje'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'QR-code naar de officiële pagina van OlliteRT'); }
+        blok.appendChild(vak);
+        blok.appendChild(el('div', 'tBron', `Scan met ${t.naam}. Dit is de officiële pagina van OlliteRT (gratis, Apache 2.0): ${K.OLLITERT_PAGINA}. Download daar het nieuwste .apk-bestand, installeer het, open OlliteRT, download een Gemma-model en tik Start Server. Zet in OlliteRT ook Start on Boot aan en de batterij op Onbeperkt.`));
+        tegel.appendChild(blok);
+      }
       if (sch.aan) {
         const img = el('img', 'tScherm');
         img.alt = `Scherm van ${t.naam}`;
@@ -2212,6 +2238,7 @@
       if (knop.dataset.actie === 'baas') maakBaas(t);
       if (knop.dataset.actie === 'ruim') ruimGemmaOp(t);
       if (knop.dataset.actie === 'test') testTelefoon(t);
+      if (knop.dataset.actie === 'installeer') { S.installQr[t.adres] = !S.installQr[t.adres]; tekenLive(); }
       if (knop.dataset.actie === 'olliteStart') startOlliteVanuitVeronica(t);
       if (knop.dataset.actie === 'weer') { staat(t.adres).vervangen = false; logRegel(`${t.naam} doet weer mee.`); tekenLive(); werkTik(); }
     });
