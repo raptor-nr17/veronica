@@ -31,6 +31,7 @@
   .tRol { font-size: 16px; color: var(--zacht); margin-top: 2px; }
   .tVersie { font-size: 14px; color: var(--zacht); margin-top: 2px; }
   .tVersie.achter { font-size: 16px; color: #f5a524; }
+  .tGemma { font-size: 16px; color: #f5a524; margin-top: 4px; line-height: 1.35; }   /* 456b: twee Gemma-apps of twee modelkopieen */
   #wandBalk { display: none; }
   body.wand header, body.wand nav, body.wand #wakkerZin, body.wand .tAdres, body.wand .tTaak, body.wand .tLive, body.wand .tBron,
   body.wand .tMeer, body.wand .tKnoppen, body.wand .tScherm, body.wand #stekkerKop, body.wand #tegels-stekkers, body.wand #zonKop, body.wand #zonStroom { display: none; }
@@ -110,7 +111,10 @@
 <header>
   <h1>VERONICA</h1>
   <span id="pantserZin" aria-live="polite"></span>
+  <button id="bureauKnop" aria-pressed="true" title="Mag Claude kleine klussen naar de telefoons sturen?">Claude-bureau: aan</button>
+  <span id="bureauZin" aria-live="polite"></span>
   <span id="veronicaZegt" aria-live="polite"></span>
+  <div id="pantserHelp" role="status"></div>
   <div id="lnaUitleg" role="alert" hidden></div>
   <div id="vindUitleg" role="status" hidden></div>
   <button id="heyKnop">Hé Veronica</button>
@@ -147,6 +151,7 @@
       </div>
       <p id="reserveZin"></p>
     </div>
+    <p id="priveBezig" class="groteMelding" hidden>Privé-klus bezig</p>
     <div id="tegels"></div>
     <div id="stekkerNieuw"></div>
     <h2 id="stekkerKop" hidden>Stekkers</h2>
@@ -251,6 +256,7 @@
   <p id="nieuwQrTijd"></p>
   <button id="nieuwQrSluit">Sluiten</button>
 </div>
+<script src="pool.js"></script>
 <script src="kern.js"></script>
 <script src="qrcode.js"></script>
 <!-- 1.9.12: de QR-LEZER (jsQR, Apache-2.0, dezelfde als in JARVIS). Chrome heeft alleen op ChromeOS, macOS en

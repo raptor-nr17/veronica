@@ -81,6 +81,40 @@
   // ---- Uit JARVIS /jarvis/status (alleen telefoons met JARVIS) ----
   const HITTE = ['geen', 'licht', 'matig', 'ernstig', 'kritiek', 'noodgeval', 'uitschakelen'];
   const STROOM = { altijd: 'Altijd', slim: 'Slim', zon: '100% zon' };
+  // 456: wat de telefoon over zichzelf zegt (RAM, Android, 64-bits, vrije ruimte): alleen getallen en een ja/nee, binnen redelijke grenzen.
+  function leesCapaciteit(c) {
+    if (!c || typeof c !== 'object') return null;
+    const g = (v, max) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max ? v : null);
+    const uit = { ramGb: g(c.ramGb, 512), sdk: g(c.sdk, 100), arm64: typeof c.arm64 === 'boolean' ? c.arm64 : null, vrijGb: g(c.vrijGb, 100000) };
+    return Object.values(uit).every((v) => v === null) ? null : uit;
+  }
+  // 456b: dubbele Gemma-apps of modelkopieen op een telefoon. Alleen bekende namen, getallen en ja/nee, en een zin die als TEKST wordt getoond.
+  const GEMMA_APPS = ['OlliteRT', 'OlliteRT (dev)', 'OlliteRT (beta)', 'Google AI Edge Gallery'];
+  const OLLITE_TOESTANDEN = ['klaar', 'geen-model', 'staat-niet-aan', 'niet-geinstalleerd', 'onbekend'];
+  function leesGemma(g) {
+    if (!g || typeof g !== 'object') return null;
+    const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : 0);
+    const o = g.olliteRt && typeof g.olliteRt === 'object' ? g.olliteRt : null;
+    return {
+      melding: typeof g.melding === 'string' && g.melding.trim() ? g.melding.replace(/[\u0000-\u001f]/g, ' ').slice(0, 800) : null,
+      apps: Array.isArray(g.apps) ? g.apps.filter((a) => GEMMA_APPS.includes(a)) : [],
+      kopieen: n(g.kopieen), opruimbaarMb: n(g.opruimbaarMb), kanOpruimen: g.kanOpruimen === true,
+      ollite: g.ollite && typeof g.ollite === 'object' && OLLITE_TOESTANDEN.includes(g.ollite.toestand) ? { toestand: g.ollite.toestand, zin: String(g.ollite.zin || '').replace(/[\u0000-\u001f]/g, ' ').slice(0, 300), kanStarten: g.ollite.kanStarten === true } : null,
+      olliteRt: o ? { health: typeof o.health === 'boolean' ? o.health : null, metrics: typeof o.metrics === 'boolean' ? o.metrics : null, modellen: Number.isInteger(o.modellen) ? o.modellen : null } : null,
+    };
+  }
+  // 457: de AI-kern meldt alleen getallen en een ja/nee. Veronica zegt het in een zin.
+  function leesAikern(a) {
+    if (!a || typeof a !== 'object') return null;
+    const n = (v) => (Number.isInteger(v) && v >= 0 && v < 1000 ? v : 0);
+    return { noodstop: a.noodstop === true, klanten: n(a.klanten), voorstellenOpen: n(a.voorstellenOpen), geweigerd: n(a.geweigerd) };
+  }
+  function kernZin(a) {
+    if (!a) return null;
+    if (a.noodstop) return 'AI-kern: de noodstop staat aan. Er start niets.';
+    const w = a.voorstellenOpen === 0 ? 'er wacht niets op jou' : a.voorstellenOpen === 1 ? 'er wacht 1 voorstel op jouw goedkeuring' : `er wachten ${a.voorstellenOpen} voorstellen op jouw goedkeuring`;
+    return `AI-kern: ${a.klanten} ${a.klanten === 1 ? 'klant' : 'klanten'}, ${w}.`;
+  }
   function leesStatus(k, t) {
     const x = k && typeof k === 'object' ? k : {};
     const b = x.batterij && typeof x.batterij === 'object' ? x.batterij : {};
@@ -95,14 +129,20 @@
       headroom: meting(getal(b.headroom), bron, t),
       stroom: meting(typeof s.stand === 'string' ? (STROOM[s.stand] || s.stand) : null, bron, t),
       magRekenen: meting(typeof s.magRekenen === 'boolean' ? s.magRekenen : null, bron, t),
+      inGebruik: meting(typeof x.inGebruik === 'boolean' ? x.inGebruik : null, bron, t),
+      kernMeerekenen: meting(typeof x.kernMeerekenen === 'boolean' ? x.kernMeerekenen : null, bron, t),
+      capaciteit: meting(leesCapaciteit(x.capaciteit), bron, t),
+      gemma: meting(leesGemma(x.gemma), bron, t),
       rol: meting(x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, bron, t),
+      aikern: meting(leesAikern(x.aikern), bron, t),
+      adressen: meting(Array.isArray(x.adressen) ? x.adressen.map((a) => normaalAdres(a, OLLITERT_POORT)).filter(Boolean).slice(0, 4) : null, bron, t),
       versie: meting(typeof x.versie === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(x.versie) ? x.versie : null, bron, t),
     };
   }
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.23';
+  const JARVIS_NIEUWSTE = '1.9.24';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -163,6 +203,7 @@
         naam, adres,
         jarvis: j || `http://${host}:${JARVIS_POORT}`,
         kern: ruw.kern === true,
+        alternatieven: (Array.isArray(ruw.alternatieven) ? ruw.alternatieven : []).map((a) => normaalAdres(a, OLLITERT_POORT)).filter((a) => a && a !== adres).slice(0, 4),
         // De plek (1.9.0): mobiel (in je broekzak) of rek (koeler en stekker). Onbekend = null.
         plek: ruw.plek === 'mobiel' || ruw.plek === 'rek' ? ruw.plek : null,
         sleutel: typeof ruw.sleutel === 'string' ? ruw.sleutel.slice(0, 200) : '',
@@ -184,7 +225,9 @@
       stekkersGevonden.push({ naam: String(k.naam || 'Stekker').replace(/[^\p{L}\p{N} ._-]/gu, '').slice(0, 40) || 'Stekker', ip: m[1], mac });
     }
     // 452b: wie antwoordt, de baas of een werker? Alleen de baas is gezaghebbend voor de stekkers.
-    return { telefoons: uit, stekkers, stekkersGevonden, rol: x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon) };
+    // 455: van een privé-klus weet Veronica ALLEEN dat er een bezig is. Geen titel, geen soort, geen tekst.
+    const priveBezig = x.prive && typeof x.prive === 'object' && Number(x.prive.bezig) > 0 ? 1 : 0;
+    return { telefoons: uit, stekkers, stekkersGevonden, priveBezig, rol: x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon) };
   }
   // 1.9.14: de downloadlink voor een nieuwe telefoon (QR "JARVIS op een nieuwe telefoon zetten"). Alleen een
   // ondertekend adres in de postbus (zelfde regel als de werker in JARVIS); al het andere: null.
@@ -373,7 +416,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.23';
+  const VERONICA_VERSIE = '1.9.24';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
   function koppelStand(i) {
     const o = i || {};
@@ -891,8 +934,20 @@
     return kandidaten.length ? { adres: kandidaten[0].jarvis, naam: kandidaten[0].naam } : null;
   }
 
+  // 457: ZWIJGT HET OLLITERT-ADRES, MAAR ANTWOORDT JARVIS? Dan is het adres meestal oud (hotspot, ander wifi). Kandidaten, in volgorde:
+  // wat de telefoon zelf meldt (verse JARVIS), de host waar JARVIS wel antwoordt met poort 8000, en wat de baas nog van hem wist.
+  function alternatieveAdressen(t, status) {
+    const uit = [];
+    const voeg = (a) => { const n = normaalAdres(a, OLLITERT_POORT); if (n && n !== t.adres && !uit.includes(n)) uit.push(n); };
+    const gemeld = status && status.adressen && Array.isArray(status.adressen.waarde) ? status.adressen.waarde : [];
+    gemeld.forEach(voeg);
+    const m = /^http:\/\/([^:/]+)/.exec(String(t.jarvis || ''));
+    if (m) voeg(`http://${m[1]}:${OLLITERT_POORT}`);
+    (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
+    return uit.slice(0, 6);
+  }
   return {
-    begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
+    alternatieveAdressen, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,

@@ -16,6 +16,7 @@
 (function () {
   'use strict';
   const K = window.VeronicaKern;
+  const Pool = window.VeronicaPool;
   const $ = (id) => document.getElementById(id);
   function el(tag, klasse, tekst) {
     const e = document.createElement(tag);
@@ -106,10 +107,18 @@
     karakter: 'hulpdienst', // haar karakter (kern.js: veronicaZin); 'zakelijk' = zonder
     taken: [],
     aan: false,
+    bureau: true,           // Claude-bureau (de rekenbrug) aan/uit; standaard aan. Pantser moet daarnaast aan staan.
+    snelheid: {},           // adres -> gemeten tokens per seconde (voortschrijdend)
+    klusMs: {},             // adres -> hoe lang de laatste klus duurde
+    snelheidProef: {},      // adres -> wanneer de korte snelheidstest voor het laatst liep
+    beloften: new Map(),    // taakId -> { resolve, reject } (alleen Claude-klussen; nooit opgeslagen)
+    rem: Pool.maakRem(() => Date.now()),
+    tellers: { klussen: 0, gelukt: 0, mislukt: 0, verdrongen: 0, tokens: 0, ms: 0, soort: {} },
     stromen: new Map(),     // adres -> { ctrl, taakId, reden }
     live: {},               // adres -> tekst die nu binnenkomt (van Veronica's eigen werk)
     scherm: {},             // adres -> { code, url, aan }
     log: [],
+    testUitslag: {},
     wakeLock: null,
   };
   const staat = (adres) => (S.staten[adres] = S.staten[adres] || {});
@@ -150,18 +159,22 @@
   }
 
   // ---- Meten ----
-  async function meetTelefoon(t) {
-    const m = meet(t.adres);
-    const s = staat(t.adres);
+  // 457: gevonden andere adressen onthouden we per telefoon-naam, zodat het logboek niet bij elke lijst van de baas opnieuw hetzelfde meldt.
+  const adresGelogd = new Set();
+  async function gezondAdres(t, adres) {
     try {
-      const r = await haal(`${t.adres}/health?metrics=true`, { headers: kop(t) }, 2500);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      m.health = K.leesHealth(await r.json(), nu());
-      m.gezien = nu();
-      s.bereikbaar = true;
-    } catch (e) {
-      s.bereikbaar = false;   // de oude metingen blijven staan en worden vanzelf grijs
-    }
+      const r = await haal(`${adres}/health?metrics=true`, { headers: kop(t) }, 2500);
+      if (!r.ok) return null;
+      return K.leesHealth(await r.json(), nu());
+    } catch (e) { return null; }
+  }
+  async function meetTelefoon(t) {
+    let m = meet(t.adres);
+    let s = staat(t.adres);
+    const eerderBereikbaar = s.bereikbaar === true;
+    const h = await gezondAdres(t, t.adres);
+    if (h) { m.health = h; m.gezien = nu(); s.bereikbaar = true; }
+    else s.bereikbaar = false;   // de oude metingen blijven staan en worden vanzelf grijs
     if (!(m.jarvisNietTot > nu())) {
       try {
         const r = await haal(`${t.jarvis}/jarvis/status`, {}, 2000);
@@ -169,9 +182,40 @@
         m.status = K.leesStatus(await r.json(), nu());
       } catch (e) { m.jarvisNietTot = nu() + 60000; }   // geen JARVIS (of even weg): een minuut niet vragen
     }
+    // 457: het adres zwijgt maar JARVIS antwoordt -> de andere adressen proberen, hoogstens vier tegelijk.
+    if (s.bereikbaar === false && m.status) {
+      const kand = K.alternatieveAdressen(t, m.status);
+      for (let i = 0; i < kand.length && s.bereikbaar === false; i += 3) {
+        const uit = await Promise.all(kand.slice(i, i + 3).map(async (a) => ({ a, h: await gezondAdres(t, a) })));
+        const goed = uit.find((x) => x.h);
+        if (!goed) continue;
+        const oud = t.adres;
+        const sleutelOud = `${oud}`;
+        // De metingen verhuizen mee met het adres.
+        S.metingen[goed.a] = Object.assign(S.metingen[goed.a] || {}, m, { health: goed.h, gezien: nu() });
+        S.staten[goed.a] = Object.assign(S.staten[goed.a] || {}, s, { bereikbaar: true });
+        t.adres = goed.a;
+        m = S.metingen[goed.a]; s = S.staten[goed.a];
+        const sl = `${t.naam}|${sleutelOud}|${goed.a}`;
+        if (!adresGelogd.has(sl)) {
+          adresGelogd.add(sl);
+          logRegel(`${t.naam}: het doorgegeven adres gaf geen antwoord. Ik heb het gevonden op ${goed.a.slice(7)} en gebruik dat nu.`);
+        }
+        try { await Opslag.schrijf('telefoons', S.telefoons); } catch (e) { /* volgende keer */ }
+      }
+      if (s.bereikbaar === false) {
+        const sl = `${t.naam}|zwijgt`;
+        if (!adresGelogd.has(sl)) { adresGelogd.add(sl); logRegel(`${t.naam}: JARVIS antwoordt wel, maar het rekenprogramma (OlliteRT) niet op ${kand.length ? 'de adressen die ik probeerde' : 'dit adres'}. Is OlliteRT aan en staat de server aan?`); }
+      } else adresGelogd.delete(`${t.naam}|zwijgt`);
+    }
     const st = m.status || {};
     const vers = (x) => (x && nu() - x.t <= K.MAX_LEEFTIJD_MS ? x.waarde : null);
     s.hitteStand = K.ruweStand({ headroom: vers(st.headroom), temperatuur: vers(st.temperatuur), hitte: vers(st.hitte) });
+    // 456b: zodra een telefoon (weer) antwoordt: temperatuur en accu in het logboek, zodat je later kunt zien hoe warm hij was.
+    if (!eerderBereikbaar && s.bereikbaar === true) {
+      const tp = vers(st.temperatuur), ac = vers(st.batterij);
+      logRegel(`${t.naam} antwoordt${tp !== null || ac !== null ? ':' : '.'}${tp !== null ? ` ${String(Math.round(tp * 10) / 10).replace('.', ',')} °C` : ''}${tp !== null && ac !== null ? ',' : ''}${ac !== null ? ` accu ${Math.round(ac)}%` : ''}${tp !== null || ac !== null ? '.' : ''}`);
+    }
   }
   // Het JARVIS-adres dat ze nu volgt (stand.json, koppeltoken, het adres in de QR).
   const kernNu = () => S.actieveKern || S.kern;
@@ -272,6 +316,7 @@
       karakterTik();
       tekenLive();
       werkTik();
+      snelheidTik();
     } finally { meetBezig = false; }
   }
 
@@ -279,8 +324,9 @@
   // van Veronica) kwam vroeger pas in Veronica als die lijst opnieuw werd opgehaald -- alleen op Koppelen, of als niemand
   // antwoordde. Nu hoogstens eens per minuut, alleen als de baas toch al antwoordt (een verzoek).
   let lijstT = 0;
+  let zwareLijstT = 0;
   async function lijstTik(adres) {
-    if (!S.code || nu() - lijstT < 60000) return;
+    if (!S.code || nu() - lijstT < 15000) return;
     lijstT = nu();
     let l = null;
     try {
@@ -288,6 +334,10 @@
       if (r.ok) l = K.leesVertrouwd(await r.json());
     } catch (e) { return; }
     if (!l) return;
+    // 455: alleen "er loopt een privé-klus" (een ja/nee), elke 15 s; de rest van de lijst hoogstens eens per minuut.
+    if (l.rol === 'baas' && S.priveBezig !== l.priveBezig) { S.priveBezig = l.priveBezig; $('priveBezig').hidden = !l.priveBezig; }
+    if (nu() - zwareLijstT < 60000) return;
+    zwareLijstT = nu();
     if (l.rol === 'baas' && await neemStekkersOver(l)) tekenLive();
     if (!l.telefoons.length) return;
     l.telefoons = K.herstelKernAdres(l.telefoons, adres);
@@ -831,6 +881,56 @@
   // 1.9.21 (451): DE BAAS WISSELEN MET EEN KNOP. Eerst de nieuwe baas roepen ('word-baas'); antwoordt die niet, dan
   // verandert er niets. Daarna de oude ('word-werker'). Beide met de code van de rij: een werker laat die ook binnen.
   // De nieuwe baas neemt die code over als zijn eigen code, dus Veronica hoeft niets opnieuw te koppelen.
+  // 456b: "Ruim op" -- JARVIS wist ALLEEN zijn eigen dubbele modelkopie op die telefoon (nooit een app, nooit het laatste exemplaar).
+  async function ruimGemmaOp(t) {
+    if (!S.code || !t || !t.jarvis) return;
+    const gm = (meet(t.adres).status || {}).gemma;
+    const g = gm && gm.waarde;
+    if (!g || !g.kanOpruimen) return;
+    if (typeof window.confirm === 'function' && !window.confirm(`${t.naam}: de dubbele kopie van het model wissen (${String(Math.round(g.opruimbaarMb / 100) / 10).replace('.', ',')} GB)? Alleen de kopie in JARVIS. Je Gemma-apps blijven staan.`)) return;
+    let ok = false;
+    try { ok = (await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'ruim-gemma-op', van: 'veronica' }) }, 3000)).ok; } catch (e) { ok = false; }
+    logRegel(ok ? `${t.naam}: opruimen gevraagd. Binnen een halve minuut staat hier het resultaat.` : `${t.naam} antwoordt niet. Er is niets gewist.`);
+    (meet(t.adres)).jarvisNietTot = 0;
+  }
+  // 458: "Open OlliteRT" -- JARVIS op die telefoon opent de app. Lukt dat niet (Android), dan zegt JARVIS dat in zijn eigen logboek.
+  async function startOlliteVanuitVeronica(t) {
+    if (!S.code || !t || !t.jarvis) return;
+    let ok = false;
+    try { ok = (await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'start-ollite', van: 'veronica' }) }, 3000)).ok; } catch (e) { ok = false; }
+    logRegel(ok ? `${t.naam}: gevraagd om OlliteRT te openen. Over een halve minuut zie je hier of de server aan staat.` : `${t.naam} antwoordt niet. Er is niets gevraagd.`);
+    (meet(t.adres)).jarvisNietTot = 0;
+  }
+  // 458: TEST DEZE TELEFOON -- een korte vraag, het antwoord en de tijd. Niet tijdens werk van de pool op die telefoon.
+  async function testTelefoon(t) {
+    const s = staat(t.adres);
+    if (s.bezig) { S.testUitslag[t.adres] = { zin: 'Test: deze telefoon is nu bezig. Probeer het zo nog eens.' }; tekenLive(); return; }
+    s.bezig = true;
+    S.testUitslag[t.adres] = { zin: 'Test loopt...' }; tekenLive();
+    const ctrl = new AbortController();
+    const klok = setTimeout(() => ctrl.abort(), 30000);
+    const t0 = nu();
+    let zin;
+    try {
+      const model = modelNaamVan(meet(t.adres));
+      const r = await fetch(`${t.adres}/v1/chat/completions`, Object.assign({
+        method: 'POST', signal: ctrl.signal, headers: Object.assign({ 'Content-Type': 'application/json' }, kop(t)),
+        body: JSON.stringify({ model: model || undefined, stream: false, max_tokens: 20, temperature: 0, messages: [{ role: 'user', content: 'Zeg alleen het woord: klaar.' }] }),
+      }, K.lnaOpties(t.adres)));
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      const tekst = String(d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80);
+      const sec = String(Math.round((nu() - t0) / 100) / 10).replace('.', ',');
+      zin = tekst ? `Test gelukt in ${sec} seconden. Antwoord: "${tekst}".` : `Test: de telefoon antwoordde na ${sec} seconden, maar zonder tekst. Is er een model geladen?`;
+    } catch (e) {
+      const snel = nu() - t0 < 4000;
+      zin = ctrl.signal.aborted ? 'Test mislukt: na 30 seconden nog geen antwoord. Het model laadt misschien nog, of de telefoon is te traag.'
+        : snel ? 'Test mislukt: OlliteRT weigert de verbinding. Staat de server aan op die telefoon?' : 'Test mislukt: geen antwoord van OlliteRT.';
+    } finally { clearTimeout(klok); s.bezig = false; }
+    S.testUitslag[t.adres] = { zin };
+    logRegel(`${t.naam}: ${zin}`);
+    tekenLive();
+  }
   async function maakBaas(t) {
     if (!S.code || !t || !t.jarvis || t.kern) return;
     if (typeof window.confirm === 'function' && !window.confirm(`${t.naam} de baas maken?`)) return;
@@ -856,7 +956,12 @@
     const vak = $('tegels');
     $('leeg').hidden = S.telefoons.length > 0;
     const n = S.telefoons.filter((t) => staat(t.adres).bereikbaar && !staat(t.adres).vervangen).length;
-    $('pantserZin').textContent = `${S.aan ? 'Pantser aan' : 'Pantser uit'} · ${n} van ${S.telefoons.length} bereikbaar · wachtrij ${S.taken.filter((x) => x.status === 'wacht').length}`;
+    const ps = pantserStand();
+    $('pantserZin').textContent = `${ps.regel}${S.aan ? ` · wachtrij ${S.taken.filter((x) => x.status === 'wacht').length}` : ''}`;
+    morphKinderen($('pantserHelp'), S.aan ? ps.helpen.map((h) => { const d = el('div', 'pantserHelpRegel', h.zin); d.dataset.sleutel = h.adres; return d; }) : []);
+    $('bureauKnop').textContent = `Claude-bureau: ${S.bureau ? 'aan' : 'uit'}`;
+    $('bureauKnop').setAttribute('aria-pressed', String(S.bureau));
+    $('bureauZin').textContent = S.bureau ? `${S.tellers.klussen} ${S.tellers.klussen === 1 ? 'klus' : 'klussen'}${S.tellers.ms > 0 && S.tellers.tokens > 0 ? ` · ±${Math.round(S.tellers.tokens * 1000 / S.tellers.ms * 10) / 10} tokens/s` : ''}` : '';
     const tijd = nu();
     metScroll(() => morphKinderen(vak, S.telefoons.map((t) => {
       const m = meet(t.adres);
@@ -875,8 +980,29 @@
       const vz = m.status && m.status.versie && tijd - m.status.versie.t <= K.MAX_LEEFTIJD_MS
         ? K.versieZin(m.status.versie.waarde, K.nieuwsteVersie(S.telefoons.map((x) => ((meet(x.adres).status || {}).versie || {}).waarde)), m.status.rol && m.status.rol.waarde) : null;
       if (vz) tegel.appendChild(el('div', `tVersie${vz.achter ? ' achter' : ''}`, vz.tekst));
+      {
+        const ps = poolStaat(t);
+        const klasseNaam = { zwaar: 'ZWAAR', midden: 'MIDDEN', licht: 'LICHT', 'te-oud': 'TE OUD VOOR MODEL' }[ps.klasse];
+        const snel = ps.tps ? `±${String(Math.round(ps.tps * 10) / 10).replace('.', ',')} tokens/s` : 'snelheid nog niet gemeten';
+        const model = ps.klasse === 'te-oud' ? ps.klasseReden : `${ps.model || 'nog geen model'}${ps.aanbevolenModel && ps.model && !ps.model.toUpperCase().includes(ps.aanbevolenModel) ? ` (aanbevolen: ${ps.aanbevolenModel})` : ''}`;
+        tegel.appendChild(el('div', `tKlasse k-${ps.klasse}`, `${klasseNaam} · ${model} · ${snel} · ${ps.bezig ? 'bezig' : 'vrij'}`));
+      }
+      {
+        // 456b: dubbele Gemma-apps of modelkopieen op deze telefoon (de zin komt van JARVIS en wordt alleen als TEKST getoond).
+        const gm = m.status && m.status.gemma && tijd - m.status.gemma.t <= K.MAX_LEEFTIJD_MS ? m.status.gemma.waarde : null;
+        if (gm && gm.melding) tegel.appendChild(el('div', 'tGemma', gm.melding));
+      }
+      {
+        // 457: de AI-kern (alleen getallen; de zin maakt Veronica zelf).
+        const ak = m.status && m.status.aikern && tijd - m.status.aikern.t <= K.MAX_LEEFTIJD_MS ? m.status.aikern.waarde : null;
+        const zin = K.kernZin(ak);
+        if (zin) tegel.appendChild(el('div', 'tGemma', zin));
+      }
       tegel.appendChild(meterRij(t, m, s, tijd));
-      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`;
+      // 458: weet JARVIS op die telefoon wat er met OlliteRT is, dan zegt Veronica dat, in plaats van "geen antwoord".
+      const olGm = m.status && m.status.gemma && tijd - m.status.gemma.t <= K.MAX_LEEFTIJD_MS ? m.status.gemma.waarde : null;
+      const olZin = olGm && olGm.ollite && olGm.ollite.toestand !== 'klaar' && olGm.ollite.toestand !== 'onbekend' ? olGm.ollite.zin : null;
+      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : (!s.bereikbaar && olZin ? olZin : `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`);
       tegel.appendChild(el('div', `tBereik${s.bereikbaar && !oud ? '' : ' oud'}`, bereik));
       // De taak, en de tekst die NU binnenkomt (eigen werk, of wat de hoofdtelefoon meldt).
       const eigen = S.stromen.get(t.adres);
@@ -885,7 +1011,8 @@
       let taakZin = 'wacht';
       let live = '';
       let liveBron = '';
-      if (taak) { taakZin = `Veronica: ${taak.tekst.slice(0, 60)}`; live = S.live[t.adres] || ''; liveBron = 'eigen stroom van deze telefoon'; }
+      if (taak && taak.claude) { taakZin = `Claude-klus (${taak.soort})`; }
+      else if (taak) { taakZin = `Veronica: ${taak.tekst.slice(0, 60)}`; live = S.live[t.adres] || ''; liveBron = 'eigen stroom van deze telefoon'; }
       else if (kernAct) { taakZin = `hoofdtelefoon: ${kernAct.label}`; live = kernAct.tekst; liveBron = `stand.json van de hoofdtelefoon · ${K.leeftijdZin(tijd - kernAct.t)}`; }
       else if (m.health && m.health.bezig && m.health.bezig.waarde && tijd - m.health.bezig.t <= K.MAX_LEEFTIJD_MS) taakZin = 'rekent (voor iets buiten Veronica)';
       tegel.appendChild(el('div', 'tTaak', taakZin));
@@ -915,7 +1042,17 @@
       if (s.vervangen) { const w = el('button', 'klein-knop', 'Weer erbij'); w.dataset.actie = 'weer'; knoppen.appendChild(w); }
       // 1.9.21 (451): van baas wisselen. Koppelen regelt het vanzelf (de eerste telefoon is de baas); dit is voor later.
       if (t.jarvis && !t.kern) { const b = el('button', 'klein-knop', 'Maak dit de baas'); b.dataset.actie = 'baas'; knoppen.appendChild(b); }
+      {
+        const gm = m.status && m.status.gemma && tijd - m.status.gemma.t <= K.MAX_LEEFTIJD_MS ? m.status.gemma.waarde : null;
+        if (t.jarvis && gm && gm.kanOpruimen) { const b = el('button', 'klein-knop', 'Ruim op'); b.dataset.actie = 'ruim'; b.title = 'Wist alleen de dubbele kopie van het model in JARVIS zelf'; knoppen.appendChild(b); }
+      }
+      {
+        const gm2 = m.status && m.status.gemma && tijd - m.status.gemma.t <= K.MAX_LEEFTIJD_MS ? m.status.gemma.waarde : null;
+        if (t.jarvis && gm2 && gm2.ollite && gm2.ollite.kanStarten) { const b = el('button', 'klein-knop', 'Open OlliteRT'); b.dataset.actie = 'olliteStart'; b.title = 'JARVIS opent de OlliteRT-app op die telefoon. De server aanzetten doe je daar zelf, tenzij OlliteRT hem vanzelf start.'; knoppen.appendChild(b); }
+        const tb = el('button', 'klein-knop', 'Test deze telefoon'); tb.dataset.actie = 'test'; tb.title = 'Stuurt een korte vraag en laat het antwoord en de tijd zien'; knoppen.appendChild(tb);
+      }
       tegel.appendChild(knoppen);
+      if (S.testUitslag[t.adres]) tegel.appendChild(el('div', 'tBron', S.testUitslag[t.adres].zin));
       if (sch.aan) {
         const img = el('img', 'tScherm');
         img.alt = `Scherm van ${t.naam}`;
@@ -1085,6 +1222,75 @@
     if (S.telefoons.some((t) => S.scherm[t.adres] && S.scherm[t.adres].aan)) tekenLive();
   }
 
+  // ---- De rekenpool: wat de verkeersagent (pool.js) per telefoon moet weten ----
+  const modelNaamVan = (m) => (m.health && m.health.model && nu() - m.health.model.t <= K.MAX_LEEFTIJD_MS ? m.health.model.waarde : null);
+  function poolStaat(t) {
+    const s = staat(t.adres);
+    const m = meet(t.adres);
+    const vers = (x) => x && nu() - x.t <= K.MAX_LEEFTIJD_MS;
+    const modelNaam = modelNaamVan(m);
+    const st = m.status || {};
+    const rustPer = (S.zonStroom && S.zonStroom.rustPer) || {};
+    const tps = S.snelheid[t.adres] || (m.health && m.health.tps && vers(m.health.tps) && m.health.tps.waarde > 0 ? m.health.tps.waarde : undefined);
+    const cap = st.capaciteit && vers(st.capaciteit) && st.capaciteit.waarde ? st.capaciteit.waarde : {};
+    const c = Pool.capaciteit({ ramGb: cap.ramGb, sdk: cap.sdk, arm64: cap.arm64, vrijGb: cap.vrijGb, tps, modelGeladen: modelNaam ? true : undefined, model: modelNaam });
+    return {
+      bereikbaar: s.bereikbaar, bezig: s.bezig, vervangen: s.vervangen, uitTot: s.uitTot, hitteStand: s.hitteStand, laatstGebruikt: s.laatstGebruikt,
+      rust: rustPer[t.naam] ? true : undefined,
+      magRekenen: st.magRekenen && vers(st.magRekenen) && st.magRekenen.waarde === false ? false : undefined,
+      modelGeladen: m.health && m.health.model && vers(m.health.model) ? !!modelNaam : undefined,
+      klasse: c.klasse, klasseReden: c.reden, aanbevolenModel: c.model, model: modelNaam,
+      tps,
+      laadt: st.laadt && vers(st.laadt) ? st.laadt.waarde : undefined,
+      inGebruik: st.inGebruik && vers(st.inGebruik) ? st.inGebruik.waarde : undefined,
+      kernMeerekenen: st.kernMeerekenen && vers(st.kernMeerekenen) ? st.kernMeerekenen.waarde === true : undefined,
+    };
+  }
+  const poolStaten = () => { const u = {}; for (const t of S.telefoons) u[t.adres] = poolStaat(t); return u; };
+  const pantserStand = () => Pool.pantserRegel(S.telefoons, poolStaten(), S.aan);
+
+  // Een korte snelheidstest per telefoon (een klein verzoek van ~24 tokens): zo weet de verdeler de klasse en de tijdslimiet.
+  // Alleen als de telefoon vrij en bereikbaar is, hoogstens eens per tien minuten, en nooit tegelijk met werk.
+  async function meetSnelheid(t) {
+    const s = staat(t.adres);
+    if (s.bezig || !s.bereikbaar || s.vervangen || nu() - (S.snelheidProef[t.adres] || 0) < 10 * 60 * 1000) return;
+    if (poolStaat(t).klasse === 'te-oud') return;                // te oud voor een model: ook geen speedtest
+    S.snelheidProef[t.adres] = nu();
+    s.bezig = true;
+    const ctrl = new AbortController();
+    const klok = setTimeout(() => ctrl.abort(), 20000);
+    const t0 = nu();
+    let stukjes = 0;
+    try {
+      const model = modelNaamVan(meet(t.adres));
+      const r = await fetch(`${t.adres}/v1/chat/completions`, Object.assign({
+        method: 'POST', signal: ctrl.signal, headers: Object.assign({ 'Content-Type': 'application/json' }, kop(t)),
+        body: JSON.stringify({ model: model || undefined, stream: true, max_tokens: 24, temperature: 0, messages: [{ role: 'user', content: 'Tel van een tot twintig, met komma\'s ertussen.' }] }),
+      }, K.lnaOpties(t.adres)));
+      if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+      const lezer = K.maakSseLezer();
+      const rd = r.body.getReader();
+      const dec = new TextDecoder();
+      let eerste = null;
+      for (;;) {
+        const { value, done } = await rd.read();
+        if (done) break;
+        const n = lezer.voeg(dec.decode(value, { stream: true })).length;
+        if (n && eerste === null) eerste = nu();
+        stukjes += n;
+      }
+      // De eerste stukjes tellen niet mee: het model "wordt wakker". Gemeten vanaf het eerste stukje.
+      if (stukjes > 3 && eerste !== null && nu() > eerste) S.snelheid[t.adres] = Pool.bijwerkSnelheid(S.snelheid[t.adres], stukjes - 1, nu() - eerste);
+    } catch (e) { /* geen meting: de klasse blijft op RAM en model staan */ } finally {
+      clearTimeout(klok);
+      s.bezig = false;
+      tekenLive();
+      werkTik();
+    }
+  }
+  function snelheidTik() { if (S.aan) for (const t of S.telefoons) meetSnelheid(t); }
+
+
   // ---- De wachtrij ----
   const nieuwId = () => `v${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
   async function voegTakenToe(tekst) {
@@ -1101,11 +1307,21 @@
   function werkTik() {
     if (!S.aan) return;
     for (;;) {
-      const taak = S.taken.find((x) => x.status === 'wacht');
-      if (!taak) return;
-      const t = K.kiesTelefoon(S.telefoons, S.staten, nu());
-      if (!t) return;
-      draai(taak, t);
+      const staten = poolStaten();
+      const wachtend = Pool.wachtrijVolgorde(S.taken);
+      if (!wachtend.length) return;
+      // De eerste klus waar een telefoon voor vrij is. Een zware klus die nog wacht houdt de lichte klussen daarachter niet op.
+      let gedaan = false;
+      for (const taak of wachtend) {
+        const t = Pool.kiesTelefoon(S.telefoons, staten, taak, nu());
+        if (t) { draai(taak, t); gedaan = true; break; }
+      }
+      if (gedaan) continue;
+      // Niemand vrij voor de belangrijkste klus: mag een LAGERE voorrang worden afgebroken? Die klus gaat dan opnieuw de wachtrij in.
+      const lopend = [...S.stromen.entries()].map(([adres, st]) => ({ adres, voorrang: Pool.rangVan(S.taken.find((x) => x.id === st.taakId)), sinds: st.sinds || 0 }));
+      const weg = Pool.verdring(wachtend[0], lopend, S.telefoons, staten, nu());
+      if (weg) { const st = S.stromen.get(weg); st.reden = 'verdrongen'; st.ctrl.abort(); }
+      return;
     }
   }
   async function draai(taak, t) {
@@ -1114,19 +1330,24 @@
     s.laatstGebruikt = nu();
     taak.status = 'bezig';
     taak.telefoon = t.naam;
-    Opslag.taak(taak);
+    if (!taak.claude) Opslag.taak(taak);            // Claude-klussen staan NIET in de opslag van deze browser
     const ctrl = new AbortController();
-    const stroom = { ctrl, taakId: taak.id, reden: null };
+    const stroom = { ctrl, taakId: taak.id, reden: null, sinds: nu() };
     S.stromen.set(t.adres, stroom);
-    S.live[t.adres] = '';
+    if (!taak.claude) S.live[t.adres] = '';
     tekenLive();
     const m = meet(t.adres);
     const model = m.health && m.health.model ? m.health.model.waarde : undefined;
+    const t0 = nu();
+    let stukjes = 0;
+    // Te langzaam? Dan gaat de klus naar de volgende telefoon (zie de tijdslimiet in pool.js).
+    const limiet = Pool.tijdslimiet(taak.max_tokens || 600, S.snelheid[t.adres]);
+    const klok = taak.claude ? setTimeout(() => { stroom.reden = 'traag'; ctrl.abort(); }, limiet) : null;
     try {
       const r = await fetch(`${t.adres}/v1/chat/completions`, Object.assign({
         method: 'POST', signal: ctrl.signal,
         headers: Object.assign({ 'Content-Type': 'application/json' }, kop(t)),
-        body: JSON.stringify({ model, stream: true, max_tokens: 600, messages: [{ role: 'user', content: taak.tekst }] }),
+        body: JSON.stringify({ model, stream: true, max_tokens: taak.max_tokens || 600, messages: [{ role: 'user', content: taak.tekst }] }),
       }, K.lnaOpties(t.adres)));
       if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
       const lezer = K.maakSseLezer();
@@ -1135,50 +1356,161 @@
       for (;;) {
         const { value, done } = await rd.read();
         if (done) break;
-        if (lezer.voeg(dec.decode(value, { stream: true })).length) { S.live[t.adres] = K.zonderDenken(lezer.tekst()); tekenLive(); }
+        const n = lezer.voeg(dec.decode(value, { stream: true })).length;
+        stukjes += n;
+        // De tekst die binnenkomt is van Veronica's eigen werk; die van Claude-klussen laat ze NIET op het scherm zien.
+        if (n && !taak.claude) { S.live[t.adres] = K.zonderDenken(lezer.tekst()); tekenLive(); }
       }
+      const ms = nu() - t0;
       taak.status = 'klaar';
       taak.uitkomst = K.zonderDenken(lezer.tekst());
       taak.klaar = nu();
-      logRegel(`${t.naam} is klaar: ${taak.tekst.slice(0, 40)}`);
+      if (stukjes > 2) S.snelheid[t.adres] = Pool.bijwerkSnelheid(S.snelheid[t.adres], stukjes, ms);
+      S.klusMs[t.adres] = ms;
+      S.tellers.klussen += 1; S.tellers.gelukt += 1; S.tellers.tokens += stukjes; S.tellers.ms += ms;
+      if (taak.claude) {
+        S.tellers.soort[taak.soort] = (S.tellers.soort[taak.soort] || 0) + 1;
+        const b = S.beloften.get(taak.id);
+        if (b) { S.beloften.delete(taak.id); b.resolve(Pool.maakResultaat(taak, t.naam, taak.uitkomst, ms, stukjes, nu())); }
+        taak.tekst = ''; taak.uitkomst = '';                                    // niets van Claude's inhoud blijft liggen
+        logRegel(`Claude-klus (${taak.soort}) klaar op ${t.naam}: ${Math.round(ms / 100) / 10} s`);   // GEEN inhoud in het logboek
+      } else logRegel(`${t.naam} is klaar: ${taak.tekst.slice(0, 40)}`);
     } catch (fout) {
-      // Uitgevallen (of vervangen, of noodstop): het stukje gaat terug in de wachtrij.
+      if (taak.status === 'fout') return;        // een Claude-klus die al is afgehandeld (deadline, stop, noodstop): niets terugzetten
+      // Uitgevallen, vervangen, verdrongen, te traag of noodstop: het stukje gaat terug in de wachtrij.
       taak.status = 'wacht';
       taak.telefoon = null;
       if (stroom.reden === 'noodstop') { /* blijft wachten tot het pantser weer aan gaat */ }
       else if (stroom.reden === 'vervangen') logRegel(`Onderdeel vervangen: ${t.naam}. Het werk gaat naar een ander.`);
-      else {
+      else if (stroom.reden === 'verdrongen') { S.tellers.verdrongen += 1; logRegel(`${t.naam}: een klus met lagere voorrang is opnieuw in de wachtrij gezet voor een met hogere voorrang.`); }
+      else if (stroom.reden === 'traag') {
+        (taak.uitgesloten = taak.uitgesloten || []).push(t.adres);
+        taak.pogingen += 1;
+        logRegel(`${t.naam} was te langzaam voor deze klus. Hij gaat naar een andere telefoon.`);
+        if (!S.telefoons.some((x) => !taak.uitgesloten.includes(x.adres))) afgebroken(taak, 'tijd', 'Alle telefoons waren te langzaam voor deze klus.');
+      } else {
         taak.pogingen += 1;
         s.uitTot = nu() + 30000;
         logRegel(`${t.naam} viel uit (${(fout && fout.message) || 'geen antwoord'}). Het werk gaat naar een ander.`);
-        if (taak.pogingen >= 3) { taak.status = 'fout'; taak.uitkomst = 'Drie keer mislukt.'; }
+        if (taak.pogingen >= 3) { afgebroken(taak, 'mislukt', 'Drie keer mislukt.'); }
       }
+      if (taak.status === 'wacht' && taak.pogingen >= 3) afgebroken(taak, 'mislukt', 'Drie keer mislukt.');
     } finally {
+      if (klok) clearTimeout(klok);
       s.bezig = false;
       S.stromen.delete(t.adres);
-      S.live[t.adres] = '';
-      await Opslag.taak(taak);
+      if (!taak.claude) S.live[t.adres] = '';
+      if (!taak.claude) await Opslag.taak(taak);
       tekenLive();
       werkTik();
     }
   }
+  // Een klus die niet meer verder kan: de gebruiker (of Claude) krijgt een eerlijke uitslag.
+  function afgebroken(taak, fout, reden) {
+    taak.status = 'fout';
+    taak.uitkomst = reden;
+    if (taak.claude) {
+      S.tellers.mislukt += 1;
+      const b = S.beloften.get(taak.id);
+      if (b) { S.beloften.delete(taak.id); b.reject({ fout, reden, let_op: Pool.LET_OP }); }
+      taak.tekst = '';
+    }
+  }
   function tekenWachtrij() {
     const lijst = $('takenLijst');
+    S.taken = S.taken.filter((x) => !(x.claude && (x.status === 'klaar' || x.status === 'fout')));       // Claude-klussen blijven niet staan
     morphKinderen(lijst, S.taken.slice().reverse().slice(0, 50).map((x) => {
       const d = el('div', `taak ${x.status}`);
       d.dataset.id = x.id;
-      d.appendChild(el('div', 'taakKop', `${x.status === 'klaar' ? '✓' : x.status === 'bezig' ? '…' : x.status === 'fout' ? '✗' : '·'} ${x.tekst.slice(0, 80)}${x.telefoon ? ` (${x.telefoon})` : ''}`));
-      if (x.uitkomst) d.appendChild(el('div', 'taakUit', x.uitkomst));
+      d.appendChild(el('div', 'taakKop', `${x.status === 'klaar' ? '✓' : x.status === 'bezig' ? '…' : x.status === 'fout' ? '✗' : '·'} ${x.claude ? `Claude-klus (${x.soort})` : x.tekst.slice(0, 80)}${x.telefoon ? ` (${x.telefoon})` : ''}`));
+      if (x.uitkomst && !x.claude) d.appendChild(el('div', 'taakUit', x.uitkomst));
       return d;
     }));
   }
 
+
+  // ---- De REKENBRUG: Claude (Cowork in Chrome, of een script in de Veronica-tab) stuurt kleine klussen naar de telefoons ----
+  //
+  // window.rekenbrug.taak({ soort, tekst, max_tokens, opties }) -> belofte met { id, soort, telefoon, tekst, ms, tokens, tokens_per_s, let_op }.
+  // Alleen de vaste klussoorten (pool.js). Het antwoord is DATA van een klein model: het veld let_op zegt dat. Privé-kamer-klussen gaan hier NOOIT
+  // doorheen (de kamer staat in JARVIS en kent deze brug niet). Voorrang 2: de eigen vragen van de eigenaar en de privé-kamer gaan voor.
+  function brugTaak(inv) {
+    if (!S.bureau) return Promise.reject({ fout: 'bureau-uit', reden: 'Het Claude-bureau staat uit in Veronica.', let_op: Pool.LET_OP });
+    if (!S.aan) return Promise.reject({ fout: 'pantser-uit', reden: 'Pantser staat uit. Zet in Veronica Pantser aan.', let_op: Pool.LET_OP });
+    const v = Pool.valideer(inv);
+    if (!v.ok) return Promise.reject({ fout: 'ongeldig', reden: v.reden, let_op: Pool.LET_OP });
+    if (!S.rem.mag(v.soort)) return Promise.reject({ fout: 'rem', reden: `Te veel klussen van de soort ${v.soort} dit uur (hoogstens ${Pool.SOORTEN[v.soort].limiet}).`, let_op: Pool.LET_OP });
+    S.rem.tel(v.soort);
+    const id = nieuwId();
+    const taak = {
+      id, claude: true, soort: v.soort, tekst: Pool.maakPrompt(v.soort, v.tekst, v.opties), max_tokens: v.max_tokens, gewicht: v.gewicht, maat: undefined,
+      voorrang: Pool.VOORRANG.claude, status: 'wacht', pogingen: 0, sinds: nu(), telefoon: null, uitkomst: null, uitgesloten: [],
+    };
+    return new Promise((resolve, reject) => {
+      S.beloften.set(id, { resolve, reject });
+      S.taken.push(taak);
+      // Een eigen deadline: een klus die zo lang niets oplevert krijgt een eerlijke tijdsuitslag (nooit eeuwig wachten).
+      const wacht = Math.min(Number(inv && inv.wacht_s) > 0 ? Number(inv.wacht_s) * 1000 : 180000, 600000);
+      setTimeout(() => {
+        if (S.beloften.has(id) && (taak.status === 'wacht' || taak.status === 'bezig')) {
+          const st = [...S.stromen.entries()].find(([, x]) => x.taakId === id);
+          if (st) { st[1].reden = 'tijd'; st[1].ctrl.abort(); }
+          afgebroken(taak, 'tijd', 'De klus duurde te lang.');
+          tekenWachtrij();
+        }
+      }, wacht);
+      tekenWachtrij();
+      werkTik();
+    });
+  }
+  function brugStatus() {
+    const ps = pantserStand();
+    const staten = poolStaten();
+    return {
+      versie: 1, bureau: S.bureau, pantser: S.aan, regel: ps.regel, klaar: ps.klaar, totaal: ps.totaal, klussenTegelijk: ps.tegelijk,
+      telefoons: S.telefoons.map((t) => ({ naam: t.naam, klasse: staten[t.adres].klasse, model: staten[t.adres].model || null, tokens_per_s: staten[t.adres].tps || null, bezig: !!staten[t.adres].bezig, klaar: Pool.pantserRegel([t], staten, true).klaar === 1, laatste_klus_ms: S.klusMs[t.adres] || null })),
+      wachtrij: S.taken.filter((x) => x.claude && x.status === 'wacht').length,
+      bezig: S.taken.filter((x) => x.claude && x.status === 'bezig').length,
+      tellers: JSON.parse(JSON.stringify(S.tellers)),
+      soorten: Object.keys(Pool.SOORTEN),
+      let_op: Pool.LET_OP,
+    };
+  }
+  function brugStop() {
+    let n = 0;
+    for (const x of S.taken) if (x.claude && (x.status === 'wacht' || x.status === 'bezig')) { afgebroken(x, 'gestopt', 'Gestopt via rekenbrug.stop().'); n += 1; }
+    for (const st of S.stromen.values()) { const x = S.taken.find((k) => k.id === st.taakId); if (x && x.claude) { st.reden = 'gestopt'; st.ctrl.abort(); } }
+    tekenWachtrij();
+    return n;
+  }
+  function zetBureau(aan) {
+    S.bureau = !!aan;
+    Opslag.schrijf('bureau', S.bureau).catch(() => {});
+    if (!S.bureau) brugStop();
+    logRegel(S.bureau ? 'Claude-bureau aan.' : 'Claude-bureau uit: klussen van Claude worden geweigerd.');
+    tekenLive();
+  }
+  window.rekenbrug = Object.freeze({ taak: brugTaak, status: brugStatus, stop: brugStop, versie: 1 });
+
   // ---- Pantser, Vervang onderdeel, NOODSTOP ----
+  // 456: de ene knop. De baas (JARVIS) opent of sluit zijn rekenpool (het OpenAI-adres); dit hoeft niet te lukken om hier te werken.
+  async function pantserNaarBaas(aan) {
+    if (!S.code || !kernNu()) return;
+    try { await haal(`${kernNu()}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'pantser', aan: !!aan, van: 'veronica' }) }, 3000); } catch (e) { /* de baas is er niet: Veronica rekent zelf door */ }
+  }
   function zetPantser(aan) {
     S.aan = !!aan;
+    pantserNaarBaas(S.aan);
     $('pantserKnop').textContent = S.aan ? 'Pantser aan' : 'Pantser uit';
     $('pantserKnop').setAttribute('aria-pressed', String(S.aan));
-    logRegel(S.aan ? 'Pantser aan: de wachtrij loopt.' : 'Pantser uit: de wachtrij staat stil.');
+    logRegel(S.aan ? 'Pantser aan: de telefoons worden opgeroepen en de wachtrij loopt.' : 'Pantser uit: geen nieuwe klussen; de telefoons rusten.');
+    if (S.aan) {
+      // Een knop: de baas roept alle telefoons op (ze melden zich zelf aan), dan meten we en testen we de snelheid.
+      roepOp(true).then(() => meetRonde()).then(() => snelheidTik()).catch(() => {});
+    } else {
+      // Wat nog wacht op een telefoon krijgt een eerlijke uitslag; wat al loopt maakt zijn klus af, daarna rust de telefoon.
+      for (const x of S.taken) if (x.claude && x.status === 'wacht') afgebroken(x, 'pantser-uit', 'Pantser staat uit.');
+    }
     tekenLive();
     werkTik();
   }
@@ -1195,6 +1527,8 @@
     $('pantserKnop').textContent = 'Pantser uit';
     $('pantserKnop').setAttribute('aria-pressed', 'false');
     for (const st of S.stromen.values()) { st.reden = 'noodstop'; st.ctrl.abort(); }
+    for (const x of S.taken) if (x.claude && (x.status === 'wacht' || x.status === 'bezig')) afgebroken(x, 'noodstop', 'NOODSTOP in Veronica.');
+    pantserNaarBaas(false);                       // ook de rekenpool van de baas dicht
     logRegel(K.veronicaZin(S.karakter, 'noodstop'));
     spreek(K.veronicaZin(S.karakter, 'noodstop'), 'noodstop');
     waarschuw('noodstop', K.veronicaZin('hulpdienst', 'noodstop'), true);
@@ -1851,11 +2185,13 @@
       S.eigenaarZelf = (await Opslag.lees('eigenaarZelf')) === true;
       S.karakter = (await Opslag.lees('karakter')) === 'zakelijk' ? 'zakelijk' : 'hulpdienst';
       S.wilWakker = (await Opslag.lees('wakker')) === true;
+      S.bureau = (await Opslag.lees('bureau')) !== false;
       S.taken = ((await Opslag.alleTaken()) || []).sort((a, b) => a.sinds - b.sinds);
       // Wat bezig was toen Veronica dichtging, gaat terug in de wachtrij.
       for (const x of S.taken) if (x.status === 'bezig') { x.status = 'wacht'; x.telefoon = null; await Opslag.taak(x); }
     } catch (e) { logRegel('De opslag van deze browser is niet te lezen.'); }
     $('pantserKnop').addEventListener('click', () => zetPantser(!S.aan));
+    $('bureauKnop').addEventListener('click', () => zetBureau(!S.bureau));
     $('noodstop').addEventListener('click', noodstop);
     $('vervangKnop').addEventListener('click', () => { const a = $('vervangKeus').value; if (a) vervang(a); });
     $('wakkerKnop').addEventListener('click', wakker);
@@ -1874,6 +2210,9 @@
       if (!t) return;
       if (knop.dataset.actie === 'scherm') schermWissel(t);
       if (knop.dataset.actie === 'baas') maakBaas(t);
+      if (knop.dataset.actie === 'ruim') ruimGemmaOp(t);
+      if (knop.dataset.actie === 'test') testTelefoon(t);
+      if (knop.dataset.actie === 'olliteStart') startOlliteVanuitVeronica(t);
       if (knop.dataset.actie === 'weer') { staat(t.adres).vervangen = false; logRegel(`${t.naam} doet weer mee.`); tekenLive(); werkTik(); }
     });
     $('wandUit').addEventListener('click', (e) => { e.stopPropagation(); Wand.stilT = nu(); zetWand(false); });
@@ -1974,6 +2313,6 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive };
+  window.__veronica = { poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon };
   start();
 }());
