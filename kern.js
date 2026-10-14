@@ -102,7 +102,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.22';
+  const JARVIS_NIEUWSTE = '1.9.23';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -175,7 +175,16 @@
       if (!m || !isEigenNet(m[1]) || stekkers.some((s) => s.ip === m[0])) continue;
       stekkers.push({ naam: String(k.naam || 'Stekker').slice(0, 40), ip: m[0], rol: k.rol === 'laden' ? 'laden' : 'ventilator' });
     }
-    return { telefoons: uit, stekkers, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon) };
+    // 452b: stekkers die JARVIS op het wifi VOND maar nog niet vertrouwt. Veronica toont er twee knoppen bij.
+    const stekkersGevonden = [];
+    for (const k of Array.isArray(x.stekkersGevonden) ? x.stekkersGevonden : []) {
+      const m = /^(\d{1,3}(?:\.\d{1,3}){3})$/.exec(String((k && k.ip) || '').trim());
+      const mac = String((k && k.mac) || '').trim().toUpperCase();
+      if (!m || !isEigenNet(m[1]) || !/^[0-9A-F:]{12,17}$/.test(mac) || stekkersGevonden.some((g) => g.mac === mac) || stekkersGevonden.length >= 6) continue;
+      stekkersGevonden.push({ naam: String(k.naam || 'Stekker').replace(/[^\p{L}\p{N} ._-]/gu, '').slice(0, 40) || 'Stekker', ip: m[1], mac });
+    }
+    // 452b: wie antwoordt, de baas of een werker? Alleen de baas is gezaghebbend voor de stekkers.
+    return { telefoons: uit, stekkers, stekkersGevonden, rol: x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon) };
   }
   // 1.9.14: de downloadlink voor een nieuwe telefoon (QR "JARVIS op een nieuwe telefoon zetten"). Alleen een
   // ondertekend adres in de postbus (zelfde regel als de werker in JARVIS); al het andere: null.
@@ -364,7 +373,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.22';
+  const VERONICA_VERSIE = '1.9.23';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
   function koppelStand(i) {
     const o = i || {};
@@ -693,7 +702,7 @@
       const accu = typeof r.accu === 'number' && r.accuMs !== null && r.accuMs <= maxMs ? Math.round(r.accu) : null;
       const stand = temp === null ? 'onbekend' : temp >= REK_HEET ? 'heet' : temp >= REK_WARM ? 'warm' : 'koel';
       return { naam: r.naam, temp, accu, stand,
-        tekst: `${r.naam} · ${temp === null ? 'temperatuur onbekend' : `${getal(temp)} °C`} · ${accu === null ? 'accu onbekend' : `🔋 ${accu}%${r.laadt ? ' (laadt)' : ''}`}${r.rust === true ? ' · 😴 rust tot de zon' : r.rust === false ? ' · ⚙️ rekent' : ''}` };
+        tekst: `${r.naam} · ${temp === null ? 'temperatuur onbekend' : `${getal(temp)} °C`} · ${accu === null ? 'accu onbekend' : `🔋 ${accu}%${r.laadt ? ' (laadt)' : ''}`}${r.rust === true ? ' · 😴 rust tot de zon' : r.rust === false ? ' · ⚙️ rekent' : ''}${/^\d+\.\d+\.\d+$/.test(String(r.versie || '')) ? ` · JARVIS ${r.versie}` : ''}` };
     });
     const gemeten = regels.filter((r) => r.temp !== null).sort((a, b) => b.temp - a.temp);
     if (!gemeten.length) return { stand: 'onbekend', zin: 'Rek: nog geen temperatuur gemeten.', regels };

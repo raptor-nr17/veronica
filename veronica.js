@@ -88,6 +88,7 @@
   const S = {
     telefoons: [],          // [{ naam, adres, jarvis, kern, sleutel }]
     stekkers: [],           // [{ naam, ip, rol }] (alleen lezen)
+    stekkersGevonden: [],   // [{ naam, ip, mac }] gevonden door JARVIS, nog niet vertrouwd (452b)
     stekkerMeting: {},      // ip -> { aan, watt, kwh, vandaag } (metingen met bron en tijd)
     kern: null, code: null, // de hoofdtelefoon (zijn JARVIS-adres) en zijn koppelcode
     actieveKern: null,      // wie ze NU volgt: de hoofdtelefoon, of de waarnemend baas als die weg is
@@ -236,6 +237,9 @@
     // 450: antwoordde de baas zelf (zijn oude adres), dan is DAT zijn adres -- niet wat hij over zichzelf zegt.
     const kernOud = l.telefoons.find((t) => t.kern);
     if (kernOud && S.kern && gevonden.a === S.kern) l.telefoons = K.herstelKernAdres(l.telefoons, gevonden.a);
+    // 452b: de stekkers komen ALLEEN van de baas. Antwoordt een werker (de baas is weg), dan is zijn lijst van stekkers leeg
+    // en zou Veronica ze allemaal vergeten.
+    if (l.rol === 'baas') await neemStekkersOver(l);
     if (l.telefoons.length) {
       S.telefoons = l.telefoons;
       await Opslag.schrijf('telefoons', S.telefoons);
@@ -283,7 +287,9 @@
       const r = await haal(`${adres}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': S.code } }, 3000);
       if (r.ok) l = K.leesVertrouwd(await r.json());
     } catch (e) { return; }
-    if (!l || !l.telefoons.length) return;
+    if (!l) return;
+    if (l.rol === 'baas' && await neemStekkersOver(l)) tekenLive();
+    if (!l.telefoons.length) return;
     l.telefoons = K.herstelKernAdres(l.telefoons, adres);
     const namen = K.nieuweNamen(S.telefoons, l.telefoons);
     const oud = JSON.stringify(S.telefoons.map((t) => [t.naam, t.adres]));
@@ -742,7 +748,8 @@
   function tekenRek(st) {
     const rustPer = (S.zonStroom && S.zonStroom.rustPer) || {};
     const o = K.rekOverzicht(st.map((x) => ({ naam: x.t.naam, plek: x.t.plek, temp: x.d.temperatuur.waarde, tempMs: x.d.temperatuur.ms,
-      accu: x.d.batterij.waarde, accuMs: x.d.batterij.ms, laadt: x.d.batterij.laadt, rust: rustPer[x.t.naam] })), 60000);
+      accu: x.d.batterij.waarde, accuMs: x.d.batterij.ms, laadt: x.d.batterij.laadt, rust: rustPer[x.t.naam],
+      versie: ((meet(x.t.adres).status || {}).versie || {}).waarde })), 60000);
     const blok = $('rekBlok');
     blok.hidden = !o;
     if (!o) return;
@@ -953,9 +960,33 @@
       return tegel;
     })));
     $('stekkerKop').hidden = !S.stekkers.length;
+    tekenStekkerNieuw();
     tekenSamen(tijd);
     tekenZonStroom(tijd);
     tekenWachtrij();
+  }
+
+  // 452b: NIEUWE STEKKERS. JARVIS (de baas) zoekt zelf Tasmota-stekkers op het wifi; hier staat wat hij vond, met twee
+  // knoppen. Veronica zoekt NIET zelf (een webpagina kan geen mDNS en mag het lokale netwerk niet afzoeken).
+  function tekenStekkerNieuw() {
+    const heeft = (rol) => S.stekkers.some((k) => k.rol === rol);
+    const mist = [heeft('ventilator') ? null : 'de ventilator', heeft('laden') ? null : 'de lader'].filter(Boolean);
+    const kaarten = S.stekkersGevonden.map((g) => {
+      const t = el('section', 'tegel stekker nieuw');
+      t.dataset.sleutel = g.mac;
+      t.append(el('h2', '', `🔌 Nieuwe stekker: ${g.naam}`), el('div', 'tRol', `Gevonden op het wifi (…${g.ip.split('.').pop()}). Wat doet hij?`));
+      const rij = el('div', 'tKnoppen');
+      for (const [rol, tekst] of [['ventilator', 'Dit is de ventilator'], ['laden', 'Dit is de lader']]) {
+        const b = el('button', 'klein-knop', tekst);
+        b.dataset.mac = g.mac; b.dataset.stekkerRol = rol;
+        rij.appendChild(b);
+      }
+      t.appendChild(rij);
+      return t;
+    });
+    const hint = (!kaarten.length && S.code && mist.length)
+      ? [(() => { const p = el('p', 'eerlijk', `Nog geen stekker voor ${mist.join(' en ')}. Zet een Tasmota-stekker in het stopcontact en op je wifi (2,4 GHz): JARVIS zoekt hem zelf, en hij verschijnt dan hier met twee knoppen.`); p.dataset.sleutel = 'hint'; return p; })()] : [];
+    morphKinderen($('stekkerNieuw'), kaarten.concat(hint));
   }
 
   // ZON EN STROOM: wat de hoofdtelefoon meldt, met bron en leeftijd. Nooit zelf gerekend.
@@ -1178,12 +1209,39 @@
     tekenLive();
   }
 
+  // 452b: de stekkers van de baas overnemen, ELKE keer dat Veronica de lijst leest (niet alleen bij het koppelen):
+  // een stekker die later wordt toegevoegd of gevonden moet vanzelf verschijnen. true = er veranderde iets.
+  async function neemStekkersOver(l) {
+    const nieuw = l.stekkers || [];
+    const gevonden = l.stekkersGevonden || [];
+    const veranderd = JSON.stringify(nieuw) !== JSON.stringify(S.stekkers) || JSON.stringify(gevonden) !== JSON.stringify(S.stekkersGevonden);
+    if (!veranderd) return false;
+    S.stekkers = nieuw;
+    S.stekkersGevonden = gevonden;
+    await Opslag.schrijf('stekkers', S.stekkers);
+    return true;
+  }
+  // 452b: "Dit is de ventilator" / "Dit is de lader". Veronica stuurt alleen de keuze (mac + rol, met de code); de baas
+  // zoekt de stekker in wat hij zelf vond en vertrouwt hem. Een onbekende mac doet niets.
+  async function kiesStekkerRol(mac, rol) {
+    if (!S.code || !['ventilator', 'laden'].includes(rol) || !/^[0-9A-F:]{12,17}$/.test(mac)) return;
+    const g = S.stekkersGevonden.find((x) => x.mac === mac);
+    try {
+      const a = await haal(`${kernNu()}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'stekker-kies', mac, rol, van: 'veronica' }) }, 4000);
+      if (!a.ok) throw new Error(String(a.status));
+      S.stekkersGevonden = S.stekkersGevonden.filter((x) => x.mac !== mac);
+      logRegel(`${g ? g.naam : 'Stekker'}: doorgegeven aan de baas als ${rol === 'laden' ? 'lader' : 'ventilator'}. Binnen een minuut staat hij bij de stekkers.`);
+    } catch (e) {
+      logRegel('De keuze kon niet naar de baas (geen antwoord). Probeer het zo nog eens.');
+    }
+    tekenLive();
+  }
+
   // ---- Koppelen: de vertrouwde lijst EEN keer overnemen van de hoofdtelefoon ----
   async function bewaarLijst(l) {
     if (l.kern) l.telefoons = K.herstelKernAdres(l.telefoons, l.kern);   // 450: het adres dat antwoordde
     S.telefoons = l.telefoons;
-    S.stekkers = l.stekkers || [];
-    await Opslag.schrijf('stekkers', S.stekkers);
+    await neemStekkersOver(l);
     if (l.kern) S.kern = l.kern;
     if (l.code) S.code = l.code;
     S.bekend = K.voegBekendToe(S.bekend, [l.kern].concat(l.alt || [], l.bekend || [], l.telefoons.map((t) => t.jarvis)));
@@ -1860,6 +1918,10 @@
     });
     $('nieuwQrKnop').addEventListener('click', () => { if (gekoppeld()) toonNieuweTelefoonQr('paneel'); else toonScherm('koppel'); });
     $('koppelQrNieuw').addEventListener('click', () => toonNieuweTelefoonQr('koppel'));
+    $('stekkerNieuw').addEventListener('click', (e) => {   // 452b: ventilator of lader
+      const b = e.target && e.target.closest ? e.target.closest('button[data-mac]') : null;
+      if (b) kiesStekkerRol(b.dataset.mac, b.dataset.stekkerRol);
+    });
     $('stekkerTegels').addEventListener('click', (e) => {   // 1.9.15: de handknop
       const b = e.target && e.target.closest ? e.target.closest('button[data-hand]') : null;
       if (b) kiesHand(b.dataset.stekker, b.dataset.hand);
