@@ -90,6 +90,7 @@
     telefoons: [],          // [{ naam, adres, jarvis, kern, sleutel }]
     stekkers: [],           // [{ naam, ip, rol }] (alleen lezen)
     stekkersGevonden: [],   // [{ naam, ip, mac }] gevonden door JARVIS, nog niet vertrouwd (452b)
+    stekkerScan: null,      // 463b: wat de laatste zoekronde van de baas deed
     stekkerMeting: {},      // ip -> { aan, watt, kwh, vandaag } (metingen met bron en tijd)
     kern: null, code: null, // de hoofdtelefoon (zijn JARVIS-adres) en zijn koppelcode
     actieveKern: null,      // wie ze NU volgt: de hoofdtelefoon, of de waarnemend baas als die weg is
@@ -336,7 +337,17 @@
       const [a, b] = await Promise.all([haal(`http://${k.ip}/cm?cmnd=Status%208`, {}, 2500), haal(`http://${k.ip}/cm?cmnd=Power`, {}, 2500)]);
       if (!a.ok || !b.ok) throw new Error('geen antwoord');
       S.stekkerMeting[k.ip] = K.leesStekker(await a.json(), await b.json(), nu());
-    } catch (e) { /* de oude meting blijft en wordt vanzelf grijs */ }
+    } catch (e) {
+      // 463b: Veronica mag een stekker alleen lezen als die CORS toestaat. Lukt het niet, dan geldt wat de BAAS meet (met zijn leeftijd).
+      const b = S.zonStroom && S.zonStroom.stekkerPer ? S.zonStroom.stekkerPer[k.naam] : null;
+      if (b) {
+        const bron = (w) => ({ waarde: w, bron: 'Tasmota Status 8, via de hoofdtelefoon', t: b.t });
+        const vorig = S.stekkerMeting[k.ip];
+        if (!vorig || (vorig.watt && vorig.watt.t < b.t) || !vorig.watt) {
+          S.stekkerMeting[k.ip] = { aan: b.aan === null ? null : bron(b.aan), watt: b.watt === null ? null : bron(b.watt), kwh: b.kwh === null ? null : bron(b.kwh), vandaag: b.vandaag === null ? null : bron(b.vandaag), spanning: b.spanning === null ? null : bron(b.spanning), meet: b.meet };
+        }
+      }
+    }
   }
   let meetBezig = false;
   async function meetRonde() {
@@ -1191,10 +1202,10 @@
       const m = S.stekkerMeting[k.ip] || {};
       const tegel = el('section', 'tegel stekker');
       tegel.dataset.ip = k.ip;
-      tegel.appendChild(el('h2', '', `${k.naam} · ${k.rol === 'laden' ? 'laden' : 'ventilator'}`));
+      tegel.appendChild(el('h2', '', `${k.naam} · ${k.rol === 'laden' ? 'lader' : k.rol === 'meter' ? 'meter' : 'ventilator'}`));
       const dl = el('dl', 'tCijfers');
       for (const [label, x, opmaak] of [['Aan', m.aan, (v) => (v ? 'aan' : 'uit')], ['Vermogen', m.watt, (v) => `${Math.round(v)} W`],
-        ['Totaal', m.kwh, (v) => `${String(Math.round(v * 100) / 100).replace('.', ',')} kWh`], ['Vandaag', m.vandaag, (v) => `${String(Math.round(v * 100) / 100).replace('.', ',')} kWh`]]) {
+        ['Spanning', m.spanning, (v) => `${Math.round(v)} V`], ['Totaal', m.kwh, (v) => `${String(Math.round(v * 100) / 100).replace('.', ',')} kWh`], ['Vandaag', m.vandaag, (v) => `${String(Math.round(v * 100) / 100).replace('.', ',')} kWh`]]) {
         const v = K.vakje(x || null, tijd, opmaak);
         const dd = el('dd', v.onbekend ? 'onbekend' : (v.oud ? 'oud' : ''));
         dd.appendChild(el('span', 'waarde', v.tekst));
@@ -1202,6 +1213,17 @@
         dl.append(el('dt', '', label), dd);
       }
       tegel.appendChild(dl);
+      if (m.meet === false) tegel.appendChild(el('div', 'tBron', 'Deze stekker meet niet (geen energie in Tasmota Status 8).'));
+      // 463b: de rol zetten (lader, meter of ventilator). De baas doet het; een meter schakelt nooit.
+      const rolRij = el('div', 'tKnoppen vRol');
+      for (const [rol, tekst] of [['laden', 'Lader'], ['meter', 'Meter'], ['ventilator', 'Ventilator']]) {
+        const b = el('button', `vRol-${rol}`, tekst);
+        b.dataset.rolNaam = k.naam; b.dataset.nieuweRol = rol;
+        b.setAttribute('aria-pressed', String(k.rol === rol));
+        rolRij.appendChild(b);
+      }
+      tegel.appendChild(rolRij);
+      if (k.rol === 'meter') { tegel.appendChild(el('div', 'tBron', 'Meter: alleen lezen. Deze stekker schakelt nooit.')); return tegel; }
       // 1.9.15: DE HANDKNOP. Automatisch, Aan of Uit; met de hand gaat altijd voor. Veronica stuurt het verzoek naar
       // de baas (/jarvis/roep, met de code); de baas schakelt. De stand hier is wat de baas zegt.
       const hand = HandV.gekozen[k.naam] || (S.zonStroom && S.zonStroom.handPer && S.zonStroom.handPer[k.naam]) || null;
@@ -1215,7 +1237,7 @@
       }
       tegel.appendChild(rij);
       tegel.appendChild(el('div', 'tBron', hand === null ? 'Handknop: onbekend (de baas meldt het nog niet).'
-        : hand === 'auto' ? (k.rol === 'laden' ? "Automatisch: alleen in de zonuren, 's nachts nooit." : 'Automatisch: aan vanaf 35 °C, uit als alles 33 °C of koeler is.')
+        : hand === 'auto' ? (k.rol === 'laden' ? "Automatisch: in de zonuren aan, daarbuiten uit; zakt een telefoon onder de reserve, dan toch aan." : 'Automatisch: aan vanaf 35 °C, uit als alles 33 °C of koeler is.')
           : `Met de hand ${hand}: dat gaat voor, tot je Automatisch kiest.${HandV.gekozen[k.naam] ? ' (doorgegeven)' : ''}`));
       return tegel;
     })));
@@ -1236,7 +1258,7 @@
       t.dataset.sleutel = g.mac;
       t.append(el('h2', '', `🔌 Nieuwe stekker: ${g.naam}`), el('div', 'tRol', `Gevonden op het wifi (…${g.ip.split('.').pop()}). Wat doet hij?`));
       const rij = el('div', 'tKnoppen');
-      for (const [rol, tekst] of [['ventilator', 'Dit is de ventilator'], ['laden', 'Dit is de lader']]) {
+      for (const [rol, tekst] of [['ventilator', 'Dit is de ventilator'], ['laden', 'Dit is de lader'], ['meter', 'Dit is de meter']]) {
         const b = el('button', 'klein-knop', tekst);
         b.dataset.mac = g.mac; b.dataset.stekkerRol = rol;
         rij.appendChild(b);
@@ -1247,6 +1269,9 @@
     const hint = (!kaarten.length && S.code && mist.length)
       ? [(() => { const p = el('p', 'eerlijk', `Nog geen stekker voor ${mist.join(' en ')}. Zet een Tasmota-stekker in het stopcontact en op je wifi (2,4 GHz): JARVIS zoekt hem zelf, en hij verschijnt dan hier met twee knoppen.`); p.dataset.sleutel = 'hint'; return p; })()] : [];
     morphKinderen($('stekkerNieuw'), kaarten.concat(hint));
+    // 463b: het beheer-blokje (zoek nu, adres toevoegen, wat er gescand is) staat er zodra Veronica gekoppeld is.
+    $('stekkerBeheer').hidden = !S.code;
+    $('stekkerScanZin').textContent = K.scanZin(S.stekkerScan);
   }
 
   // ZON EN STROOM: wat de hoofdtelefoon meldt, met bron en leeftijd. Nooit zelf gerekend.
@@ -1672,6 +1697,10 @@
   async function neemStekkersOver(l) {
     const nieuw = l.stekkers || [];
     const gevonden = l.stekkersGevonden || [];
+    // 463b: een nieuwe zoekronde van de baas komt als logregel in Veronica (wat er gescand is).
+    const sc = l.stekkerScan || null;
+    if (sc && (!S.stekkerScan || sc.leeftijdMs < S.stekkerScan.leeftijdMs)) logRegel(K.scanZin(sc));
+    S.stekkerScan = sc || S.stekkerScan;
     const veranderd = JSON.stringify(nieuw) !== JSON.stringify(S.stekkers) || JSON.stringify(gevonden) !== JSON.stringify(S.stekkersGevonden);
     if (!veranderd) return false;
     S.stekkers = nieuw;
@@ -1681,14 +1710,33 @@
   }
   // 452b: "Dit is de ventilator" / "Dit is de lader". Veronica stuurt alleen de keuze (mac + rol, met de code); de baas
   // zoekt de stekker in wat hij zelf vond en vertrouwt hem. Een onbekende mac doet niets.
+  // 463b: "Zoek nu", "Stekker toevoegen op adres" en de rol van een bestaande stekker. Alles gaat via de baas (met de code).
+  async function stekkerRoep(lijf, goed, fout) {
+    if (!S.code) { logRegel('Dit kan pas na het koppelen met de hoofdtelefoon.'); return false; }
+    try {
+      const a = await haal(`${kernNu()}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(Object.assign({ van: 'veronica' }, lijf)) }, 5000);
+      if (!a.ok) throw new Error(String(a.status));
+      logRegel(goed);
+      return true;
+    } catch (e) { logRegel(fout); return false; }
+  }
+  const zoekStekkersNu = () => stekkerRoep({ soort: 'stekker-zoek' }, 'Zoek nu doorgegeven aan de baas. Binnen een minuut staat hier wat hij vond.', 'Het zoeken kon niet naar de baas (geen antwoord). Probeer het zo nog eens.');
+  async function voegStekkerOpAdresToe(ip, rol) {
+    const schoon = String(ip || '').trim();
+    const m = /^(\d{1,3}(?:\.\d{1,3}){3})$/.exec(schoon);
+    if (!m || !K.isEigenNet(m[1])) { logRegel('Dat adres hoort niet bij je eigen wifi. Kijk het adres na in je router of in de Tasmota-pagina.'); return; }
+    if (!['laden', 'meter', 'ventilator'].includes(rol)) return;
+    await stekkerRoep({ soort: 'stekker-adres', ip: m[1], rol }, `Stekker op ${m[1]} doorgegeven aan de baas als ${rol === 'laden' ? 'lader' : rol === 'meter' ? 'meter' : 'ventilator'}. Hij kijkt of het Tasmota is en voegt hem toe.`, `Het adres ${m[1]} kon niet naar de baas (geen antwoord). Probeer het zo nog eens.`);
+  }
+  const kiesStekkerNieuweRol = (naam, rol) => stekkerRoep({ soort: 'stekker-rol', naam, rol }, `${naam}: nieuwe rol (${rol === 'laden' ? 'lader' : rol === 'meter' ? 'meter' : 'ventilator'}) doorgegeven aan de baas.`, `${naam}: de nieuwe rol kon niet naar de baas. Probeer het zo nog eens.`);
   async function kiesStekkerRol(mac, rol) {
-    if (!S.code || !['ventilator', 'laden'].includes(rol) || !/^[0-9A-F:]{12,17}$/.test(mac)) return;
+    if (!S.code || !['ventilator', 'laden', 'meter'].includes(rol) || !/^[0-9A-F:]{12,17}$/.test(mac)) return;
     const g = S.stekkersGevonden.find((x) => x.mac === mac);
     try {
       const a = await haal(`${kernNu()}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'stekker-kies', mac, rol, van: 'veronica' }) }, 4000);
       if (!a.ok) throw new Error(String(a.status));
       S.stekkersGevonden = S.stekkersGevonden.filter((x) => x.mac !== mac);
-      logRegel(`${g ? g.naam : 'Stekker'}: doorgegeven aan de baas als ${rol === 'laden' ? 'lader' : 'ventilator'}. Binnen een minuut staat hij bij de stekkers.`);
+      logRegel(`${g ? g.naam : 'Stekker'}: doorgegeven aan de baas als ${rol === 'laden' ? 'lader' : rol === 'meter' ? 'meter' : 'ventilator'}. Binnen een minuut staat hij bij de stekkers.`);
     } catch (e) {
       logRegel('De keuze kon niet naar de baas (geen antwoord). Probeer het zo nog eens.');
     }
@@ -2387,6 +2435,12 @@
     $('stekkerNieuw').addEventListener('click', (e) => {   // 452b: ventilator of lader
       const b = e.target && e.target.closest ? e.target.closest('button[data-mac]') : null;
       if (b) kiesStekkerRol(b.dataset.mac, b.dataset.stekkerRol);
+    });
+    $('stekkerZoekNu').addEventListener('click', () => zoekStekkersNu());   // 463b
+    document.querySelectorAll('#stekkerBeheer [data-adresrol]').forEach((b) => b.addEventListener('click', () => voegStekkerOpAdresToe($('stekkerAdres').value, b.dataset.adresrol)));
+    $('stekkerTegels').addEventListener('click', (e) => {   // 463b: de rol van een stekker
+      const b = e.target && e.target.closest ? e.target.closest('button[data-nieuwe-rol]') : null;
+      if (b && b.getAttribute('aria-pressed') !== 'true') kiesStekkerNieuweRol(b.dataset.rolNaam, b.dataset.nieuweRol);
     });
     $('stekkerTegels').addEventListener('click', (e) => {   // 1.9.15: de handknop
       const b = e.target && e.target.closest ? e.target.closest('button[data-hand]') : null;

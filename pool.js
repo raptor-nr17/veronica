@@ -91,7 +91,7 @@
     const model = /e4b/i.test(x.model || '') ? 'E4B' : /e2b/i.test(x.model || '') ? 'E2B' : null;
     if (x.arm64 === false) return { klasse: 'te-oud', reden: 'geen 64-bits ARM', zin: 'te oud voor model', model: null };
     if (ram !== null && ram < MIN_RAM_GB) return { klasse: 'te-oud', reden: `${Math.round(ram * 10) / 10} GB RAM (minimaal ${MIN_RAM_GB})`, zin: 'te oud voor model', model: null };
-    if (vrij !== null && vrij < MIN_VRIJ_GB && x.modelGeladen !== true) return { klasse: 'te-oud', reden: `${Math.round(vrij * 10) / 10} GB vrije ruimte (minimaal ${MIN_VRIJ_GB} voor het model)`, zin: 'te oud voor model (te weinig ruimte)', model: null };
+    if (vrij !== null && vrij < MIN_VRIJ_GB && x.modelGeladen !== true) return { klasse: 'te-oud', reden: `${String(Math.round(vrij * 10) / 10).replace('.', ',')} GB vrij, ${MIN_VRIJ_GB} GB nodig voor het model: maak nog ${String(Math.ceil((MIN_VRIJ_GB - vrij) * 10) / 10).replace('.', ',')} GB vrij (verwijder apps, foto's of video's op die telefoon)`, zin: 'te oud voor model (te weinig ruimte)', model: null };
     let klasse;
     if (ram !== null && ram >= 12 && (tps === null || tps >= 8)) klasse = 'zwaar';
     else if (ram !== null && ram >= 6 && (tps === null || tps >= 3)) klasse = 'midden';

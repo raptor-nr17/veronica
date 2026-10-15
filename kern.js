@@ -173,7 +173,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.29';
+  const JARVIS_NIEUWSTE = '1.9.30';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -245,7 +245,7 @@
     for (const k of Array.isArray(x.stekkers) ? x.stekkers : []) {
       const m = /^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?$/.exec(String((k && k.ip) || '').trim());
       if (!m || !isEigenNet(m[1]) || stekkers.some((s) => s.ip === m[0])) continue;
-      stekkers.push({ naam: String(k.naam || 'Stekker').slice(0, 40), ip: m[0], rol: k.rol === 'laden' ? 'laden' : 'ventilator' });
+      stekkers.push({ naam: String(k.naam || 'Stekker').slice(0, 40), ip: m[0], rol: k.rol === 'laden' || k.rol === 'meter' ? k.rol : 'ventilator' });
     }
     // 452b: stekkers die JARVIS op het wifi VOND maar nog niet vertrouwt. Veronica toont er twee knoppen bij.
     const stekkersGevonden = [];
@@ -257,8 +257,14 @@
     }
     // 452b: wie antwoordt, de baas of een werker? Alleen de baas is gezaghebbend voor de stekkers.
     // 455: van een privé-klus weet Veronica ALLEEN dat er een bezig is. Geen titel, geen soort, geen tekst.
+    // 463b: wat de laatste zoekronde van de baas deed (alleen tellers en wifi-nummers).
+    const sc = x.stekkerScan && typeof x.stekkerScan === 'object' ? x.stekkerScan : null;
+    const tel = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 100000 ? Math.round(v) : null);
+    const stekkerScan = sc && tel(sc.leeftijdMs) !== null && tel(sc.gescand) !== null
+      ? { leeftijdMs: tel(sc.leeftijdMs), netten: (Array.isArray(sc.netten) ? sc.netten : []).map((n) => String(n)).filter((n) => /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(n)).slice(0, 4), gescand: tel(sc.gescand), antwoord: tel(sc.antwoord) || 0, tasmota: tel(sc.tasmota) || 0, door: sc.door === 'op verzoek' ? 'op verzoek' : 'vanzelf' }
+      : null;
     const priveBezig = x.prive && typeof x.prive === 'object' && Number(x.prive.bezig) > 0 ? 1 : 0;
-    return { telefoons: uit, stekkers, stekkersGevonden, priveBezig, rol: x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon) };
+    return { telefoons: uit, stekkers, stekkersGevonden, stekkerScan, priveBezig, rol: x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon) };
   }
   // 1.9.14: de downloadlink voor een nieuwe telefoon (QR "JARVIS op een nieuwe telefoon zetten"). Alleen een
   // ondertekend adres in de postbus (zelfde regel als de werker in JARVIS); al het andere: null.
@@ -335,6 +341,19 @@
     return `Ik vind niemand meer (${o.geprobeerd} adressen geprobeerd). Staan de telefoons aan en zit deze computer op hetzelfde wifi, het liefst de hotspot van de hoofdtelefoon? Lukt het niet: open op de baas Apparaten (daar staat de QR voor Veronica) en scan die een keer.`;
   }
 
+  // 463b: een meter in gewone taal: "123 W · 230 V · totaal 4,56 kWh · vandaag 0,8 kWh". Alleen wat er staat.
+  function meterZin(s) {
+    const g = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const k = (v, n) => String(Math.round(v * 10 ** n) / 10 ** n).replace('.', ',');
+    return [g(s.watt) !== null ? `${k(s.watt, 0)} W` : 'watt onbekend', g(s.spanning) !== null ? `${k(s.spanning, 0)} V` : null,
+      g(s.kwh) !== null ? `totaal ${k(s.kwh, 2)} kWh` : null, g(s.vandaag) !== null ? `vandaag ${k(s.vandaag, 2)} kWh` : null].filter(Boolean).join(' · ');
+  }
+  // 463b: wat de laatste zoekronde van de baas deed, in een zin.
+  function scanZin(sc) {
+    if (!sc) return 'De baas heeft nog niet naar stekkers gezocht (of hij is een oudere versie).';
+    const net = sc.netten.length ? sc.netten.map((n) => `${n}.x`).join(' en ') : 'geen wifi';
+    return `Laatste zoekronde van de baas: ${leeftijdZin(sc.leeftijdMs)} (${sc.door}): ${sc.gescand} adressen op ${net}, ${sc.antwoord} antwoordden, ${sc.tasmota} ${sc.tasmota === 1 ? 'is' : 'zijn'} Tasmota.`;
+  }
   // Tasmota Status 8 (energie) en Power: alleen wat er staat.
   function leesStekker(status8, power, t) {
     const e = status8 && status8.StatusSNS && status8.StatusSNS.ENERGY ? status8.StatusSNS.ENERGY : {};
@@ -344,6 +363,8 @@
       watt: meting(getal(e.Power), 'Tasmota Status 8', t),
       kwh: meting(getal(e.Total), 'Tasmota Status 8', t),
       vandaag: meting(getal(e.Today), 'Tasmota Status 8', t),
+      spanning: meting(getal(e.Voltage), 'Tasmota Status 8', t),
+      meet: status8 && status8.StatusSNS ? !!status8.StatusSNS.ENERGY : null,   // 463b: false = deze stekker meet niet
     };
   }
   // 1.9.13 (punt 7): "GEEN ANTWOORD" ZIJN TWEE VERSCHILLENDE DINGEN. Op 11 oktober was de telefoon er wel
@@ -447,7 +468,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.29';
+  const VERONICA_VERSIE = '1.9.30';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -877,6 +898,18 @@
       rijen.push({ label: `Ventilator: ${tekst(vent.naam) || ''}`, m: bij(vent.leeftijdMs) === null ? null
         : meting(`${vent.aan === true ? 'aan' : vent.aan === false ? 'uit' : 'aan/uit onbekend'}${tekst(vent.reden) ? ` · ${tekst(vent.reden)}` : ''}`, 'Tasmota, via de hoofdtelefoon', bij(vent.leeftijdMs)) });
     }
+    // 463b: wat de BAAS aan elke stekker meet (Veronica kan een stekker niet altijd zelf lezen: dat mag alleen met CORS). Per naam.
+    const stekkerPer = {};
+    for (const s of Array.isArray(d.stekkers) ? d.stekkers : []) {
+      if (!s || !tekst(s.naam) || bij(s.leeftijdMs) === null) continue;
+      stekkerPer[tekst(s.naam)] = { t: bij(s.leeftijdMs), aan: s.aan === true ? true : s.aan === false ? false : null, watt: g(s.watt), kwh: g(s.kwh), vandaag: g(s.vandaag), spanning: g(s.spanning), meet: s.meet === false ? false : s.meet === true ? true : null };
+    }
+    // De meter(s): het totale verbruik, ALS GEMETEN WAARDE met bron en leeftijd. Meet de stekker niet, dan staat dat er duidelijk.
+    for (const s of Array.isArray(d.stekkers) ? d.stekkers : []) {
+      if (!s || s.rol !== 'meter') continue;
+      rijen.push({ label: `Verbruik: ${tekst(s.naam) || 'meter'}`, m: bij(s.leeftijdMs) === null ? null
+        : meting(s.meet === false ? 'deze stekker meet niet' : meterZin(s), 'Tasmota Status 8, via de hoofdtelefoon', bij(s.leeftijdMs)) });
+    }
     for (const s of Array.isArray(d.stekkers) ? d.stekkers : []) {
       if (!s || s.rol !== 'laden') continue;
       rijen.push({ label: `Laden: ${tekst(s.naam) || ''}`, m: bij(s.leeftijdMs) === null ? null
@@ -902,7 +935,7 @@
     const st = d.staaf;
     const staaf = st && g(st.zon) !== null && g(st.buiten) !== null
       ? meting({ zon: st.zon, buiten: st.buiten, onbekend: g(st.onbekend) || 0 }, `${tekst(st.bron) || 'Tasmota'}, via de hoofdtelefoon`, ontvangen) : null;
-    return { rijen, staaf, accuPer, rustPer, handPer, reserve: RESERVES.includes(d.reserve) ? d.reserve : null, geenZon: d.geenZon === true, zon: zonStand };
+    return { rijen, staaf, accuPer, rustPer, handPer, stekkerPer, reserve: RESERVES.includes(d.reserve) ? d.reserve : null, geenZon: d.geenZon === true, zon: zonStand };
   }
 
   // ---- HET KARAKTER VAN VERONICA: de nuchtere hulpdienst ----
@@ -984,7 +1017,7 @@
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
-    meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, hitteNaam, ruweStand,
+    meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, meterZin, scanZin, hitteNaam, ruweStand,
     isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

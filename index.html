@@ -154,6 +154,17 @@
     <p id="priveBezig" class="groteMelding" hidden>Privé-klus bezig</p>
     <div id="tegels"></div>
     <div id="stekkerNieuw"></div>
+    <div id="stekkerBeheer" hidden>
+      <p id="stekkerScanZin" class="eerlijk"></p>
+      <button id="stekkerZoekNu">Zoek stekkers nu</button>
+      <label for="stekkerAdres">Stekker toevoegen op adres (geen wachtwoord nodig)</label>
+      <input id="stekkerAdres" inputmode="decimal" autocomplete="off" maxlength="15" placeholder="adres van de stekker">
+      <div class="tKnoppen">
+        <button data-adresrol="laden">Dit is de lader</button>
+        <button data-adresrol="meter">Dit is de meter</button>
+        <button data-adresrol="ventilator">Dit is de ventilator</button>
+      </div>
+    </div>
     <h2 id="stekkerKop" hidden>Stekkers</h2>
     <div id="tegels-stekkers"><div id="stekkerTegels" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px"></div></div>
     <h2 id="zonKop">Zon en stroom</h2>
