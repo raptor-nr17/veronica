@@ -56,10 +56,10 @@
   }
 
   // ---- Uit OlliteRT /health?metrics=true: alleen wat er staat ----
-  function leesHealth(d, t) {
+  function leesHealth(d, t, bronNaam) {
     const x = d && typeof d === 'object' ? d : {};
     const m = x.metrics && typeof x.metrics === 'object' ? x.metrics : {};
-    const bron = 'OlliteRT /health';
+    const bron = bronNaam || 'OlliteRT /health';
     const getal = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
     const uit = {
       model: meting(typeof (m.model || x.model) === 'string' ? (m.model || x.model) : null, bron, t),
@@ -103,6 +103,36 @@
       olliteRt: o ? { health: typeof o.health === 'boolean' ? o.health : null, metrics: typeof o.metrics === 'boolean' ? o.metrics : null, modellen: Number.isInteger(o.modellen) ? o.modellen : null } : null,
     };
   }
+  // 460b: DE EIGEN MOTOR van JARVIS (LiteRT-LM). Alleen een vaste fase, getallen en een zin die als TEKST getoond wordt.
+  const MOTOR_FASEN = ['uit', 'te-oud', 'wacht', 'zoeken', 'downloaden', 'laden', 'klaar', 'gepauzeerd', 'fout'];
+  function leesMotor(m) {
+    if (!m || typeof m !== 'object' || m.motor !== 'jarvis-zelf' || !MOTOR_FASEN.includes(m.fase)) return null;
+    const n = (v, max) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.min(max, Math.round(v * 10) / 10) : 0);
+    return {
+      aan: m.aan === true, fase: m.fase, klaar: m.klaar === true && m.fase === 'klaar',
+      zin: typeof m.zin === 'string' ? m.zin.replace(/[\u0000-\u001f]/g, ' ').slice(0, 200) : '',
+      procent: Math.round(n(m.procent, 100)), poort: Number.isInteger(m.poort) && m.poort >= 1024 && m.poort <= 65535 ? m.poort : 8081,
+      backend: m.backend === 'GPU' || m.backend === 'CPU' ? m.backend : '', tokensPerSeconde: n(m.tokensPerSeconde, 10000),
+      klussen: Math.round(n(m.klussen, 1000000)), geheugenGb: Math.round(n(m.geheugenMb, 1000000) / 100) / 10, batterijVrij: m.batterijVrij === true,
+    };
+  }
+  function motorZin(m) {
+    if (!m) return null;
+    const kop = 'Motor: JARVIS zelf';
+    if (!m.aan) return `${kop} · uit. Aanzetten kan met de knop hieronder (de telefoon haalt het model alleen op wifi en aan de lader binnen).`;
+    if (m.fase === 'te-oud') return `${kop} · ${m.zin || 'deze telefoon is te oud voor de eigen motor'}`;
+    if (m.fase === 'downloaden') return `${kop} · model downloaden ${m.procent}%`;
+    if (m.fase === 'laden') return `${kop} · model laden`;
+    if (m.klaar) return `${kop} · klaar${m.backend ? ` (${m.backend})` : ''}${m.tokensPerSeconde > 0 ? ` · ±${String(m.tokensPerSeconde).replace('.', ',')} tokens/s (geschat)` : ''}${m.klussen ? ` · ${m.klussen} ${m.klussen === 1 ? 'vraag' : 'vragen'}` : ''}`;
+    return `${kop} · ${m.zin || m.fase}`;
+  }
+  // Het adres van de eigen motor op die telefoon: host van JARVIS + de poort die de telefoon zelf meldt (alleen als hij klaar is).
+  function motorAdres(t, status) {
+    const m = status && status.motor && status.motor.waarde;
+    const h = /^http:\/\/([^:/]+)/.exec(String(t && t.jarvis || ''));
+    if (!m || !m.klaar || !h) return null;
+    return `http://${h[1]}:${m.poort}`;
+  }
   // 457: de AI-kern meldt alleen getallen en een ja/nee. Veronica zegt het in een zin.
   function leesAikern(a) {
     if (!a || typeof a !== 'object') return null;
@@ -135,6 +165,7 @@
       gemma: meting(leesGemma(x.gemma), bron, t),
       rol: meting(x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, bron, t),
       aikern: meting(leesAikern(x.aikern), bron, t),
+      motor: meting(leesMotor(x.motor), bron, t),
       adressen: meting(Array.isArray(x.adressen) ? x.adressen.map((a) => normaalAdres(a, OLLITERT_POORT)).filter(Boolean).slice(0, 4) : null, bron, t),
       versie: meting(typeof x.versie === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(x.versie) ? x.versie : null, bron, t),
     };
@@ -142,7 +173,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.25';
+  const JARVIS_NIEUWSTE = '1.9.26';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -416,7 +447,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.25';
+  const VERONICA_VERSIE = '1.9.26';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -949,7 +980,7 @@
     return uit.slice(0, 6);
   }
   return {
-    alternatieveAdressen, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
+    alternatieveAdressen, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,

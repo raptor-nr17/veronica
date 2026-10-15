@@ -162,11 +162,12 @@
   // ---- Meten ----
   // 457: gevonden andere adressen onthouden we per telefoon-naam, zodat het logboek niet bij elke lijst van de baas opnieuw hetzelfde meldt.
   const adresGelogd = new Set();
-  async function gezondAdres(t, adres) {
+  async function gezondAdres(t, adres, motor) {
     try {
-      const r = await haal(`${adres}/health?metrics=true`, { headers: kop(t) }, 2500);
+      // 460b: de eigen motor van JARVIS praat met de rij-code als Bearer-token; OlliteRT met zijn eigen sleutel (als die er is).
+      const r = await haal(`${adres}/health?metrics=true`, { headers: motor ? { Authorization: `Bearer ${S.code}` } : kop(t) }, 2500);
       if (!r.ok) return null;
-      return K.leesHealth(await r.json(), nu());
+      return K.leesHealth(await r.json(), nu(), motor ? 'JARVIS-motor /health (tokens per seconde geschat)' : undefined);
     } catch (e) { return null; }
   }
   // 460: is er een VERSE melding van JARVIS op die telefoon? Een oude melding bewijst niets: de telefoon kan er sindsdien uit zijn.
@@ -183,7 +184,7 @@
     let m = meet(t.adres);
     let s = staat(t.adres);
     const eerderBereikbaar = s.bereikbaar === true;
-    const h = await gezondAdres(t, t.adres);
+    const h = await gezondAdres(t, t.adres, t.motor === true);
     if (h) { m.health = h; m.gezien = nu(); s.bereikbaar = true; }
     else s.bereikbaar = false;   // de oude metingen blijven staan en worden vanzelf grijs
     if (!(m.jarvisNietTot > nu())) {
@@ -192,6 +193,25 @@
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         m.status = K.leesStatus(await r.json(), nu());
       } catch (e) { m.jarvisNietTot = nu() + 60000; }   // geen JARVIS (of even weg): een minuut niet vragen
+    }
+    // 460b: OlliteRT zwijgt maar de EIGEN MOTOR van JARVIS is klaar -> dan gaat deze telefoon voortaan via de motor (poort uit de melding,
+    // de rij-code als sleutel). Een telefoon die al op zijn motor staat wordt gewoon via de motor gemeten.
+    if (s.bereikbaar === false && S.code && jarvisVers(m.status, nu())) {
+      const ma = K.motorAdres(t, m.status);
+      if (ma && ma !== t.adres) {
+        const hm = await gezondAdres(t, ma, true);
+        if (hm) {
+          const oud = t.adres;
+          S.metingen[ma] = Object.assign(S.metingen[ma] || {}, m, { health: hm, gezien: nu() });
+          S.staten[ma] = Object.assign(S.staten[ma] || {}, s, { bereikbaar: true });
+          t.adres = ma; t.sleutel = S.code; t.motor = true;
+          m = S.metingen[ma]; s = S.staten[ma];
+          const sl = `${t.naam}|motor|${ma}`;
+          if (!adresGelogd.has(sl)) { adresGelogd.add(sl); logRegel(`${t.naam}: rekent met de eigen motor van JARVIS (${ma.slice(7)}). OlliteRT is niet nodig.`); }
+          try { await Opslag.schrijf('telefoons', S.telefoons); } catch (e) { /* volgende keer */ }
+          void oud;
+        }
+      }
     }
     // 457: het adres zwijgt maar JARVIS antwoordt -> de andere adressen proberen, hoogstens vier tegelijk.
     if (s.bereikbaar === false && jarvisVers(m.status, nu())) {
@@ -912,6 +932,14 @@
     logRegel(ok ? `${t.naam}: gevraagd om OlliteRT te openen. Over een halve minuut zie je hier of de server aan staat.` : `${t.naam} antwoordt niet. Er is niets gevraagd.`);
     (meet(t.adres)).jarvisNietTot = 0;
   }
+  // 460b: de eigen motor aan of uit zetten op die telefoon. Er opent daar GEEN venster (de eenmalige toestemming voor 'batterij onbeperkt' vraagt de telefoon alleen als je hem zelf aanzet).
+  async function motorVanuitVeronica(t, aan) {
+    if (!S.code || !t || !t.jarvis) return;
+    let ok = false;
+    try { ok = (await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: aan ? 'motor-aan' : 'motor-uit', van: 'veronica' }) }, 3000)).ok; } catch (e) { ok = false; }
+    logRegel(ok ? `${t.naam}: eigen motor ${aan ? 'aangezet' : 'uitgezet'}. ${aan ? 'Het model komt er alleen op wifi en aan de lader; hier zie je de voortgang.' : ''}`.trim() : `${t.naam} antwoordt niet. Er is niets veranderd.`);
+    (meet(t.adres)).jarvisNietTot = 0;
+  }
   // 458: TEST DEZE TELEFOON -- een korte vraag, het antwoord en de tijd. Niet tijdens werk van de pool op die telefoon.
   async function testTelefoon(t) {
     const s = staat(t.adres);
@@ -936,7 +964,7 @@
     } catch (e) {
       const snel = nu() - t0 < 4000;
       zin = ctrl.signal.aborted ? 'Test mislukt: na 30 seconden nog geen antwoord. Het model laadt misschien nog, of de telefoon is te traag.'
-        : snel ? 'Test mislukt: OlliteRT weigert de verbinding. Staat de server aan op die telefoon?' : 'Test mislukt: geen antwoord van OlliteRT.';
+        : snel ? (t.motor ? 'Test mislukt: de eigen motor weigert de verbinding. Is het model al geladen?' : 'Test mislukt: OlliteRT weigert de verbinding. Staat de server aan op die telefoon?') : (t.motor ? 'Test mislukt: geen antwoord van de eigen motor.' : 'Test mislukt: geen antwoord van OlliteRT.');
     } finally { clearTimeout(klok); s.bezig = false; }
     S.testUitslag[t.adres] = { zin };
     logRegel(`${t.naam}: ${zin}`);
@@ -1004,6 +1032,12 @@
         if (gm && gm.melding) tegel.appendChild(el('div', 'tGemma', gm.melding));
       }
       {
+        // 460b: de eigen motor van JARVIS (fase, voortgang, tokens/s). De zin maakt Veronica zelf uit een vaste fase en getallen.
+        const mo = m.status && m.status.motor && tijd - m.status.motor.t <= K.MAX_LEEFTIJD_MS ? m.status.motor.waarde : null;
+        const mz = K.motorZin(mo);
+        if (mz) tegel.appendChild(el('div', 'tGemma', mz));
+      }
+      {
         // 457: de AI-kern (alleen getallen; de zin maakt Veronica zelf).
         const ak = m.status && m.status.aikern && tijd - m.status.aikern.t <= K.MAX_LEEFTIJD_MS ? m.status.aikern.waarde : null;
         const zin = K.kernZin(ak);
@@ -1063,6 +1097,15 @@
         const gm2 = m.status && m.status.gemma && tijd - m.status.gemma.t <= K.MAX_LEEFTIJD_MS ? m.status.gemma.waarde : null;
         if (t.jarvis && gm2 && gm2.ollite && gm2.ollite.kanStarten) { const b = el('button', 'klein-knop', 'Open OlliteRT'); b.dataset.actie = 'olliteStart'; b.title = 'JARVIS opent de OlliteRT-app op die telefoon. De server aanzetten doe je daar zelf, tenzij OlliteRT hem vanzelf start.'; knoppen.appendChild(b); }
         if (installeerKans && t.jarvis) { const ib = el('button', 'klein-knop', S.installQr[t.adres] ? 'OlliteRT installeren: verberg' : 'OlliteRT installeren'); ib.dataset.actie = 'installeer'; ib.title = 'Laat een QR zien naar de officiële pagina van OlliteRT. Jij downloadt zelf; Veronica en JARVIS downloaden niets.'; knoppen.appendChild(ib); }
+        {
+          const mo = m.status && m.status.motor && tijd - m.status.motor.t <= K.MAX_LEEFTIJD_MS ? m.status.motor.waarde : null;
+          if (t.jarvis && mo && mo.fase !== 'te-oud') {
+            const mb = el('button', 'klein-knop', mo.aan ? 'Eigen motor: uit' : 'Eigen motor: aan');
+            mb.dataset.actie = 'motor'; mb.dataset.aan = mo.aan ? '0' : '1';
+            mb.title = mo.aan ? 'Zet de eigen motor van JARVIS op die telefoon uit' : 'JARVIS op die telefoon haalt het model binnen (alleen op wifi en aan de lader, ca. 2,6 GB) en rekent dan zelf';
+            knoppen.appendChild(mb);
+          }
+        }
         const tb = el('button', 'klein-knop', 'Test deze telefoon'); tb.dataset.actie = 'test'; tb.title = 'Stuurt een korte vraag en laat het antwoord en de tijd zien'; knoppen.appendChild(tb);
       }
       tegel.appendChild(knoppen);
@@ -2240,6 +2283,7 @@
       if (knop.dataset.actie === 'test') testTelefoon(t);
       if (knop.dataset.actie === 'installeer') { S.installQr[t.adres] = !S.installQr[t.adres]; tekenLive(); }
       if (knop.dataset.actie === 'olliteStart') startOlliteVanuitVeronica(t);
+      if (knop.dataset.actie === 'motor') motorVanuitVeronica(t, knop.dataset.aan === '1');
       if (knop.dataset.actie === 'weer') { staat(t.adres).vervangen = false; logRegel(`${t.naam} doet weer mee.`); tekenLive(); werkTik(); }
     });
     $('wandUit').addEventListener('click', (e) => { e.stopPropagation(); Wand.stilT = nu(); zetWand(false); });
@@ -2340,6 +2384,6 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon };
+  window.__veronica = { motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon };
   start();
 }());
