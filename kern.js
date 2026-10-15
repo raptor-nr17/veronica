@@ -167,6 +167,7 @@
       aikern: meting(leesAikern(x.aikern), bron, t),
       motor: meting(leesMotor(x.motor), bron, t),
       adressen: meting(Array.isArray(x.adressen) ? x.adressen.map((a) => normaalAdres(a, OLLITERT_POORT)).filter(Boolean).slice(0, 4) : null, bron, t),
+      priveSleutel: meting(x.prive && typeof x.prive === 'object' && typeof x.prive.sleutel === 'boolean' ? x.prive.sleutel : null, bron, t),   // 466: ALLEEN ja/nee, nooit inhoud
       versie: meting(typeof x.versie === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(x.versie) ? x.versie : null, bron, t),
     };
   }
@@ -468,7 +469,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.31';
+  const VERONICA_VERSIE = '1.9.32';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';

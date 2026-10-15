@@ -105,6 +105,23 @@
   .zsZon { background: #f2c94c; } .zsBuiten { background: #5b7bd5; } .zsOnbekend { background: var(--oud); }
   .zsStaaf .bron { color: var(--zacht); font-size: 12px; }
   #qrVideo { width: 100%; max-width: 420px; }
+  /* 466: Mijn privé-hoek */
+  #priveHoek { max-width: 900px; }
+  #priveHoek h3 { margin: 0 0 8px; font-size: 22px; } #priveHoek h4 { margin: 12px 0 4px; }
+  #priveHoek .phBlok, #priveHoek .phSlot, #priveHoek .phBoven { background: var(--paneel); border: 3px solid var(--lijn); border-radius: 18px; padding: 14px; margin: 0 0 14px; }
+  #priveHoek .phBoven { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  #priveHoek .phBoven .phKlein, #priveHoek .phKijk { flex-basis: 100%; }
+  #priveHoek button { min-height: 48px; font-size: 18px; padding: 8px 16px; margin: 4px 6px 4px 0; }
+  #priveHoek .phNood { background: #b91c1c; color: #fff; font-weight: 800; } #priveHoek .phStop { font-weight: 800; }
+  #priveHoek .phKlein { color: var(--zacht); font-size: 15px; } #priveHoek .phEerlijk { color: var(--zacht); font-size: 17px; font-weight: 600; }
+  #priveHoek .phMelding { font-weight: 700; } #priveHoek .phGoed { font-weight: 700; }
+  #priveHoek .phKijk.moet { border: 2px solid #d97706; border-radius: 12px; padding: 8px; }
+  #priveHoek input[type=password], #priveHoek input[type=search], #priveHoek select, #priveHoek textarea { font-size: 18px; width: 100%; max-width: 520px; padding: 8px; box-sizing: border-box; display: block; margin: 4px 0; }
+  #priveHoek input[type=checkbox] { width: 28px; height: 28px; vertical-align: middle; }
+  #priveHoek .phTabel { border-collapse: collapse; width: 100%; } #priveHoek .phTabel th, #priveHoek .phTabel td { border-bottom: 1px solid var(--lijn); padding: 6px; text-align: left; font-size: 17px; }
+  #priveHoek .phRollen { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 8px 0; } #priveHoek .phRol { border: 2px solid var(--lijn); border-radius: 12px; padding: 8px; }
+  #priveHoek details { margin: 8px 0; } #priveHoek summary { font-size: 18px; cursor: pointer; padding: 6px 0; }
+  #priveHoek .phLabel { font-weight: 800; } #priveHoek .phLogRegel { padding: 4px 0; border-bottom: 1px solid var(--lijn); }
 </style>
 </head>
 <body>
@@ -136,6 +153,7 @@
   <button id="tab-live" aria-pressed="true">Live</button>
   <button id="tab-wachtrij" aria-pressed="false">Wachtrij</button>
   <button id="tab-koppel" aria-pressed="false">Koppelen</button>
+  <button id="tab-prive" aria-pressed="false">🔒 Mijn privé-hoek</button>
 </nav>
 <main>
   <p class="eerlijk" id="wakkerZin">Veronica werkt alleen zolang deze computer aan is en niet slaapt. Tik op "Houd het scherm aan", of zet slapen uit.
@@ -176,6 +194,9 @@
     <button id="taakKnop">In de wachtrij</button>
     <p class="eerlijk">De wachtrij staat op deze computer. Tik op Pantser aan om hem te laten lopen. Valt een telefoon weg, dan gaat zijn vraag naar een andere.</p>
     <div id="takenLijst"></div>
+  </section>
+  <section id="scherm-prive" hidden>
+    <div id="priveHoek"></div>
   </section>
   <section id="scherm-koppel" hidden>
     <!-- 1.9.14 (12 oktober): ALLE QR'S NAAST ELKAAR, elk met een kop in gewone taal.
@@ -275,6 +296,8 @@
      Android een ingebouwde QR-lezer; op Windows en Linux niet. Zonder deze lezer deed "Scan" daar niets. -->
 <script src="jsQR.js"></script>
 <script src="meters.js"></script>
+<script src="prive-hoek.js"></script>
+<script src="prive-hoek-ui.js"></script>
 <script src="veronica.js"></script>
 </body>
 </html>

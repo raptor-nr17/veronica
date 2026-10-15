@@ -2328,7 +2328,9 @@
     volgKlok = setInterval(volgNieuweTelefoons, 5000);
   }
   function toonScherm(naam) {
-    for (const s of ['live', 'wachtrij', 'koppel']) { $(`scherm-${s}`).hidden = s !== naam; $(`tab-${s}`).setAttribute('aria-pressed', String(s === naam)); }
+    for (const s of ['live', 'wachtrij', 'koppel', 'prive']) { $(`scherm-${s}`).hidden = s !== naam; $(`tab-${s}`).setAttribute('aria-pressed', String(s === naam)); }
+    if (naam !== 'prive' && PriveUi && PriveUi.open) PriveUi.dicht();   // 466: de hoek gaat dicht zodra je weggaat
+    if (naam === 'prive' && PriveUi) PriveUi.teken();
     // 1.9.6: op Koppelen staat de QR voor een nieuwe telefoon er meteen (geen extra tik).
     if (naam === 'koppel') tekenKoppelStand();
     if (naam === 'koppel' && gekoppeld() && !$('koppelQrBeeld').querySelector('svg')) toonNieuweTelefoonQr('koppel');
@@ -2338,6 +2340,54 @@
   }
 
   // ---- Start ----
+
+  // ---- 466: MIJN PRIVÉ-HOEK ----
+  // Eigen database in deze browser; geen netwerk. De inhoud (prive-hoek.js / prive-hoek-ui.js) komt nooit in logRegel, ntfy of een telefoon.
+  const PriveOpslag = (() => {
+    let db = null;
+    const open = () => db ? Promise.resolve(db) : new Promise((klaar, mis) => { const r = indexedDB.open('veronica-prive', 1); r.onupgradeneeded = () => r.result.createObjectStore('hoek'); r.onsuccess = () => { db = r.result; klaar(db); }; r.onerror = () => mis(r.error); });
+    const doe = async (modus, f) => { const d = await open(); return new Promise((klaar, mis) => { const tx = d.transaction('hoek', modus); const u = f(tx.objectStore('hoek')); tx.oncomplete = () => klaar(u && 'result' in u ? u.result : undefined); tx.onerror = () => mis(tx.error); }); };
+    return { lees: (k) => doe('readonly', (s) => s.get(k)), schrijf: (k, w) => doe('readwrite', (s) => s.put(w, k)), wis: (k) => doe('readwrite', (s) => s.delete(k)) };
+  })();
+  const priveRijen = () => S.telefoons.map((t) => {
+    const m = meet(t.adres); const st = m.status || {};
+    const vers = (x) => x && nu() - x.t <= K.MAX_LEEFTIJD_MS;
+    const ps = poolStaat(t);
+    const bereikbaar = !!(st.versie && vers(st.versie));
+    return {
+      naam: t.naam,
+      priveSleutel: st.priveSleutel && vers(st.priveSleutel) ? st.priveSleutel.waarde : null,
+      versie: st.versie && vers(st.versie) ? st.versie.waarde : 'onbekend',
+      accu: st.batterij && vers(st.batterij) && st.batterij.waarde !== null ? `${Math.round(st.batterij.waarde)}%${st.laadt && vers(st.laadt) && st.laadt.waarde ? ' (laadt)' : ''}` : 'onbekend',
+      temp: st.temperatuur && vers(st.temperatuur) && st.temperatuur.waarde !== null ? `${String(Math.round(st.temperatuur.waarde * 10) / 10).replace('.', ',')} °C` : 'onbekend',
+      model: !bereikbaar && !ps.model ? 'onbekend' : ps.model ? `ja (${ps.model})` : 'nee',
+    };
+  });
+  const priveVerbruik = () => S.stekkers.filter((k) => k.rol === 'meter').map((k) => {
+    const m = S.stekkerMeting[k.ip] || {}; const tijd = nu();
+    if (m.meet === false) return { naam: k.naam, tekst: 'deze stekker meet niet', bron: 'Tasmota Status 8' };
+    const w = K.vakje(m.watt || null, tijd, (v) => `${Math.round(v)} W`);
+    const sp = K.vakje(m.spanning || null, tijd, (v) => `${Math.round(v)} V`);
+    const tot = K.vakje(m.kwh || null, tijd, (v) => `totaal ${String(Math.round(v * 100) / 100).replace('.', ',')} kWh`);
+    const vd = K.vakje(m.vandaag || null, tijd, (v) => `vandaag ${String(Math.round(v * 100) / 100).replace('.', ',')} kWh`);
+    const delen = [w, sp, tot, vd].filter((x) => !x.onbekend);
+    return { naam: k.naam, tekst: delen.length ? delen.map((x) => x.tekst).join(' · ') : 'onbekend', bron: delen.length ? delen[0].bron : 'nog niet gemeten' };
+  });
+  let PriveUi = null;
+  function startPriveHoek() {
+    if (typeof PriveHoek === 'undefined' || typeof PriveHoekUI === 'undefined') return;
+    PriveUi = PriveHoekUI.maak(PriveHoek, {
+      doc: document, nu, opslag: PriveOpslag, crypto: window.crypto,
+      rijen: priveRijen, verbruik: priveVerbruik,
+      noodstopKern: () => { for (const t of S.telefoons) { const a = (meet(t.adres).status || {}).aikern; if (a && a.waarde && nu() - a.t <= K.MAX_LEEFTIJD_MS) return a.waarde.noodstop === true; } return null; },
+      noodstop: () => noodstop(), stop: () => { if (S.aan) $('pantserKnop').click(); }, pantserAan: () => S.aan === true,
+      bevestig: (zin) => window.confirm(zin),
+      downloadBestand: (naam, tekst) => { const b = new Blob([tekst], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = naam; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); },
+    });
+    PriveUi.start($('priveHoek')).catch(() => { $('priveHoek').textContent = 'De privé-hoek kon niet worden geladen in deze browser.'; });
+    setInterval(() => PriveUi.tik(), 30000);
+  }
+
   async function start() {
     try {
       S.telefoons = (await Opslag.lees('telefoons')) || [];
@@ -2450,8 +2500,9 @@
     $('nieuwQrSluit').addEventListener('click', () => { $('nieuwQrPaneel').hidden = true; clearInterval(qrKlok); $('nieuwQrBeeld').replaceChildren(); });
     $('qrPlakKnop').addEventListener('click', () => koppelMetQrTekst($('qrTekst').value));
     $('taakKnop').addEventListener('click', () => { voegTakenToe($('taakTekst').value); $('taakTekst').value = ''; });
-    for (const s of ['live', 'wachtrij', 'koppel']) $(`tab-${s}`).addEventListener('click', () => toonScherm(s));
+    for (const s of ['live', 'wachtrij', 'koppel', 'prive']) $(`tab-${s}`).addEventListener('click', () => toonScherm(s));
     // De Live modus is het startscherm -- behalve als Veronica nog nergens mee gekoppeld is: dan meteen de QR (1.9.14).
+    startPriveHoek();
     toonScherm(gekoppeld() ? 'live' : 'koppel');
     tekenKarakter();
     tekenNtfy();
@@ -2495,5 +2546,6 @@
     keus.value = voor;
   }
   window.__veronica = { NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon };
+  Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
