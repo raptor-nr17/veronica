@@ -119,6 +119,7 @@
     scherm: {},             // adres -> { code, url, aan }
     log: [],
     testUitslag: {},
+    nulmeting: {},          // 462: adres -> { loopt, zin, uitslag }
     installQr: {},
     wakeLock: null,
   };
@@ -970,6 +971,57 @@
     logRegel(`${t.naam}: ${zin}`);
     tekenLive();
   }
+  // 462: DE NULMETING -- twintig minuten per telefoon (nulmeting.js). Tien vragen, elke minuut accu en temperatuur, en een eigen noodstop.
+  // De telefoon is al die tijd "bezig": de pool geeft hem geen werk. Blijf op dit tabblad; sluiten of herladen breekt de meting af.
+  const NulS = { stop: false, versnel: 1 };       // versnel: ALLEEN voor de test (een minuut duurt dan 60000 x versnel ms)
+  async function startNulmeting(t) {
+    const Nm = window.Nulmeting;
+    if (!Nm || !t) return;
+    const s = staat(t.adres);
+    const nul = S.nulmeting[t.adres] = S.nulmeting[t.adres] || {};
+    if (nul.loopt) { nul.zin = 'Nulmeting: loopt al.'; tekenLive(); return; }
+    if (s.bezig || !s.bereikbaar) { nul.zin = 'Nulmeting: deze telefoon is nu niet vrij of niet bereikbaar. Probeer het zo nog eens.'; tekenLive(); return; }
+    if (typeof window.confirm === 'function' && !window.confirm(`${t.naam} twintig minuten meten? Hij krijgt in die tijd geen ander werk. Laat hem aan de lader liggen en laat dit tabblad open.`)) return;
+    NulS.stop = false; nul.loopt = true; nul.uitslag = null; nul.zin = 'Nulmeting loopt: nog ongeveer twintig minuten.';
+    s.bezig = true; tekenLive();
+    const begin = nu();
+    const io = {
+      wacht: (ms) => new Promise((r) => setTimeout(r, ms * NulS.versnel)),
+      status: async () => {
+        const st = meet(t.adres).status || {};
+        const vers2 = (v) => (v && nu() - v.t <= K.MAX_LEEFTIJD_MS ? v.waarde : null);
+        return { temp: vers2(st.temperatuur), accu: vers2(st.batterij), laadt: vers2(st.laadt) === true };
+      },
+      vraag: async (v) => {
+        const ctrl = new AbortController();
+        const klok = setTimeout(() => ctrl.abort(), 120000);
+        const t0 = nu();
+        try {
+          const model = modelNaamVan(meet(t.adres));
+          const r = await fetch(`${t.adres}/v1/chat/completions`, Object.assign({
+            method: 'POST', signal: ctrl.signal, headers: Object.assign({ 'Content-Type': 'application/json' }, kop(t)),
+            body: JSON.stringify({ model: model || undefined, stream: false, max_tokens: v.max_tokens, temperature: 0, messages: [{ role: 'user', content: v.prompt }] }),
+          }, K.lnaOpties(t.adres)));
+          if (!r.ok) return { ok: false };
+          const d = await r.json();
+          const tekst = String(d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || '').trim();
+          if (!tekst) return { ok: false };
+          const gemeld = d && d.usage && Number(d.usage.completion_tokens);
+          return { ok: true, ms: Math.max(1, nu() - t0), tokens: gemeld > 0 ? gemeld : Math.max(1, Math.ceil(tekst.length / 4)) };   // zonder opgave van de telefoon: vier tekens tellen als een token
+        } catch (e) { return { ok: false }; } finally { clearTimeout(klok); }
+      },
+    };
+    try {
+      const metingen = await Nm.voerUit(io, { stop: () => NulS.stop });
+      const uitslag = Nm.beoordeel(metingen);
+      nul.uitslag = uitslag;
+      nul.zin = `Nulmeting ${uitslag.ok ? 'geslaagd' : 'niet geslaagd'}: ${uitslag.redenen.join(' ')} Past bij: ${uitslag.advies.toUpperCase()}.`;
+      logRegel(`${t.naam}: ${nul.zin}`);
+    } catch (e) {
+      nul.zin = 'Nulmeting: er ging iets mis. Er is niets veranderd op de telefoon.';
+      logRegel(`${t.naam}: ${nul.zin}`);
+    } finally { nul.loopt = false; s.bezig = false; nul.minuten = Math.round((nu() - begin) / 60000); tekenLive(); }
+  }
   async function maakBaas(t) {
     if (!S.code || !t || !t.jarvis || t.kern) return;
     if (typeof window.confirm === 'function' && !window.confirm(`${t.naam} de baas maken?`)) return;
@@ -1107,9 +1159,11 @@
           }
         }
         const tb = el('button', 'klein-knop', 'Test deze telefoon'); tb.dataset.actie = 'test'; tb.title = 'Stuurt een korte vraag en laat het antwoord en de tijd zien'; knoppen.appendChild(tb);
+        const nb = el('button', 'klein-knop', S.nulmeting[t.adres] && S.nulmeting[t.adres].loopt ? 'Nulmeting loopt...' : 'Nulmeting (20 min)'); nb.dataset.actie = 'nulmeting'; nb.title = 'Meet twintig minuten wat deze telefoon echt kan: snelheid, warmte en accu. Een keer per telefoon.'; knoppen.appendChild(nb);
       }
       tegel.appendChild(knoppen);
       if (S.testUitslag[t.adres]) tegel.appendChild(el('div', 'tBron', S.testUitslag[t.adres].zin));
+      if (S.nulmeting[t.adres] && S.nulmeting[t.adres].zin) tegel.appendChild(el('div', 'tBron', S.nulmeting[t.adres].zin));
       if (S.installQr[t.adres] && window.qrcode) {
         // 460: een QR naar de OFFICIELE pagina van OlliteRT. Geen download, geen eigen kopie: jij scant, kiest de nieuwste versie en installeert zelf.
         const blok = el('div', 'tInstall');
@@ -1593,6 +1647,7 @@
   }
   async function noodstop() {
     S.aan = false;
+    NulS.stop = true;                              // 462: ook een lopende nulmeting stopt
     $('pantserKnop').textContent = 'Pantser uit';
     $('pantserKnop').setAttribute('aria-pressed', 'false');
     for (const st of S.stromen.values()) { st.reden = 'noodstop'; st.ctrl.abort(); }
@@ -2281,6 +2336,7 @@
       if (knop.dataset.actie === 'baas') maakBaas(t);
       if (knop.dataset.actie === 'ruim') ruimGemmaOp(t);
       if (knop.dataset.actie === 'test') testTelefoon(t);
+      if (knop.dataset.actie === 'nulmeting') startNulmeting(t);
       if (knop.dataset.actie === 'installeer') { S.installQr[t.adres] = !S.installQr[t.adres]; tekenLive(); }
       if (knop.dataset.actie === 'olliteStart') startOlliteVanuitVeronica(t);
       if (knop.dataset.actie === 'motor') motorVanuitVeronica(t, knop.dataset.aan === '1');
@@ -2384,6 +2440,6 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon };
+  window.__veronica = { NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon };
   start();
 }());

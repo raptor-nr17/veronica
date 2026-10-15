@@ -70,19 +70,31 @@
   // ---- Capaciteit: wat kan deze (oude) telefoon? ----
   // c = { ramGb, sdk, arm64, vrijGb, tps, modelGeladen, model }. Onbekende waarden (null/undefined) worden NIET geraden: dan beslist de rest.
   const KLASSEN = Object.freeze(['zwaar', 'midden', 'licht', 'te-oud']);
-  const MIN_RAM_GB = 6;
+  const MIN_RAM_GB = 4;            // 462: NOMINAAL (zoals op de doos). Onder de 4 GB past ook een model van 1 GB niet meer fatsoenlijk.
   const MIN_VRIJ_GB = 3;
   const getal = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  // 462: GEMETEN GEHEUGEN IS NIET HET GEHEUGEN OP DE DOOS. Android meldt (totalMem) ongeveer: 4 GB -> 3,6; 6 GB -> 5,5; 8 GB -> 7,4; 12 GB -> 11,2.
+  // Zonder omrekenen was een telefoon van 12 GB nooit ZWAAR, een van 8 GB nooit MIDDEN en een van 6 GB TE OUD. nominaalGb() zoekt de grootste
+  // gangbare maat waar het gemeten getal minstens 86% van is. Wie al een nominaal getal doorgeeft (12, 8, 6, 4) krijgt hetzelfde terug.
+  const NOMINALE_GB = Object.freeze([2, 3, 4, 6, 8, 12, 16, 24, 32]);
+  function nominaalGb(gb) {
+    const g = getal(gb);
+    if (g === null) return null;
+    let n = null;
+    for (const s of NOMINALE_GB) if (g >= 0.86 * s) n = s;
+    return n === null ? g : n;
+  }
+  // c = { ramGb, sdk, arm64, vrijGb, tps, modelGeladen, model }. Onbekende waarden (null/undefined) worden NIET geraden: dan beslist de rest.
   function capaciteit(c) {
     const x = c && typeof c === 'object' ? c : {};
-    const ram = getal(x.ramGb); const tps = getal(x.tps); const vrij = getal(x.vrijGb);
+    const ram = nominaalGb(x.ramGb); const tps = getal(x.tps); const vrij = getal(x.vrijGb);
     const model = /e4b/i.test(x.model || '') ? 'E4B' : /e2b/i.test(x.model || '') ? 'E2B' : null;
     if (x.arm64 === false) return { klasse: 'te-oud', reden: 'geen 64-bits ARM', zin: 'te oud voor model', model: null };
     if (ram !== null && ram < MIN_RAM_GB) return { klasse: 'te-oud', reden: `${Math.round(ram * 10) / 10} GB RAM (minimaal ${MIN_RAM_GB})`, zin: 'te oud voor model', model: null };
     if (vrij !== null && vrij < MIN_VRIJ_GB && x.modelGeladen !== true) return { klasse: 'te-oud', reden: `${Math.round(vrij * 10) / 10} GB vrije ruimte (minimaal ${MIN_VRIJ_GB} voor het model)`, zin: 'te oud voor model (te weinig ruimte)', model: null };
     let klasse;
     if (ram !== null && ram >= 12 && (tps === null || tps >= 8)) klasse = 'zwaar';
-    else if (ram !== null && ram >= 8 && (tps === null || tps >= 3)) klasse = 'midden';
+    else if (ram !== null && ram >= 6 && (tps === null || tps >= 3)) klasse = 'midden';
     else if (ram === null && tps === null && model) klasse = model === 'E4B' ? 'zwaar' : 'midden';      // geen JARVIS en nog geen meting: het geladen model zegt wat het kan
     else if (ram === null && tps !== null) klasse = tps >= 8 ? 'zwaar' : tps >= 3 ? 'midden' : 'licht';
     else klasse = 'licht';
@@ -220,5 +232,5 @@
     };
   }
 
-  return { wachtrijVolgorde, KLASSEN, GEWICHT_NAAR_KLASSEN, capaciteit, gewichtVan, tijdslimiet, VOORRANG, SOORTEN, LET_OP, MAX_TEKST, MAX_TOKENS, valideer, maakPrompt, rangVan, geschikt, kiesTelefoon, verdring, volgende, maakRem, bijwerkSnelheid, maakResultaat, pantserRegel };
+  return { wachtrijVolgorde, KLASSEN, GEWICHT_NAAR_KLASSEN, capaciteit, nominaalGb, gewichtVan, tijdslimiet, VOORRANG, SOORTEN, LET_OP, MAX_TEKST, MAX_TOKENS, valideer, maakPrompt, rangVan, geschikt, kiesTelefoon, verdring, volgende, maakRem, bijwerkSnelheid, maakResultaat, pantserRegel };
 }));
