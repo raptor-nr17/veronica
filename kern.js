@@ -349,6 +349,25 @@
     return [g(s.watt) !== null ? `${k(s.watt, 0)} W` : 'watt onbekend', g(s.spanning) !== null ? `${k(s.spanning, 0)} V` : null,
       g(s.kwh) !== null ? `totaal ${k(s.kwh, 2)} kWh` : null, g(s.vandaag) !== null ? `vandaag ${k(s.vandaag, 2)} kWh` : null].filter(Boolean).join(' · ');
   }
+  // 467: verbruik en kosten. Tarief instelbaar (standaard 0,30 per kWh). Kosten = gemeten kWh x tarief; niets geschat.
+  const TARIEF_STANDAARD = 0.30;
+  function leesTarief(t) {
+    const n = Number(String(t === undefined || t === null ? '' : t).trim().replace(',', '.'));
+    return Number.isFinite(n) && n > 0 && n <= 5 ? Math.round(n * 1000) / 1000 : TARIEF_STANDAARD;
+  }
+  const euro = (x) => `€ ${(Math.round(x * 100) / 100).toFixed(2).replace('.', ',')}`;
+  // Een regel voor het verslag: "Nu 123 W · vandaag 0,80 kWh (€ 0,24) · totaal 4,56 kWh (€ 1,37) · tarief € 0,30 per kWh".
+  function verbruikRegel(s, tarief) {
+    const g = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+    const t = leesTarief(tarief);
+    const kw = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+    const delen = [];
+    if (g(s.watt) !== null) delen.push(`nu ${Math.round(s.watt)} W`);
+    if (g(s.vandaag) !== null) delen.push(`vandaag ${kw(s.vandaag)} kWh (${euro(s.vandaag * t)})`);
+    if (g(s.kwh) !== null) delen.push(`totaal ${kw(s.kwh)} kWh (${euro(s.kwh * t)})`);
+    if (!delen.length) return 'Verbruik: onbekend (nog niet gemeten).';
+    return `Verbruik: ${delen.join(' · ')} · tarief ${euro(t)} per kWh.`;
+  }
   // 463b: wat de laatste zoekronde van de baas deed, in een zin.
   function scanZin(sc) {
     if (!sc) return 'De baas heeft nog niet naar stekkers gezocht (of hij is een oudere versie).';
@@ -1018,7 +1037,7 @@
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
-    meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, meterZin, scanZin, hitteNaam, ruweStand,
+    meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
     isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

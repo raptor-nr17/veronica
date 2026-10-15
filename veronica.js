@@ -1245,6 +1245,7 @@
     tekenStekkerNieuw();
     tekenSamen(tijd);
     tekenZonStroom(tijd);
+    tekenVerbruik(tijd);
     tekenWachtrij();
   }
 
@@ -1273,6 +1274,31 @@
     $('stekkerBeheer').hidden = !S.code;
     $('stekkerScanZin').textContent = K.scanZin(S.stekkerScan);
   }
+
+  // 467: verbruik en kosten van de meter-stekker, met een tarief dat de mens zelf instelt (alleen in deze browser).
+  const TARIEF_SLEUTEL = 'veronica-tarief';
+  function leesTariefOpslag() { try { return localStorage.getItem(TARIEF_SLEUTEL); } catch (e) { return null; } }
+  function tekenVerbruik(tijd) {
+    const meter = S.stekkers.find((k) => k.rol === 'meter');
+    const blok = $('verbruikBlok');
+    blok.hidden = !meter;
+    if (!meter) return;
+    const veld = $('tariefVeld');
+    if (document.activeElement !== veld) veld.value = String(K.leesTarief(leesTariefOpslag())).replace('.', ',');
+    const m = S.stekkerMeting[meter.ip] || {};
+    if (m.meet === false) { $('verbruikRegel').textContent = 'Deze stekker meet niet (geen energie in Tasmota Status 8).'; return; }
+    const w = (x) => (x && typeof x.waarde === 'number' ? x.waarde : null);
+    const eerste = [m.watt, m.vandaag, m.kwh].find(Boolean);
+    const bron = eerste ? K.vakje(eerste, tijd) : null;
+    $('verbruikRegel').textContent = K.verbruikRegel({ watt: w(m.watt), vandaag: w(m.vandaag), kwh: w(m.kwh) }, leesTariefOpslag())
+      + (bron ? ` Bron: ${bron.bron}${bron.oud ? ' (oude meting)' : ''}.` : '');
+  }
+  document.addEventListener('input', (e) => {
+    if (e.target && e.target.id === 'tariefVeld') {
+      try { localStorage.setItem(TARIEF_SLEUTEL, String(K.leesTarief(e.target.value))); } catch (x) { /* alleen voor nu */ }
+      tekenVerbruik(nu());
+    }
+  });
 
   // ZON EN STROOM: wat de hoofdtelefoon meldt, met bron en leeftijd. Nooit zelf gerekend.
   const kwhZin = (x) => `${String(Math.round(x * 100) / 100).replace('.', ',')} kWh`;

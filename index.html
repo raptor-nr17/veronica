@@ -185,6 +185,12 @@
     </div>
     <h2 id="stekkerKop" hidden>Stekkers</h2>
     <div id="tegels-stekkers"><div id="stekkerTegels" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px"></div></div>
+    <div id="verbruikBlok" class="zsPaneel" hidden>
+      <h2>Verbruik en kosten</h2>
+      <p id="verbruikRegel" class="eerlijk"></p>
+      <label>Tarief per kWh (€) <input id="tariefVeld" type="text" inputmode="decimal" size="6" autocomplete="off"></label>
+      <p class="tBron">Kosten = gemeten kWh x dit tarief. Het tarief is jouw instelling; de kWh komen van de meter-stekker.</p>
+    </div>
     <h2 id="zonKop">Zon en stroom</h2>
     <div id="zonStroom" class="zsPaneel"></div>
   </section>
