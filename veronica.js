@@ -386,6 +386,50 @@
       return gevonden.a;
     } finally { HZ.bezig = false; }
   }
+  // ---- 476c: ZOEKEN OVER DE TELEFOONS ----
+  // De telefoons die nu een deelvraag mogen doen: bereikbaar (of JARVIS meldde zich vers) en met een JARVIS-adres.
+  let zoeker = null;
+  function zoekTelefoons() {
+    return S.telefoons.filter((t) => t.jarvis && (staat(t.adres).bereikbaar === true || jarvisVers(meet(t.adres).status, nu())))
+      .map((t) => ({ id: t.adres, naam: t.naam, host: (/^http:\/\/([^:/]+)/.exec(t.jarvis) || [])[1] || '' })).filter((t) => t.host);
+  }
+  let zoekGebonden = false;
+  function zoekBlokStart() {
+    if (!window.VeronicaZoek || !$('zoekKnop')) return;
+    zoeker = window.VeronicaZoek.maak({ haal, telefoons: zoekTelefoons, code: () => S.code });
+    if (zoekGebonden) return;   // de knoppen krijgen hun luisteraars hoogstens een keer (anders loopt een vraag dubbel)
+    zoekGebonden = true;
+    const doe = async () => {
+      const knop = $('zoekKnop'), stand = $('zoekStand'), uit = $('zoekUitslag');
+      knop.disabled = true; stand.textContent = 'Even zoeken…'; uit.replaceChildren();
+      let u = null;
+      try { u = await zoeker.zoek($('zoekVraag').value); } catch (e) { u = { ok: false, zin: 'Zoeken lukte niet. Probeer het zo nog eens.' }; }
+      knop.disabled = false;
+      tekenZoekUitslag(u);
+    };
+    $('zoekKnop').addEventListener('click', () => { doe(); });
+    $('zoekVraag').addEventListener('keydown', (e) => { if (e.key === 'Enter') doe(); });
+  }
+  // Alles als PLATTE TEKST (textContent): geen aanklikbare adressen, niets wordt geopend.
+  function tekenZoekUitslag(u) {
+    const stand = $('zoekStand'), uit = $('zoekUitslag');
+    uit.replaceChildren();
+    const p = (tekst, klasse) => { const e = document.createElement('p'); if (klasse) e.className = klasse; e.textContent = tekst; uit.appendChild(e); return e; };
+    if (!u || !u.ok) { stand.textContent = (u && u.zin) || 'Zoeken lukte niet.'; return; }
+    stand.textContent = u.samengevoegd.length ? `${u.aantal} ${u.aantal === 1 ? 'resultaat' : 'resultaten'} voor "${u.term}".` : (u.zin || 'Ik vond niets.');
+    for (const d of u.delen) {
+      p(`${d.naam}: ${d.ok && !d.reden ? `${d.aantal} gevonden${d.telefoon ? `, opgehaald door ${d.telefoon}` : ''}${d.uitGeheugen ? ' (uit het geheugen)' : ''}` : (d.zin || 'niet gelukt')}`, 'klein');
+    }
+    for (const r of u.samengevoegd) {
+      const kaart = document.createElement('div'); kaart.className = 'zoekRes';
+      const k = document.createElement('b'); k.textContent = r.titel; kaart.appendChild(k);
+      if (r.tekst) { const t = document.createElement('div'); t.textContent = r.tekst; kaart.appendChild(t); }
+      const b = document.createElement('div'); b.className = 'klein'; b.textContent = `Bron: ${r.bronnen.join(', ')}${r.telefonen.length ? ` · via ${r.telefonen.join(', ')}` : ''} · ${r.url}`; kaart.appendChild(b);
+      uit.appendChild(kaart);
+    }
+    for (const m of u.meldingen || []) if (typeof m === 'string') p(m, 'klein');
+    p(u.let_op, 'klein');
+  }
   async function meetStekker(k) {
     try {
       const [a, b] = await Promise.all([haal(`http://${k.ip}/cm?cmnd=Status%208`, {}, 2500), haal(`http://${k.ip}/cm?cmnd=Power`, {}, 2500)]);
@@ -2718,6 +2762,7 @@
       // Automatisch de rij oproepen: elke tien minuten (en meteen als het wifi terug is).
       if (S.code && nu() - roepT > 10 * 60 * 1000) roepOp(false);
     }, 1000);
+    zoekBlokStart();
     setInterval(schermTik, 1000);
     setInterval(wandTik, 1000);
     setInterval(antwoordTik, 1000);
@@ -2742,7 +2787,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { zoekBlokStart, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

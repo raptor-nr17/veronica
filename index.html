@@ -212,6 +212,16 @@
     <h2>Wie doet wat</h2>
     <p class="eerlijk">Per telefoon: welk werk hij nu krijgt en waarom. Claude-klussen en vragen van Veronica kun je per telefoon uitzetten; de rest regelt de telefoon zelf. Uitzetten kan altijd, aanzetten alleen als de telefoon het kan.</p>
     <div id="takenVerdeling"></div>
+    <!-- 476c: een zoekvraag, verdeeld over de telefoons. Alleen lezen: platte tekst, niets wordt geopend, geplaatst of gekocht. -->
+    <section id="zoekBlok" class="blok">
+      <h2>Zoeken over de telefoons</h2>
+      <p class="klein">Stel een vraag. De telefoons zoeken elk een deel (Wikipedia, Wikidata, Marginalia) en ik voeg het samen, met bron. Veronica haalt zelf niets van internet. Niet voor privé-vragen.</p>
+      <label for="zoekVraag">Wat wil je weten?</label>
+      <input id="zoekVraag" autocomplete="off" spellcheck="false" maxlength="200" placeholder="bijvoorbeeld: Hindeloopen schaatsen geschiedenis">
+      <button type="button" id="zoekKnop">Zoek</button>
+      <p id="zoekStand" aria-live="polite"></p>
+      <div id="zoekUitslag"></div>
+    </section>
   </section>
   <section id="scherm-prive" hidden>
     <div id="priveHoek"></div>
@@ -307,6 +317,10 @@
   <button id="nieuwQrSluit">Sluiten</button>
 </div>
 <script src="pool.js"></script>
+<script src="prive-zoek.js"></script>
+<script src="zoekkassa.js"></script>
+<script src="zoekmulti.js"></script>
+<script src="zoeken.js"></script>
 <script src="takenverdeling.js"></script>
 <script src="nulmeting.js"></script>
 <script src="kern.js"></script>
