@@ -32,6 +32,12 @@
   .tVersie { font-size: 14px; color: var(--zacht); margin-top: 2px; }
   .tVersie.achter { font-size: 16px; color: #f5a524; }
   .tGemma { font-size: 16px; color: #f5a524; margin-top: 4px; line-height: 1.35; }   /* 456b: twee Gemma-apps of twee modelkopieen */
+  .taakTegel .taakRegel { display: flex; gap: 10px; align-items: baseline; margin: 4px 0; font-size: 15px; }   /* 469: wie doet wat */
+  .taakTegel .taakRegel.magNiet .taakUitleg { color: #888; }
+  .taakTegel .taakRegel.mag .taakUitleg { color: #4caf50; }
+  .taakTegel .taakSchakel { display: inline-flex; gap: 6px; align-items: center; min-width: 190px; }
+  .taakTegel .taakNaam { min-width: 190px; display: inline-block; }
+  .taakSamen { margin: 10px 0; font-size: 15px; color: #9ab; }
   .tMotorKlaar { font-size: 15px; color: #9ab; margin-top: 4px; line-height: 1.35; }   /* 468: klaar voor de eigen motor? */
   .tMotorKlaar.klaar { color: #4caf50; }
   .tMotorKlaar.kanNiet { color: #888; }
@@ -203,6 +209,9 @@
     <button id="taakKnop">In de wachtrij</button>
     <p class="eerlijk">De wachtrij staat op deze computer. Tik op Pantser aan om hem te laten lopen. Valt een telefoon weg, dan gaat zijn vraag naar een andere.</p>
     <div id="takenLijst"></div>
+    <h2>Wie doet wat</h2>
+    <p class="eerlijk">Per telefoon: welk werk hij nu krijgt en waarom. Claude-klussen en vragen van Veronica kun je per telefoon uitzetten; de rest regelt de telefoon zelf. Uitzetten kan altijd, aanzetten alleen als de telefoon het kan.</p>
+    <div id="takenVerdeling"></div>
   </section>
   <section id="scherm-prive" hidden>
     <div id="priveHoek"></div>
@@ -298,6 +307,7 @@
   <button id="nieuwQrSluit">Sluiten</button>
 </div>
 <script src="pool.js"></script>
+<script src="takenverdeling.js"></script>
 <script src="nulmeting.js"></script>
 <script src="kern.js"></script>
 <script src="qrcode.js"></script>

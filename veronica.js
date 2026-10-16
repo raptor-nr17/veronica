@@ -561,7 +561,8 @@
   async function luister(hey) {
     if (Spr.luistert) { if (Spr.opname) Spr.opname.stop(); return; }   // tweede tik = klaar met praten
     if (hey) spreek(K.veronicaZin(S.karakter, 'luister'), 'luister');
-    const t = K.kiesTelefoon(S.telefoons, S.staten, nu());
+    const uitK = uitgeslotenDoorKeuze('veronica');
+    const t = K.kiesTelefoon(S.telefoons.filter((x) => !uitK.includes(x.adres)), S.staten, nu());
     if (t && navigator.mediaDevices && window.MediaRecorder) {
       const tekst = await luisterViaGemma(t);
       if (tekst !== null) return verwerkSpraak(tekst, 'Gemma');
@@ -1257,6 +1258,7 @@
     tekenZonStroom(tijd);
     tekenVerbruik(tijd);
     tekenWachtrij();
+    tekenTakenverdeling(false);
   }
 
   // 452b: NIEUWE STEKKERS. JARVIS (de baas) zoekt zelf Tasmota-stekkers op het wifi; hier staat wat hij vond, met twee
@@ -1308,6 +1310,67 @@
       try { localStorage.setItem(TARIEF_SLEUTEL, String(K.leesTarief(e.target.value))); } catch (x) { /* alleen voor nu */ }
       tekenVerbruik(nu());
     }
+  });
+
+  // 469: WIE DOET WAT. De keuzes van de eigenaar (alleen uitsluiten) staan in deze browser; de regels staan in takenverdeling.js.
+  const TAKEN_SLEUTEL = 'veronica-taken';
+  function leesTakenKeuzes() { try { return Takenverdeling.schoonKeuzes(JSON.parse(localStorage.getItem(TAKEN_SLEUTEL) || '{}'), S.telefoons.map((t) => t.adres)); } catch (e) { return {}; } }
+  function bewaarTakenKeuzes(k) { try { localStorage.setItem(TAKEN_SLEUTEL, JSON.stringify(Takenverdeling.schoonKeuzes(k, S.telefoons.map((t) => t.adres)))); } catch (e) { /* alleen voor nu */ } }
+  function takenTelefoons() {
+    const tijd = nu();
+    return S.telefoons.map((t) => {
+      const ps = poolStaat(t);
+      const m = meet(t.adres);
+      const mo = m.status && m.status.motor && tijd - m.status.motor.t <= K.MAX_LEEFTIJD_MS ? m.status.motor.waarde : null;
+      const rol = m.status && m.status.rol && tijd - m.status.rol.t <= K.MAX_LEEFTIJD_MS ? m.status.rol.waarde : null;
+      return { naam: t.naam, adres: t.adres, kern: !!t.kern, rol, klasse: ps.klasse, klasseReden: ps.klasseReden, modelGeladen: ps.modelGeladen, motorKlaar: !!(mo && mo.klaar), bereikbaar: ps.bereikbaar, vervangen: ps.vervangen, hitteStand: ps.hitteStand, rust: ps.rust, magRekenen: ps.magRekenen };
+    });
+  }
+  const uitgeslotenDoorKeuze = (soort) => Takenverdeling.uitgeslotenVoor(S.telefoons, leesTakenKeuzes(), soort);
+  let takenHandtekening = '';
+  function tekenTakenverdeling(forceer) {
+    const vak = $('takenVerdeling');
+    if (!vak || ($('scherm-wachtrij').hidden && !forceer)) return;
+    const keuzes = leesTakenKeuzes();
+    const r = Takenverdeling.verdeel(takenTelefoons(), keuzes);
+    const hand = JSON.stringify(r);
+    if (hand === takenHandtekening && !forceer) return;
+    takenHandtekening = hand;
+    const delen = [];
+    if (!r.telefoons.length) delen.push(el('p', 'eerlijk', 'Nog geen telefoons gekoppeld.'));
+    for (const t of r.telefoons) {
+      const kaart = el('section', 'tegel taakTegel');
+      kaart.appendChild(el('h2', '', `${t.naam}${t.rol === 'baas' ? ' · 👑 Baas' : t.rol === 'werker' ? ' · Werker' : ''}${t.klasse ? ` · ${t.klasse === 'te-oud' ? 'te oud voor model' : t.klasse}` : ''}`));
+      for (const regel of t.regels) {
+        const rij = el('div', `taakRegel ${regel.mag ? 'mag' : 'magNiet'}`);
+        if (!regel.vast || Takenverdeling.KIESBAAR.includes(regel.soort)) {
+          const lab = el('label', 'taakSchakel');
+          const box = document.createElement('input'); box.type = 'checkbox';
+          box.checked = Takenverdeling.magVan(keuzes, t.adres, regel.soort);
+          box.dataset.adres = t.adres; box.dataset.soort = regel.soort;
+          lab.appendChild(box); lab.appendChild(el('span', '', regel.naam));
+          rij.appendChild(lab);
+        } else rij.appendChild(el('span', 'taakNaam', regel.naam));
+        rij.appendChild(el('span', 'taakUitleg', `${regel.mag ? 'ja' : 'nee'} · ${regel.reden}`));
+        kaart.appendChild(rij);
+      }
+      delen.push(kaart);
+    }
+    const sam = el('div', 'taakSamen');
+    for (const z of r.samenvatting) sam.appendChild(el('div', '', z));
+    delen.push(sam);
+    for (const w of r.waarschuwingen) delen.push(el('p', 'eerlijk waarschuwing', w));
+    vak.replaceChildren(...delen);
+  }
+  document.addEventListener('change', (e) => {
+    const b = e.target;
+    if (!b || !b.dataset || !b.dataset.soort || !b.dataset.adres || !Takenverdeling.KIESBAAR.includes(b.dataset.soort)) return;
+    const k = leesTakenKeuzes();
+    k[b.dataset.adres] = Object.assign({}, k[b.dataset.adres]);
+    if (b.checked) delete k[b.dataset.adres][b.dataset.soort]; else k[b.dataset.adres][b.dataset.soort] = false;
+    bewaarTakenKeuzes(k);
+    logRegel(`${(S.telefoons.find((t) => t.adres === b.dataset.adres) || {}).naam || b.dataset.adres}: ${b.dataset.soort === 'claude' ? 'Claude-klussen' : 'vragen van Veronica'} ${b.checked ? 'weer aan' : 'uitgezet'}.`);
+    tekenTakenverdeling(true);
   });
 
   // ZON EN STROOM: wat de hoofdtelefoon meldt, met bron en leeftijd. Nooit zelf gerekend.
@@ -1497,6 +1560,8 @@
       // De eerste klus waar een telefoon voor vrij is. Een zware klus die nog wacht houdt de lichte klussen daarachter niet op.
       let gedaan = false;
       for (const taak of wachtend) {
+        // 469: telefoons die de eigenaar voor deze soort heeft uitgezet (alleen uitsluiten; pool.js beslist de rest).
+        for (const a of uitgeslotenDoorKeuze(taak.claude ? 'claude' : 'veronica')) if (!(taak.uitgesloten = taak.uitgesloten || []).includes(a)) taak.uitgesloten.push(a);
         const t = Pool.kiesTelefoon(S.telefoons, staten, taak, nu());
         if (t) { draai(taak, t); gedaan = true; break; }
       }
@@ -2368,6 +2433,7 @@
     if (naam !== 'prive' && PriveUi && PriveUi.open) PriveUi.dicht();   // 466: de hoek gaat dicht zodra je weggaat
     if (naam === 'prive' && PriveUi) PriveUi.teken();
     // 1.9.6: op Koppelen staat de QR voor een nieuwe telefoon er meteen (geen extra tik).
+    if (naam === 'wachtrij') tekenTakenverdeling(true);
     if (naam === 'koppel') tekenKoppelStand();
     if (naam === 'koppel' && gekoppeld() && !$('koppelQrBeeld').querySelector('svg')) toonNieuweTelefoonQr('koppel');
     if (naam === 'koppel' && !gekoppeld()) startVeronicaQr();   // 1.9.14
@@ -2581,7 +2647,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon };
+  window.__veronica = { NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
