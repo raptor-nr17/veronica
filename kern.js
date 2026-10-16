@@ -531,7 +531,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.34';
+  const VERONICA_VERSIE = '1.9.35';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -569,6 +569,43 @@
   function netVan(adres) {
     const m = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}/.exec(String(adres || ''));
     return m ? `${m[1]}.${m[2]}.${m[3]}` : null;
+  }
+  // ---- 476: ZELF HERSTELLEN NA EEN ANDER WIFI (16 oktober: het huis kreeg een andere router) ----
+  // Veronica had de telefoons onthouden op het OUDE net en zei alleen "0 van 2 bereikbaar". Nu: antwoordt geen enkel
+  // onthouden adres meer, dan zoekt ze de telefoons opnieuw op het netwerk -- eerst het wifi van deze computer, dan de
+  // gangbare thuisnetten, en het oude net als laatste. Ze vraagt op elk adres /jarvis/vertrouwd MET de code: alleen een
+  // eigen telefoon antwoordt daar met 200, dus een treffer is bewezen (geen gokwerk, niets te typen).
+  function herstelPlan(o) {
+    const x = o || {};
+    const eigen = (x.eigen || []).map(String).filter(isThuisNet);
+    const eigenNetten = [];
+    for (const ip of eigen) { const n = netVan(ip); if (n && !eigenNetten.includes(n)) eigenNetten.push(n); }
+    const oudeNetten = [];
+    for (const a of x.bekend || []) { const n = netVan(a); if (n && isThuisNet(`${n}.1`) && !oudeNetten.includes(n)) oudeNetten.push(n); }
+    const netten = eigenNetten
+      .concat(GANGBARE_NETTEN.filter((n) => !eigenNetten.includes(n) && !oudeNetten.includes(n)))
+      .concat(oudeNetten.filter((n) => !eigenNetten.includes(n)));
+    const adressen = [];
+    for (const n of netten) {
+      const mijn = eigen.find((ip) => ip.startsWith(n + '.'));
+      for (const a of subnetAdressen(mijn || `${n}.0`)) if (!adressen.includes(a)) adressen.push(a);
+    }
+    return { eigenNetten, oudeNetten, netten, adressen, gok: !eigenNetten.length };
+  }
+  // De zinnen erbij, in gewone taal. fase: 'zoekt' | 'gevonden' | 'niets'.
+  function herstelZin(fase, o) {
+    const x = o || {};
+    const lijst = (ns) => (ns || []).map((n) => `${n}.x`).join(', ');
+    if (fase === 'zoekt') {
+      const oud = x.oudeNetten && x.oudeNetten.length ? ` op het oude adres (${lijst(x.oudeNetten)})` : '';
+      return `Geen enkele telefoon antwoordt${oud}. Ander wifi? Ik zoek de telefoons opnieuw op het netwerk (${lijst(x.netten)}). Je hoeft niets te typen.`;
+    }
+    if (fase === 'gevonden') {
+      const net = x.net ? ` (${x.net}.x)` : '';
+      const namen = (x.namen || []).filter(Boolean);
+      return `Gevonden op het nieuwe wifi${net}${namen.length ? `: ${namen.join(', ')}` : ''}. Ik kijk weer mee.`;
+    }
+    return `Ook op het netwerk niets gevonden (${x.aantal || 0} adressen geprobeerd). Staan de telefoons aan, en zitten ze op hetzelfde wifi als deze computer? Over een paar minuten probeer ik het opnieuw. Sneller: open Koppelen en scan de QR daar met de baas-telefoon.`;
   }
   // Alle adressen in hetzelfde /24-net, behalve het eigen, op poort 8080 -- de dichtstbijzijnde eerst.
   function subnetAdressen(ip) {
@@ -1076,7 +1113,7 @@
     return uit.slice(0, 6);
   }
   return {
-    alternatieveAdressen, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND,
+    alternatieveAdressen, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,

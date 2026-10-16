@@ -304,10 +304,19 @@
     }
     const v = $('vindUitleg');
     if (!gevonden) {
+      // 476: na twee stille rondes (ruim 20 s) zoekt Veronica de telefoons ZELF opnieuw op het netwerk (ander wifi).
+      // Die zoeker zet zijn eigen zin in hetzelfde vak; zolang hij loopt blijft die staan.
+      if (gekoppeld() && !HZ.bezig && nu() - stilSinds >= HZ.NA_MS && nu() - HZ.laatst >= HZ.TUSSEN_MS) { herstelZoek(); return; }
+      if (HZ.bezig) return;
       const u = K.vindUitleg({ gekoppeld: !!S.code, bereikbaar: 0, stilMs: nu() - stilSinds, geprobeerd: lijst.length });
       if (v) { v.textContent = u; v.hidden = !u; }
       return;
     }
+    await verwerkGevonden(gevonden);
+  }
+  // Iemand antwoordde met de code (rondvragen of de herstelzoeker): zijn lijst overnemen.
+  async function verwerkGevonden(gevonden) {
+    const v = $('vindUitleg');
     stilSinds = nu();
     if (v) v.hidden = true;
     const l = K.leesVertrouwd(gevonden.d);
@@ -331,6 +340,51 @@
     if (S.actieveKern !== gevonden.a) logRegel(`Gevonden via ${gevonden.a.slice(7)}. Ik kijk weer mee.`);
     S.actieveKern = gevonden.a;
     vulVervang();
+  }
+  // ---- 476: DE HERSTELZOEKER (ander wifi) ----
+  // Antwoordt geen enkel onthouden adres meer, dan zoekt Veronica de telefoons opnieuw: /jarvis/vertrouwd met de code op
+  // elk adres van het eigen net, dan de gangbare thuisnetten, het oude net als laatste (K.herstelPlan). Acht tegelijk,
+  // 1,2 s per adres, de eerste treffer geeft de hele lijst (met de nieuwe adressen). Hoogstens eens per drie minuten.
+  // HZ.proefAdressen: alleen voor de test (een lijst in plaats van het echte zoekplan).
+  const HZ = { bezig: false, laatst: 0, NA_MS: 20000, TUSSEN_MS: 180000, proefAdressen: null, gescand: 0, laatsteUitslag: null };
+  function toonVind(tekst) { const v = $('vindUitleg'); if (v) { v.textContent = tekst; v.hidden = !tekst; } }
+  async function herstelZoek() {
+    if (HZ.bezig || !gekoppeld()) return null;
+    HZ.bezig = true; HZ.laatst = nu(); HZ.gescand = 0;
+    try {
+      let eigen = [];
+      try { eigen = await eigenAdressen(); } catch (e) { eigen = []; }
+      const plan = K.herstelPlan({ eigen, bekend: K.rondvraagLijst(S) });
+      const adressen = Array.isArray(HZ.proefAdressen) ? HZ.proefAdressen.slice() : plan.adressen;
+      const zinZoekt = K.herstelZin('zoekt', plan);
+      toonVind(zinZoekt); logRegel(zinZoekt);
+      let i = 0, gevonden = null;
+      const werker = async () => {
+        while (!gevonden && i < adressen.length && !Bijwerk.nieuw) {
+          const a = adressen[i++];
+          HZ.gescand += 1;
+          try {
+            const r = await haal(`${a}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': S.code } }, 1200);
+            if (r.ok && !gevonden) gevonden = { a, d: await r.json() };
+          } catch (e) { /* geen telefoon van ons op dit adres */ }
+        }
+      };
+      await Promise.all(Array.from({ length: 8 }, werker));
+      if (!gevonden) {
+        const zin = K.herstelZin('niets', { aantal: HZ.gescand });
+        toonVind(zin); logRegel(zin);
+        HZ.laatsteUitslag = { gevonden: false, gescand: HZ.gescand, t: nu() };
+        return null;
+      }
+      await verwerkGevonden(gevonden);
+      const zin = K.herstelZin('gevonden', { net: K.netVan(gevonden.a), namen: S.telefoons.map((t) => t.naam) });
+      logRegel(zin); toonVind(zin);
+      setTimeout(() => { if ($('vindUitleg') && $('vindUitleg').textContent === zin) toonVind(''); }, 60000);
+      HZ.laatsteUitslag = { gevonden: true, adres: gevonden.a, gescand: HZ.gescand, t: nu() };
+      if (VQ.herstel) { VQ.herstel = false; VQ.herstelReden = ''; if (!$('scherm-koppel').hidden) { $('koppelQrBeeld').replaceChildren(); toonNieuweTelefoonQr('koppel'); } }
+      meetRonde();
+      return gevonden.a;
+    } finally { HZ.bezig = false; }
   }
   async function meetStekker(k) {
     try {
@@ -1966,12 +2020,21 @@
     }
     return uit;
   }
-  function tekenVeronicaQr() {
+  // 476: de baas is weg (ander wifi): de QR van Veronica zelf in de kaart, met de reden erbij, en zelf zoeken.
+  function herstelQr(reden) {
+    VQ.herstel = true;
+    VQ.herstelReden = `Ik kan de baas niet bereiken. ${String(reden || '').trim()} Ander wifi? Scan deze QR met de BAAS-telefoon (JARVIS, Koppel met Veronica): dan geeft hij zijn nieuwe adres door. Ondertussen zoek ik zelf op het netwerk.`.replace(/\s+/g, ' ');
+    tekenVeronicaQr($('koppelQrBeeld'));
+    logRegel('Koppelen: de baas antwoordt niet; ik toon de QR van Veronica zelf en zoek de telefoons opnieuw.');
+    zoekTelefoon();
+    herstelZoek();
+  }
+  function tekenVeronicaQr(doel) {
     VQ.vorige = VQ.sleutel;
     VQ.sleutel = K.nieuweSleutel();
     VQ.tot = nu() + K.VERONICA_QR_MS;
     if (!VQ.vorige) VQ.briefSinds = Math.floor(Date.now() / 1000) - 60;
-    const vak = $('veronicaQrBeeld'), tekst = K.veronicaQrTekst(VQ.sleutel);
+    const vak = doel || (VQ.herstel ? $('koppelQrBeeld') : $('veronicaQrBeeld')), tekst = K.veronicaQrTekst(VQ.sleutel);
     if (typeof window.qrcode !== 'function') { vak.textContent = 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).'; return; }
     const q = window.qrcode(0, 'M');
     q.addData(tekst);
@@ -1981,9 +2044,12 @@
     if (svg) { svg.classList.add('qr-plaatje'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'QR-code: scan mij met JARVIS'); }
     clearInterval(VQ.klok);
     const zet = () => {
-      if (gekoppeld()) { clearInterval(VQ.klok); return; }
+      if (gekoppeld() && !VQ.herstel) { clearInterval(VQ.klok); return; }
       const rest = Math.max(0, Math.ceil((VQ.tot - nu()) / 1000));
-      $('veronicaQrTijd').textContent = `Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, '0')} geldig. Werkt een keer.`;
+      const tel = `Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, '0')} geldig. Werkt een keer.`;
+      // 476: in de herstelstand staat de reden erbij, in het vak van de koppelkaart.
+      if (VQ.herstel) $('koppelQrTijd').textContent = `${VQ.herstelReden} ${tel}`;
+      else $('veronicaQrTijd').textContent = tel;
       if (!rest) tekenVeronicaQr();   // vanzelf een nieuwe
     };
     zet();
@@ -2133,11 +2199,11 @@
       let laatsteVeld = null;
       VQ.zoekKlok = setInterval(() => {
         briefStroom();
-        if (!gekoppeld()) toonZoekStand(begin);
+        if (!gekoppeld() && !VQ.herstel) toonZoekStand(begin);
         const v = K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
         if (v && v !== laatsteVeld) { laatsteVeld = v; VQ.extra.push(v); }
       }, 1000);
-      while (!gekoppeld() && !$('scherm-koppel').hidden) {
+      while ((!gekoppeld() || VQ.herstel) && !$('scherm-koppel').hidden) {
         const veld = K.normaalAdres($('veronicaAdres').value, K.JARVIS_POORT);
         const plan = K.zoekPlan(VQ.eigen, S.bekend);
         if (veld) laatsteVeld = veld;
@@ -2145,11 +2211,13 @@
         // Wat er IS: een ingevuld adres en het adres uit de brief. Pas na "Zoek zelf" de rest.
         const voor = (veld ? [veld] : []).concat([...VQ.briefGezien]).filter((a, i, l) => l.indexOf(a) === i);
         const adressen = VQ.zelfZoeken ? voor.concat(plan.adressen.filter((a) => !voor.includes(a))) : voor;
-        toonZoekStand(begin);
+        if (!VQ.herstel) toonZoekStand(begin);
         const l = adressen.length || VQ.extra.length ? await zoekRonde(adressen) : null;
         if (l) {
-          VQ.vorige = null; VQ.sleutel = null; clearInterval(VQ.klok);
+          const herstel = VQ.herstel;
+          VQ.vorige = null; VQ.sleutel = null; VQ.herstel = false; VQ.herstelReden = ''; clearInterval(VQ.klok);
           await bewaarLijst(l);
+          if (herstel) { logRegel('De baas gaf via de QR zijn nieuwe adres door. Ik kijk weer mee.'); $('koppelQrBeeld').replaceChildren(); $('koppelQrTijd').textContent = ''; }
           $('veronicaZoekStand').textContent = '';
           zegKoppel(`Klaar: ${l.telefoons.length} ${l.telefoons.length === 1 ? 'telefoon' : 'telefoons'}. Scan deze QR met de volgende telefoon.`, false);
           logRegel('Gekoppeld vanaf de QR van Veronica.');
@@ -2162,7 +2230,7 @@
   }
   const slaap = (ms) => new Promise((z) => setTimeout(z, ms));
   function startVeronicaQr() {
-    if (gekoppeld()) return;
+    if (gekoppeld() && !VQ.herstel) return;
     if (!VQ.sleutel || nu() >= VQ.tot) tekenVeronicaQr();
     zoekTelefoon();
   }
@@ -2177,7 +2245,7 @@
     const vak = $(opKoppel ? 'koppelQrBeeld' : 'nieuwQrBeeld');
     const tijd = $(opKoppel ? 'koppelQrTijd' : 'nieuwQrTijd');
     if (!opKoppel) $('nieuwQrPaneel').hidden = false;
-    vak.textContent = 'Even…';
+    vak.textContent = 'Even… ik vraag de baas om een koppelcode.';
     tijd.textContent = '';
     if (!S.kern || !S.code) {
       vak.textContent = opKoppel
@@ -2185,15 +2253,27 @@
         : 'Koppel Veronica eerst met de hoofdtelefoon (Koppelen).';
       return;
     }
+    // 476: NOOIT op "Even..." blijven staan. Komt er binnen acht seconden niets, dan de terugval: de QR van Veronica zelf.
+    let klaar = false;
+    const wachter = opKoppel ? setTimeout(() => { if (!klaar) herstelQr('De baas antwoordde niet binnen acht seconden.'); }, 8000) : null;
     let t = null, waarom = null;
     const t0 = nu();
     try {
       const r = await haal(`${kernNu()}/jarvis/koppeltoken`, { method: 'POST', headers: { 'X-Koppelcode': S.code } }, 4000);
       if (r.ok) t = (await r.json()).t;
-    } catch (e) { t = null; waarom = await waaromGeenAntwoord(kernNu(), t0, 4000); }
+    } catch (e) { t = null; try { waarom = await waaromGeenAntwoord(kernNu(), t0, 4000); } catch (x) { waarom = null; } }
+    klaar = true;
+    if (wachter) clearTimeout(wachter);
     const tekst = K.koppelQrTekst(kernNu(), t);
     if (typeof window.qrcode !== 'function') { vak.textContent = 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).'; return; }
-    if (!tekst) { vak.textContent = `Nu geen QR. ${waarom || 'De hoofdtelefoon gaf geen koppelcode.'}`; return; }
+    if (!tekst) {
+      // 476: de baas is niet te bereiken (ander wifi?). Dan de QR van Veronica zelf: de baas scant hem en geeft zijn
+      // nieuwe adres door (brievenbus), en Veronica zoekt ondertussen zelf. Een kaart zonder QR helpt niemand.
+      if (opKoppel) herstelQr(waarom || 'De hoofdtelefoon gaf geen koppelcode.');
+      else vak.textContent = `Nu geen QR. ${waarom || 'De hoofdtelefoon gaf geen koppelcode.'}`;
+      return;
+    }
+    VQ.herstel = false; VQ.herstelReden = '';
     const q = window.qrcode(0, 'M');
     q.addData(tekst);
     q.make();
@@ -2436,7 +2516,7 @@
     if (naam === 'wachtrij') tekenTakenverdeling(true);
     if (naam === 'koppel') tekenKoppelStand();
     if (naam === 'koppel' && gekoppeld() && !$('koppelQrBeeld').querySelector('svg')) toonNieuweTelefoonQr('koppel');
-    if (naam === 'koppel' && !gekoppeld()) startVeronicaQr();   // 1.9.14
+    if (naam === 'koppel' && (!gekoppeld() || VQ.herstel)) startVeronicaQr();   // 1.9.14; 476: ook in de herstelstand
     if (naam === 'koppel' && gekoppeld()) startVolgen();
     if (naam === 'koppel') tekenUpdatePlek();
   }
@@ -2662,7 +2742,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
