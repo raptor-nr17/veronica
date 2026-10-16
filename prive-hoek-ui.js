@@ -5,7 +5,9 @@
 //
 // OPSLAG: een EIGEN database in deze browser ("veronica-prive"), los van de rest van Veronica. Er gaat NIETS van de inhoud naar een
 // telefoon, ntfy, een server, Drive of een andere dienst; dit bestand heeft geen netwerkaanroep. De opgeslagen hoek is NIET
-// versleuteld in de browser (de back-up wel); het slot houdt het scherm dicht, de inlog van de Chromebook beschermt de rest.
+// versleuteld in de browser (de back-up wel). 476b: GEEN slot meer (besluit van de eigenaar, 16 oktober): geen pincode,
+// geen wachtwoord, geen extra inlog -- de inlog van de Chromebook beschermt de hoek. Wat blijft: alleen deze browser, niets
+// op internet, niets bewaard buiten de browser.
 (function (wortel, fabriek) {
   if (typeof module === 'object' && module.exports) module.exports = fabriek;
   else wortel.PriveHoekUI = { maak: fabriek };
@@ -14,20 +16,20 @@
   // d = { doc, nu(), opslag{lees,schrijf,wis}, rijen(), verbruik(), noodstopKern(), noodstop(), stop(), pantserAan(), crypto?, downloadBestand(naam, tekst), bevestig(zin), model? }
   const doc = d.doc;
   const el = (tag, klasse, tekst) => { const e = doc.createElement(tag); if (klasse) e.className = klasse; if (tekst !== undefined) e.textContent = tekst; return e; };
-  const U = { store: null, slot: null, open: false, poging: null, melding: '', test: null, proef: null, zoek: '', filter: '', klaar: false, inactiefT: 0, proefModel: null, gesprek: [] };
+  const U = { store: null, open: true, melding: '', test: null, proef: null, zoek: '', filter: '', klaar: false, inactiefT: 0, proefModel: null, gesprek: [] };
   let wortelEl = null;
   const INACTIEF_MS = 10 * 60 * 1000;
 
   async function laad() {
     const s = await d.opslag.lees('store');
-    const sl = await d.opslag.lees('slot');
     U.store = P.leesStore(s);
-    U.slot = sl && typeof sl === 'object' ? sl : null;
+    try { await d.opslag.wis('slot'); } catch (e) { /* een oud slot uit 466: weg ermee */ }
     U.klaar = true;
   }
   async function bewaar() { await d.opslag.schrijf('store', U.store); }
   function raak() { U.inactiefT = d.nu(); }
-  function dicht() { U.open = false; U.test = null; U.proef = null; U.proefModel = null; U.gesprek = []; U.melding = ''; teken(); }
+  // 476b: 'dicht' ruimt alleen het tijdelijke op (gesprek, proef); de hoek zelf blijft open, er is geen slot.
+  function dicht() { U.open = true; U.test = null; U.proef = null; U.proefModel = null; U.gesprek = []; U.melding = ''; teken(); }
   function meld(zin) { U.melding = zin || ''; teken(); }
 
   function kop(tekst) { return el('h3', '', tekst); }
@@ -40,42 +42,6 @@
     const w = el('div', 'phVeld'); const l = el('label', '', label); l.htmlFor = id;
     const i = el('input'); i.type = type; i.id = id; i.autocomplete = 'off'; i.spellcheck = false;
     w.append(l, i); return { w, i };
-  }
-
-  function slotScherm() {
-    const k = el('section', 'phSlot');
-    k.append(kop('Mijn privé-hoek'));
-    if (!U.slot) {
-      k.append(el('p', '', 'Dit hoekje is alleen voor jou. Kies eerst een pincode (minstens 6 tekens). Die bedenk je zelf. Ik bewaar alleen een afgeleide waarde, nooit de pincode zelf.'));
-      const a = veld('Nieuwe pincode', 'password', 'phPin1'); const b = veld('Nog een keer', 'password', 'phPin2');
-      k.append(a.w, b.w, knop('Pincode instellen', async () => {
-        if (a.i.value !== b.i.value) return meld('De twee pincodes zijn niet hetzelfde.');
-        const r = await P.maakSlot(a.i.value, d.crypto);
-        if (!r.ok) return meld(P.FOUTZIN[r.fout] || 'Dat lukte niet.');
-        U.slot = r.slot; await d.opslag.schrijf('slot', U.slot);
-        U.open = true; raak(); P.logToevoegen(U.store, 'Privé-hoek ingesteld.', 'eigenaar', d.nu()); await bewaar(); meld('');
-      }));
-    } else {
-      k.append(el('p', '', 'Typ je pincode om het hoekje te openen.'));
-      const a = veld('Pincode', 'password', 'phPin');
-      const probeer = async () => {
-        const r = await P.controleerSlot(U.slot, a.i.value, U.poging, d.nu(), d.crypto);
-        U.poging = r.poging; a.i.value = '';
-        if (r.ok) { U.open = true; raak(); return meld(''); }
-        meld(r.fout === 'wacht' ? `Te vaak fout. Wacht nog ${Math.ceil(r.nogMs / 1000)} seconden.` : (P.FOUTZIN[r.fout] || 'Dat klopt niet.'));
-      };
-      a.i.addEventListener('keydown', (e) => { if (e.key === 'Enter') probeer().catch(() => {}); });
-      k.append(a.w, knop('Openen', probeer));
-      const det = el('details'); det.append(el('summary', '', 'Pincode vergeten?'));
-      det.append(el('p', '', 'Er is geen herstel. Je kunt de hele privé-hoek wissen en opnieuw beginnen. Heb je een back-up, dan kun je daaruit terug.'));
-      det.append(knop('Wis de hele privé-hoek', async () => {
-        if (!d.bevestig('De hele privé-hoek wissen? Dit kan niet terug (zonder back-up).')) return;
-        U.store = P.nieuweStore(); U.slot = null; U.poging = null; await d.opslag.schrijf('store', U.store); await d.opslag.wis('slot'); meld('Alles gewist. Kies een nieuwe pincode.');
-      }, 'phGevaar'));
-      k.append(det);
-    }
-    if (U.melding) k.append(el('p', 'phMelding', U.melding));
-    return k;
   }
 
   function bovenbalk() {
@@ -289,6 +255,12 @@
     rij.append(c, el('span', '', ' Andere telefoons laten meerekenen voor privé (standaard uit)'));
     k.append(rij);
     k.append(el('p', 'phEerlijk', 'Let op: dit bewaart alleen jouw wens. Aanzetten doet nu nog NIETS: de telefoons weigeren privé-werk van anderen, en die weg is niet gebouwd. Zodra dat wel kan, zeg ik het hier.'));
+    // 476b: geen pincode en geen wachtwoord op deze hoek (besluit van de eigenaar). Wissen kan wel, met een bevestiging.
+    k.append(el('p', '', 'Er zit geen pincode op deze hoek: wie aan deze computer mag, mag hier. De inlog van de Chromebook is het slot.'));
+    k.append(knop('Wis de hele privé-hoek', async () => {
+      if (!d.bevestig('De hele privé-hoek wissen? Dit kan niet terug (zonder back-up).')) return;
+      U.store = P.nieuweStore(); await d.opslag.schrijf('store', U.store); meld('Alles gewist.');
+    }, 'phGevaar'));
     return k;
   }
 
@@ -296,7 +268,6 @@
     if (!wortelEl) return;
     wortelEl.replaceChildren();
     if (!U.klaar) { wortelEl.append(el('p', '', 'Even laden…')); return; }
-    if (!U.open) { wortelEl.append(slotScherm()); return; }
     wortelEl.append(bovenbalk());
     if (U.melding) wortelEl.append(el('p', 'phMelding', U.melding));
     wortelEl.append(statusBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), testBlok(), backupBlok(), privacyBlok());
@@ -305,7 +276,7 @@
   return {
     async start(rootEl) { wortelEl = rootEl; await laad(); teken(); },
     teken, dicht,
-    tik() { if (U.open && d.nu() - U.inactiefT > INACTIEF_MS) dicht(); },
+    tik() { if (d.nu() - U.inactiefT > INACTIEF_MS) { U.inactiefT = d.nu(); dicht(); } },
     get open() { return U.open; },
     get store() { return U.store; },
     async ontvangVoorstel(voorstel) { const r = P.voorstelToevoegen(U.store, voorstel, d.nu()); if (r.ok) { await bewaar(); teken(); } return r; },

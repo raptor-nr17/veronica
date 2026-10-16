@@ -10,7 +10,8 @@
 //  - de vijf vaste testvragen voor het karakter;
 //  - de versleutelde back-up (sleutel = een wachtwoord dat de EIGENAAR zelf typt; hier wordt er nooit een bedacht of bewaard),
 //    het bestandsformaat, en de herstelproef;
-//  - het slot (pincode die de eigenaar zelf kiest; alleen een afgeleide waarde met zout wordt bewaard);
+//  - GEEN slot (476b, besluit van de eigenaar op 16 oktober: geen pincode, geen wachtwoord, geen extra inlog --
+//    de inlog van de Chromebook beschermt de hoek; wie aan die computer mag, mag in de hoek);
 //  - de wekelijkse "kijk even mee"-stand.
 //
 // WAT HIER NIET IN ZIT, MET OPZET: een model, een netwerkaanroep, een verbinding met de privé-kamer van de telefoons. De privé-AI
@@ -39,11 +40,8 @@
   const MAX_VOORSTELLEN = 200;
   const MAX_SAMENVATTINGEN = 400;
   const MIN_WACHTWOORD = 12;        // back-up
-  const MIN_PIN = 6;                // slot
   const KDF_ITER = 310000;
   const MEEKIJK_DAGEN = 7;
-  const POGINGEN_MAX = 5;
-  const POGINGEN_WACHT_MS = 60000;
 
   // De vijf vaste testvragen voor het karakter. Vast, in gewone taal, zonder lokaas voor lof.
   const TESTVRAGEN = Object.freeze([
@@ -268,30 +266,6 @@
     return { ok: true, gemaakt: r.gemaakt, inBackup: tellingen(r.store), nuAanwezig: tellingen(leesStore(store)), zelfdeTellingen: nu === bak, zelfdeInhoud: gelijkInhoud };
   }
 
-  // ---------------------------------------------------------------- het slot (pincode van de eigenaar)
-  async function maakSlot(pin, cr) {
-    const c = cryptoVan(cr);
-    if (!c || !c.subtle) return { ok: false, fout: 'geen-crypto' };
-    if (typeof pin !== 'string' || pin.length < MIN_PIN) return { ok: false, fout: 'pin-kort' };
-    const zout = c.getRandomValues(new Uint8Array(16));
-    const basis = await c.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
-    const bits = await c.subtle.deriveBits({ name: 'PBKDF2', salt: zout, iterations: KDF_ITER, hash: 'SHA-256' }, basis, 256);
-    return { ok: true, slot: { zout: naarB64(zout), iteraties: KDF_ITER, hash: naarB64(bits) } };
-  }
-  // poging = { fouten, sindsT } wordt door de aanroeper bijgehouden (in het geheugen).
-  async function controleerSlot(slot, pin, poging, nu, cr) {
-    const c = cryptoVan(cr);
-    const p = poging || { fouten: 0, sindsT: 0 };
-    if (p.fouten >= POGINGEN_MAX && nu - p.sindsT < POGINGEN_WACHT_MS) return { ok: false, fout: 'wacht', nogMs: POGINGEN_WACHT_MS - (nu - p.sindsT), poging: p };
-    if (!c || !c.subtle || !slot || typeof pin !== 'string') return { ok: false, fout: 'geen-slot', poging: p };
-    const basis = await c.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
-    const bits = await c.subtle.deriveBits({ name: 'PBKDF2', salt: vanB64(slot.zout), iterations: slot.iteraties, hash: 'SHA-256' }, basis, 256);
-    const gelijk = naarB64(bits) === slot.hash;
-    if (gelijk) return { ok: true, poging: { fouten: 0, sindsT: 0 } };
-    const fouten = p.fouten >= POGINGEN_MAX ? 1 : p.fouten + 1;
-    return { ok: false, fout: 'fout', poging: { fouten, sindsT: nu } };
-  }
-
   // ---------------------------------------------------------------- de wekelijkse "kijk even mee"
   function meekijkStand(store, nu) {
     const t = store.instellingen.meekijkT;
@@ -336,20 +310,17 @@
 
   const FOUTZIN = Object.freeze({
     'wachtwoord-kort': `Kies een wachtwoord van minstens ${MIN_WACHTWOORD} tekens. Dat bedenk jij zelf; ik bewaar het nergens.`,
-    'pin-kort': `Kies een pincode van minstens ${MIN_PIN} tekens.`,
     'geen-crypto': 'Deze browser kan niet versleutelen. Gebruik Chrome op de Chromebook.',
     'geen-backup': 'Dit bestand is geen back-up van de privé-hoek.',
     'wachtwoord-leeg': 'Typ het wachtwoord van de back-up.',
     'fout-wachtwoord-of-beschadigd': 'Het wachtwoord klopt niet, of het bestand is beschadigd.',
     leeg: 'Er staat niets in het veld.',
-    wacht: 'Te vaak fout. Wacht even.',
-    fout: 'Die pincode klopt niet.',
   });
 
   return Object.freeze({
-    FORMAAT, FORMAAT_VERSIE, MAPPEN, HERKOMST, HERKOMST_NAAM, ROLLEN_STANDAARD, TESTVRAGEN, MIN_WACHTWOORD, MIN_PIN, KDF_ITER, MEEKIJK_DAGEN, POGINGEN_MAX, FOUTZIN,
+    FORMAAT, FORMAAT_VERSIE, MAPPEN, HERKOMST, HERKOMST_NAAM, ROLLEN_STANDAARD, TESTVRAGEN, MIN_WACHTWOORD, KDF_ITER, MEEKIJK_DAGEN, FOUTZIN,
     nieuweStore, leesStore, dagVan, logToevoegen, logZoek, mag, zetTekst, samenvattingToevoegen, leesVoorAi,
     voorstelToevoegen, keurVoorstel, openVoorstellen, testKarakter,
-    maakBackup, openBackup, herstelProef, tellingen, maakSlot, controleerSlot, meekijkStand, heeftMeegekeken, zetDeelPrive, zetPraatLokaal, zetPraatTelefoon, isLokaalAdres, backupDatumZin,
+    maakBackup, openBackup, herstelProef, tellingen, meekijkStand, heeftMeegekeken, zetDeelPrive, zetPraatLokaal, zetPraatTelefoon, isLokaalAdres, backupDatumZin,
   });
 }));
