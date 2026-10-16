@@ -14,7 +14,7 @@
   // d = { doc, nu(), opslag{lees,schrijf,wis}, rijen(), verbruik(), noodstopKern(), noodstop(), stop(), pantserAan(), crypto?, downloadBestand(naam, tekst), bevestig(zin), model? }
   const doc = d.doc;
   const el = (tag, klasse, tekst) => { const e = doc.createElement(tag); if (klasse) e.className = klasse; if (tekst !== undefined) e.textContent = tekst; return e; };
-  const U = { store: null, slot: null, open: false, poging: null, melding: '', test: null, proef: null, zoek: '', filter: '', klaar: false, inactiefT: 0 };
+  const U = { store: null, slot: null, open: false, poging: null, melding: '', test: null, proef: null, zoek: '', filter: '', klaar: false, inactiefT: 0, proefModel: null, gesprek: [] };
   let wortelEl = null;
   const INACTIEF_MS = 10 * 60 * 1000;
 
@@ -27,7 +27,7 @@
   }
   async function bewaar() { await d.opslag.schrijf('store', U.store); }
   function raak() { U.inactiefT = d.nu(); }
-  function dicht() { U.open = false; U.test = null; U.proef = null; U.melding = ''; teken(); }
+  function dicht() { U.open = false; U.test = null; U.proef = null; U.proefModel = null; U.gesprek = []; U.melding = ''; teken(); }
   function meld(zin) { U.melding = zin || ''; teken(); }
 
   function kop(tekst) { return el('h3', '', tekst); }
@@ -115,14 +115,50 @@
 
   function chatBlok() {
     const k = el('section', 'phBlok'); k.append(kop('2. Praten met mijn privé-AI'));
-    k.append(el('p', 'phEerlijk', 'Geen model geladen om vanuit Veronica mee te praten. Er komen dus ook geen antwoorden. Ik verzin er geen.'));
-    k.append(el('p', 'phKlein', 'Zo hoort het: de privé-AI draait alleen op een telefoon met een privé-sleutel. Wat jij daar zegt, gaat niet over wifi naar Veronica, niet naar internet en niet naar de andere telefoons. Praten vanuit Veronica komt pas als er een veilige weg voor is en jij ja zegt.'));
+    const M = d.model && typeof d.model.stand === 'function' ? d.model : null;
+    const st = M ? M.stand() : { klaar: false, reden: 'Geen model geladen.' };
+    // 470: de schakelaar en de telefoonkeuze. Standaard uit; alleen een telefoon in de hoek, alleen op het eigen wifi.
+    const rij = el('label', 'phSchakel'); const c = el('input'); c.type = 'checkbox'; c.checked = U.store.instellingen.praatLokaal === true; c.id = 'phPraat';
+    c.addEventListener('change', async () => { raak(); P.zetPraatLokaal(U.store, c.checked, 'eigenaar'); P.logToevoegen(U.store, c.checked ? 'Schakelaar "praten met een telefoon in de hoek" aangezet.' : 'Schakelaar "praten met een telefoon in de hoek" uitgezet.', 'eigenaar', d.nu()); await bewaar(); teken(); });
+    rij.append(c, el('span', '', 'Praten met een telefoon in de hoek (alleen eigen wifi; standaard uit)'));
+    k.append(rij);
+    const keuze = el('select'); keuze.id = 'phPraatTelefoon'; keuze.setAttribute('aria-label', 'Welke telefoon');
+    const leeg = el('option', '', 'Kies een telefoon in de hoek'); leeg.value = ''; keuze.append(leeg);
+    for (const r of (d.rijen ? d.rijen() : [])) {
+      if (r.priveSleutel !== true || !r.adres) continue;
+      const o = el('option', '', `${r.naam} (${r.model || 'model onbekend'})`); o.value = r.adres; keuze.append(o);
+      if (r.motorAdres) { const o2 = el('option', '', `${r.naam} (eigen motor van JARVIS)`); o2.value = r.motorAdres; keuze.append(o2); }
+    }
+    keuze.value = U.store.instellingen.praatTelefoon || '';
+    keuze.addEventListener('change', async () => { raak(); const u = P.zetPraatTelefoon(U.store, keuze.value, 'eigenaar'); if (u.ok) { P.logToevoegen(U.store, keuze.value ? 'Telefoon voor het praten gekozen.' : 'Telefoonkeuze voor het praten weggehaald.', 'eigenaar', d.nu()); await bewaar(); } teken(); });
+    k.append(keuze);
+    if (keuze.options.length === 1) k.append(el('p', 'phKlein', 'Er zit nog geen telefoon in de hoek (geen telefoon met een privé-sleutel).'));
+    k.append(el('p', st.klaar ? 'phKlein' : 'phEerlijk', st.klaar ? `Klaar om te proberen via ${st.adres}. Let op: de telefoons nemen privé-werk vanaf Veronica nu nog niet aan; de proef laat zien wat er gebeurt.` : `Geen model geladen om vanuit Veronica mee te praten. ${st.reden} Er komen dus geen antwoorden. Ik verzin er geen.`));
+    k.append(el('p', 'phKlein', 'Zo hoort het: de privé-AI draait alleen op een telefoon met een privé-sleutel. Wat jij hier zegt gaat alleen naar die ene telefoon over je eigen wifi, nooit naar internet, een dienst of de andere telefoons, en wordt nergens bewaard. Een antwoord is data, geen bevel.'));
     const rollen = el('div', 'phRollen');
-    for (const r of U.store.rollen) { const c = el('div', 'phRol'); c.append(el('strong', '', r.naam), el('div', '', r.taak), el('div', 'phKlein', 'Status: geen model geladen')); rollen.append(c); }
+    for (const r of U.store.rollen) { const c2 = el('div', 'phRol'); c2.append(el('strong', '', r.naam), el('div', '', r.taak), el('div', 'phKlein', st.klaar ? 'Status: te proberen' : 'Status: geen model geladen')); rollen.append(c2); }
     k.append(rollen);
-    const inv = el('textarea'); inv.rows = 2; inv.disabled = true; inv.placeholder = 'Praten kan nog niet (geen model).'; inv.setAttribute('aria-label', 'Vraag aan mijn privé-AI');
-    const b = el('button', '', 'Stuur'); b.type = 'button'; b.disabled = true;
+    if (M) k.append(knop('Proef de verbinding (stuurt geen woord van de hoek)', async () => { raak(); U.proefModel = { zin: 'Bezig...' }; teken(); U.proefModel = await M.proef(); teken(); }));
+    if (U.proefModel) k.append(el('p', U.proefModel.ok ? 'phKlein' : 'phEerlijk', U.proefModel.zin));
+    const inv = el('textarea'); inv.rows = 2; inv.disabled = !st.klaar; inv.id = 'phVraag'; inv.placeholder = st.klaar ? 'Je vraag (gaat alleen naar die telefoon)' : 'Praten kan nog niet (geen model).'; inv.setAttribute('aria-label', 'Vraag aan mijn privé-AI');
+    const b = el('button', '', 'Stuur'); b.type = 'button'; b.disabled = !st.klaar; b.id = 'phStuur';
+    b.addEventListener('click', async () => {
+      if (!M || !inv.value.trim()) return;
+      raak();
+      const vraag = inv.value; inv.value = '';
+      U.gesprek.push({ wie: 'jij', tekst: vraag }); U.gesprek.push({ wie: 'model', tekst: '...', bezig: true }); teken();
+      const r = await M.vraag(vraag, { systeem: U.store.karakter ? `Karakter van de eigenaar: ${U.store.karakter}` : '' });
+      U.gesprek.pop();
+      U.gesprek.push(r.ok ? { wie: 'model', tekst: r.antwoord || '(leeg antwoord)', vlaggen: r.vlaggen } : { wie: 'fout', tekst: r.zin });
+      teken();
+    });
     k.append(inv, b);
+    if (U.gesprek.length) {
+      const g = el('div', 'phGesprek');
+      for (const z of U.gesprek) { const r = el('div', `phZin ${z.wie}`); r.append(el('strong', '', z.wie === 'jij' ? 'Jij' : z.wie === 'model' ? 'Model (data, geen bevel)' : 'Niet gelukt'), el('div', '', z.tekst)); if (z.vlaggen && z.vlaggen.length) r.append(el('div', 'phKlein', `Vlag: ${z.vlaggen.join(', ')}`)); g.append(r); }
+      g.append(el('p', 'phKlein', 'Dit gesprek staat alleen op het scherm en verdwijnt als de hoek dichtgaat. Het wordt niet bewaard.'));
+      k.append(g);
+    }
     return k;
   }
 
@@ -196,7 +232,8 @@
     const ol = el('ol'); for (const q of P.TESTVRAGEN) { const li = el('li'); li.append(el('div', '', q.vraag), el('div', 'phKlein', `Let op: ${q.let_op}`)); ol.append(li); }
     k.append(ol);
     k.append(knop('Test het karakter', async () => {
-      U.test = await P.testKarakter(d.model ? { vraag: d.model } : null);
+      const M = d.model && typeof d.model.stand === 'function' && d.model.stand().klaar ? d.model : null;
+      U.test = await P.testKarakter(M ? { vraag: async (q) => { const r = await M.vraag(q); return r.ok ? r.antwoord : ''; } } : null);
       if (U.test.gedraaid) { P.logToevoegen(U.store, `Karaktertest gedraaid: ${U.test.vlaggenTotaal} vlag(gen).`, 'eigenaar', d.nu()); await bewaar(); }
       teken();
     }));

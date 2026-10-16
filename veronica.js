@@ -2443,6 +2443,18 @@
 
   // ---- Start ----
 
+  // ---- 470: DE WEG VAN DE PRIVÉ-HOEK NAAR EEN MODEL (prive-model.js) ----
+  // Het enige stukje rond de hoek dat het netwerk aanraakt, en alleen naar het lokale adres dat de eigenaar in de hoek koos,
+  // met de schakelaar aan. Standaard uit. De regels en de test: prive-model.js, check_prive_model.js.
+  function priveModelLaag() {
+    if (typeof PriveModel === 'undefined' || typeof PriveHoek === 'undefined') return null;
+    return PriveModel.maak({
+      fetch: (u, o) => window.fetch(u, o), nu, isLokaal: PriveHoek.isLokaalAdres,
+      instellingen: () => (PriveUi && PriveUi.store ? PriveUi.store.instellingen : null),
+      inHoek: (adres) => { const r = priveRijen().find((x) => x.adres === adres || x.motorAdres === adres); return r ? r.priveSleutel === true : null; },
+    });
+  }
+
   // ---- 466: MIJN PRIVÉ-HOEK ----
   // Eigen database in deze browser; geen netwerk. De inhoud (prive-hoek.js / prive-hoek-ui.js) komt nooit in logRegel, ntfy of een telefoon.
   const PriveOpslag = (() => {
@@ -2458,6 +2470,8 @@
     const bereikbaar = !!(st.versie && vers(st.versie));
     return {
       naam: t.naam,
+      adres: t.adres,
+      motorAdres: K.motorAdres(t, st),
       priveSleutel: st.priveSleutel && vers(st.priveSleutel) ? st.priveSleutel.waarde : null,
       versie: st.versie && vers(st.versie) ? st.versie.waarde : 'onbekend',
       accu: st.batterij && vers(st.batterij) && st.batterij.waarde !== null ? `${Math.round(st.batterij.waarde)}%${st.laadt && vers(st.laadt) && st.laadt.waarde ? ' (laadt)' : ''}` : 'onbekend',
@@ -2484,6 +2498,7 @@
       noodstopKern: () => { for (const t of S.telefoons) { const a = (meet(t.adres).status || {}).aikern; if (a && a.waarde && nu() - a.t <= K.MAX_LEEFTIJD_MS) return a.waarde.noodstop === true; } return null; },
       noodstop: () => noodstop(), stop: () => { if (S.aan) $('pantserKnop').click(); }, pantserAan: () => S.aan === true,
       bevestig: (zin) => window.confirm(zin),
+      model: priveModelLaag(),   // 470: zie hierboven (buiten dit blok: het is het ENIGE stukje van de hoek dat het netwerk aanraakt)
       downloadBestand: (naam, tekst) => { const b = new Blob([tekst], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = naam; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); },
     });
     PriveUi.start($('priveHoek')).catch(() => { $('priveHoek').textContent = 'De privé-hoek kon niet worden geladen in deze browser.'; });

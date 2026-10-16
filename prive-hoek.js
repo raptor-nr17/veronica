@@ -68,7 +68,7 @@
       logboek: [],                    // [{ dag, regels: [{ t, herkomst, tekst }] }] -- alleen toevoegen
       samenvattingen: [],             // [{ dag, tekst, door }]
       voorstellen: [],                // [{ id, soort, titel, tekst, door, t, status }]
-      instellingen: { deelPrive: false, meekijkT: null, laatsteBackup: null },
+      instellingen: { deelPrive: false, meekijkT: null, laatsteBackup: null, praatLokaal: false, praatTelefoon: '' },
     };
   }
   // Een store uit opslag of back-up lezen: alleen wat bekend is, binnen de grenzen. Rommel valt weg.
@@ -97,7 +97,8 @@
       s.voorstellen.push({ id: v.id, soort: v.soort, titel: knip(v.titel, 120), tekst: knip(v.tekst, MAX_TEKST), door: 'rol', t: Number.isFinite(v.t) ? v.t : 0, status: v.status === true ? true : v.status === false ? false : null });
     }
     const i = x.instellingen && typeof x.instellingen === 'object' ? x.instellingen : {};
-    s.instellingen = { deelPrive: i.deelPrive === true, meekijkT: Number.isFinite(i.meekijkT) ? i.meekijkT : null, laatsteBackup: Number.isFinite(i.laatsteBackup) ? i.laatsteBackup : null };
+    s.instellingen = { deelPrive: i.deelPrive === true, meekijkT: Number.isFinite(i.meekijkT) ? i.meekijkT : null, laatsteBackup: Number.isFinite(i.laatsteBackup) ? i.laatsteBackup : null,
+      praatLokaal: i.praatLokaal === true, praatTelefoon: isLokaalAdres(i.praatTelefoon) ? i.praatTelefoon : '' };
     return s;
   }
 
@@ -311,6 +312,21 @@
     store.instellingen.deelPrive = aan === true;
     return { ok: true };
   }
+  // 470: praten met een model op een telefoon in de hoek, ALLEEN over het eigen wifi. Standaard UIT. Dit bewaart de wens en de
+  // gekozen telefoon; het praten zelf staat in prive-model.js en kan alleen als deze schakelaar aan staat.
+  const LOKAAL_RE = /^http:\/\/(127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|[a-z0-9-]+\.local)(:\d{1,5})?$/i;
+  function isLokaalAdres(a) { return typeof a === 'string' && a.length <= 64 && LOKAAL_RE.test(a); }
+  function zetPraatLokaal(store, aan, door) {
+    if (door !== 'eigenaar') return { ok: false, fout: 'niet-toegestaan' };
+    store.instellingen.praatLokaal = aan === true;
+    return { ok: true };
+  }
+  function zetPraatTelefoon(store, adres, door) {
+    if (door !== 'eigenaar') return { ok: false, fout: 'niet-toegestaan' };
+    if (adres !== '' && !isLokaalAdres(adres)) return { ok: false, fout: 'geen-lokaal-adres' };
+    store.instellingen.praatTelefoon = adres;
+    return { ok: true };
+  }
   function backupDatumZin(store, nu) {
     const t = store.instellingen.laatsteBackup;
     if (!Number.isFinite(t)) return 'Nog geen back-up gemaakt.';
@@ -334,6 +350,6 @@
     FORMAAT, FORMAAT_VERSIE, MAPPEN, HERKOMST, HERKOMST_NAAM, ROLLEN_STANDAARD, TESTVRAGEN, MIN_WACHTWOORD, MIN_PIN, KDF_ITER, MEEKIJK_DAGEN, POGINGEN_MAX, FOUTZIN,
     nieuweStore, leesStore, dagVan, logToevoegen, logZoek, mag, zetTekst, samenvattingToevoegen, leesVoorAi,
     voorstelToevoegen, keurVoorstel, openVoorstellen, testKarakter,
-    maakBackup, openBackup, herstelProef, tellingen, maakSlot, controleerSlot, meekijkStand, heeftMeegekeken, zetDeelPrive, backupDatumZin,
+    maakBackup, openBackup, herstelProef, tellingen, maakSlot, controleerSlot, meekijkStand, heeftMeegekeken, zetDeelPrive, zetPraatLokaal, zetPraatTelefoon, isLokaalAdres, backupDatumZin,
   });
 }));
