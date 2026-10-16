@@ -1103,8 +1103,11 @@
         if (!mo || !mo.klaar) {
           const ps = poolStaat(t);
           const capM = m.status && m.status.capaciteit && tijd - m.status.capaciteit.t <= K.MAX_LEEFTIJD_MS ? m.status.capaciteit.waarde : null;
-          const mk = K.motorKlaarZin(capM, { laadt: ps.laadt, modelGeladen: ps.modelGeladen });
-          tegel.appendChild(el('div', `tMotorKlaar${mk.klaar ? ' klaar' : mk.kan ? '' : ' kanNiet'}`, mk.tekst));
+          // Pas als de telefoon zijn getallen gemeld heeft: anders springt de tegel van hoogte zodra ze binnenkomen (scrolregel 1.9.4).
+          if (capM) {
+            const mk = K.motorKlaarZin(capM, { laadt: ps.laadt, modelGeladen: ps.modelGeladen });
+            tegel.appendChild(el('div', `tMotorKlaar${mk.klaar ? ' klaar' : mk.kan ? '' : ' kanNiet'}`, mk.tekst));
+          }
         }
       }
       {
