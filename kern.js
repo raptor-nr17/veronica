@@ -126,6 +126,49 @@
     if (m.klaar) return `${kop} · klaar${m.backend ? ` (${m.backend})` : ''}${m.tokensPerSeconde > 0 ? ` · ±${String(m.tokensPerSeconde).replace('.', ',')} tokens/s (geschat)` : ''}${m.klussen ? ` · ${m.klussen} ${m.klussen === 1 ? 'vraag' : 'vragen'}` : ''}`;
     return `${kop} · ${m.zin || m.fase}`;
   }
+  // 468: KLAAR VOOR DE EIGEN MOTOR? Een regel per telefoon die zegt wat al goed is en wat er nog moet gebeuren, uit
+  // getallen die Veronica al heeft (RAM, Android, 64-bits, vrije ruimte, aan de lader). Niets wordt gestart: de knop
+  // blijft bij de eigenaar. Grenzen: dezelfde als pool.js (4 GB RAM nominaal, 3 GB vrij) en motorkeuze.js (Android 10 = SDK 29).
+  const MOTOR_MIN_SDK = 29;
+  const MOTOR_MIN_RAM_GB = 4;
+  const MOTOR_MIN_VRIJ_GB = 3;
+  const MOTOR_MODEL_GB = { 'Gemma 4 E4B': 3.7, 'Gemma 4 E2B': 2.6 };
+  function motorKlaarZin(cap, extra) {
+    const c = cap || {};
+    const x = extra || {};
+    const g = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+    const k1 = (v) => String(Math.round(v * 10) / 10).replace('.', ',');
+    const nog = [];
+    const goed = [];
+    const onbekend = [];
+    if (c.arm64 === false) nog.push('deze telefoon is geen 64-bits ARM (dan kan de motor er nooit op)');
+    else if (c.arm64 === true) goed.push('64-bits'); else onbekend.push('64-bits');
+    const sdk = g(c.sdk);
+    if (sdk !== null && sdk < MOTOR_MIN_SDK) nog.push(`Android te oud (Android 10 of nieuwer nodig)`);
+    else if (sdk !== null) goed.push('Android nieuw genoeg'); else onbekend.push('Android-versie');
+    const ram = g(c.ramGb);
+    if (ram !== null && ram < MOTOR_MIN_RAM_GB) nog.push(`${k1(ram)} GB geheugen (minimaal ${MOTOR_MIN_RAM_GB} nodig; dat is niet te veranderen)`);
+    else if (ram !== null) goed.push(`${k1(ram)} GB geheugen`); else onbekend.push('geheugen');
+    const vrij = g(c.vrijGb);
+    if (vrij !== null && vrij < MOTOR_MIN_VRIJ_GB && x.modelGeladen !== true) {
+      const modellen = Object.entries(MOTOR_MODEL_GB).map(([n, gb]) => `${k1(gb)} GB voor ${n}`).join(', ');
+      nog.push(`maak nog ${k1(Math.ceil((MOTOR_MIN_VRIJ_GB - vrij) * 10) / 10)} GB vrij (nu ${k1(vrij)} GB vrij; ${modellen}): verwijder apps, foto's of video's op die telefoon`);
+    } else if (vrij !== null) goed.push(`${k1(vrij)} GB vrij`); else onbekend.push('vrije ruimte');
+    if (x.laadt === false) nog.push('zet hem aan de lader (het model wordt alleen aan de lader en op wifi binnengehaald)');
+    else if (x.laadt === true) goed.push('aan de lader');
+    const vast = nog.some((z) => /nooit|niet te veranderen|te oud/.test(z));
+    let kop;
+    if (vast) kop = 'Eigen motor: kan niet op deze telefoon';
+    else if (nog.length) kop = 'Eigen motor: nog niet klaar';
+    else if (onbekend.length === 4) kop = 'Eigen motor: nog niets bekend over deze telefoon';
+    else kop = 'Eigen motor: klaar om aan te zetten';
+    const delen = [`${kop}.`];
+    if (nog.length) delen.push(`Te doen: ${nog.join('; ')}.`);
+    if (goed.length) delen.push(`Al goed: ${goed.join(', ')}.`);
+    if (onbekend.length && onbekend.length < 4) delen.push(`Nog niet gemeld: ${onbekend.join(', ')}.`);
+    if (!vast) delen.push('Aanzetten en het model ophalen doe je zelf, op de telefoon of met de knop hieronder; dat gebeurt nooit vanzelf.');
+    return { kop, kan: !vast, klaar: !vast && !nog.length && onbekend.length < 4, tekst: delen.join(' ') };
+  }
   // Het adres van de eigen motor op die telefoon: host van JARVIS + de poort die de telefoon zelf meldt (alleen als hij klaar is).
   function motorAdres(t, status) {
     const m = status && status.motor && status.motor.waarde;
@@ -1037,7 +1080,7 @@
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
-    meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
+    meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
     isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

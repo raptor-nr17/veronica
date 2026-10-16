@@ -1099,6 +1099,13 @@
         const mo = m.status && m.status.motor && tijd - m.status.motor.t <= K.MAX_LEEFTIJD_MS ? m.status.motor.waarde : null;
         const mz = K.motorZin(mo);
         if (mz) tegel.appendChild(el('div', 'tGemma', mz));
+        // 468: klaar voor de eigen motor? Alleen zolang hij niet al draait; de zin zegt wat er nog moet gebeuren.
+        if (!mo || !mo.klaar) {
+          const ps = poolStaat(t);
+          const capM = m.status && m.status.capaciteit && tijd - m.status.capaciteit.t <= K.MAX_LEEFTIJD_MS ? m.status.capaciteit.waarde : null;
+          const mk = K.motorKlaarZin(capM, { laadt: ps.laadt, modelGeladen: ps.modelGeladen });
+          tegel.appendChild(el('div', `tMotorKlaar${mk.klaar ? ' klaar' : mk.kan ? '' : ' kanNiet'}`, mk.tekst));
+        }
       }
       {
         // 457: de AI-kern (alleen getallen; de zin maakt Veronica zelf).
