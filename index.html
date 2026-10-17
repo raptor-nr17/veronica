@@ -212,6 +212,13 @@
       <button type="button" id="verslagWis">Verslag wissen</button>
       <p id="verslagMelding" class="klein" aria-live="polite"></p>
     </div>
+    <div id="samenBlok" class="zsPaneel" hidden>
+      <h2>Samenwerken</h2>
+      <p id="samenTrede" class="eerlijk"></p>
+      <p id="samenAfnemers" class="tBron"></p>
+      <p id="samenKennis" class="tBron"></p>
+      <div id="samenLijst"></div>
+    </div>
     <div id="naleesBlok" class="zsPaneel" hidden>
       <h2>Gemma-werk nalezen</h2>
       <p class="tBron">Concepten van de Gemma's op je telefoons. Niets gaat vanzelf live: jij keurt. Je oordeel gaat via de baas-telefoon naar de postbus; de server verwerkt het zodra hij wakker is (uiterlijk 's nachts om half twee, of meteen als je de beheerpagina opent).</p>
@@ -358,6 +365,12 @@
   </section>
   <div id="log" aria-live="polite"></div>
 </main>
+<div id="versQrPaneel" hidden role="dialog" aria-label="QR om bij te werken">
+  <h2>Scan dit met JARVIS op <span id="versQrNaam"></span></h2>
+  <p>Open JARVIS op die telefoon en tik op <b>Scan</b>. Hij krijgt een vers postbus-adres en werkt zichzelf daarna bij. Dit hoeft maar een keer.</p>
+  <img id="versQrBeeld" alt="QR met een vers postbus-adres" width="300" height="300">
+  <button id="versQrSluit">Sluiten</button>
+</div>
 <div id="nieuwQrPaneel" hidden role="dialog" aria-label="QR voor een nieuwe telefoon">
   <h2>Scan dit met de nieuwe telefoon</h2>
   <p>Open JARVIS op die telefoon en tik op <b>Scan om te koppelen</b>. Hij doet daarna vanzelf mee.</p>
@@ -375,6 +388,7 @@
 <script src="takenverdeling.js"></script>
 <script src="nulmeting.js"></script>
 <script src="nachtlog.js"></script>
+<script src="afnemers.js"></script>
 <script src="kern.js"></script>
 <script src="qrcode.js"></script>
 <!-- 1.9.12: de QR-LEZER (jsQR, Apache-2.0, dezelfde als in JARVIS). Chrome heeft alleen op ChromeOS, macOS en

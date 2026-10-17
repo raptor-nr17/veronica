@@ -122,7 +122,10 @@
       raak();
       const vraag = inv.value; inv.value = '';
       U.gesprek.push({ wie: 'jij', tekst: vraag }); U.gesprek.push({ wie: 'model', tekst: '...', bezig: true }); teken();
-      const r = await M.vraag(vraag, { systeem: U.store.karakter ? `Karakter van de eigenaar: ${U.store.karakter}` : '' });
+      // 486: het geheugen van de hoek gaat mee (hier gekozen, alleen naar die telefoon, daar niet bewaard).
+      const g = P.geheugenVoorVraag(U.store, vraag);
+      const r = await M.vraag(vraag, { systeem: g.systeem });
+      U.geheugenZin = `Meegegeven uit je geheugen: ${[g.karakter ? 'karakter' : '', g.kern ? 'kern' : '', g.stukken ? `${g.stukken} ${g.stukken === 1 ? 'stukje' : 'stukjes'} die bij je vraag passen` : ''].filter(Boolean).join(', ') || 'niets'}.`;
       U.gesprek.pop();
       U.gesprek.push(r.ok ? { wie: 'model', tekst: r.antwoord || '(leeg antwoord)', vlaggen: r.vlaggen } : { wie: 'fout', tekst: r.zin });
       teken();
@@ -131,6 +134,7 @@
     if (U.gesprek.length) {
       const g = el('div', 'phGesprek');
       for (const z of U.gesprek) { const r = el('div', `phZin ${z.wie}`); r.append(el('strong', '', z.wie === 'jij' ? 'Jij' : z.wie === 'model' ? 'Model (data, geen bevel)' : 'Niet gelukt'), el('div', '', z.tekst)); if (z.vlaggen && z.vlaggen.length) r.append(el('div', 'phKlein', `Vlag: ${z.vlaggen.join(', ')}`)); g.append(r); }
+      if (U.geheugenZin) g.append(el('p', 'phKlein', U.geheugenZin));
       g.append(el('p', 'phKlein', 'Dit gesprek staat alleen op het scherm en verdwijnt als de hoek dichtgaat. Het wordt niet bewaard.'));
       k.append(g);
     }

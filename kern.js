@@ -40,6 +40,23 @@
   }
   const leesVolLokaal = (x) => x === '1';
 
+  // 485: het samenwerken op trede 1 uit stand.json van de baas: de trede, de open voorstellen van de AI-kern (alleen tekst), het
+  // aantal in het kennisboek. Wat niet klopt valt weg.
+  function leesSamenwerken(x) {
+    if (!x || typeof x !== 'object') return null;
+    const tekst = (v, m) => String(v === null || v === undefined ? '' : v).slice(0, m);
+    const voorstellen = (Array.isArray(x.voorstellen) ? x.voorstellen : []).slice(0, 20)
+      .filter((v) => v && /^v\d{1,6}$/.test(String(v.id || '')))
+      .map((v) => ({ id: v.id, klant: tekst(v.klant, 40), titel: tekst(v.titel, 120), tekst: tekst(v.tekst, 600), t: Number(v.t) || 0 }));
+    const n = Number(x.kennisboek);
+    return { trede: x.trede === 1 || x.trede === 2 || x.trede === 3 ? x.trede : 1, voorstellen, kennisboek: Number.isInteger(n) && n >= 0 ? n : null };
+  }
+  const TREDE_ZIN = {
+    1: 'Trede 1: de telefoons doen voorstellen, jij keurt. Er wordt niets vanzelf uitgevoerd.',
+    2: 'Trede 2: kleine veilige klussen die jij per soort hebt vrijgegeven.',
+    3: 'Trede 3: meer vrijheid per soort klus, binnen de grenzen die jij zette.',
+  };
+
   // 483: de nalees-lijst uit stand.json van de baas. Alleen tekst; wat niet klopt valt weg. null = de baas is niet aan de postbus gekoppeld.
   function leesNalees(n) {
     if (!n || typeof n !== 'object' || !Array.isArray(n.lijst)) return null;
@@ -267,12 +284,13 @@
       adressen: meting(Array.isArray(x.adressen) ? x.adressen.map((a) => normaalAdres(a, OLLITERT_POORT)).filter(Boolean).slice(0, 4) : null, bron, t),
       priveSleutel: meting(x.prive && typeof x.prive === 'object' && typeof x.prive.sleutel === 'boolean' ? x.prive.sleutel : null, bron, t),   // 466: ALLEEN ja/nee, nooit inhoud
       versie: meting(typeof x.versie === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(x.versie) ? x.versie : null, bron, t),
+      bijwerkFout: meting(x.bijwerkFout === 'verlopen' ? 'verlopen' : null, bron, t),   // 487
     };
   }
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.38';
+  const JARVIS_NIEUWSTE = '1.9.39';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -286,7 +304,7 @@
     if (typeof versie !== 'string' || !/^\d+\.\d+\.\d+$/.test(versie)) return null;
     if (vergelijkVersie(versie, nieuwste) >= 0) return { tekst: `JARVIS ${versie}`, achter: false };
     const wacht = rol === 'baas' ? ' De baas wacht daarbij tot de werkers klaar zijn.' : '';
-    return { tekst: `JARVIS ${versie}: loopt achter op ${nieuwste}. Hij werkt zichzelf vanzelf bij zodra hij aan de lader ligt en niets doet (hij kijkt elke zes uur; sneller kan met Instellingen, Kijk of er een nieuwe versie is).${wacht}`, achter: true };
+    return { tekst: `JARVIS ${versie}: oud, wil bijwerken (loopt achter op ${nieuwste}). Hij werkt zichzelf vanzelf bij zodra hij aan de lader ligt en niets doet (hij kijkt elke zes uur; sneller kan met Instellingen, Kijk of er een nieuwe versie is).${wacht}`, achter: true };
   }
   const hitteNaam = (n) => (Number.isInteger(n) && n >= 0 && n < HITTE.length ? HITTE[n] : 'onbekend');
 
@@ -363,11 +381,41 @@
       ? { leeftijdMs: tel(sc.leeftijdMs), netten: (Array.isArray(sc.netten) ? sc.netten : []).map((n) => String(n)).filter((n) => /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(n)).slice(0, 4), gescand: tel(sc.gescand), antwoord: tel(sc.antwoord) || 0, tasmota: tel(sc.tasmota) || 0, door: sc.door === 'op verzoek' ? 'op verzoek' : 'vanzelf' }
       : null;
     const priveBezig = x.prive && typeof x.prive === 'object' && Number(x.prive.bezig) > 0 ? 1 : 0;
-    return { telefoons: uit, stekkers, stekkersGevonden, stekkerScan, priveBezig, rol: x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon) };
+    return { telefoons: uit, stekkers, stekkersGevonden, stekkerScan, priveBezig, rol: x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon), postbusAdres: leesPostbusAdres(x.postbusAdres) };
   }
   // 1.9.14: de downloadlink voor een nieuwe telefoon (QR "JARVIS op een nieuwe telefoon zetten"). Alleen een
   // ondertekend adres in de postbus (zelfde regel als de werker in JARVIS); al het andere: null.
   const POSTBUS_HOST = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.s3\.[a-z]{2}-[a-z]{3}\.scw\.cloud$/;
+  // 487: het postbus-adres van de baas (een ondertekend adres van het pakket, hoogstens zeven dagen geldig). Veronica bewaart het
+  // NIET (alleen in het geheugen van de pagina) en geeft het alleen terug aan een eigen telefoon die vastzit: met een roep (een
+  // tik) of als QR "LRWERK1 <adres>" (dezelfde als op de beheerpagina) voor een oude JARVIS.
+  function leesPostbusAdres(a) {
+    if (typeof a !== 'string' || a.length > 2000) return null;
+    let u;
+    try { u = new URL(a); } catch (e) { return null; }
+    if (u.protocol !== 'https:' || u.port || u.username || u.password || !POSTBUS_HOST.test(u.hostname)) return null;
+    if (!/[/]gemma-werk[/]taken[/]pakket[.]json$/.test(u.pathname) || !u.searchParams.get('X-Amz-Signature')) return null;
+    return u.href;
+  }
+  function adresGetekend(a) {
+    let d = null;
+    try { d = new URL(a).searchParams.get('X-Amz-Date'); } catch (e) { return 0; }
+    const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(String(d || ''));
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : 0;
+  }
+  const postbusQrTekst = (a) => (leesPostbusAdres(a) ? `LRWERK1 ${leesPostbusAdres(a)}` : null);
+  // Moet deze telefoon geholpen worden met een vers adres? Alleen als hij achterloopt EN (hij zegt zelf "verlopen", of hij is
+  // ouder dan 1.9.39: die nemen een nieuwer adres van de baas niet vanzelf over).
+  const VERS_ADRES_VANAF = '1.9.39';
+  function bijwerkHulp(versie, nieuwste, fout) {
+    if (typeof versie !== 'string' || vergelijkVersie(versie, nieuwste) >= 0) return null;
+    const oud = vergelijkVersie(versie, VERS_ADRES_VANAF) < 0;
+    if (fout !== 'verlopen' && !oud) return null;
+    return { tik: !oud, qr: oud, zin: oud
+      ? `Deze JARVIS (${versie}) kan zijn postbus-adres niet zelf vernieuwen. Een keer: tik op "Toon de QR", en scan hem op die telefoon met JARVIS (Scan). Daarna werkt hij zichzelf bij en is dit nooit meer nodig.`
+      : 'Het postbus-adres van deze telefoon is verlopen. Tik op "Geef een vers adres"; daarna werkt hij zichzelf bij.' };
+  }
+
   function leesNieuweTelefoon(n) {
     if (!n || typeof n.apk !== 'string' || n.apk.length > 2000) return null;
     let u;
@@ -588,7 +636,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.42';
+  const VERONICA_VERSIE = '1.9.43';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1211,7 +1259,7 @@
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
-    motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
+    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, leesPostbusAdres, adresGetekend, postbusQrTekst, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

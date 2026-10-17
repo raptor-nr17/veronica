@@ -120,6 +120,9 @@
     metingen: {},           // adres -> { health: {...}, status: {...}, gezien, jarvisNietTot }
     staten: {},             // adres -> { bereikbaar, bezig, uitTot, vervangen, hitteStand, laatstGebruikt }
     kernActiviteit: {},
+    postbusVers: null,      // 487: het nieuwste postbus-adres van de baas, ALLEEN in het geheugen
+    samen: null,            // 485: { trede, voorstellen, kennisboek } van de baas
+    afnemers: null,         // 485: wie gebruikt de rekenkracht (getallen)
     nalees: null,           // 483: { lijst, t, verstuurd } van de baas (concepten om na te lezen), of null
     nachtlog: [],           // 483: de nachtproef van de baas (regels van een kwartier), ook in de opslag van deze computer
     denkerPlan: null,       // 481: { telefoon, tekst, t } uit stand.json van de baas     // naam -> { tekst, label, t } (uit stand.json van de hoofdtelefoon)
@@ -309,6 +312,7 @@
     if (zs) S.zonStroom = zs;
     if (Array.isArray(d.nachtlog)) neemNachtlogOver(d.nachtlog);   // 483
     S.nalees = K.leesNalees(d.nalees); tekenNalees();   // 483
+    S.afnemers = window.Afnemers ? window.Afnemers.lees(d.afnemers) : null; S.samen = K.leesSamenwerken(d.samenwerken); tekenSamenwerken();   // 485
   }
   // 482 (17 oktober): DE LEDENBRIEF. De baas legt de leden met hun adressen versleuteld klaar op de brievenbus (ntfy), met het
   // geheime ntfy-onderwerp van de rij als sleutel (kern.js, leesLedenBrief). EEN doorlopende verbinding (449: nooit vragen in
@@ -1375,6 +1379,19 @@
       const vz = m.status && m.status.versie && tijd - m.status.versie.t <= K.MAX_LEEFTIJD_MS
         ? K.versieZin(m.status.versie.waarde, K.nieuwsteVersie(S.telefoons.map((x) => ((meet(x.adres).status || {}).versie || {}).waarde)), m.status.rol && m.status.rol.waarde) : null;
       if (vz) tegel.appendChild(el('div', `tVersie${vz.achter ? ' achter' : ''}`, vz.tekst));
+      {
+        // 487: zit hij vast op een oude versie (verlopen postbus-adres)? Dan een tik (nieuwe JARVIS) of een QR (oude JARVIS).
+        const fout = m.status && m.status.bijwerkFout && tijd - m.status.bijwerkFout.t <= K.MAX_LEEFTIJD_MS ? m.status.bijwerkFout.waarde : null;
+        const h = vz && vz.achter ? K.bijwerkHulp(m.status.versie.waarde, K.nieuwsteVersie(S.telefoons.map((x) => ((meet(x.adres).status || {}).versie || {}).waarde)), fout) : null;
+        if (h) {
+          const vak = el('div', 'tBijwerk');
+          vak.appendChild(el('div', '', h.zin));
+          if (!S.postbusVers) vak.appendChild(el('div', 'tBron', 'Even wachten: Veronica haalt een vers adres bij de baas.'));
+          else if (h.tik) { const b = el('button', '', 'Geef een vers adres'); b.dataset.versAdres = t.adres; vak.appendChild(b); }
+          else { const b = el('button', '', 'Toon de QR'); b.dataset.versQr = t.adres; vak.appendChild(b); }
+          tegel.appendChild(vak);
+        }
+      }
       // 481: geheugen en Android-versie (alleen als de telefoon ze vers meldde).
       { const cp = m.status && m.status.capaciteit && tijd - m.status.capaciteit.t <= K.MAX_LEEFTIJD_MS ? K.toestelZin(m.status.capaciteit.waarde) : null; if (cp) tegel.appendChild(el('div', 'tToestel', cp)); }
       {
@@ -1606,6 +1623,88 @@
       : 'UIT. Meldingen (ntfy), zoeken via de telefoons, het Claude-bureau en de postbus mogen naar buiten.';
   }
   document.addEventListener('click', (e) => { if (e.target && e.target.id === 'volLokaalKnop') zetVolLokaal(!VolL.aan); });
+
+  // 487: EEN VERS POSTBUS-ADRES voor een telefoon die vastzit. Alleen in het geheugen van deze pagina (nooit in de opslag of een
+  // logboek). Nieuwe JARVIS: een roep 'postbus' met de code (een tik). Oude JARVIS: de QR "LRWERK1 <adres>", een keer scannen.
+  function neemPostbusVers(a) {
+    const x = K.leesPostbusAdres(a);
+    if (x && K.adresGetekend(x) > K.adresGetekend(S.postbusVers || '')) S.postbusVers = x;
+  }
+  async function geefVersAdres(adres) {
+    const t = S.telefoons.find((x) => x.adres === adres);
+    if (!t || !t.jarvis || !S.code || !S.postbusVers) return false;
+    let ok = false;
+    try { ok = (await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'postbus', van: 'veronica', adres: S.postbusVers }) }, 3000)).ok; } catch (e) { ok = false; }
+    logRegel(ok ? `${t.naam}: vers postbus-adres gegeven. Hij kijkt nu zelf of er een nieuwe versie is.` : `${t.naam} antwoordt niet. Probeer het zo nog eens.`);
+    return ok;
+  }
+  function toonVersQr(adres) {
+    const t = S.telefoons.find((x) => x.adres === adres);
+    const tekst = K.postbusQrTekst(S.postbusVers);
+    const vak = $('versQrPaneel');
+    if (!t || !tekst || !vak || typeof window.qrcode !== 'function') return false;
+    const q = window.qrcode(0, 'M'); q.addData(tekst); q.make();
+    $('versQrBeeld').src = q.createDataURL(6, 16);
+    $('versQrNaam').textContent = t.naam;
+    vak.hidden = false;
+    return true;
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-vers-adres],button[data-vers-qr]') : null;
+    if (b && b.dataset.versAdres) geefVersAdres(b.dataset.versAdres).catch(() => {});
+    else if (b && b.dataset.versQr) toonVersQr(b.dataset.versQr);
+    if (e.target && e.target.id === 'versQrSluit') { $('versQrPaneel').hidden = true; $('versQrBeeld').removeAttribute('src'); }
+  });
+
+  // 485: SAMENWERKEN op trede 1. De voorstellen van de AI-kern op de baas; een tik stuurt EEN oordeel (/jarvis/roep, soort 'voorstel',
+  // met de code). Goedkeuren legt het alleen vast: er wordt niets vanzelf uitgevoerd (dat is trede 2, en die staat dicht).
+  const SamenV = { verstuurd: {} };
+  function tekenSamenwerken() {
+    const blok = $('samenBlok');
+    if (!blok) return;
+    const s = S.samen;
+    blok.hidden = !s && !S.afnemers;
+    if (blok.hidden) return;
+    $('samenTrede').textContent = s ? K.TREDE_ZIN[s.trede] : '';
+    $('samenAfnemers').textContent = S.afnemers && window.Afnemers ? window.Afnemers.zin(S.afnemers) : '';
+    $('samenKennis').textContent = s && s.kennisboek !== null ? `Kennisboek: ${s.kennisboek} ${s.kennisboek === 1 ? 'regel' : 'regels'} (de vaste woorden en regels die elke telefoon meekrijgt).` : '';
+    const lijst = (s ? s.voorstellen : []).filter((v) => !SamenV.verstuurd[v.id]);
+    const vak = $('samenLijst');
+    const nieuw = new Set(lijst.map((v) => v.id));
+    for (const k of [...vak.querySelectorAll('[data-voorstel]')]) if (!nieuw.has(k.dataset.voorstel)) k.remove();
+    const er = new Set([...vak.querySelectorAll('[data-voorstel]')].map((k) => k.dataset.voorstel));
+    for (const v of lijst) {
+      if (er.has(v.id)) continue;
+      const kaart = el('div', 'zsPaneel'); kaart.dataset.voorstel = v.id;
+      kaart.appendChild(el('h3', '', `Voorstel van ${v.klant}: ${v.titel || '(zonder titel)'}`));
+      kaart.appendChild(el('p', '', v.tekst));
+      const ja = el('button', '', 'Goedkeuren'); ja.dataset.samen = 'goed';
+      const nee = el('button', '', 'Afwijzen'); nee.dataset.samen = 'af';
+      kaart.append(ja, nee, el('p', 'klein'));
+      vak.appendChild(kaart);
+    }
+    if (!lijst.length && !vak.querySelector('.samenLeeg')) vak.appendChild(el('p', 'tBron samenLeeg', 'Geen voorstellen die op jou wachten.'));
+    if (lijst.length) for (const x of [...vak.querySelectorAll('.samenLeeg')]) x.remove();
+  }
+  async function stuurVoorstelOordeel(kaart, besluit) {
+    const id = kaart.dataset.voorstel;
+    const zin = kaart.querySelector('p.klein');
+    const kern = kernNu();
+    if (!kern || !S.code) { zin.textContent = 'Geen baas-telefoon bereikbaar. Probeer het straks nog eens.'; return; }
+    zin.textContent = 'Even...';
+    try {
+      const r = await haal(`${kern}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'voorstel', van: 'veronica', id, besluit }) }, 4000);
+      if (!r.ok) { zin.textContent = `De baas-telefoon gaf ${r.status}. Probeer het nog eens.`; return; }
+      SamenV.verstuurd[id] = besluit;
+      logRegel(`Voorstel ${besluit === 'goed' ? 'goedgekeurd' : 'afgewezen'}. Er wordt niets vanzelf uitgevoerd.`);
+      kaart.remove();
+      tekenSamenwerken();
+    } catch (e) { zin.textContent = 'De baas-telefoon antwoordt niet. Probeer het straks nog eens.'; }
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-samen]') : null;
+    if (b) stuurVoorstelOordeel(b.closest('[data-voorstel]'), b.dataset.samen);
+  });
 
   // 483: NALEZEN. De baas leest de concepten uit de postbus (stand.json, achter de code); een tik hier stuurt EEN oordeel naar de
   // baas (/jarvis/roep, soort 'oordeel', met de code). De baas legt het in de brievenbus; de server beslist als hij wakker is.
@@ -2323,6 +2422,7 @@
     await Opslag.schrijf('bekend', S.bekend);
     if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); tekenNtfy(); ledenStroom(); }
     if (l.nieuweTelefoon) { S.download = l.nieuweTelefoon; await Opslag.schrijf('download', S.download); }
+    neemPostbusVers(l.postbusAdres);   // 487: alleen in het geheugen
     await neemUpdateSleutelOver(l.updateSleutel, l.updateRepo);
     if (l.eigenaar && !S.eigenaarZelf) { S.eigenaar = l.eigenaar; await Opslag.schrijf('eigenaar', S.eigenaar); }
     await Opslag.schrijf('telefoons', S.telefoons);
@@ -2910,6 +3010,7 @@
     if (!l) return;
     l.telefoons = K.herstelKernAdres(l.telefoons, kernNu());   // 450
     if (l.nieuweTelefoon && (!S.download || S.download.apk !== l.nieuweTelefoon.apk)) { S.download = l.nieuweTelefoon; await Opslag.schrijf('download', S.download); }
+    neemPostbusVers(l.postbusAdres);   // 487: alleen in het geheugen
     const namen = l.telefoons.length ? K.nieuweNamen(S.telefoons, l.telefoons) : [];
     if (namen.length) {
       S.telefoons = l.telefoons;
@@ -3194,7 +3295,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

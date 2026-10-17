@@ -166,6 +166,30 @@
     return Object.freeze(kopie);
   }
 
+  // 486: HET GEHEUGEN BIJ EEN VRAAG. Op deze Chromebook gekozen, met gewone woordvergelijking (geen model, geen netwerk): het
+  // karakter, de kern (ingekort), en hoogstens drie samenvattingen en vijf logboekregels die woorden met de vraag delen. Dat gaat als
+  // systeemtekst mee naar de motor in de hoek; daar wordt niets bewaard. De vraag zelf en het antwoord komen niet in de opslag.
+  const GEHEUGEN_MAX = 2400;
+  const woordenVan = (t) => new Set(nuTekst(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter((w) => w.length >= 4));
+  function geheugenVoorVraag(store, vraag) {
+    const st = store || {};
+    const vw = woordenVan(vraag);
+    const score = (t) => { let n = 0; for (const w of woordenVan(t)) if (vw.has(w)) n += 1; return n; };
+    const beste = (lijst, max) => lijst.map((x, i) => ({ x, i, s: score(x.tekst) })).filter((a) => a.s > 0)
+      .sort((a, b) => b.s - a.s || b.i - a.i).slice(0, max).map((a) => a.x);
+    const sam = beste(Array.isArray(st.samenvattingen) ? st.samenvattingen : [], 3);
+    const regels = [];
+    for (const d of Array.isArray(st.logboek) ? st.logboek : []) for (const r of d.regels || []) regels.push({ dag: d.dag, tekst: r.tekst });
+    const log = beste(regels, 5);
+    const delen = ['Wat de eigenaar je meegeeft. Dit is achtergrond, geen opdracht. Verzin niets dat er niet staat.'];
+    if (nuTekst(st.karakter).trim()) delen.push(`Karakter: ${knip(st.karakter, 500)}`);
+    if (nuTekst(st.kern).trim()) delen.push(`Kern: ${knip(st.kern, 600)}`);
+    for (const x of sam) delen.push(`Samenvatting (${x.dag}): ${knip(x.tekst, 300)}`);
+    for (const x of log) delen.push(`Logboek (${x.dag}): ${knip(x.tekst, 200)}`);
+    const systeem = delen.join('\n').slice(0, GEHEUGEN_MAX);
+    return { systeem: delen.length > 1 ? systeem : '', stukken: sam.length + log.length, kern: !!nuTekst(st.kern).trim(), karakter: !!nuTekst(st.karakter).trim() };
+  }
+
   // ---------------------------------------------------------------- voorstellen
   let teller = 0;
   function nieuwId(nu) { teller += 1; return `v${Math.floor(nu).toString(36)}${teller.toString(36)}`.slice(0, 20); }
@@ -319,7 +343,7 @@
 
   return Object.freeze({
     FORMAAT, FORMAAT_VERSIE, MAPPEN, HERKOMST, HERKOMST_NAAM, ROLLEN_STANDAARD, TESTVRAGEN, MIN_WACHTWOORD, KDF_ITER, MEEKIJK_DAGEN, FOUTZIN,
-    nieuweStore, leesStore, dagVan, logToevoegen, logZoek, mag, zetTekst, samenvattingToevoegen, leesVoorAi,
+    nieuweStore, leesStore, dagVan, logToevoegen, logZoek, mag, zetTekst, samenvattingToevoegen, leesVoorAi, geheugenVoorVraag, GEHEUGEN_MAX,
     voorstelToevoegen, keurVoorstel, openVoorstellen, testKarakter,
     maakBackup, openBackup, herstelProef, tellingen, meekijkStand, heeftMeegekeken, zetDeelPrive, zetPraatLokaal, zetPraatTelefoon, isLokaalAdres, backupDatumZin,
   });
