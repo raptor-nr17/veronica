@@ -491,7 +491,9 @@
   // thuisnetten (192.168.x, 10.x, 172.16-31.x), alle gevonden adressen, en als vangnet de gangbare thuisnetten.
   // 449 (13 oktober, het echte huis): 192.168.68 is het standaardnet van een veelgebruikt mesh-systeem. Vooraan na .1: een
   // mesh is gewoon, en dan is dat het wifi waar de Chromebook en de telefoon op zitten.
-  const GANGBARE_NETTEN = ['192.168.1', '192.168.68', '192.168.0', '192.168.2', '192.168.178', '10.0.0'];
+  // 480: het net van de router van nu (192.168.178) VOORAAN: zonder eigen adres (Chromebook) is de volgorde een gok, en de eerste gok
+  // hoort de router te zijn waar het huis sinds 16 oktober op zit.
+  const GANGBARE_NETTEN = ['192.168.178', '192.168.1', '192.168.68', '192.168.0', '192.168.2', '10.0.0'];
   function isThuisNet(ip) {
     const d = String(ip || '').split('.').map(Number);
     if (d.length !== 4 || d.some((x) => !Number.isInteger(x) || x < 0 || x > 255)) return false;
@@ -531,7 +533,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.37';
+  const VERONICA_VERSIE = '1.9.38';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -605,7 +607,11 @@
       const namen = (x.namen || []).filter(Boolean);
       return `Gevonden op het nieuwe wifi${net}${namen.length ? `: ${namen.join(', ')}` : ''}. Ik kijk weer mee.`;
     }
-    return `Ook op het netwerk niets gevonden (${x.aantal || 0} adressen geprobeerd). Staan de telefoons aan, en zitten ze op hetzelfde wifi als deze computer? Over een paar minuten probeer ik het opnieuw. Sneller: open Koppelen en scan de QR daar met de baas-telefoon.`;
+    // 480: eerlijk zeggen WAT er te zien was. Antwoordde er wel een JARVIS maar kende hij de code niet, dan is het een andere rij
+    // (of een telefoon die opnieuw gekoppeld is). Antwoordde er geen enkele: dan draait JARVIS nergens -- na een update staat
+    // de app dicht tot iemand hem opent, en dat is de eerste plek om te kijken.
+    if (x.jarvis > 0) return `Ik zag ${x.jarvis === 1 ? 'een JARVIS-telefoon' : `${x.jarvis} JARVIS-telefoons`} op het netwerk, maar ${x.jarvis === 1 ? 'die kent' : 'die kennen'} de code van deze rij niet. Scan op Koppelen de QR van Veronica met de baas-telefoon: dan horen ze weer bij elkaar.`;
+    return `Ook op het netwerk niets gevonden (${x.aantal || 0} adressen geprobeerd, geen enkele JARVIS antwoordde). Net een update van JARVIS gehad? Dan staat de app dicht tot je hem een keer opent: tik op de telefoon op de melding "JARVIS is bijgewerkt", of open JARVIS. Zitten de telefoons op hetzelfde wifi als deze computer (niet op mobiele data of een gastnetwerk)? Over een paar minuten probeer ik het opnieuw. Sneller: open Koppelen en scan de QR daar met de baas-telefoon.`;
   }
   // Alle adressen in hetzelfde /24-net, behalve het eigen, op poort 8080 -- de dichtstbijzijnde eerst.
   function subnetAdressen(ip) {
