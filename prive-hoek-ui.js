@@ -29,7 +29,7 @@
   async function bewaar() { await d.opslag.schrijf('store', U.store); }
   function raak() { U.inactiefT = d.nu(); }
   // 476b: 'dicht' ruimt alleen het tijdelijke op (gesprek, proef); de hoek zelf blijft open, er is geen slot.
-  function dicht() { U.open = true; U.test = null; U.proef = null; U.proefModel = null; U.gesprek = []; U.melding = ''; teken(); }
+  function dicht() { U.open = true; U.test = null; U.proef = null; U.proefModel = null; U.koppelQr = null; U.gesprek = []; U.melding = ''; teken(); }
   function meld(zin) { U.melding = zin || ''; teken(); }
 
   function kop(tekst) { return el('h3', '', tekst); }
@@ -104,6 +104,15 @@
     const rollen = el('div', 'phRollen');
     for (const r of U.store.rollen) { const c2 = el('div', 'phRol'); c2.append(el('strong', '', r.naam), el('div', '', r.taak), el('div', 'phKlein', st.klaar ? 'Status: te proberen' : 'Status: geen model geladen')); rollen.append(c2); }
     k.append(rollen);
+    // 481 (stap F): de telefoon koppelen aan de hoek. Een QR met de privé-sleutel van deze Chromebook; JARVIS scant hem een keer.
+    // Geen pincode, geen wachtwoord, geen typen. Een nieuwe QR maakt een nieuwe sleutel: de oude werkt dan niet meer.
+    if (typeof d.koppelQr === 'function') {
+      k.append(knop('Koppel een telefoon aan de hoek (QR)', async () => { raak(); U.koppelQr = await d.koppelQr(); teken(); }));
+      if (U.koppelQr && U.koppelQr.beeld) {
+        const img = el('img'); img.src = U.koppelQr.beeld; img.alt = 'QR-code: scan mij met JARVIS op de telefoon voor de privé-hoek'; img.className = 'phQr';
+        k.append(img, el('p', 'phKlein', 'Scan deze QR met JARVIS op de telefoon (Koppel met Veronica, of de scanner). Daarna neemt alleen die telefoon jouw privé-vragen aan, en alleen van deze Chromebook. De QR verdwijnt als de hoek dichtgaat.'));
+      } else if (U.koppelQr && U.koppelQr.zin) k.append(el('p', 'phEerlijk', U.koppelQr.zin));
+    }
     if (M) k.append(knop('Proef de verbinding (stuurt geen woord van de hoek)', async () => { raak(); U.proefModel = { zin: 'Bezig...' }; teken(); U.proefModel = await M.proef(); teken(); }));
     if (U.proefModel) k.append(el('p', U.proefModel.ok ? 'phKlein' : 'phEerlijk', U.proefModel.zin));
     const inv = el('textarea'); inv.rows = 2; inv.disabled = !st.klaar; inv.id = 'phVraag'; inv.placeholder = st.klaar ? 'Je vraag (gaat alleen naar die telefoon)' : 'Praten kan nog niet (geen model).'; inv.setAttribute('aria-label', 'Vraag aan mijn privé-AI');

@@ -12,6 +12,9 @@
 //  - niets van de vraag of het antwoord komt in een logboek, de opslag van de browser of een ander verzoek; deze laag bewaart niets;
 //  - het antwoord is DATA (let_op), begrensd op 2000 tekens, met een vlag voor vleierij en voor een leeg antwoord;
 //  - geen verbinding met een dienst op internet, een cloudopslag of de postbus: er bestaat hier maar een adres, dat van de gekozen telefoon.
+//  - 481 (stap F, ja van de eigenaar 17 oktober): de eigen motor van JARVIS neemt privé-werk aan met een EIGEN privé-sleutel
+//    (X-Prive-Sleutel), die deze Chromebook maakt en die de telefoon EEN keer scant (QR in de hoek). Niet de rij-code, geen
+//    pincode, geen wachtwoord. Zonder die sleutel blijft de motor dicht (403).
 (function (wortel, fabriek) {
   if (typeof module === 'object' && module.exports) module.exports = fabriek();
   else wortel.PriveModel = fabriek();
@@ -23,7 +26,10 @@
   const MAX_VRAAG = 4000;
   const MAX_ANTWOORD = 2000;
 
-  // deps: { fetch, nu, isLokaal(adres), instellingen() -> { praatLokaal, praatTelefoon }, inHoek(adres) -> true|false|null }
+  // deps: { fetch, nu, isLokaal(adres), instellingen() -> { praatLokaal, praatTelefoon }, inHoek(adres) -> true|false|null, sleutel() -> '32 hex' | null }
+  const SLEUTEL_RE = /^[0-9a-f]{32}$/;
+  // De QR die de telefoon scant: alleen de sleutel, en een merk dat het om de privé-hoek gaat.
+  const qrTekst = (sleutel) => (SLEUTEL_RE.test(String(sleutel || '')) ? JSON.stringify({ pk: 1, s: sleutel }) : null);
   function maak(deps) {
     const d = deps || {};
     const isLokaal = typeof d.isLokaal === 'function' ? d.isLokaal : () => false;
@@ -47,14 +53,17 @@
       const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
       const klok = ctrl ? setTimeout(() => ctrl.abort(), opties && opties.ms ? opties.ms : 20000) : null;
       try {
-        const r = await d.fetch(`${s.adres}${pad}`, Object.assign({ headers: { 'X-Prive': '1', 'Content-Type': 'application/json' }, signal: ctrl ? ctrl.signal : undefined }, opties && opties.init ? opties.init : {}));
+        const koppen = { 'X-Prive': '1', 'Content-Type': 'application/json' };
+        const sl = typeof d.sleutel === 'function' ? d.sleutel() : null;
+        if (SLEUTEL_RE.test(String(sl || ''))) koppen['X-Prive-Sleutel'] = sl;   // 481: alleen de eigen privé-sleutel, nooit de rij-code
+        const r = await d.fetch(`${s.adres}${pad}`, Object.assign({ headers: koppen, signal: ctrl ? ctrl.signal : undefined }, opties && opties.init ? opties.init : {}));
         return { ok: r.ok, status: r.status, lees: () => r.json() };
       } catch (e) {
         return { ok: false, status: 0, reden: 'Geen antwoord van de telefoon (staat hij aan, en op hetzelfde wifi?).' };
       } finally { if (klok) clearTimeout(klok); }
     }
 
-    const uitlegStatus = (st) => (st === 403 ? 'De telefoon weigert privé-werk vanaf Veronica (403). Dat is zo gebouwd: privé-werk van buiten staat op de telefoon nog dicht. Er is dus nog geen weg; praten kan pas als de telefoon die opent, na een ja van jou.'
+    const uitlegStatus = (st) => (st === 403 ? 'De telefoon weigert privé-werk vanaf Veronica (403): hij kent de privé-sleutel van deze Chromebook nog niet. Tik hieronder op "Koppel een telefoon aan de hoek" en scan de QR met JARVIS op die telefoon.'
       : st === 401 ? 'De telefoon vraagt een sleutel (401). De privé-hoek stuurt bewust nooit de rij-code mee.' : st === 404 ? 'De telefoon kent dit adres niet (404): daar draait geen motor.' : `De telefoon antwoordt met fout ${st}.`);
 
     // Een proef zonder inhoud: is er een model, en neemt de telefoon privé-werk aan? Er gaat geen woord van de hoek mee.
@@ -86,5 +95,5 @@
     return Object.freeze({ stand, proef, vraag, LET_OP });
   }
 
-  return Object.freeze({ maak, LET_OP, VLEIERIJ, MAX_ANTWOORD });
+  return Object.freeze({ maak, LET_OP, VLEIERIJ, MAX_ANTWOORD, SLEUTEL_RE, qrTekst });
 }));

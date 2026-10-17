@@ -88,6 +88,19 @@
     const uit = { ramGb: g(c.ramGb, 512), sdk: g(c.sdk, 100), arm64: typeof c.arm64 === 'boolean' ? c.arm64 : null, vrijGb: g(c.vrijGb, 100000) };
     return Object.values(uit).every((v) => v === null) ? null : uit;
   }
+  // 481 (stap A): geheugen en Android-versie op de tegel, uit wat de telefoon zelf meldt. Het geheugen zoals op de doos (8 GB, niet
+  // 7,4: dezelfde afronding als pool.js nominaalGb). Niets gemeld = null (dan geen regel: een springende tegel breekt het scrollen).
+  const ANDROID_VAN_SDK = { 26: '8', 27: '8.1', 28: '9', 29: '10', 30: '11', 31: '12', 32: '12L', 33: '13', 34: '14', 35: '15', 36: '16', 37: '17' };
+  function toestelZin(cap) {
+    const c = cap || {};
+    const delen = [];
+    if (typeof c.ramGb === 'number' && c.ramGb > 0) {
+      const doos = [2, 3, 4, 6, 8, 12, 16, 24, 32].find((g) => c.ramGb <= g * 0.97 + 0.4) || Math.round(c.ramGb);
+      delen.push(`${doos} GB geheugen`);
+    }
+    if (typeof c.sdk === 'number' && c.sdk > 0) delen.push(ANDROID_VAN_SDK[c.sdk] ? `Android ${ANDROID_VAN_SDK[c.sdk]}` : `Android (API ${c.sdk})`);
+    return delen.length ? delen.join(' · ') : null;
+  }
   // 456b: dubbele Gemma-apps of modelkopieen op een telefoon. Alleen bekende namen, getallen en ja/nee, en een zin die als TEKST wordt getoond.
   const GEMMA_APPS = ['OlliteRT', 'OlliteRT (dev)', 'OlliteRT (beta)', 'Google AI Edge Gallery'];
   const OLLITE_TOESTANDEN = ['klaar', 'geen-model', 'staat-niet-aan', 'niet-geinstalleerd', 'onbekend'];
@@ -114,6 +127,8 @@
       procent: Math.round(n(m.procent, 100)), poort: Number.isInteger(m.poort) && m.poort >= 1024 && m.poort <= 65535 ? m.poort : 8081,
       backend: m.backend === 'GPU' || m.backend === 'CPU' ? m.backend : '', tokensPerSeconde: n(m.tokensPerSeconde, 10000),
       klussen: Math.round(n(m.klussen, 1000000)), geheugenGb: Math.round(n(m.geheugenMb, 1000000) / 100) / 10, batterijVrij: m.batterijVrij === true,
+      // 481 (stap D): het geheugenmodel (EmbeddingGemma) op deze telefoon: alleen ja/nee en een zin.
+      geheugen: m.geheugen && typeof m.geheugen === 'object' ? { klaar: m.geheugen.klaar === true, zin: typeof m.geheugen.zin === 'string' ? m.geheugen.zin.replace(/[\u0000-\u001f]/g, ' ').slice(0, 160) : '' } : null,
     };
   }
   function motorZin(m) {
@@ -204,6 +219,7 @@
       magRekenen: meting(typeof s.magRekenen === 'boolean' ? s.magRekenen : null, bron, t),
       inGebruik: meting(typeof x.inGebruik === 'boolean' ? x.inGebruik : null, bron, t),
       kernMeerekenen: meting(typeof x.kernMeerekenen === 'boolean' ? x.kernMeerekenen : null, bron, t),
+      gespaard: meting(typeof x.gespaard === 'boolean' ? x.gespaard : null, bron, t),   // 481: de schuif Sparen op de telefoon
       capaciteit: meting(leesCapaciteit(x.capaciteit), bron, t),
       gemma: meting(leesGemma(x.gemma), bron, t),
       rol: meting(x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, bron, t),
@@ -217,7 +233,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.35';
+  const JARVIS_NIEUWSTE = '1.9.36';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -533,7 +549,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.38';
+  const VERONICA_VERSIE = '1.9.39';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -730,6 +746,7 @@
       accu: { prio: 3, tag: 'battery' },
       stil: { prio: 3, tag: 'zzz' },
       proef: { prio: 2, tag: 'white_check_mark' },
+      denker: { prio: 2, tag: 'speech_balloon' },   // 481: zelfde als JARVIS (waarschuw.js)
     };
     const STIL_KEUZES = ['uit', '22:00-08:00', '23:00-07:00'];
 
@@ -883,6 +900,8 @@
     const delen = [];
     if (r === 'baas') delen.push('👑 Baas');
     else if (r === 'werker') delen.push('Werker');
+    // 481: de schuif Sparen. Veronica TOONT hem; omzetten kan alleen op de telefoon zelf.
+    if (status && status.gespaard && status.gespaard.waarde === true && tijd - status.gespaard.t <= MAX_LEEFTIJD_MS) delen.push('🔋 Gespaard');
     if (t && PLEK_NAAM[t.plek]) delen.push(PLEK_NAAM[t.plek]);
     return delen.join(' · ') || 'rol onbekend';
   }
@@ -1119,7 +1138,7 @@
     return uit.slice(0, 6);
   }
   return {
-    alternatieveAdressen, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
+    alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,

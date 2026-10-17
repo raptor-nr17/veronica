@@ -103,7 +103,8 @@
     wilWakker: false,       // scherm aan gevraagd: na slaapstand vraagt ze het zelf opnieuw
     metingen: {},           // adres -> { health: {...}, status: {...}, gezien, jarvisNietTot }
     staten: {},             // adres -> { bereikbaar, bezig, uitTot, vervangen, hitteStand, laatstGebruikt }
-    kernActiviteit: {},     // naam -> { tekst, label, t } (uit stand.json van de hoofdtelefoon)
+    kernActiviteit: {},
+    denkerPlan: null,       // 481: { telefoon, tekst, t } uit stand.json van de baas     // naam -> { tekst, label, t } (uit stand.json van de hoofdtelefoon)
     zonStroom: null,        // { rijen, staaf } (uit stand.json; Veronica rekent de zon niet zelf)
     karakter: 'hulpdienst', // haar karakter (kern.js: veronicaZin); 'zakelijk' = zonder
     taken: [],
@@ -283,6 +284,9 @@
       if (a && a.telefoon && !a.klaar) act[a.telefoon] = { tekst: String(a.tekst || ''), label: String(a.label || ''), t: nu() };
     }
     S.kernActiviteit = act;
+    // 481 (stap C): het laatste plan van de denker (alleen tekst, hoogstens 600 tekens), voor onder zijn tegel.
+    S.denkerPlan = d.plan && typeof d.plan === 'object' && typeof d.plan.tekst === 'string' && d.plan.tekst.trim()
+      ? { telefoon: String(d.plan.telefoon || '').slice(0, 60), tekst: d.plan.tekst.slice(0, 600), t: Number(d.plan.t) || nu() } : null;
     const zs = K.leesZonStroom(d.zonStroom, nu());
     if (zs) S.zonStroom = zs;
   }
@@ -410,6 +414,25 @@
     return S.telefoons.filter((t) => t.jarvis && (staat(t.adres).bereikbaar === true || jarvisVers(meet(t.adres).status, nu())))
       .map((t) => ({ id: t.adres, naam: t.naam, host: (/^http:\/\/([^:/]+)/.exec(t.jarvis) || [])[1] || '' })).filter((t) => t.host);
   }
+  // 481 (stap D): een telefoon met het geheugenmodel klaar (en niet gespaard) rekent de vectoren. Alleen met de rij-code;
+  // er gaat alleen tekst heen die al in het zoekgeheugen staat (openbare zoekuitslagen) of de zoekvraag zelf.
+  function geheugenTelefoon() {
+    const tijd = nu();
+    return S.telefoons.find((t) => {
+      const st = meet(t.adres).status || {};
+      const mo = st.motor && tijd - st.motor.t <= K.MAX_LEEFTIJD_MS ? st.motor.waarde : null;
+      return mo && mo.geheugen && mo.geheugen.klaar === true && !gespaardNu(t) && K.motorAdres(t, st);
+    }) || null;
+  }
+  async function geheugenVanTelefoon(teksten) {
+    const t = geheugenTelefoon();
+    if (!t || !S.code) return null;
+    const adres = K.motorAdres(t, meet(t.adres).status);
+    const r = await haal(`${adres}/v1/embeddings`, { method: 'POST', headers: { Authorization: `Bearer ${S.code}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ input: teksten }) }, 20000);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return Array.isArray(d && d.data) ? d.data.slice().sort((a, b) => a.index - b.index).map((x) => x.embedding) : null;
+  }
   let zoekGebonden = false;
   let zoekGeheugen = null;
   function geheugenTel() {
@@ -422,7 +445,9 @@
     if (zoekGebonden) return;   // de knoppen krijgen hun luisteraars hoogstens een keer (anders loopt een vraag dubbel)
     zoekGebonden = true;
     // 477: het zoekgeheugen (eerdere uitslagen, alleen in deze browser). Zonder het bestand werkt het zoeken gewoon.
-    zoekGeheugen = window.ZoekGeheugen ? window.ZoekGeheugen.maak({ opslag: { lees: () => Opslag.lees('zoekgeheugen'), schrijf: (t) => Opslag.schrijf('zoekgeheugen', t) } }) : null;
+    // 481 (stap D): het geheugenmodel van een telefoon (EmbeddingGemma op de eigen motor) als die er is; anders de woorddelen.
+    zoekGeheugen = window.ZoekGeheugen ? window.ZoekGeheugen.maak({ opslag: { lees: () => Opslag.lees('zoekgeheugen'), schrijf: (t) => Opslag.schrijf('zoekgeheugen', t) },
+      bron: { naam: 'embeddinggemma-256', embed: geheugenVanTelefoon } }) : null;
     geheugenTel();
     const doe = async () => {
       const knop = $('zoekKnop'), stand = $('zoekStand'), uit = $('zoekUitslag');
@@ -1233,6 +1258,8 @@
       const vz = m.status && m.status.versie && tijd - m.status.versie.t <= K.MAX_LEEFTIJD_MS
         ? K.versieZin(m.status.versie.waarde, K.nieuwsteVersie(S.telefoons.map((x) => ((meet(x.adres).status || {}).versie || {}).waarde)), m.status.rol && m.status.rol.waarde) : null;
       if (vz) tegel.appendChild(el('div', `tVersie${vz.achter ? ' achter' : ''}`, vz.tekst));
+      // 481: geheugen en Android-versie (alleen als de telefoon ze vers meldde).
+      { const cp = m.status && m.status.capaciteit && tijd - m.status.capaciteit.t <= K.MAX_LEEFTIJD_MS ? K.toestelZin(m.status.capaciteit.waarde) : null; if (cp) tegel.appendChild(el('div', 'tToestel', cp)); }
       {
         const ps = poolStaat(t);
         const klasseNaam = { zwaar: 'ZWAAR', midden: 'MIDDEN', licht: 'LICHT', 'te-oud': 'TE OUD VOOR MODEL' }[ps.klasse];
@@ -1291,6 +1318,13 @@
       lv.hidden = !live;
       tegel.appendChild(lv);
       if (live) tegel.appendChild(el('div', 'tBron', liveBron));
+      // 481 (stap C): het PLAN van de denker apart (ingeklapt), los van het antwoord. Alleen onder de telefoon die het maakte.
+      if (S.denkerPlan && S.denkerPlan.telefoon === t.naam && tijd - S.denkerPlan.t <= 60 * 60 * 1000) {
+        const pl = el('details', 'tPlan');
+        pl.appendChild(el('summary', '', `Plan (${K.leeftijdZin(tijd - S.denkerPlan.t)})`));
+        pl.appendChild(el('pre', 'tPlanTekst', S.denkerPlan.tekst));
+        tegel.appendChild(pl);
+      }
       // Alle getallen (met bron) staan eronder, ingeklapt: de meters zijn het hoofdbeeld.
       const meer = el('details', 'tMeer');
       meer.appendChild(el('summary', '', 'Alle getallen'));
@@ -1509,10 +1543,15 @@
       const m = meet(t.adres);
       const mo = m.status && m.status.motor && tijd - m.status.motor.t <= K.MAX_LEEFTIJD_MS ? m.status.motor.waarde : null;
       const rol = m.status && m.status.rol && tijd - m.status.rol.t <= K.MAX_LEEFTIJD_MS ? m.status.rol.waarde : null;
-      return { naam: t.naam, adres: t.adres, kern: !!t.kern, rol, klasse: ps.klasse, klasseReden: ps.klasseReden, modelGeladen: ps.modelGeladen, motorKlaar: !!(mo && mo.klaar), bereikbaar: ps.bereikbaar, vervangen: ps.vervangen, hitteStand: ps.hitteStand, rust: ps.rust, magRekenen: ps.magRekenen };
+      const cp = m.status && m.status.capaciteit && tijd - m.status.capaciteit.t <= K.MAX_LEEFTIJD_MS ? m.status.capaciteit.waarde : null;
+      return { naam: t.naam, adres: t.adres, kern: !!t.kern, rol, klasse: ps.klasse, klasseReden: ps.klasseReden, modelGeladen: ps.modelGeladen, motorKlaar: !!(mo && mo.klaar), bereikbaar: ps.bereikbaar, vervangen: ps.vervangen, hitteStand: ps.hitteStand, rust: ps.rust, magRekenen: ps.magRekenen,
+        gespaard: gespaardNu(t), geheugenKlaar: !!(mo && mo.geheugen && mo.geheugen.klaar), sdk: cp && typeof cp.sdk === 'number' ? cp.sdk : null };   // 481
     });
   }
-  const uitgeslotenDoorKeuze = (soort) => Takenverdeling.uitgeslotenVoor(S.telefoons, leesTakenKeuzes(), soort);
+  // 481: gespaard = de schuif Sparen op de telefoon zelf (alleen een verse melding telt). Veronica geeft hem dan niets.
+  function gespaardNu(t) { const g = (meet(t.adres).status || {}).gespaard; return !!(g && g.waarde === true && nu() - g.t <= K.MAX_LEEFTIJD_MS); }
+  const uitgeslotenDoorKeuze = (soort) => Takenverdeling.uitgeslotenVoor(S.telefoons, leesTakenKeuzes(), soort)
+    .concat(S.telefoons.filter((t) => gespaardNu(t)).map((t) => t.adres));
   let takenHandtekening = '';
   function tekenTakenverdeling(forceer) {
     const vak = $('takenVerdeling');
@@ -1527,6 +1566,7 @@
     for (const t of r.telefoons) {
       const kaart = el('section', 'tegel taakTegel');
       kaart.appendChild(el('h2', '', `${t.naam}${t.rol === 'baas' ? ' · 👑 Baas' : t.rol === 'werker' ? ' · Werker' : ''}${t.klasse ? ` · ${t.klasse === 'te-oud' ? 'te oud voor model' : t.klasse}` : ''}`));
+      if (t.taak) kaart.appendChild(el('div', `taakRol rol-${t.taak.rol}`, `Rol: ${t.taak.naam}`));   // 481
       for (const regel of t.regels) {
         const rij = el('div', `taakRegel ${regel.mag ? 'mag' : 'magNiet'}`);
         if (!regel.vast || Takenverdeling.KIESBAAR.includes(regel.soort)) {
@@ -1670,7 +1710,8 @@
     return {
       bereikbaar: s.bereikbaar, bezig: s.bezig, vervangen: s.vervangen, uitTot: s.uitTot, hitteStand: s.hitteStand, laatstGebruikt: s.laatstGebruikt,
       rust: rustPer[t.naam] ? true : undefined,
-      magRekenen: st.magRekenen && vers(st.magRekenen) && st.magRekenen.waarde === false ? false : undefined,
+      // 481: een gespaarde telefoon (de schuif op de telefoon) telt als "mag niet rekenen": de pool geeft hem niets.
+      magRekenen: (st.magRekenen && vers(st.magRekenen) && st.magRekenen.waarde === false) || gespaardNu(t) ? false : undefined,
       modelGeladen: m.health && m.health.model && vers(m.health.model) ? !!modelNaam : undefined,
       klasse: c.klasse, klasseReden: c.reden, aanbevolenModel: c.model, model: modelNaam,
       tps,
@@ -2667,7 +2708,27 @@
       fetch: (u, o) => window.fetch(u, o), nu, isLokaal: PriveHoek.isLokaalAdres,
       instellingen: () => (PriveUi && PriveUi.store ? PriveUi.store.instellingen : null),
       inHoek: (adres) => { const r = priveRijen().find((x) => x.adres === adres || x.motorAdres === adres); return r ? r.priveSleutel === true : null; },
+      sleutel: () => PriveMotorSleutel.waarde,   // 481: de eigen privé-sleutel van deze Chromebook (nooit de rij-code)
     });
+  }
+  // 481 (stap F): DE PRIVÉ-SLEUTEL VAN DEZE CHROMEBOOK voor de eigen motor van een telefoon. 32 hex uit crypto.getRandomValues, bewaard
+  // in de eigen database van de hoek (veronica-prive), NOOIT in localStorage, een logboek of een verzoek naar iets anders dan de
+  // gekozen telefoon. Een nieuwe QR = een nieuwe sleutel (de oude telefoon moet dan opnieuw scannen).
+  const PriveMotorSleutel = { waarde: null, geladen: false };
+  async function laadPriveMotorSleutel() {
+    if (PriveMotorSleutel.geladen) return;
+    PriveMotorSleutel.geladen = true;
+    try { const w = await PriveOpslag.lees('motor-sleutel'); if (typeof w === 'string' && /^[0-9a-f]{32}$/.test(w)) PriveMotorSleutel.waarde = w; } catch (e) { /* geen sleutel */ }
+  }
+  async function maakPriveKoppelQr() {
+    const b = new Uint8Array(16); window.crypto.getRandomValues(b);
+    const s = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    try { await PriveOpslag.schrijf('motor-sleutel', s); } catch (e) { return { zin: 'De sleutel kon niet bewaard worden in deze browser.' }; }
+    PriveMotorSleutel.waarde = s;
+    const tekst = PriveModel.qrTekst(s);
+    if (typeof window.qrcode !== 'function' || !tekst) return { zin: 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).' };
+    const q = window.qrcode(0, 'M'); q.addData(tekst); q.make();
+    return { beeld: q.createDataURL(8, 16) };
   }
 
   // ---- 466: MIJN PRIVÉ-HOEK ----
@@ -2713,9 +2774,11 @@
       noodstopKern: () => { for (const t of S.telefoons) { const a = (meet(t.adres).status || {}).aikern; if (a && a.waarde && nu() - a.t <= K.MAX_LEEFTIJD_MS) return a.waarde.noodstop === true; } return null; },
       noodstop: () => noodstop(), stop: () => { if (S.aan) $('pantserKnop').click(); }, pantserAan: () => S.aan === true,
       bevestig: (zin) => window.confirm(zin),
+      koppelQr: maakPriveKoppelQr,   // 481: de telefoon koppelen aan de hoek (QR met de privé-sleutel)
       model: priveModelLaag(),   // 470: zie hierboven (buiten dit blok: het is het ENIGE stukje van de hoek dat het netwerk aanraakt)
       downloadBestand: (naam, tekst) => { const b = new Blob([tekst], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = naam; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); },
     });
+    laadPriveMotorSleutel();
     PriveUi.start($('priveHoek')).catch(() => { $('priveHoek').textContent = 'De privé-hoek kon niet worden geladen in deze browser.'; });
     setInterval(() => PriveUi.tik(), 30000);
   }
