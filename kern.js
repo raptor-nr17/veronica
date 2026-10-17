@@ -404,6 +404,15 @@
     return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : 0;
   }
   const postbusQrTekst = (a) => (leesPostbusAdres(a) ? `LRWERK1 ${leesPostbusAdres(a)}` : null);
+  // 488: een adres is alleen iets waard als het nog geldt (zeven dagen na het ondertekenen, met tien minuten marge). Een verlopen
+  // adres van de baas als QR tonen gaf op 17 oktober een QR die niets deed: dan liever eerlijk zeggen en om een verse code vragen.
+  const ADRES_GELDIG_MS = 7 * 24 * 3600 * 1000 - 10 * 60 * 1000;
+  const adresVers = (a, nu) => { const t = leesPostbusAdres(a) ? adresGetekend(a) : 0; return t > 0 && (nu || Date.now()) - t < ADRES_GELDIG_MS; };
+  // 488: een geplakte koppelcode ("LRWERK1 <adres>", zoals in de mail of op de beheerpagina), ook met witruimte of een regeleinde.
+  function leesPlakCode(tekst) {
+    const t = String(tekst || '').replace(/\s+/g, ' ').trim().replace(/^LRWERK1 /, '');
+    return leesPostbusAdres(t);
+  }
   // Moet deze telefoon geholpen worden met een vers adres? Alleen als hij achterloopt EN (hij zegt zelf "verlopen", of hij is
   // ouder dan 1.9.39: die nemen een nieuwer adres van de baas niet vanzelf over).
   const VERS_ADRES_VANAF = '1.9.39';
@@ -636,7 +645,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.43';
+  const VERONICA_VERSIE = '1.9.44';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1260,6 +1269,6 @@
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, leesPostbusAdres, adresGetekend, postbusQrTekst, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

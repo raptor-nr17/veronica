@@ -1386,7 +1386,14 @@
         if (h) {
           const vak = el('div', 'tBijwerk');
           vak.appendChild(el('div', '', h.zin));
-          if (!S.postbusVers) vak.appendChild(el('div', 'tBron', 'Even wachten: Veronica haalt een vers adres bij de baas.'));
+          if (!K.adresVers(S.postbusVers, tijd)) {
+            // 488: geen of een VERLOPEN adres bij de baas. Geen dode QR tonen: een verse code plakken (uit de mail).
+            vak.appendChild(el('div', 'tBron', S.postbusVers
+              ? 'Ook het adres van de baas is verlopen. Plak hier de verse code uit de mail (begint met LRWERK1).'
+              : 'Veronica heeft nog geen geldig adres. Plak hier de verse code uit de mail (begint met LRWERK1).'));
+            const veld = el('textarea', 'tPlak'); veld.rows = 2; veld.placeholder = 'LRWERK1 …'; veld.dataset.versPlak = '1'; vak.appendChild(veld);
+            const b = el('button', '', 'Gebruik deze code'); b.dataset.versPlakKnop = t.adres; vak.appendChild(b);
+          }
           else if (h.tik) { const b = el('button', '', 'Geef een vers adres'); b.dataset.versAdres = t.adres; vak.appendChild(b); }
           else { const b = el('button', '', 'Toon de QR'); b.dataset.versQr = t.adres; vak.appendChild(b); }
           tegel.appendChild(vak);
@@ -1632,14 +1639,25 @@
   }
   async function geefVersAdres(adres) {
     const t = S.telefoons.find((x) => x.adres === adres);
-    if (!t || !t.jarvis || !S.code || !S.postbusVers) return false;
+    if (!t || !t.jarvis || !S.code || !K.adresVers(S.postbusVers)) return false;
     let ok = false;
     try { ok = (await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'postbus', van: 'veronica', adres: S.postbusVers }) }, 3000)).ok; } catch (e) { ok = false; }
     logRegel(ok ? `${t.naam}: vers postbus-adres gegeven. Hij kijkt nu zelf of er een nieuwe versie is.` : `${t.naam} antwoordt niet. Probeer het zo nog eens.`);
     return ok;
   }
+  // 488: een geplakte verse code (uit de mail). Alleen in het geheugen, net als het adres van de baas.
+  function plakVersCode(veld) {
+    const a = K.leesPlakCode(veld && veld.value);
+    if (!a || !K.adresVers(a)) { logRegel(a ? 'Deze code is ook al verlopen. Vraag een nieuwe.' : 'Dat is geen koppelcode. Hij begint met LRWERK1.'); return false; }
+    neemPostbusVers(a);
+    if (veld) veld.value = '';
+    logRegel('Verse code ontvangen. Tik nu bij de telefoon op de knop.');
+    try { tekenLive(); } catch (e) { /* de volgende ronde tekent */ }
+    return true;
+  }
   function toonVersQr(adres) {
     const t = S.telefoons.find((x) => x.adres === adres);
+    if (!K.adresVers(S.postbusVers)) return false;
     const tekst = K.postbusQrTekst(S.postbusVers);
     const vak = $('versQrPaneel');
     if (!t || !tekst || !vak || typeof window.qrcode !== 'function') return false;
@@ -1651,6 +1669,8 @@
   }
   document.addEventListener('click', (e) => {
     const b = e.target && e.target.closest ? e.target.closest('button[data-vers-adres],button[data-vers-qr]') : null;
+    const pk = e.target && e.target.closest ? e.target.closest('button[data-vers-plak-knop]') : null;
+    if (pk) plakVersCode(pk.parentNode.querySelector('textarea[data-vers-plak]'));
     if (b && b.dataset.versAdres) geefVersAdres(b.dataset.versAdres).catch(() => {});
     else if (b && b.dataset.versQr) toonVersQr(b.dataset.versQr);
     if (e.target && e.target.id === 'versQrSluit') { $('versQrPaneel').hidden = true; $('versQrBeeld').removeAttribute('src'); }
@@ -3295,7 +3315,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
