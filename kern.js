@@ -233,7 +233,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.36';
+  const JARVIS_NIEUWSTE = '1.9.37';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -549,7 +549,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.39';
+  const VERONICA_VERSIE = '1.9.40';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -692,6 +692,36 @@
     const k = await sub.importKey('raw', raw, { name: 'AES-GCM' }, false, ['decrypt']);
     return new TextDecoder().decode(await sub.decrypt({ name: 'AES-GCM', iv: hexNaar(iv) }, k, hexNaar(data)));
   }
+
+  // 482 (17 oktober): DE LEDENBRIEF van de baas (koppel.js, ledenBriefVerzoek): de leden MET hun adressen. Het onderwerp en
+  // de sleutel komen uit het geheime ntfy-onderwerp van de rij (S.ntfy.onderwerp), niet uit de code van zes cijfers.
+  const LEDEN_ONDERWERP_RE = /^jv[a-z0-9]{30}$/;
+  const LEDEN_VERS_MS = 30 * 60 * 1000;   // zolang is een brief "vers": dan zoekt Veronica niets af, ze gebruikt de brief
+  async function ledenOnderwerp(o, c) {
+    if (!LEDEN_ONDERWERP_RE.test(String(o || ''))) return null;
+    return 'vl' + naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes('veronica-leden:' + o))).slice(0, 30);
+  }
+  // Een regel van ntfy -> { t, leden: [{ naam, id, host, poort, rol }] } (alleen thuisadressen), of null.
+  async function leesLedenBrief(o, regel, c) {
+    if (!LEDEN_ONDERWERP_RE.test(String(o || ''))) return null;
+    let m, b, d;
+    try { m = JSON.parse(regel); } catch (e) { return null; }
+    if (!m || (m.event && m.event !== 'message')) return null;
+    try { b = JSON.parse(m.message); d = JSON.parse(await veronicaOpenMet(o, b.iv, b.data, 'veronica-leden-sleutel:', c)); } catch (e) { return null; }
+    if (!d || d.v !== 1 || !Array.isArray(d.leden)) return null;
+    const leden = d.leden.filter((l) => l && isThuisNet(String(l.host || ''))).slice(0, 12).map((l) => ({
+      naam: String(l.naam || '').slice(0, 40), id: String(l.id || '').slice(0, 40), host: String(l.host),
+      poort: Number(l.poort) > 0 && Number(l.poort) < 65536 ? Number(l.poort) : JARVIS_POORT, rol: l.rol === 'baas' ? 'baas' : 'werker',
+    }));
+    return { t: Number(d.t) || 0, leden };
+  }
+  // De adressen uit een verse brief gaan VOOR in de rondvraag; de baas eerst.
+  function metLedenBrief(lijst, brief, nuMs) {
+    if (!ledenBriefVers(brief, nuMs)) return (lijst || []).slice();
+    const uitBrief = brief.leden.slice().sort((a, b) => (b.rol === 'baas') - (a.rol === 'baas')).map((l) => `http://${l.host}:${l.poort}`);
+    return uitBrief.concat((lijst || []).filter((a) => !uitBrief.includes(a)));
+  }
+  const ledenBriefVers = (brief, nuMs) => !!(brief && Array.isArray(brief.leden) && brief.leden.length && (nuMs - brief.t) <= LEDEN_VERS_MS);
 
   // ---- Local Network Access (Chrome): zeg dat het verzoek naar het eigen netwerk gaat ----
   function lnaOpties(url) {
@@ -1140,7 +1170,7 @@
   return {
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
-    SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
+    SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
     isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,

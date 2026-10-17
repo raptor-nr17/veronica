@@ -290,6 +290,52 @@
     const zs = K.leesZonStroom(d.zonStroom, nu());
     if (zs) S.zonStroom = zs;
   }
+  // 482 (17 oktober): DE LEDENBRIEF. De baas legt de leden met hun adressen versleuteld klaar op de brievenbus (ntfy), met het
+  // geheime ntfy-onderwerp van de rij als sleutel (kern.js, leesLedenBrief). EEN doorlopende verbinding (449: nooit vragen in
+  // een lus). Een nieuwe brief = meteen rondvragen op die adressen. Veronica luistert zelf NIET op Bluetooth.
+  const LB = { brief: null, stroom: null, onderwerp: '', wachtTot: 0, fouten: 0 };
+  async function ledenStroom() {
+    const o = S.ntfy && S.ntfy.onderwerp;
+    if (!o || typeof fetch !== 'function') return;
+    if (LB.stroom && LB.stroom.loopt && LB.onderwerp === o) return;
+    if (nu() < LB.wachtTot && LB.onderwerp === o) return;
+    if (LB.stroom && LB.stroom.loopt) LB.stroom.ctrl.abort();
+    LB.onderwerp = o;
+    const st = LB.stroom = { loopt: true, ctrl: new AbortController() };
+    let fout = false;
+    try {
+      const topic = await K.ledenOnderwerp(o);
+      if (!topic) return;
+      const sinds = Math.floor(nu() / 1000) - 12 * 3600;
+      const r = await fetch(K.briefStroomUrl([topic], sinds), { signal: st.ctrl.signal, cache: 'no-store' });
+      if (!r.ok) fout = true;
+      else if (r.body && r.body.getReader) {
+        const lezer = r.body.getReader(), dec = new TextDecoder();
+        let rest = '';
+        for (;;) {
+          const { value, done } = await lezer.read();
+          if (done) break;
+          rest += dec.decode(value, { stream: true });
+          const regels = rest.split('\n');
+          rest = regels.pop();
+          for (const regel of regels) await ledenRegel(o, regel);
+        }
+        if (rest.trim()) await ledenRegel(o, rest);
+      } else for (const regel of (await r.text()).split('\n')) await ledenRegel(o, regel);
+    } catch (e) { if (!st.ctrl.signal.aborted) fout = true; }
+    finally {
+      st.loopt = false;
+      if (!st.ctrl.signal.aborted) { LB.fouten = fout ? LB.fouten + 1 : 0; LB.wachtTot = nu() + (fout ? Math.min(300000, 10000 * 2 ** Math.min(5, LB.fouten)) : 2000); }
+    }
+  }
+  async function ledenRegel(o, regel) {
+    const b = await K.leesLedenBrief(o, regel);
+    if (!b || (LB.brief && b.t <= LB.brief.t)) return;
+    LB.brief = b;
+    await Opslag.schrijf('ledenbrief', b);
+    logRegel(`De baas meldde waar de telefoons zitten (${b.leden.length}). Ik kijk daar, en zoek niets af.`);
+    if (!S.telefoons.some((t) => staat(t.adres).bereikbaar === true)) rondvragen(true);
+  }
   // RONDVRAGEN (na een netwerkwissel, of als de hoofdtelefoon en de baas zwijgen): elk adres dat
   // ze kent, tot er iemand antwoordt. Die geeft (met de code) de lijst van nu: telefoons, leden en
   // hun adressen. Hoogstens eens per vijftien seconden, vier tegelijk.
@@ -298,7 +344,7 @@
   async function rondvragen(dwing) {
     if (!S.code || (!dwing && nu() - rondT < 15000)) return;
     rondT = nu();
-    const lijst = K.rondvraagLijst(S);
+    const lijst = K.metLedenBrief(K.rondvraagLijst(S), LB.brief, nu());   // 482: de adressen uit de ledenbrief van de baas eerst
     let gevonden = null;
     for (let i = 0; i < lijst.length && !gevonden; i += 4) {
       const uit = await Promise.all(lijst.slice(i, i + 4).map(async (a) => {
@@ -310,7 +356,9 @@
     if (!gevonden) {
       // 476: na twee stille rondes (ruim 20 s) zoekt Veronica de telefoons ZELF opnieuw op het netwerk (ander wifi).
       // Die zoeker zet zijn eigen zin in hetzelfde vak; zolang hij loopt blijft die staan.
-      if (gekoppeld() && !HZ.bezig && nu() - stilSinds >= HZ.NA_MS && nu() - HZ.laatst >= HZ.TUSSEN_MS) { herstelZoek(); return; }
+      // 482: met een VERSE ledenbrief zoekt ze niets af: de baas zei net waar iedereen zit. Antwoordt dan niemand, dan zit
+      // deze computer op een ander netwerk; afzoeken helpt daar niet.
+      if (gekoppeld() && !HZ.bezig && !K.ledenBriefVers(LB.brief, nu()) && nu() - stilSinds >= HZ.NA_MS && nu() - HZ.laatst >= HZ.TUSSEN_MS) { herstelZoek(); return; }
       if (HZ.bezig) return;
       const u = K.vindUitleg({ gekoppeld: !!S.code, bereikbaar: 0, stilMs: nu() - stilSinds, geprobeerd: lijst.length });
       if (v) { v.textContent = u; v.hidden = !u; }
@@ -2080,7 +2128,7 @@
     if (l.code) S.code = l.code;
     S.bekend = K.voegBekendToe(S.bekend, [l.kern].concat(l.alt || [], l.bekend || [], l.telefoons.map((t) => t.jarvis)));
     await Opslag.schrijf('bekend', S.bekend);
-    if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); tekenNtfy(); }
+    if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); tekenNtfy(); ledenStroom(); }
     if (l.nieuweTelefoon) { S.download = l.nieuweTelefoon; await Opslag.schrijf('download', S.download); }
     await neemUpdateSleutelOver(l.updateSleutel, l.updateRepo);
     if (l.eigenaar && !S.eigenaarZelf) { S.eigenaar = l.eigenaar; await Opslag.schrijf('eigenaar', S.eigenaar); }
@@ -2796,6 +2844,7 @@
       S.updateRepo = (await Opslag.lees('updateRepo')) || null;
       S.bekend = (await Opslag.lees('bekend')) || [];
       S.ntfy = K.leesNtfy(await Opslag.lees('ntfy'));
+      { const b = await Opslag.lees('ledenbrief'); if (b && Array.isArray(b.leden)) LB.brief = b; }   // 482
       Wand.auto = (await Opslag.lees('wandAuto')) !== false;
       S.spraak = Object.assign(S.spraak, (await Opslag.lees('spraak')) || {});
       S.eigenaar = K.leesEigenaar(await Opslag.lees('eigenaar'));
@@ -2917,6 +2966,8 @@
       if (S.code && nu() - roepT > 10 * 60 * 1000) roepOp(false);
     }, 1000);
     zoekBlokStart();
+    ledenStroom();   // 482: de ledenbrief van de baas (een verbinding; opnieuw na een fout, met wachten)
+    setInterval(() => { ledenStroom(); }, 30000);
     setInterval(schermTik, 1000);
     setInterval(wandTik, 1000);
     setInterval(antwoordTik, 1000);
@@ -2941,7 +2992,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
