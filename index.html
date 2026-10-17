@@ -157,6 +157,7 @@
   <button id="nieuwQrKnop">📱 QR voor een nieuwe telefoon</button>
   <button id="noodstop">NOODSTOP</button>
 </header>
+<div id="volLokaalBalk" hidden role="status" style="background:#1b5e20;color:#fff;padding:8px 16px;font-weight:600">🔒 Vol lokaal staat AAN: niets gaat naar buiten. Alleen je eigen telefoons.</div>
 <div id="wandBalk"><span id="wandKlok"></span><span id="wandZin"></span><button id="wandUit">← Terug</button></div>
 <nav>
   <button id="tab-live" aria-pressed="true">Live</button>
@@ -210,6 +211,19 @@
       <button type="button" id="verslagWis">Verslag wissen</button>
       <p id="verslagMelding" class="klein" aria-live="polite"></p>
     </div>
+    <div id="naleesBlok" class="zsPaneel" hidden>
+      <h2>Gemma-werk nalezen</h2>
+      <p class="tBron">Concepten van de Gemma's op je telefoons. Niets gaat vanzelf live: jij keurt. Je oordeel gaat via de baas-telefoon naar de postbus; de server verwerkt het zodra hij wakker is (uiterlijk 's nachts om half twee, of meteen als je de beheerpagina opent).</p>
+      <p id="naleesZin" class="eerlijk"></p>
+      <div id="naleesLijst"></div>
+    </div>
+    <div id="nachtBlok" class="zsPaneel" hidden>
+      <h2>Nachtproef</h2>
+      <p class="tBron">Elk kwartier schrijft de baas per telefoon op: accu, temperatuur en of de motor aan staat. Een vraagteken = niet gemeten.</p>
+      <p id="nachtZin" class="eerlijk"></p>
+      <div style="overflow-x:auto"><table id="nachtTabel" class="klein"></table></div>
+      <button type="button" id="nachtWis">Nachtproef wissen</button>
+    </div>
     <h2 id="zonKop">Zon en stroom</h2>
     <div id="zonStroom" class="zsPaneel"></div>
   </section>
@@ -244,6 +258,12 @@
     </section>
   </section>
   <section id="scherm-prive" hidden>
+    <div class="zsPaneel" id="volLokaalVak">
+      <h2>Vol lokaal</h2>
+      <button type="button" id="volLokaalKnop" aria-pressed="false">Vol lokaal: UIT</button>
+      <p id="volLokaalZin" class="eerlijk"></p>
+      <p class="tBron">Dit geldt voor Veronica op deze computer. De telefoons zelf doen hun eigen werk (bijwerken, de postbus); dat stop je met Sparen of Pauze op de telefoon.</p>
+    </div>
     <div id="priveHoek"></div>
   </section>
   <section id="scherm-koppel" hidden>
@@ -324,6 +344,14 @@
     <button id="wandAutoKnop" aria-pressed="true">Wandstand vanzelf: aan</button>
     <p class="eerlijk">De wandstand laat alleen de kaarten zien, groot. Vanzelf na twee minuten zonder muis of toetsen. Echt volledig scherm komt na de eerste tik (zo wil de browser het).</p>
     <p id="ntfyStand"></p>
+    <div id="ntfyVak" hidden>
+      <p>Naam van je meldingen: <code id="ntfyNaam"></code></p>
+      <p><img id="ntfyQr" alt="QR: meldingen op je telefoon" width="180" height="180"></p>
+      <p class="eerlijk">Scan de QR met je telefoon (de app ntfy moet erop staan), of tik op de knop. In ntfy: Abonneren. Klaar.</p>
+      <a id="ntfyOpen" href="#" target="_blank" rel="noopener"><button type="button" tabindex="-1">Open in de app ntfy</button></a>
+      <button type="button" id="ntfyKopieer">Kopieer de naam</button>
+      <p id="ntfyKopieerZin" class="klein" aria-live="polite"></p>
+    </div>
     <button id="ntfyProef">Stuur een proefmelding</button>
     <p class="eerlijk">Karakter aan: Veronica zegt kort wat ze doet en waarom. Zakelijk: alleen de feiten.</p>
   </section>
@@ -345,6 +373,7 @@
 <script src="verslag.js"></script>
 <script src="takenverdeling.js"></script>
 <script src="nulmeting.js"></script>
+<script src="nachtlog.js"></script>
 <script src="kern.js"></script>
 <script src="qrcode.js"></script>
 <!-- 1.9.12: de QR-LEZER (jsQR, Apache-2.0, dezelfde als in JARVIS). Chrome heeft alleen op ChromeOS, macOS en

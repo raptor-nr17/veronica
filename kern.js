@@ -26,6 +26,33 @@
     if (waarde === undefined || waarde === null || (typeof waarde === 'number' && !Number.isFinite(waarde))) return null;
     return { waarde, bron, t };
   }
+  // 483: VOL LOKAAL. De ENE regel of Veronica iets naar buiten mag sturen. Aan = alleen de eigen telefoons (een lokaal adres:
+  // 127.x, 10.x, 192.168.x, 172.16-31.x, .local) en Veronica's eigen bestanden (zelfde origin). Alles anders (ntfy, GitHub, de
+  // postbus, Google) niet. Uit = alles zoals altijd.
+  const LOKAAL_HOST_RE = /^(127\.\d{1,3}\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|localhost|[a-z0-9-]+\.local)$/i;
+  function magNaarBuiten(url, o) {
+    const opt = o || {};
+    if (!opt.volLokaal) return true;
+    let u;
+    try { u = new URL(String(url), opt.basis || undefined); } catch (e) { return false; }
+    if (opt.basis) { try { if (u.origin === new URL(opt.basis).origin) return true; } catch (e) { /* geen basis */ } }
+    return (u.protocol === 'http:' || u.protocol === 'https:') && LOKAAL_HOST_RE.test(u.hostname);
+  }
+  const leesVolLokaal = (x) => x === '1';
+
+  // 483: de nalees-lijst uit stand.json van de baas. Alleen tekst; wat niet klopt valt weg. null = de baas is niet aan de postbus gekoppeld.
+  function leesNalees(n) {
+    if (!n || typeof n !== 'object' || !Array.isArray(n.lijst)) return null;
+    const tekst = (x, m) => String(x === null || x === undefined ? '' : x).slice(0, m);
+    const lijst = [];
+    for (const x of n.lijst.slice(0, 20)) {
+      if (!x || !/^[a-z0-9-]{1,120}$/.test(String(x.taakId || '')) || !['vertaal', 'keuring', 'bord', 'buurtpin'].includes(x.soort)) continue;
+      lijst.push({ taakId: x.taakId, soort: x.soort, taal: x.taal === 'en' || x.taal === 'de' ? x.taal : null, naam: tekst(x.naam, 120),
+        bron: tekst(x.bron, 3000), concept: tekst(x.concept, 6000), telefoon: tekst(x.telefoon, 60),
+        meldingen: Array.isArray(x.meldingen) ? x.meldingen.slice(0, 6).map((m) => tekst(m, 200)) : [] });
+    }
+    return { lijst, t: Number(n.t) || 0, verstuurd: Math.max(0, Math.min(999, Number(n.verstuurd) || 0)) };
+  }
   // Hoe oud, in gewone taal.
   function leeftijdZin(ms) {
     if (!(ms >= 0)) return '';
@@ -233,7 +260,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.37';
+  const JARVIS_NIEUWSTE = '1.9.38';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -549,7 +576,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.40';
+  const VERONICA_VERSIE = '1.9.41';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1172,7 +1199,7 @@
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
-    meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
+    magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
     isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

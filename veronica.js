@@ -18,6 +18,22 @@
   const K = window.VeronicaKern;
   const Pool = window.VeronicaPool;
   const $ = (id) => document.getElementById(id);
+  // 483: VOL LOKAAL (schakelaar in de privé-hoek, standaard UIT). EEN poort voor elk verzoek van deze pagina: window.fetch zelf.
+  // Aan = alleen de eigen telefoons en Veronica's eigen bestanden (K.magNaarBuiten); de rest wordt geweigerd voor hij vertrekt.
+  const VOL_SLEUTEL = 'veronica-vol-lokaal';
+  const VolL = { aan: (() => { try { return K.leesVolLokaal(localStorage.getItem(VOL_SLEUTEL)); } catch (e) { return false; } })(), geweigerd: 0 };
+  const volLokaal = () => VolL.aan;
+  {
+    const echt = window.fetch.bind(window);
+    window.fetch = (u, o) => {
+      const url = typeof u === 'string' ? u : (u && u.url) || String(u);
+      if (!K.magNaarBuiten(url, { volLokaal: VolL.aan, basis: location.href })) {
+        VolL.geweigerd += 1;
+        return Promise.reject(new TypeError('Vol lokaal staat aan: niets gaat naar buiten.'));
+      }
+      return echt(u, o);
+    };
+  }
   function el(tag, klasse, tekst) {
     const e = document.createElement(tag);
     if (klasse) e.className = klasse;
@@ -104,6 +120,8 @@
     metingen: {},           // adres -> { health: {...}, status: {...}, gezien, jarvisNietTot }
     staten: {},             // adres -> { bereikbaar, bezig, uitTot, vervangen, hitteStand, laatstGebruikt }
     kernActiviteit: {},
+    nalees: null,           // 483: { lijst, t, verstuurd } van de baas (concepten om na te lezen), of null
+    nachtlog: [],           // 483: de nachtproef van de baas (regels van een kwartier), ook in de opslag van deze computer
     denkerPlan: null,       // 481: { telefoon, tekst, t } uit stand.json van de baas     // naam -> { tekst, label, t } (uit stand.json van de hoofdtelefoon)
     zonStroom: null,        // { rijen, staaf } (uit stand.json; Veronica rekent de zon niet zelf)
     karakter: 'hulpdienst', // haar karakter (kern.js: veronicaZin); 'zakelijk' = zonder
@@ -289,12 +307,15 @@
       ? { telefoon: String(d.plan.telefoon || '').slice(0, 60), tekst: d.plan.tekst.slice(0, 600), t: Number(d.plan.t) || nu() } : null;
     const zs = K.leesZonStroom(d.zonStroom, nu());
     if (zs) S.zonStroom = zs;
+    if (Array.isArray(d.nachtlog)) neemNachtlogOver(d.nachtlog);   // 483
+    S.nalees = K.leesNalees(d.nalees); tekenNalees();   // 483
   }
   // 482 (17 oktober): DE LEDENBRIEF. De baas legt de leden met hun adressen versleuteld klaar op de brievenbus (ntfy), met het
   // geheime ntfy-onderwerp van de rij als sleutel (kern.js, leesLedenBrief). EEN doorlopende verbinding (449: nooit vragen in
   // een lus). Een nieuwe brief = meteen rondvragen op die adressen. Veronica luistert zelf NIET op Bluetooth.
   const LB = { brief: null, stroom: null, onderwerp: '', wachtTot: 0, fouten: 0 };
   async function ledenStroom() {
+    if (volLokaal()) return;   // 483: de ledenbrief komt via internet (ntfy)
     const o = S.ntfy && S.ntfy.onderwerp;
     if (!o || typeof fetch !== 'function') return;
     if (LB.stroom && LB.stroom.loopt && LB.onderwerp === o) return;
@@ -387,7 +408,7 @@
     }
     S.bekend = K.voegBekendToe(S.bekend, [gevonden.a].concat(l.bekend, l.kern ? [l.kern] : []));
     await Opslag.schrijf('bekend', S.bekend);
-    if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); }
+    if (l.ntfy) { S.ntfy = l.ntfy; await Opslag.schrijf('ntfy', S.ntfy); tekenNtfy(); }
     await neemUpdateSleutelOver(l.updateSleutel, l.updateRepo);
     if (S.actieveKern !== gevonden.a) logRegel(`Gevonden via ${gevonden.a.slice(7)}. Ik kijk weer mee.`);
     S.actieveKern = gevonden.a;
@@ -501,6 +522,7 @@
       const knop = $('zoekKnop'), stand = $('zoekStand'), uit = $('zoekUitslag');
       knop.disabled = true; stand.textContent = 'Even zoeken…'; uit.replaceChildren();
       let u = null;
+      if (volLokaal()) { knop.disabled = false; stand.textContent = 'Vol lokaal staat aan: zoeken op internet doe ik nu niet. Zet het uit in Mijn privé-hoek.'; return; }
       try { u = await zoeker.zoek($('zoekVraag').value, { soort: $('zoekSoort') ? $('zoekSoort').value : 'algemeen' }); } catch (e) { u = { ok: false, zin: 'Zoeken lukte niet. Probeer het zo nog eens.' }; }
       knop.disabled = false;
       if (zoekGeheugen && u && u.ok && u.samengevoegd && u.samengevoegd.length) { try { await zoekGeheugen.onthoud(u); geheugenTel(); } catch (e) { /* het geheugen is een gemak */ } }
@@ -651,6 +673,7 @@
         if (r.ok) { NtS.laatst[soort] = tijd; logRegel(`Gemeld op de hoofdtelefoon (thuis): ${schone}`); return { gestuurd: true, manier: 'thuis' }; }
       } catch (e) { /* dan via ntfy */ }
     }
+    if (volLokaal()) return { gestuurd: false, reden: 'vol lokaal staat aan (niets naar buiten)' };
     const n = S.ntfy || {};
     const basis = { onderwerp: n.onderwerp, uit: n.aan === false, soort, nu: tijd, laatst: NtS.laatst };
     let m = K.Ntfy.magSturen(basis);
@@ -670,12 +693,38 @@
       return { gestuurd: true, manier: 'ntfy' };
     } catch (e) { return { gestuurd: false, reden: 'geen internet' }; }
   }
+  // 483: de naam (onderwerp) maakt de baas zelf aan, willekeurig (waarschuw.js, maakOnderwerp). Veronica toont hem met een QR
+  // en een knop, en stuurt EEN proefmelding zodra ze een nieuwe naam leert (een keer per naam, onthouden op deze computer).
+  const NtfyV = { qrVoor: '', proefBezig: false };
   function tekenNtfy() {
     const v = $('ntfyStand');
     if (!v) return;
     const n = S.ntfy;
-    v.textContent = !n ? 'Waarschuwingen naar je telefoon: nog niet ingesteld (dat doe je op de hoofdtelefoon, Beheer).'
+    v.textContent = !n ? 'Waarschuwingen naar je telefoon: nog niet ingesteld. De baas-telefoon maakt de naam vanzelf aan; koppel Veronica met de baas, dan staat hij hier.'
       : `Waarschuwingen naar je telefoon: ${n.aan ? 'aan' : 'uit'}. Stille uren: ${n.stil === 'uit' ? 'geen' : n.stil}. Thuis gaat het via de hoofdtelefoon zelf.`;
+    const vak = $('ntfyVak');
+    if (!vak) return;
+    vak.hidden = !n;
+    if (!n) return;
+    $('ntfyNaam').textContent = n.onderwerp;
+    const link = K.Ntfy.abonneerLink(n.onderwerp);
+    $('ntfyOpen').href = link || '#';
+    if (NtfyV.qrVoor !== n.onderwerp && typeof window.qrcode === 'function' && link) {
+      const q = window.qrcode(0, 'M'); q.addData(link); q.make();
+      $('ntfyQr').src = q.createDataURL(5, 8);
+      NtfyV.qrVoor = n.onderwerp;
+    }
+    ntfyEersteProef();
+  }
+  async function ntfyEersteProef() {
+    const n = S.ntfy;
+    if (!n || n.aan === false || NtfyV.proefBezig) return;
+    NtfyV.proefBezig = true;
+    try {
+      if ((await Opslag.lees('ntfyProefVoor')) === n.onderwerp) return;
+      const r = await waarschuw('proef', K.veronicaZin('hulpdienst', 'proef') || 'Dit is een proef. Zo ziet een waarschuwing eruit.');
+      if (r && r.gestuurd) { await Opslag.schrijf('ntfyProefVoor', n.onderwerp); logRegel('Eerste proefmelding verstuurd naar de nieuwe naam. Kijk op je telefoon.'); }
+    } catch (e) { /* de volgende keer */ } finally { NtfyV.proefBezig = false; }
   }
 
   // ---- ROEP DE RIJ OP: elk bekend adres, "meld je", en de ledenlijst ----
@@ -790,6 +839,7 @@
       const tekst = await luisterViaGemma(t);
       if (tekst !== null) return verwerkSpraak(tekst, 'Gemma');
     }
+    if (volLokaal()) { $('spraakZin').textContent = 'Vol lokaal staat aan: luisteren via Google doe ik niet. Een Gemma op een telefoon moet vrij zijn.'; return null; }
     return luisterViaChrome();
   }
   async function neemOp(maxMs) {
@@ -1519,6 +1569,125 @@
     $('stekkerScanZin').textContent = K.scanZin(S.stekkerScan);
   }
 
+  // 483: de schakelaar en de balk. De balk staat bovenaan op ELK scherm zolang Vol lokaal aan staat.
+  function zetVolLokaal(aan) {
+    VolL.aan = !!aan;
+    try { localStorage.setItem(VOL_SLEUTEL, VolL.aan ? '1' : '0'); } catch (e) { /* alleen voor nu */ }
+    logRegel(VolL.aan ? 'Vol lokaal AAN: niets gaat naar buiten, alleen je eigen telefoons.' : 'Vol lokaal UIT: meldingen, zoeken en de postbus mogen weer.');
+    tekenVolLokaal();
+  }
+  function tekenVolLokaal() {
+    const balk = $('volLokaalBalk');
+    if (balk) balk.hidden = !VolL.aan;
+    const knop = $('volLokaalKnop');
+    if (knop) { knop.textContent = `Vol lokaal: ${VolL.aan ? 'AAN' : 'UIT'}`; knop.setAttribute('aria-pressed', String(VolL.aan)); }
+    const zin = $('volLokaalZin');
+    if (zin) zin.textContent = VolL.aan
+      ? 'AAN. Veronica praat alleen met je eigen telefoons (hun eigen motor). Geen meldingen via internet, geen zoeken, geen Claude, geen postbus, geen Google.'
+      : 'UIT. Meldingen (ntfy), zoeken via de telefoons, het Claude-bureau en de postbus mogen naar buiten.';
+  }
+  document.addEventListener('click', (e) => { if (e.target && e.target.id === 'volLokaalKnop') zetVolLokaal(!VolL.aan); });
+
+  // 483: NALEZEN. De baas leest de concepten uit de postbus (stand.json, achter de code); een tik hier stuurt EEN oordeel naar de
+  // baas (/jarvis/roep, soort 'oordeel', met de code). De baas legt het in de brievenbus; de server beslist als hij wakker is.
+  const NaleesV = { verstuurd: {} };
+  const SOORT_NAAM = { vertaal: 'Vertaling', keuring: 'Tekstkeuring', bord: 'Bordfoto', buurtpin: 'Buurtpin' };
+  const TAAL_NAAM = { en: 'Engels', de: 'Duits' };
+  function tekenNalees() {
+    const blok = $('naleesBlok');
+    if (!blok) return;
+    const n = S.nalees;
+    blok.hidden = !n;
+    if (!n) return;
+    const lijst = n.lijst.filter((x) => !NaleesV.verstuurd[x.taakId]);
+    $('naleesZin').textContent = lijst.length ? `${lijst.length} ${lijst.length === 1 ? 'concept wacht' : 'concepten wachten'} op jou.`
+      : `Niets om na te lezen.${n.verstuurd ? ` ${n.verstuurd} ${n.verstuurd === 1 ? 'oordeel ligt' : 'oordelen liggen'} klaar voor de server.` : ''}`;
+    const vak = $('naleesLijst');
+    const open = new Set([...vak.querySelectorAll('[data-taak]')].map((k) => k.dataset.taak));
+    const nieuw = new Set(lijst.map((x) => x.taakId));
+    for (const k of [...vak.querySelectorAll('[data-taak]')]) if (!nieuw.has(k.dataset.taak)) k.remove();
+    for (const x of lijst) {
+      if (open.has(x.taakId)) continue;   // een kaart waar je misschien in typt, laten staan
+      const kaart = el('div', 'zsPaneel'); kaart.dataset.taak = x.taakId;
+      kaart.appendChild(el('h3', '', `${SOORT_NAAM[x.soort] || x.soort}${x.taal ? ` naar het ${TAAL_NAAM[x.taal]}` : ''}: ${x.naam}`));
+      const bron = el('details'); bron.appendChild(el('summary', '', 'De Nederlandse tekst')); bron.appendChild(el('p', '', x.bron)); kaart.appendChild(bron);
+      if (x.soort === 'vertaal') { const t = el('textarea'); t.rows = 6; t.style.width = '100%'; t.value = x.concept; t.dataset.tekst = '1'; kaart.appendChild(t); }
+      else kaart.appendChild(el('pre', '', x.concept));
+      if (x.meldingen.length) kaart.appendChild(el('p', 'eerlijk', `Controle: ${x.meldingen.join('; ')}`));
+      kaart.appendChild(el('p', 'tBron', `Gemaakt door ${x.telefoon || 'een telefoon'}.`));
+      const goed = el('button', '', 'Goedkeuren'); goed.dataset.nalees = 'goed';
+      const af = el('button', '', 'Afkeuren'); af.dataset.nalees = 'af';
+      kaart.append(goed, af, el('p', 'klein'));
+      vak.appendChild(kaart);
+    }
+  }
+  async function stuurNaleesOordeel(kaart, besluit) {
+    const id = kaart.dataset.taak;
+    const x = S.nalees && S.nalees.lijst.find((y) => y.taakId === id);
+    const zin = kaart.querySelector('p.klein');
+    if (!x) { zin.textContent = 'Dit concept staat niet meer in de lijst.'; return; }
+    if (volLokaal()) { zin.textContent = 'Vol lokaal staat aan: een oordeel gaat via de postbus naar buiten. Zet het eerst uit in Mijn privé-hoek.'; return; }
+    const kern = kernNu();
+    if (!kern || !S.code) { zin.textContent = 'Geen baas-telefoon bereikbaar. Probeer het straks nog eens.'; return; }
+    const veld = kaart.querySelector('[data-tekst]');
+    const lijf = { soort: 'oordeel', van: 'veronica', taakId: id, besluit };
+    if (besluit === 'goed' && veld && veld.value.trim() !== x.concept.trim()) {
+      if (new TextEncoder().encode(veld.value).length > 1500) { zin.textContent = 'Je wijziging is te lang om via de telefoon te sturen. Keur goed zonder wijziging, of wijzig op de beheerpagina.'; return; }
+      lijf.tekst = veld.value;
+    }
+    zin.textContent = 'Even...';
+    try {
+      const r = await haal(`${kern}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(lijf) }, 4000);
+      if (!r.ok) { zin.textContent = `De baas-telefoon gaf ${r.status}. Probeer het nog eens.`; return; }
+      NaleesV.verstuurd[id] = besluit;
+      logRegel(`${besluit === 'goed' ? 'Goedgekeurd' : 'Afgekeurd'}: ${x.naam}. De baas legt het in de postbus.`);
+      kaart.remove();
+      tekenNalees();
+    } catch (e) { zin.textContent = 'De baas-telefoon antwoordt niet. Probeer het straks nog eens.'; }
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-nalees]') : null;
+    if (b) stuurNaleesOordeel(b.closest('[data-taak]'), b.dataset.nalees);
+  });
+
+  // 483: DE NACHTPROEF. De baas schrijft elk kwartier een regel (nachtlog.js); deze computer bewaart ze een week en toont
+  // de laatste twaalf uur. Alleen wat de telefoons maten: een vraagteken is "niet gemeten", nooit nul.
+  const NACHT_MAX = 7 * 24 * 4;
+  function neemNachtlogOver(lijst) {
+    if (!window.Nachtlog) return;
+    const voor = S.nachtlog.length ? S.nachtlog[S.nachtlog.length - 1].t : 0;
+    S.nachtlog = window.Nachtlog.leesLijst(S.nachtlog.concat(lijst), NACHT_MAX);
+    const na = S.nachtlog.length ? S.nachtlog[S.nachtlog.length - 1].t : 0;
+    if (na !== voor) { Opslag.schrijf('nachtlog', S.nachtlog).catch(() => {}); tekenNachtlog(); }
+  }
+  function tekenNachtlog() {
+    const blok = $('nachtBlok');
+    if (!blok || !window.Nachtlog) return;
+    const tijd = nu();
+    const recent = S.nachtlog.filter((r) => tijd - r.t <= 12 * 60 * 60 * 1000);
+    blok.hidden = !S.nachtlog.length;
+    if (blok.hidden) return;
+    const klok = (t) => new Date(t).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+    const laatste = S.nachtlog[S.nachtlog.length - 1];
+    $('nachtZin').textContent = recent.length
+      ? `${recent.length} metingen in de laatste 12 uur. Laatste om ${klok(laatste.t)}${tijd - laatste.t > 30 * 60 * 1000 ? ` (${K.leeftijdZin(tijd - laatste.t)}: de baas schrijft nu niet)` : ''}.`
+      : `Geen metingen in de laatste 12 uur. De laatste was om ${klok(laatste.t)}.`;
+    const tabel = $('nachtTabel');
+    tabel.replaceChildren();
+    const namen = [];
+    for (const r of recent) for (const t of r.telefoons) if (!namen.includes(t.naam)) namen.push(t.naam);
+    const kop = el('tr');
+    kop.appendChild(el('th', '', 'Tijd'));
+    for (const n of namen) kop.appendChild(el('th', '', n));
+    tabel.appendChild(kop);
+    for (const r of recent.slice().reverse()) {
+      const rij = el('tr');
+      rij.appendChild(el('td', '', klok(r.t)));
+      for (const n of namen) { const t = r.telefoons.find((x) => x.naam === n); rij.appendChild(el('td', '', t ? window.Nachtlog.zin(t) : '-')); }
+      tabel.appendChild(rij);
+    }
+  }
+
   // 467: verbruik en kosten van de meter-stekker, met een tarief dat de mens zelf instelt (alleen in deze browser).
   const TARIEF_SLEUTEL = 'veronica-tarief';
   function leesTariefOpslag() { try { return localStorage.getItem(TARIEF_SLEUTEL); } catch (e) { return null; } }
@@ -1527,6 +1696,7 @@
     const blok = $('verbruikBlok');
     blok.hidden = !meter;
     tekenVerslag();
+    tekenNachtlog();
     if (!meter) return;
     const veld = $('tariefVeld');
     if (document.activeElement !== veld) veld.value = String(K.leesTarief(leesTariefOpslag())).replace('.', ',');
@@ -1568,6 +1738,9 @@
       let gelukt = false;
       try { await Promise.race([navigator.clipboard.writeText($('verslagTekst').textContent), new Promise((_, mis) => setTimeout(() => mis(new Error('te lang')), 2500))]); gelukt = true; } catch (x) { gelukt = false; }
       $('verslagMelding').textContent = gelukt ? 'Gekopieerd. Je kunt het nu plakken in een bericht of mail.' : 'Kopieren lukte niet. Selecteer de tekst van het verslag en kopieer met Ctrl+C.';
+    } else if (id === 'nachtWis') {
+      if (!window.confirm('De nachtproef op deze computer wissen? De baas houdt zijn eigen regels.')) return;
+      S.nachtlog = []; await Opslag.schrijf('nachtlog', []); tekenNachtlog();
     } else if (id === 'verslagWis') {
       if (!dagboek || !window.confirm('Het hele verbruiksdagboek wissen? Dit staat alleen op deze computer.')) return;
       await dagboek.wisAlles(); $('verslagMelding').textContent = 'Het dagboek is leeg.'; tekenVerslag();
@@ -1959,6 +2132,7 @@
   // Alleen de vaste klussoorten (pool.js). Het antwoord is DATA van een klein model: het veld let_op zegt dat. Privé-kamer-klussen gaan hier NOOIT
   // doorheen (de kamer staat in JARVIS en kent deze brug niet). Voorrang 2: de eigen vragen van de eigenaar en de privé-kamer gaan voor.
   function brugTaak(inv) {
+    if (volLokaal()) return Promise.reject({ fout: 'vol-lokaal', reden: 'Vol lokaal staat aan in Veronica: geen klussen van of voor Claude.', let_op: Pool.LET_OP });
     if (!S.bureau) return Promise.reject({ fout: 'bureau-uit', reden: 'Het Claude-bureau staat uit in Veronica.', let_op: Pool.LET_OP });
     if (!S.aan) return Promise.reject({ fout: 'pantser-uit', reden: 'Pantser staat uit. Zet in Veronica Pantser aan.', let_op: Pool.LET_OP });
     const v = Pool.valideer(inv);
@@ -2845,6 +3019,7 @@
       S.bekend = (await Opslag.lees('bekend')) || [];
       S.ntfy = K.leesNtfy(await Opslag.lees('ntfy'));
       { const b = await Opslag.lees('ledenbrief'); if (b && Array.isArray(b.leden)) LB.brief = b; }   // 482
+      if (window.Nachtlog) S.nachtlog = window.Nachtlog.leesLijst(await Opslag.lees('nachtlog'), NACHT_MAX);   // 483
       Wand.auto = (await Opslag.lees('wandAuto')) !== false;
       S.spraak = Object.assign(S.spraak, (await Opslag.lees('spraak')) || {});
       S.eigenaar = K.leesEigenaar(await Opslag.lees('eigenaar'));
@@ -2920,6 +3095,12 @@
       $('zoekZelfKnop').textContent = 'Ik zoek zelf op het wifi...';
     });
     $('veronicaVersie').textContent = `Veronica ${K.VERONICA_VERSIE}`;
+    $('ntfyKopieer').addEventListener('click', async () => {
+      const naam = S.ntfy && S.ntfy.onderwerp;
+      let gelukt = false;
+      try { if (naam) { await Promise.race([navigator.clipboard.writeText(naam), new Promise((_, mis) => setTimeout(() => mis(new Error('te lang')), 2500))]); gelukt = true; } } catch (x) { gelukt = false; }
+      $('ntfyKopieerZin').textContent = gelukt ? 'Gekopieerd. Plak de naam in ntfy bij Abonneren.' : 'Kopieren lukte niet. Selecteer de naam en kopieer met Ctrl+C.';
+    });
     $('ntfyProef').addEventListener('click', async () => {
       const r = await waarschuw('proef', K.veronicaZin('hulpdienst', 'proef'));
       logRegel(r.gestuurd ? 'Proefmelding verstuurd. Kijk op je telefoon.' : `Proefmelding niet verstuurd: ${r.reden}.`);
@@ -2950,6 +3131,7 @@
     toonScherm(gekoppeld() ? 'live' : 'koppel');
     tekenKarakter();
     tekenNtfy();
+    tekenVolLokaal();   // 483
     tekenSpraak();
     $('wandAutoKnop').textContent = `Wandstand vanzelf: ${Wand.auto ? 'aan' : 'uit'}`;
     $('wandAutoKnop').setAttribute('aria-pressed', String(Wand.auto));
@@ -2992,7 +3174,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
