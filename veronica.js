@@ -394,21 +394,55 @@
       .map((t) => ({ id: t.adres, naam: t.naam, host: (/^http:\/\/([^:/]+)/.exec(t.jarvis) || [])[1] || '' })).filter((t) => t.host);
   }
   let zoekGebonden = false;
+  let zoekGeheugen = null;
+  function geheugenTel() {
+    if (!zoekGeheugen || !$('zoekGeheugenTel')) return;
+    zoekGeheugen.telling().then((n) => { $('zoekGeheugenTel').textContent = n ? `${n} eerdere resultaten onthouden, alleen op deze computer.` : 'Nog niets onthouden.'; }).catch(() => {});
+  }
   function zoekBlokStart() {
     if (!window.VeronicaZoek || !$('zoekKnop')) return;
     zoeker = window.VeronicaZoek.maak({ haal, telefoons: zoekTelefoons, code: () => S.code });
     if (zoekGebonden) return;   // de knoppen krijgen hun luisteraars hoogstens een keer (anders loopt een vraag dubbel)
     zoekGebonden = true;
+    // 477: het zoekgeheugen (eerdere uitslagen, alleen in deze browser). Zonder het bestand werkt het zoeken gewoon.
+    zoekGeheugen = window.ZoekGeheugen ? window.ZoekGeheugen.maak({ opslag: { lees: () => Opslag.lees('zoekgeheugen'), schrijf: (t) => Opslag.schrijf('zoekgeheugen', t) } }) : null;
+    geheugenTel();
     const doe = async () => {
       const knop = $('zoekKnop'), stand = $('zoekStand'), uit = $('zoekUitslag');
       knop.disabled = true; stand.textContent = 'Even zoeken…'; uit.replaceChildren();
       let u = null;
-      try { u = await zoeker.zoek($('zoekVraag').value); } catch (e) { u = { ok: false, zin: 'Zoeken lukte niet. Probeer het zo nog eens.' }; }
+      try { u = await zoeker.zoek($('zoekVraag').value, { soort: $('zoekSoort') ? $('zoekSoort').value : 'algemeen' }); } catch (e) { u = { ok: false, zin: 'Zoeken lukte niet. Probeer het zo nog eens.' }; }
       knop.disabled = false;
+      if (zoekGeheugen && u && u.ok && u.samengevoegd && u.samengevoegd.length) { try { await zoekGeheugen.onthoud(u); geheugenTel(); } catch (e) { /* het geheugen is een gemak */ } }
       tekenZoekUitslag(u);
+      // Lukte het zoeken niet (geen telefoon bereikbaar, oude JARVIS): kijk dan toch in wat eerder is gevonden.
+      if (zoekGeheugen && (!u || !u.ok || !u.samengevoegd.length) && !(u && u.geweigerd)) await toonGeheugen(true);
+    };
+    const toonGeheugen = async (alsAanvulling) => {
+      const stand = $('zoekStand'), uit = $('zoekUitslag');
+      if (!zoekGeheugen) return;
+      let lijst = [];
+      try { lijst = await zoekGeheugen.zoek($('zoekVraag').value, 8); } catch (e) { lijst = []; }
+      if (!alsAanvulling) { uit.replaceChildren(); stand.textContent = lijst.length ? `${lijst.length} eerdere ${lijst.length === 1 ? 'resultaat' : 'resultaten'} gevonden in het geheugen.` : 'Hier staat nog niets over in het geheugen.'; }
+      else if (lijst.length) { const e = document.createElement('p'); e.className = 'klein'; e.textContent = 'Wat eerder is gevonden (uit het geheugen):'; uit.appendChild(e); }
+      for (const r of lijst) {
+        const kaart = document.createElement('div'); kaart.className = 'zoekRes';
+        const k = document.createElement('b'); k.textContent = r.titel; kaart.appendChild(k);
+        if (r.tekst) { const t = document.createElement('div'); t.textContent = r.tekst; kaart.appendChild(t); }
+        const b = document.createElement('div'); b.className = 'klein';
+        const dag = r.t ? new Date(r.t).toLocaleDateString('nl-NL') : 'eerder';
+        b.textContent = `Uit het geheugen, gevonden op ${dag} bij "${r.term}" · Bron: ${r.bronnen.join(', ')} · ${r.url}`; kaart.appendChild(b);
+        uit.appendChild(kaart);
+      }
     };
     $('zoekKnop').addEventListener('click', () => { doe(); });
     $('zoekVraag').addEventListener('keydown', (e) => { if (e.key === 'Enter') doe(); });
+    if ($('zoekGeheugenKnop')) $('zoekGeheugenKnop').addEventListener('click', () => { toonGeheugen(false); });
+    if ($('zoekGeheugenWis')) $('zoekGeheugenWis').addEventListener('click', async () => {
+      if (!zoekGeheugen) return;
+      if (!window.confirm('Alles wissen wat Veronica onthouden heeft van eerdere zoekvragen? Dit staat alleen op deze computer.')) return;
+      await zoekGeheugen.wisAlles(); geheugenTel(); $('zoekUitslag').replaceChildren(); $('zoekStand').textContent = 'Het zoekgeheugen is leeg.';
+    });
   }
   // Alles als PLATTE TEKST (textContent): geen aanklikbare adressen, niets wordt geopend.
   function tekenZoekUitslag(u) {
@@ -428,6 +462,7 @@
       uit.appendChild(kaart);
     }
     for (const m of u.meldingen || []) if (typeof m === 'string') p(m, 'klein');
+    if (u.vermeldingen && u.vermeldingen.length) p(`Bronnen: ${u.vermeldingen.join(' · ')}`, 'klein');
     p(u.let_op, 'klein');
   }
   async function meetStekker(k) {
@@ -1392,6 +1427,7 @@
     const meter = S.stekkers.find((k) => k.rol === 'meter');
     const blok = $('verbruikBlok');
     blok.hidden = !meter;
+    tekenVerslag();
     if (!meter) return;
     const veld = $('tariefVeld');
     if (document.activeElement !== veld) veld.value = String(K.leesTarief(leesTariefOpslag())).replace('.', ',');
@@ -1403,6 +1439,41 @@
     $('verbruikRegel').textContent = K.verbruikRegel({ watt: w(m.watt), vandaag: w(m.vandaag), kwh: w(m.kwh) }, leesTariefOpslag())
       + (bron ? ` Bron: ${bron.bron}${bron.oud ? ' (oude meting)' : ''}.` : '');
   }
+  // 478: het verbruiksverslag (dagboek in deze browser; zie verslag.js).
+  let dagboek = null;
+  let verslagBezig = false;
+  async function tekenVerslag() {
+    const blok = $('verslagBlok');
+    if (!blok || !window.Verslag || verslagBezig) return;
+    verslagBezig = true;
+    try {
+      if (!dagboek) dagboek = window.Verslag.maakDagboek({ opslag: { lees: () => Opslag.lees('verbruiksdagboek'), schrijf: (t) => Opslag.schrijf('verbruiksdagboek', t) } });
+      const meter = S.stekkers.find((k) => k.rol === 'meter');
+      if (meter) {
+        const m = S.stekkerMeting[meter.ip] || {};
+        const w = (x) => (x && typeof x.waarde === 'number' ? x.waarde : null);
+        const sf = S.zonStroom && S.zonStroom.staaf && S.zonStroom.staaf.waarde;
+        await dagboek.noteer({ kwh: w(m.kwh), vandaag: w(m.vandaag), zon: sf && typeof sf.zon === 'number' ? sf.zon : null, buiten: sf && typeof sf.buiten === 'number' ? sf.buiten : null });
+      }
+      const dagen = (await dagboek.aantalDagen()) > 0;
+      blok.hidden = !meter && !dagen;
+      if (blok.hidden) return;
+      const v = await dagboek.verslag(Number($('verslagDagen').value) || 7, leesTariefOpslag());
+      $('verslagTekst').textContent = v.tekst;
+    } catch (e) { /* het verslag is een gemak */ } finally { verslagBezig = false; }
+  }
+  document.addEventListener('change', (e) => { if (e.target && e.target.id === 'verslagDagen') tekenVerslag(); });
+  document.addEventListener('click', async (e) => {
+    const id = e.target && e.target.id;
+    if (id === 'verslagKopieer') {
+      let gelukt = false;
+      try { await Promise.race([navigator.clipboard.writeText($('verslagTekst').textContent), new Promise((_, mis) => setTimeout(() => mis(new Error('te lang')), 2500))]); gelukt = true; } catch (x) { gelukt = false; }
+      $('verslagMelding').textContent = gelukt ? 'Gekopieerd. Je kunt het nu plakken in een bericht of mail.' : 'Kopieren lukte niet. Selecteer de tekst van het verslag en kopieer met Ctrl+C.';
+    } else if (id === 'verslagWis') {
+      if (!dagboek || !window.confirm('Het hele verbruiksdagboek wissen? Dit staat alleen op deze computer.')) return;
+      await dagboek.wisAlles(); $('verslagMelding').textContent = 'Het dagboek is leeg.'; tekenVerslag();
+    }
+  });
   document.addEventListener('input', (e) => {
     if (e.target && e.target.id === 'tariefVeld') {
       try { localStorage.setItem(TARIEF_SLEUTEL, String(K.leesTarief(e.target.value))); } catch (x) { /* alleen voor nu */ }
@@ -2787,7 +2858,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { zoekBlokStart, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

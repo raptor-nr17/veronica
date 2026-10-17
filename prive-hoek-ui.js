@@ -71,7 +71,7 @@
       t.append(tr);
     }
     k.append(t);
-    k.append(el('p', 'phKlein', '"In de hoek" = de telefoon heeft een eigen privé-sleutel (pincode in zijn privé-kamer). Alleen zo\'n telefoon krijgt ooit privé-werk. "onbekend" = hij meldt het niet (oude JARVIS, of niet bereikbaar).'));
+    k.append(el('p', 'phKlein', '"In de hoek" = de telefoon heeft een eigen privé-sleutel (zijn privé-kamer, zonder pincode). Alleen zo\'n telefoon krijgt ooit privé-werk. "onbekend" = hij meldt het niet (oude JARVIS, of niet bereikbaar).'));
     const v = d.verbruik();
     k.append(el('h4', '', 'Stroomverbruik van het rek'));
     if (!v.length) k.append(el('p', '', 'Geen meter gekoppeld. Voeg bij Stekkers een stekker toe als meter.'));
