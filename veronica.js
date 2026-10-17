@@ -1219,6 +1219,18 @@
     (meet(t.adres)).jarvisNietTot = 0;
   }
   // 460b: de eigen motor aan of uit zetten op die telefoon. Er opent daar GEEN venster (de eenmalige toestemming voor 'batterij onbeperkt' vraagt de telefoon alleen als je hem zelf aanzet).
+  function motorKandidaten() {
+    const tijd = nu();
+    return S.telefoons.filter((t) => { const ps = poolStaat(t); return !ps.vervangen && K.motorKandidaat(t, meet(t.adres).status, { laadt: ps.laadt, modelGeladen: ps.modelGeladen }, tijd); });
+  }
+  async function motorAlleAan() {
+    const kand = motorKandidaten();
+    if (!kand.length) return 0;
+    logRegel(`Eigen motor aanzetten op ${kand.map((t) => t.naam).join(', ')}. Het model komt er alleen op wifi en aan de lader; op de tegel zie je de voortgang.`);
+    for (const t of kand) await motorVanuitVeronica(t, true);
+    tekenLive();
+    return kand.length;
+  }
   async function motorVanuitVeronica(t, aan) {
     if (!S.code || !t || !t.jarvis) return;
     let ok = false;
@@ -1335,6 +1347,13 @@
     const ps = pantserStand();
     $('pantserZin').textContent = `${ps.regel}${S.aan ? ` · wachtrij ${S.taken.filter((x) => x.status === 'wacht').length}` : ''}`;
     morphKinderen($('pantserHelp'), S.aan ? ps.helpen.map((h) => { const d = el('div', 'pantserHelpRegel', h.zin); d.dataset.sleutel = h.adres; return d; }) : []);
+    {
+      // 484: ALLES KOPPELEN. Met Pantser aan: de telefoons die de eigen motor kunnen draaien maar hem nog niet aan hebben, met EEN tik.
+      const kand = motorKandidaten();
+      const k = $('motorAlleKnop');
+      k.hidden = !S.aan || !kand.length;
+      k.textContent = `Zet de eigen motor aan op ${kand.length === 1 ? kand[0].naam : `${kand.length} telefoons (${kand.map((t) => t.naam).join(', ')})`}`;
+    }
     $('bureauKnop').textContent = `Claude-bureau: ${S.bureau ? 'aan' : 'uit'}`;
     $('bureauKnop').setAttribute('aria-pressed', String(S.bureau));
     $('bureauZin').textContent = S.bureau ? `${S.tellers.klussen} ${S.tellers.klussen === 1 ? 'klus' : 'klussen'}${S.tellers.ms > 0 && S.tellers.tokens > 0 ? ` · ±${Math.round(S.tellers.tokens * 1000 / S.tellers.ms * 10) / 10} tokens/s` : ''}` : '';
@@ -3032,6 +3051,7 @@
       for (const x of S.taken) if (x.status === 'bezig') { x.status = 'wacht'; x.telefoon = null; await Opslag.taak(x); }
     } catch (e) { logRegel('De opslag van deze browser is niet te lezen.'); }
     $('pantserKnop').addEventListener('click', () => zetPantser(!S.aan));
+    $('motorAlleKnop').addEventListener('click', () => { motorAlleAan().catch(() => {}); });
     $('bureauKnop').addEventListener('click', () => zetBureau(!S.bureau));
     $('noodstop').addEventListener('click', noodstop);
     $('vervangKnop').addEventListener('click', () => { const a = $('vervangKeus').value; if (a) vervang(a); });
@@ -3174,7 +3194,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
