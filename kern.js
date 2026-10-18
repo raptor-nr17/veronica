@@ -710,7 +710,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.53';
+  const VERONICA_VERSIE = '1.9.54';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -776,8 +776,9 @@
     const x = o || {};
     const lijst = (ns) => (ns || []).map((n) => `${n}.x`).join(', ');
     if (fase === 'zoekt') {
-      const oud = x.oudeNetten && x.oudeNetten.length ? ` op het oude adres (${lijst(x.oudeNetten)})` : '';
-      return `Geen enkele telefoon antwoordt${oud}. Ander wifi? Ik zoek de telefoons opnieuw op het netwerk (${lijst(x.netten)}). Je hoeft niets te typen.`;
+      // 502: na een verhuizing zitten de telefoons op een ander wifi; dat zeggen, niet "geen antwoord op het oude adres".
+      const oud = x.oudeNetten && x.oudeNetten.length ? ` Laatst gezien op een ander wifi (${lijst(x.oudeNetten)}).` : '';
+      return `Geen telefoon antwoordt op dit wifi.${oud} Ander wifi? Na een verhuizing moet elke telefoon dit wifi een keer krijgen (op de telefoon zelf: wifi kiezen). Intussen zoek ik ze opnieuw op dit netwerk (${lijst(x.netten)}); hier hoef je niets te typen.`;
     }
     if (fase === 'gevonden') {
       const net = x.net ? ` (${x.net}.x)` : '';

@@ -201,6 +201,10 @@
     const antwoord = { ok: true, brievenbus: true, zin: 'Via de brievenbus: de telefoon haalt het binnen een minuut op.' };
     return { ok: true, status: 202, brievenbus: true, json: async () => antwoord, text: async () => JSON.stringify(antwoord) };
   }
+  function hartslagVers(t) {
+    const h = (t && t.id && HB.per[t.id]) || (t ? hartslagVoorAdres(t.adres) : null);
+    return !!(h && h.t && nu() - h.t <= K.HARTSLAG_VERS_MS);
+  }
   async function hartslagRegel(o, regel) {
     if (!window.Hartslag) return false;
     const h = await window.Hartslag.leesHartslag(o, regel);
@@ -1239,13 +1243,15 @@
     const snel = st.filter((x) => x.d.snelheid.waarde !== null && x.d.snelheid.ms <= OUD);
     const warm = st.filter((x) => x.d.temperatuur.waarde !== null && x.d.temperatuur.ms <= OUD).sort((a, b) => b.d.temperatuur.waarde - a.d.temperatuur.waarde)[0];
     const bereik = S.telefoons.filter((t) => staat(t.adres).bereikbaar).length;
+    // 502: een telefoon die via de brievenbus een verse hartslag gaf LEEFT, ook als het wifi hem niet bij Veronica brengt.
+    const viaPost = S.telefoons.filter((t) => !staat(t.adres).bereikbaar && hartslagVers(t)).length;
     const stek = S.stekkers.map((k) => { const m = S.stekkerMeting[k.ip] || {}; return { naam: k.naam, aan: m.aan && tijd - m.aan.t <= OUD ? m.aan.waarde : null }; });
     const z = S.zonStroom && S.zonStroom.zon;
     const duur = (ms) => { const mm = Math.round(ms / 60000); return mm >= 60 ? `${Math.floor(mm / 60)} u ${mm % 60} min` : `${mm} min`; };
     const tegel = (icoon, getal, wat, sleutel) => { const v = el('div', 'vSamen'); v.dataset.samen = sleutel; v.append(el('div', 'vIcoon', icoon), el('div', 'vGetal', getal), el('div', 'vWat2', wat)); return v; };
     tekenRek(st);
     morphKinderen($('vSamen'), [
-      tegel('📱', String(S.telefoons.length), `telefoons · ${bereik} bereikbaar`, 'telefoons'),
+      tegel('📱', String(S.telefoons.length), viaPost ? `telefoons · ${bereik + viaPost} leven (${viaPost} via de brievenbus)` : `telefoons · ${bereik} bereikbaar`, 'telefoons'),
       tegel('⚡', snel.length ? String(Math.round(snel.reduce((a, x) => a + x.d.snelheid.waarde, 0) * 10) / 10).replace('.', ',') : 'geen meting', 'tokens/s samen', 'snelheid'),
       tegel('🌡️', warm ? `${String(Math.round(warm.d.temperatuur.waarde * 10) / 10).replace('.', ',')} °C` : 'geen meting', warm ? `warmste: ${warm.t.naam}` : 'warmste telefoon', 'warmste'),
       tegel('🔌', stek.length ? stek.map((x) => (x.aan === true ? 'aan' : x.aan === false ? 'uit' : '?')).join(' · ') : 'geen', stek.length ? stek.map((x) => x.naam).join(' · ') : 'geen stekker', 'stekkers'),
@@ -1425,7 +1431,8 @@
       tegel.dataset.adres = t.adres;
       if (s.hitteStand && !oud) tegel.style.borderColor = KLEUR[s.hitteStand];
       const kopRij = el('div', 'tKop');
-      kopRij.append(el('h2', '', t.naam), el('span', 'tAdres', t.adres.replace('http://', '')));
+      // 502: een adres is geen bewijs van verbonden. Antwoordt hij niet over het wifi, dan staat er "laatst bekend adres".
+      kopRij.append(el('h2', '', t.naam), el('span', 'tAdres', staat(t.adres).bereikbaar ? t.adres.replace('http://', '') : `laatst bekend adres ${t.adres.replace('http://', '')}`));
       tegel.appendChild(kopRij);
       {
         // 490: EEN regel overzicht: versie, motor, model %, bezig of rustig (alleen verse meldingen).
@@ -1550,7 +1557,9 @@
       const olGm = m.status && m.status.gemma && tijd - m.status.gemma.t <= K.MAX_LEEFTIJD_MS ? m.status.gemma.waarde : null;
       const olZin = olGm && olGm.ollite && olGm.ollite.toestand !== 'klaar' && olGm.ollite.toestand !== 'onbekend' ? olGm.ollite.zin : null;
       const jarvisOnbekendeReden = !s.bereikbaar && !olZin && jarvisVers(m.status, tijd) ? `JARVIS antwoordt wel, maar OlliteRT niet. ${oudeJarvisZin(m.status)}` : null;
-      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : (!s.bereikbaar && olZin ? olZin : (jarvisOnbekendeReden || `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`));
+      const hsT = (() => { const h = (t.id && HB.per[t.id]) || hartslagVoorAdres(t.adres); return h && h.t ? h.t : 0; })();
+      const nietHier = !s.bereikbaar && hsT ? `zit niet op dit wifi · laatst gezien ${window.Hartslag ? window.Hartslag.minutenZin(tijd - hsT) : ''} (via de brievenbus)` : null;   // 502
+      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : (!s.bereikbaar && olZin ? olZin : (jarvisOnbekendeReden || nietHier || `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`));
       const installeerKans = !s.bereikbaar && (!olGm || !olGm.ollite || olGm.ollite.toestand === 'niet-geinstalleerd' || olGm.ollite.toestand === 'onbekend');
       tegel.appendChild(el('div', `tBereik${s.bereikbaar && !oud ? '' : ' oud'}`, bereik));
       // De taak, en de tekst die NU binnenkomt (eigen werk, of wat de hoofdtelefoon meldt).
