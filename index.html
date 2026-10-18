@@ -86,6 +86,10 @@
   #nieuwQrPaneel { position: fixed; inset: 0; z-index: 10; background: #fff; color: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center; }
   #nieuwQrPaneel[hidden] { display: none; }
   #nieuwQrPaneel button { color: #000; background: #eee; }
+  #instelPaneel { position: fixed; inset: 0; z-index: 10; background: var(--achter, #111); display: flex; flex-direction: column; gap: 8px; padding: 16px; overflow-y: auto; }
+  #instelPaneel[hidden] { display: none; }
+  #instelPaneel label { display: flex; gap: 8px; align-items: center; font-size: 18px; }
+  #instelPaneel input[type=number], #instelPaneel select { font-size: 18px; max-width: 12em; }
   #nieuwQrBeeld svg { width: min(80vw, 60vh); height: auto; }
   .qrWit { background: #fff; color: #000; display: inline-block; padding: 8px; border-radius: 10px; max-width: 100%; }
   .qrWit svg { width: min(70vw, 340px); height: auto; display: block; }
@@ -400,6 +404,23 @@
   <img id="versQrBeeld" alt="QR met een vers postbus-adres" width="300" height="300">
   <button id="versQrSluit">Sluiten</button>
 </div>
+<div id="instelPaneel" hidden role="dialog" aria-label="De eigen motor instellen">
+  <h2>Eigen motor van <span id="instelNaam"></span></h2>
+  <p id="instelUitleg" class="tBron">Zonder keuze krijgt elke telefoon vanzelf veilige instellingen. Hier kun je ze voor deze telefoon aanpassen; de telefoon krijgt het over het wifi of via de brievenbus.</p>
+  <label>Model <select id="instelModel"><option value="E2B">E2B (gewoon, zuinig)</option><option value="E4B">E4B (zwaarder, alleen met 12 GB)</option><option value="auto">Naar geheugen</option></select></label>
+  <label><input type="checkbox" id="instelGpu"> GPU gebruiken (alleen met 12 GB geheugen)</label>
+  <label>Draden <input type="number" id="instelDraden" min="1" max="8" step="1"></label>
+  <label>Tokens (geheugen van een gesprek) <input type="number" id="instelContext" min="1024" max="8192" step="256"></label>
+  <label>Temperatuur <input type="number" id="instelTemp" min="0" max="1.5" step="0.05"></label>
+  <label>Denkbudget (0 = uit) <input type="number" id="instelDenk" min="0" max="4096" step="64"></label>
+  <label>Pauze onder accu (%) <input type="number" id="instelAccu" min="20" max="95" step="5"></label>
+  <label>Pauze boven warmte (°C) <input type="number" id="instelWarmte" min="30" max="45" step="1"></label>
+  <label><input type="checkbox" id="instelLader"> Alleen rekenen aan de lader</label>
+  <p id="instelStand" class="eerlijk"></p>
+  <button id="instelBewaar">Bewaar voor deze telefoon</button>
+  <button id="instelStandaard">Terug naar standaard</button>
+  <button id="instelSluit">Sluiten</button>
+</div>
 <div id="nieuwQrPaneel" hidden role="dialog" aria-label="QR voor een nieuwe telefoon">
   <h2>Scan dit met de nieuwe telefoon</h2>
   <p>Open JARVIS op die telefoon en tik op <b>Scan om te koppelen</b>. Hij doet daarna vanzelf mee.</p>
@@ -418,6 +439,7 @@
 <script src="nulmeting.js"></script>
 <script src="nachtlog.js"></script>
 <script src="hartslag.js"></script>
+<script src="motorinstel.js"></script>
 <script src="afnemers.js"></script>
 <script src="kaartje.js"></script>
 <script src="zelftest.js"></script>

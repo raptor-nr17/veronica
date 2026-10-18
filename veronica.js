@@ -1446,6 +1446,12 @@
         const echt = h && h.t ? h : null;
         tegel.appendChild(el('div', 'tHartslag', window.Hartslag.diagnose(echt, { antwoordt: s.bereikbaar === true ? true : (s.bereikbaar === false ? false : null) }, tijd)));
         if (echt) tegel.appendChild(el('div', 'tMotorRegel', window.Hartslag.motorZin(echt)));
+        // 501: de motor-instellingen die nu gelden, in gewone taal, en een knop om ze voor deze telefoon aan te passen
+        if (echt && echt.instel && window.MotorInstel) {
+          const i = echt.instel;
+          tegel.appendChild(el('div', 'tInstel', window.MotorInstel.zin(i, i.geladen ? { draden: i.dradenToegepast, temperatuur: i.temperatuurToegepast } : {})));
+        }
+        if (echt && echt.id && !echt.dagelijks) { const b = el('button', '', 'Motor instellen'); b.dataset.instelId = echt.id; b.dataset.instelAdres = t.adres; tegel.appendChild(b); }
       }
       tegel.appendChild(el('div', 'tRol', K.rolZin(t, m.status, tijd)));
       // 452: welke JARVIS draait er, en loopt hij achter? Alleen als de telefoon zijn versie vers meldde.
@@ -1778,6 +1784,48 @@
     if (b && b.dataset.versAdres) geefVersAdres(b.dataset.versAdres).catch(() => {});
     else if (b && b.dataset.versQr) toonVersQr(b.dataset.versQr);
     if (e.target && e.target.id === 'versQrSluit') { $('versQrPaneel').hidden = true; $('versQrBeeld').removeAttribute('src'); }
+  });
+
+  // ---- 501: DE MOTOR-INSTELLINGEN OP AFSTAND (motorinstel.js, byte-gelijk met JARVIS). Een paneel buiten de tegels (die worden
+  // steeds opnieuw getekend). Bewaren = EEN roep 'motor-instel' met de code; lukt het wifi niet, dan gaat hij via de brievenbus (haal).
+  // De dagelijkse telefoon krijgt hier geen knop: zijn eigen harde regels (495) gaan altijd voor.
+  const InstV = { id: '', adres: '' };
+  function openInstel(id, adres) {
+    const h = HB.per[id];
+    if (!h || !window.MotorInstel) return false;
+    InstV.id = id; InstV.adres = adres;
+    const i = window.MotorInstel.schoon(h.instel || {}, {});
+    $('instelNaam').textContent = h.naam || 'deze telefoon';
+    $('instelModel').value = i.model; $('instelGpu').checked = i.gpu; $('instelDraden').value = i.draden; $('instelContext').value = i.context;
+    $('instelTemp').value = i.temp; $('instelDenk').value = i.denk; $('instelAccu').value = i.accuMin; $('instelWarmte').value = i.tempMax; $('instelLader').checked = i.alleenLader;
+    $('instelStand').textContent = window.MotorInstel.zin(h.instel ? i : null);
+    $('instelPaneel').hidden = false;
+    return true;
+  }
+  function instelUitPaneel() {
+    const n = (id) => Number($(id).value);
+    return { model: $('instelModel').value, gpu: $('instelGpu').checked, draden: n('instelDraden'), context: n('instelContext'), temp: n('instelTemp'), denk: n('instelDenk'),
+      accuMin: n('instelAccu'), tempMax: n('instelWarmte'), alleenLader: $('instelLader').checked };
+  }
+  async function stuurInstel(standaard) {
+    const t = S.telefoons.find((x) => x.adres === InstV.adres);
+    const doel = t && t.jarvis ? t.jarvis : InstV.adres;
+    if (!S.code || !doel) { $('instelStand').textContent = 'Nog niet gekoppeld.'; return false; }
+    const lijf = standaard ? { soort: 'motor-instel', standaard: true, van: 'veronica' } : { soort: 'motor-instel', instel: window.MotorInstel.schoon(instelUitPaneel(), {}), van: 'veronica' };
+    let r = null;
+    try { r = await haal(`${doel}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(lijf) }, 3000); } catch (e) { r = null; }
+    $('instelStand').textContent = r && r.ok ? (r.brievenbus ? 'Verstuurd via de brievenbus: de telefoon neemt het binnen een minuut over. Bij de volgende hartslag zie je het op de tegel.'
+      : 'Verstuurd. Bij de volgende hartslag zie je het op de tegel.') : 'Dit kwam niet aan (geen wifi en geen brievenbus). Probeer het straks nog eens.';
+    if (r && r.ok) logRegel(`Motor-instellingen ${standaard ? 'terug naar standaard' : 'verstuurd'} (${(HB.per[InstV.id] || {}).naam || 'telefoon'}).`);
+    return !!(r && r.ok);
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-instel-id]') : null;
+    if (b) openInstel(b.dataset.instelId, b.dataset.instelAdres);
+    const id = e.target && e.target.id;
+    if (id === 'instelBewaar') stuurInstel(false).catch(() => {});
+    if (id === 'instelStandaard') stuurInstel(true).catch(() => {});
+    if (id === 'instelSluit') $('instelPaneel').hidden = true;
   });
 
   // 492: "Zelftest nu": EEN roep 'zelftest' met de code. De telefoon kijkt alleen; de uitslag komt met de volgende meting.
@@ -3632,7 +3680,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

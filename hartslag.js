@@ -71,6 +71,7 @@
     const x = h || {};
     const m = x.motor && typeof x.motor === 'object' ? x.motor : null;
     const p = m && m.proef && typeof m.proef === 'object' ? m.proef : null;
+    const i = x.instel && typeof x.instel === 'object' ? x.instel : null;
     return {
       v: 1,
       t: Math.floor(Number(x.t) || 0),
@@ -95,6 +96,13 @@
         teOud: m.teOud === true,
         proef: p ? { ok: p.ok === true, tps: getal(p.tps, 0, 1000), ms: getal(p.ms, 0, 600000), t: Math.floor(Number(p.t) || 0), temp: getal(p.temp, -20, 90), zin: schoon(p.zin, 120) } : null,
       } : null,
+      // 501: de motor-instellingen die nu gelden (motorinstel.js), en of de motor draden en temperatuur aannam
+      instel: i ? {
+        bron: i.bron === 'veronica' ? 'veronica' : 'standaard', model: ['auto', 'E2B', 'E4B'].includes(i.model) ? i.model : 'auto', gpu: i.gpu === true,
+        draden: getal(i.draden, 1, 8), context: getal(i.context, 256, 8192), temp: getal(i.temp, 0, 1.5), denk: getal(i.denk, 0, 4096),
+        accuMin: getal(i.accuMin, 0, 100), tempMax: getal(i.tempMax, 0, 90), alleenLader: i.alleenLader === true,
+        geladen: i.geladen === true, dradenToegepast: i.dradenToegepast === true, temperatuurToegepast: i.temperatuurToegepast === true,
+      } : null,
     };
   }
   async function hartslagVerzoek(o, h, c) {
@@ -108,7 +116,9 @@
   function hartslagSleutel(h) {
     const d = schoonHartslag(h);
     const m = d.motor || {};
-    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, d.laadt, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0].join('|');
+    const i = d.instel || {};
+    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, d.laadt, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0,
+      i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast].join('|');
   }
   function hartslagNodig(o) {
     const x = o || {};
