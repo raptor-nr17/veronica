@@ -310,6 +310,7 @@
       inGebruik: meting(typeof x.inGebruik === 'boolean' ? x.inGebruik : null, bron, t),
       kernMeerekenen: meting(typeof x.kernMeerekenen === 'boolean' ? x.kernMeerekenen : null, bron, t),
       gespaard: meting(typeof x.gespaard === 'boolean' ? x.gespaard : null, bron, t),   // 481: de schuif Sparen op de telefoon
+      kast: meting(leesKast(x.kast), bron, t),   // 498: wat de telefoon van de kast vraagt of aanbiedt
       zandbak: meting(typeof x.zandbak === 'boolean' ? x.zandbak : null, bron, t),   // 496: de zandbak voor veilig browsen (alleen ja/nee)
       dagelijks: meting(x.dagelijks === 'rust' || x.dagelijks === 'meedoen' ? x.dagelijks : null, bron, t),   // 495: de dagelijkse telefoon (rust, of doet nu mee)
       capaciteit: meting(leesCapaciteit(x.capaciteit), bron, t),
@@ -547,6 +548,19 @@
     const n = Number(String(t === undefined || t === null ? '' : t).trim().replace(',', '.'));
     return Number.isFinite(n) && n > 0 && n <= 5 ? Math.round(n * 1000) / 1000 : TARIEF_STANDAARD;
   }
+  // 498: DE UITDEELKAST -- alleen namen, groottes en een sha256; al het andere valt weg.
+  const KAST_NAAM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
+  function leesKast(k) {
+    if (!k || typeof k !== 'object') return null;
+    const bytes = (b) => (Number.isFinite(b) && b > 0 && b <= 6e9 ? Math.floor(b) : 0);
+    const naam = (n) => (typeof n === 'string' && KAST_NAAM_RE.test(n) && !n.includes('..') ? n : null);
+    const model = (l) => (Array.isArray(l) ? l : []).slice(0, 2).filter((x) => x && x.soort === 'model' && naam(x.naam) && /^[0-9a-f]{64}$/i.test(String(x.sha256 || '')) && bytes(x.bytes))
+      .map((x) => ({ soort: 'model', naam: x.naam, sha256: String(x.sha256).toLowerCase(), bytes: bytes(x.bytes) }));
+    return {
+      aanbod: (Array.isArray(k.aanbod) ? k.aanbod : []).slice(0, 20).filter((x) => x && naam(x.naam) && bytes(x.bytes)).map((x) => ({ naam: x.naam, bytes: bytes(x.bytes) })),
+      vraag: model(k.vraag), heeft: model(k.heeft),
+    };
+  }
   // 495: LOKAAL EERST -- de prijs per miljoen tokens van een betaald model, alleen om te SCHATTEN wat lokaal werk scheelt.
   // De beheerder stelt hem zelf in (alleen in deze browser); er wordt nergens een extern model aangeroepen.
   const TOKENPRIJS_STANDAARD = 5;
@@ -689,7 +703,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.48';
+  const VERONICA_VERSIE = '1.9.49';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1314,7 +1328,7 @@
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
-    leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
+    leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesKast, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
     isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));
