@@ -3,8 +3,8 @@
 // DE VERSIE IS EEN VINGERAFDRUK VAN DE BESTANDEN (sha256, eerste 12 tekens). Verandert er iets,
 // dan verandert deze naam, en laadt elke Chromebook vanzelf de nieuwe versie. Een test in de
 // privé-repo eist dat hij klopt (check_veronica.js zegt welke waarde hij moet hebben).
-const VERSIE = 'veronica-d5da6236c9c6';
-const BESTANDEN = ['./index.html', './pool.js', './prive-zoek.js', './zoekkassa.js', './zoekmulti.js', './zoeken.js', './zoekgeheugen.js', './verslag.js', './takenverdeling.js', './nulmeting.js', './nachtlog.js', './afnemers.js', './zelftest.js', './kern.js', './qrcode.js', './jsQR.js', './meters.js', './prive-hoek.js', './prive-model.js', './prive-hoek-ui.js', './veronica.js', './manifest.webmanifest', './icoon-192.png', './icoon-512.png'];
+const VERSIE = 'veronica-ff3961858dbc';
+const BESTANDEN = ['./index.html', './pool.js', './prive-zoek.js', './zoekkassa.js', './zoekmulti.js', './zoeken.js', './zoekgeheugen.js', './verslag.js', './takenverdeling.js', './nulmeting.js', './nachtlog.js', './afnemers.js', './kaartje.js', './zelftest.js', './kern.js', './qrcode.js', './jsQR.js', './meters.js', './prive-hoek.js', './prive-model.js', './prive-hoek-ui.js', './veronica.js', './manifest.webmanifest', './icoon-192.png', './icoon-512.png'];
 self.addEventListener('install', (e) => {
   // cache: 'reload' = echt van de server, niet uit de browsercache (anders kan een nieuwe versie
   // met oude bestanden starten).

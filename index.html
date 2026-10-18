@@ -218,6 +218,25 @@
       <h2>Nieuwe telefoon</h2>
       <div id="nieuwKoppelLijst"></div>
     </div>
+    <style>#kaartjeBlok [hidden] { display: none; }</style>
+    <div id="kaartjeBlok" class="zsPaneel">
+      <h2>Opslag op kaartje</h2>
+      <p class="tBron">Kopieën en exports op de geheugenkaart van deze Chromebook: logboek, nachtproef, overzicht, vertalingen. NOOIT de privé-hoek, wachtwoorden of codes.</p>
+      <p id="kaartjeStatus" class="eerlijk"></p>
+      <div class="tKnoppen">
+        <button id="kaartjeKies">Kies map op het kaartje</button>
+        <button id="kaartjeToestemming" hidden>Toestemming geven</button>
+        <button id="kaartjeKijk">Kijk opnieuw</button>
+      </div>
+      <div class="tKnoppen" id="kaartjeBewaar" hidden>
+        <button data-kaartje="logboek">Bewaar logboek</button>
+        <button data-kaartje="nachtproef">Bewaar nachtproef</button>
+        <button data-kaartje="overzicht">Bewaar overzicht</button>
+        <button data-kaartje="vertalingen">Bewaar vertalingen</button>
+      </div>
+      <p id="kaartjeMelding" class="tBron" aria-live="polite"></p>
+      <ul id="kaartjeLijst"></ul>
+    </div>
     <div id="samenBlok" class="zsPaneel" hidden>
       <h2>Samenwerken</h2>
       <p id="samenTrede" class="eerlijk"></p>
@@ -397,6 +416,7 @@
 <script src="nulmeting.js"></script>
 <script src="nachtlog.js"></script>
 <script src="afnemers.js"></script>
+<script src="kaartje.js"></script>
 <script src="zelftest.js"></script>
 <script src="kern.js"></script>
 <script src="qrcode.js"></script>

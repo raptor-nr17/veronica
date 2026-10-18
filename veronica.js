@@ -1429,6 +1429,20 @@
         if (t.jarvis && S.code) { const b = el('button', '', 'Zelftest nu'); b.dataset.zelftest = t.adres; vak.appendChild(b); }
         tegel.appendChild(vak);
       }
+      {
+        // 496: de zandbak (veilig browsen). Alleen een werker; de beheerder nooit.
+        const st = m.status || {};
+        const isWerker = !t.kern && st.rol && tijd - st.rol.t <= K.MAX_LEEFTIJD_MS && st.rol.waarde === 'werker' && !(st.dagelijks && st.dagelijks.waarde);
+        if (zandbakNu(t)) {
+          const vak = el('div', 'tZandbak', '🧪 Zandbak voor veilig browsen. Doet niet mee, kent geen sleutel van het systeem. ');
+          const b = el('button', '', 'Zandbak klaar'); b.dataset.zandbak = t.adres; b.dataset.zandbakDoe = 'klaar'; vak.appendChild(b);
+          tegel.appendChild(vak);
+        } else if (isWerker && t.jarvis && S.code) {
+          const vak = el('div', 'tZandbak');
+          const b = el('button', '', 'Maak zandbak'); b.dataset.zandbak = t.adres; b.dataset.zandbakDoe = 'maak'; vak.appendChild(b);
+          tegel.appendChild(vak);
+        }
+      }
       // 481: geheugen en Android-versie (alleen als de telefoon ze vers meldde).
       { const cp = m.status && m.status.capaciteit && tijd - m.status.capaciteit.t <= K.MAX_LEEFTIJD_MS ? K.toestelZin(m.status.capaciteit.waarde) : null; if (cp) tegel.appendChild(el('div', 'tToestel', cp)); }
       {
@@ -1707,6 +1721,74 @@
   });
 
   // 492: "Zelftest nu": EEN roep 'zelftest' met de code. De telefoon kijkt alleen; de uitslag komt met de volgende meting.
+  // 496: DE ZANDBAK (Veilig browsen, docs/veilig-browsen.md). Veronica onthoudt alleen WELKE telefoon de zandbak is (het adres, in
+  // deze browser). Aanwijzen = EEN roep 'zandbak' met de code; de telefoon wist daarna zelf al zijn sleutels. Nooit de beheerder.
+  const Zandbak = {
+    SLEUTEL: 'veronica-zandbak',
+    lijst() { try { const l = JSON.parse(localStorage.getItem(this.SLEUTEL) || '[]'); return Array.isArray(l) ? l.filter((a) => typeof a === 'string').slice(0, 8) : []; } catch (e) { return []; } },
+    zet(l) { try { localStorage.setItem(this.SLEUTEL, JSON.stringify(l.slice(0, 8))); } catch (e) { /* alleen voor nu */ } },
+  };
+  async function maakZandbak(adres) {
+    const t = S.telefoons.find((x) => x.adres === adres);
+    if (!t || !t.jarvis || !S.code) return false;
+    const st = meet(t.adres).status || {};
+    if (t.kern || (st.rol && st.rol.waarde === 'baas') || (st.dagelijks && st.dagelijks.waarde)) { logRegel(`${t.naam} is een beheerder en wordt geen zandbak.`); return false; }
+    let ok = false;
+    try { ok = (await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'zandbak', van: 'veronica' }) }, 3000)).ok; } catch (e) { ok = false; }
+    if (ok) { Zandbak.zet(Zandbak.lijst().filter((a) => a !== adres).concat([adres])); }
+    logRegel(ok ? `${t.naam} is nu de zandbak. Hij doet niet meer mee en heeft alle sleutels van het systeem gewist.` : `${t.naam} antwoordt niet. Probeer het zo nog eens.`);
+    tekenLive();
+    return ok;
+  }
+  function zandbakKlaar(adres) {
+    Zandbak.zet(Zandbak.lijst().filter((a) => a !== adres));
+    logRegel('Zandbak uit de lijst. Tik op die telefoon in JARVIS op "Zandbak wissen"; daarna vraagt hij zelf om weer mee te doen.');
+    tekenLive();
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-zandbak]') : null;
+    if (!b) return;
+    if (b.dataset.zandbakDoe === 'maak') { if (window.confirm('Deze telefoon als zandbak gebruiken? Hij stopt met rekenen en wist alle sleutels van het systeem.')) maakZandbak(b.dataset.zandbak).catch(() => {}); }
+    else zandbakKlaar(b.dataset.zandbak);
+  });
+  // 497: OPSLAG OP KAARTJE (kaartje.js). Alleen niet-gevoelige kopieën; de koppelcode, het ntfy-onderwerp en het postbus-adres staan
+  // in de lijst `verboden`, en de privé-hoek heeft hier geen knop. Een status-tik vraagt nooit om toestemming (dat kan alleen na een tik).
+  const KaartjeL = window.Kaartje ? window.Kaartje.maak() : null;
+  const kaartjeVerboden = () => [S.code, S.ntfy && S.ntfy.onderwerp, S.postbusVers].filter((x) => typeof x === 'string' && x);
+  function kaartjeGegevens(soort) {
+    if (soort === 'logboek') return { soort, regels: S.log.map((x) => ({ t: x.t, zin: x.zin })) };
+    if (soort === 'nachtproef') return { soort, regels: S.nachtlog };
+    if (soort === 'overzicht') {
+      const tijd = nu();
+      return { soort, t: tijd, telefoons: S.telefoons.map((t) => ({ naam: t.naam, rol: K.rolZin(t, meet(t.adres).status, tijd) })), afnemers: S.afnemers };
+    }
+    if (soort === 'vertalingen') return { soort, concepten: S.nalees && Array.isArray(S.nalees.lijst) ? S.nalees.lijst.map((x) => ({ taakId: x.taakId, soort: x.soort, taal: x.taal, naam: x.naam, bron: x.bron, concept: x.concept })) : [] };
+    return null;
+  }
+  async function tekenKaartje() {
+    if (!KaartjeL || !$('kaartjeStatus')) return;
+    const st = await KaartjeL.status();
+    $('kaartjeStatus').textContent = window.Kaartje.STATUSZIN[st] || st;
+    $('kaartjeToestemming').hidden = st !== 'toestemming-nodig';
+    $('kaartjeKies').hidden = st === 'geen-api';
+    $('kaartjeBewaar').hidden = st !== 'aanwezig';
+    const l = st === 'aanwezig' ? await KaartjeL.lijst() : { namen: [] };
+    $('kaartjeLijst').replaceChildren(...l.namen.slice(0, 20).map((n) => el('li', '', n)));
+  }
+  const kaartjeZin = (r) => (r.ok ? '' : window.Kaartje.FOUTZIN[r.fout] || 'Dat lukte niet.');
+  document.addEventListener('click', async (e) => {
+    const t = e.target;
+    if (!t || !KaartjeL) return;
+    if (t.id === 'kaartjeKies') { const r = await KaartjeL.kies(); $('kaartjeMelding').textContent = r.ok ? 'Map gekozen.' : kaartjeZin(r); await tekenKaartje(); }
+    else if (t.id === 'kaartjeToestemming') { const r = await KaartjeL.vraagToestemming(); $('kaartjeMelding').textContent = r.ok ? 'Toestemming gegeven.' : kaartjeZin(r); await tekenKaartje(); }
+    else if (t.id === 'kaartjeKijk') { await tekenKaartje(); }
+    else if (t.dataset && t.dataset.kaartje) {
+      const r = await KaartjeL.schrijf(t.dataset.kaartje, kaartjeGegevens(t.dataset.kaartje), kaartjeVerboden(), nu());
+      $('kaartjeMelding').textContent = r.ok ? `Bewaard op het kaartje: ${r.naam}.` : kaartjeZin(r);
+      await tekenKaartje();
+    }
+  });
+  setTimeout(() => { tekenKaartje().catch(() => {}); }, 1500);
   async function vraagZelftest(adres) {
     const t = S.telefoons.find((x) => x.adres === adres);
     if (!t || !t.jarvis || !S.code) return false;
@@ -2004,7 +2086,9 @@
   // Ook als hij "meedoen" meldt: Veronica stuurt hem niets. Alleen de rij op de beheerder-telefoon zelf mag hem inzetten, en dan
   // pas als er geen werker vrij is (rij.js, zetBeheerder).
   function dagelijksNu(t) { const g = (meet(t.adres).status || {}).dagelijks; return !!(g && g.waarde && nu() - g.t <= K.MAX_LEEFTIJD_MS); }
-  function gespaardNu(t) { return schuifNu(t) || dagelijksNu(t); }
+  // 496: de zandbak (veilig browsen) krijgt ook nooit werk: in de lijst van deze computer, of zelf gemeld.
+  function zandbakNu(t) { const g = (meet(t.adres).status || {}).zandbak; return Zandbak.lijst().includes(t.adres) || !!(g && g.waarde === true); }
+  function gespaardNu(t) { return schuifNu(t) || dagelijksNu(t) || zandbakNu(t); }
   const uitgeslotenDoorKeuze = (soort) => Takenverdeling.uitgeslotenVoor(S.telefoons, leesTakenKeuzes(), soort)
     .concat(S.telefoons.filter((t) => gespaardNu(t)).map((t) => t.adres));
   let takenHandtekening = '';
@@ -3411,7 +3495,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

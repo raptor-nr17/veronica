@@ -310,6 +310,7 @@
       inGebruik: meting(typeof x.inGebruik === 'boolean' ? x.inGebruik : null, bron, t),
       kernMeerekenen: meting(typeof x.kernMeerekenen === 'boolean' ? x.kernMeerekenen : null, bron, t),
       gespaard: meting(typeof x.gespaard === 'boolean' ? x.gespaard : null, bron, t),   // 481: de schuif Sparen op de telefoon
+      zandbak: meting(typeof x.zandbak === 'boolean' ? x.zandbak : null, bron, t),   // 496: de zandbak voor veilig browsen (alleen ja/nee)
       dagelijks: meting(x.dagelijks === 'rust' || x.dagelijks === 'meedoen' ? x.dagelijks : null, bron, t),   // 495: de dagelijkse telefoon (rust, of doet nu mee)
       capaciteit: meting(leesCapaciteit(x.capaciteit), bron, t),
       gemma: meting(leesGemma(x.gemma), bron, t),
@@ -326,7 +327,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.42';
+  const JARVIS_NIEUWSTE = '1.9.43';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -688,7 +689,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.47';
+  const VERONICA_VERSIE = '1.9.48';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1072,6 +1073,7 @@
     // 481: de schuif Sparen. Veronica TOONT hem; omzetten kan alleen op de telefoon zelf.
     if (status && status.gespaard && status.gespaard.waarde === true && tijd - status.gespaard.t <= MAX_LEEFTIJD_MS) delen.push('🔋 Gespaard');
     if (status && status.dagelijks && status.dagelijks.waarde && tijd - status.dagelijks.t <= MAX_LEEFTIJD_MS) delen.push('📱 Dagelijkse telefoon');   // 495
+    if (status && status.zandbak && status.zandbak.waarde === true && tijd - status.zandbak.t <= MAX_LEEFTIJD_MS) delen.push('🧪 Zandbak');   // 496
     if (t && PLEK_NAAM[t.plek]) delen.push(PLEK_NAAM[t.plek]);
     return delen.join(' · ') || 'rol onbekend';
   }

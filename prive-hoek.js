@@ -67,6 +67,8 @@
       samenvattingen: [],             // [{ dag, tekst, door }]
       voorstellen: [],                // [{ id, soort, titel, tekst, door, t, status }]
       instellingen: { deelPrive: false, meekijkT: null, laatsteBackup: null, praatLokaal: false, praatTelefoon: '' },
+      favorieten: [],                 // 496: [{ naam, adres }] -- veilig browsen; NOOIT een wachtwoord of gebruikersnaam
+      veilig: { manager: false, gastnet: false, dns: false, scherm: false },   // 496: de vinkjes, alleen ja/nee
     };
   }
   // Een store uit opslag of back-up lezen: alleen wat bekend is, binnen de grenzen. Rommel valt weg.
@@ -97,6 +99,12 @@
     const i = x.instellingen && typeof x.instellingen === 'object' ? x.instellingen : {};
     s.instellingen = { deelPrive: i.deelPrive === true, meekijkT: Number.isFinite(i.meekijkT) ? i.meekijkT : null, laatsteBackup: Number.isFinite(i.laatsteBackup) ? i.laatsteBackup : null,
       praatLokaal: i.praatLokaal === true, praatTelefoon: isLokaalAdres(i.praatTelefoon) ? i.praatTelefoon : '' };
+    for (const f of (Array.isArray(x.favorieten) ? x.favorieten : []).slice(0, MAX_FAVORIETEN)) {
+      const a = schoonAdres(f && f.adres); const n = schoneNaam(f && f.naam);
+      if (a && n && !s.favorieten.some((y) => y.adres === a)) s.favorieten.push({ naam: n, adres: a });
+    }
+    const v = x.veilig && typeof x.veilig === 'object' ? x.veilig : {};
+    for (const k of VEILIG_VINKJES) s.veilig[k] = v[k] === true;
     return s;
   }
 
@@ -186,8 +194,49 @@
     if (nuTekst(st.kern).trim()) delen.push(`Kern: ${knip(st.kern, 600)}`);
     for (const x of sam) delen.push(`Samenvatting (${x.dag}): ${knip(x.tekst, 300)}`);
     for (const x of log) delen.push(`Logboek (${x.dag}): ${knip(x.tekst, 200)}`);
+    // 496: favoriete sites (naam en adres) als de vraag erover gaat, of een naam noemt.
+    const fav = (Array.isArray(st.favorieten) ? st.favorieten : []).filter((f) => /favoriet/i.test(nuTekst(vraag)) || score(f.naam) > 0).slice(0, 10);
+    if (fav.length) delen.push(`Favoriete sites (alleen voor de zandbak-telefoon): ${fav.map((f) => `${f.naam} (${f.adres})`).join('; ')}`);
     const systeem = delen.join('\n').slice(0, GEHEUGEN_MAX);
     return { systeem: delen.length > 1 ? systeem : '', stukken: sam.length + log.length, kern: !!nuTekst(st.kern).trim(), karakter: !!nuTekst(st.karakter).trim() };
+  }
+
+  // ---------------------------------------------------------------- 496: veilig browsen
+  // Favorieten: alleen een naam en een adres, op deze Chromebook (en in de versleutelde back-up). GEEN wachtwoord: een adres met
+  // inloggegevens wordt geweigerd, alles na ? of # valt weg (daar zitten vaak sleutels of sessies), en een naam of adres waarin
+  // "wachtwoord", "password" of "token" staat komt er niet in. Wachtwoorden horen in Bitwarden op de zandbak-telefoon.
+  const MAX_FAVORIETEN = 200;
+  const VEILIG_VINKJES = Object.freeze(['manager', 'gastnet', 'dns', 'scherm']);
+  const STANDAARD_SCHEMA = 'https:';
+  const GEHEIM_RE = /wachtwoord|password|passwd|token|secret|geheim|apikey|api_key|session/i;
+  function schoonAdres(a) {
+    const t = nuTekst(a).trim();
+    if (!t || t.length > 300 || GEHEIM_RE.test(t)) return '';
+    let u;
+    try { u = new URL(/^[a-z][a-z0-9+.-]*:/i.test(t) ? t : `${STANDAARD_SCHEMA}//${t}`); } catch (e) { return ''; }   // zonder schema: https (alleen ontleden, geen netwerk)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return '';
+    if (u.username || u.password) return '';
+    return `${u.protocol}//${u.host}${u.pathname === '/' ? '' : u.pathname}`;
+  }
+  function schoneNaam(n) { const t = nuTekst(n).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80); return t && !GEHEIM_RE.test(t) ? t : ''; }
+  function favorietToevoegen(store, naam, adres, door) {
+    if (door !== 'eigenaar') return { ok: false, fout: 'niet-toegestaan' };
+    const a = schoonAdres(adres); const n = schoneNaam(naam) || (a ? new URL(a).host : '');
+    if (!a) return { ok: false, fout: 'geen-adres' };
+    if (store.favorieten.length >= MAX_FAVORIETEN) return { ok: false, fout: 'te-veel' };
+    store.favorieten = store.favorieten.filter((f) => f.adres !== a).concat([{ naam: n, adres: a }]);
+    return { ok: true, adres: a };
+  }
+  function favorietWeg(store, adres, door) {
+    if (door !== 'eigenaar') return { ok: false, fout: 'niet-toegestaan' };
+    const voor = store.favorieten.length;
+    store.favorieten = store.favorieten.filter((f) => f.adres !== adres);
+    return { ok: store.favorieten.length < voor };
+  }
+  function zetVeiligVinkje(store, sleutel, aan, door) {
+    if (door !== 'eigenaar' || !VEILIG_VINKJES.includes(sleutel)) return { ok: false, fout: 'niet-toegestaan' };
+    store.veilig[sleutel] = aan === true;
+    return { ok: true };
   }
 
   // ---------------------------------------------------------------- voorstellen
@@ -343,6 +392,7 @@
 
   return Object.freeze({
     FORMAAT, FORMAAT_VERSIE, MAPPEN, HERKOMST, HERKOMST_NAAM, ROLLEN_STANDAARD, TESTVRAGEN, MIN_WACHTWOORD, KDF_ITER, MEEKIJK_DAGEN, FOUTZIN,
+    MAX_FAVORIETEN, VEILIG_VINKJES, schoonAdres, favorietToevoegen, favorietWeg, zetVeiligVinkje,
     nieuweStore, leesStore, dagVan, logToevoegen, logZoek, mag, zetTekst, samenvattingToevoegen, leesVoorAi, geheugenVoorVraag, GEHEUGEN_MAX,
     voorstelToevoegen, keurVoorstel, openVoorstellen, testKarakter,
     maakBackup, openBackup, herstelProef, tellingen, meekijkStand, heeftMeegekeken, zetDeelPrive, zetPraatLokaal, zetPraatTelefoon, isLokaalAdres, backupDatumZin,

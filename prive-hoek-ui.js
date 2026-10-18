@@ -277,13 +277,49 @@
     return k;
   }
 
+  // 496: VEILIG BROWSEN. Surfen gebeurt op de zandbak-telefoon (scherm op de Chromebook via scrcpy). Hier staan alleen de favorieten
+  // (naam en adres, als TEKST: een link openen op de Chromebook zou de zandbak omzeilen) en de vinkjes. Geen wachtwoorden.
+  const VINKJE_ZIN = Object.freeze({
+    manager: 'Bitwarden op de zandbak, met een eigen account op het aparte mailadres (wachtwoorden staan daar, niet hier)',
+    gastnet: 'De zandbak zit op het gastnetwerk van de router en is het gewone wifi vergeten',
+    dns: 'Privé-DNS op de zandbak: security.cloudflare-dns.com of dns.quad9.net (alleen malware, geen volwassenenfilter)',
+    scherm: 'scrcpy werkt via de USB-kabel vanuit Linux op de Chromebook',
+  });
+  function veiligBlok() {
+    const k = el('section', 'phBlok'); k.append(kop('10. Veilig browsen'));
+    k.append(el('p', '', 'Je surft op de zandbak-telefoon; zijn scherm staat via de kabel op deze Chromebook. Downloads en installaties blijven op die telefoon. De zandbak kies je op Live, bij de tegel van een werker ("Maak zandbak").'));
+    k.append(el('p', 'phEerlijk', 'Wachtwoorden bewaar je NIET hier, niet in Veronica en niet in Mijn-AI. Die staan in Bitwarden op de zandbak.'));
+    k.append(el('p', 'phKlein', 'Scherm doorsturen, in de Terminal van Linux: scrcpy --no-clipboard-autosync --turn-screen-off --stay-awake'));
+    for (const sleutel of P.VEILIG_VINKJES) {
+      const rij = el('label', 'phSchakel'); const c = el('input'); c.type = 'checkbox'; c.checked = U.store.veilig[sleutel] === true; c.id = `phVeilig-${sleutel}`;
+      c.addEventListener('change', async () => { raak(); P.zetVeiligVinkje(U.store, sleutel, c.checked, 'eigenaar'); await bewaar(); });
+      rij.append(c, el('span', '', ` ${VINKJE_ZIN[sleutel]}`));
+      k.append(rij, el('br'));
+    }
+    k.append(el('h4', '', 'Favorieten (naam en adres, alleen op deze Chromebook)'));
+    if (!U.store.favorieten.length) k.append(el('p', 'phKlein', 'Nog geen favorieten.'));
+    for (const f of U.store.favorieten) {
+      const r = el('div', 'phLogRegel');
+      r.append(el('span', 'phLabel', `${f.naam}: `), el('span', '', f.adres),
+        knop('Weg', async () => { P.favorietWeg(U.store, f.adres, 'eigenaar'); await bewaar(); teken(); }));
+      k.append(r);
+    }
+    const n = veld('Naam', 'text', 'phFavNaam'); const a = veld('Adres', 'text', 'phFavAdres');
+    k.append(n.w, a.w, knop('Favoriet bewaren', async () => {
+      const uit = P.favorietToevoegen(U.store, n.i.value, a.i.value, 'eigenaar');
+      if (!uit.ok) { meld(uit.fout === 'geen-adres' ? 'Dat adres bewaar ik niet: geen geldig adres, of er staan inloggegevens of een sleutel in.' : 'Dat lukte niet.'); return; }
+      await bewaar(); meld(`Bewaard: ${uit.adres}`);
+    }));
+    return k;
+  }
+
   function teken() {
     if (!wortelEl) return;
     wortelEl.replaceChildren();
     if (!U.klaar) { wortelEl.append(el('p', '', 'Even laden…')); return; }
     wortelEl.append(bovenbalk());
     if (U.melding) wortelEl.append(el('p', 'phMelding', U.melding));
-    wortelEl.append(statusBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), testBlok(), backupBlok(), privacyBlok());
+    wortelEl.append(statusBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
   }
 
   return {
