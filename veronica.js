@@ -1374,6 +1374,18 @@
       const kopRij = el('div', 'tKop');
       kopRij.append(el('h2', '', t.naam), el('span', 'tAdres', t.adres.replace('http://', '')));
       tegel.appendChild(kopRij);
+      {
+        // 490: EEN regel overzicht: versie, motor, model %, bezig of rustig (alleen verse meldingen).
+        const vers = (x) => (x && tijd - x.t <= K.MAX_LEEFTIJD_MS ? x.waarde : null);
+        const st = m.status || {};
+        const hb = vers(m.health && m.health.bezig);
+        const bezig = s.bezig || S.taken.some((x) => x.status === 'bezig' && x.telefoon === t.naam) || hb === true ? true
+          : (s.bereikbaar && (hb === false || vers(st.versie) !== null) ? false : null);
+        const ov = K.overzicht({ bereikbaar: s.bereikbaar === false ? false : undefined,
+          versie: vers(st.versie), nieuwste: K.nieuwsteVersie(S.telefoons.map((y) => ((meet(y.adres).status || {}).versie || {}).waarde)),
+          motor: vers(st.motor), bezig });
+        tegel.appendChild(el('div', 'tOverzicht', ov.tekst));
+      }
       tegel.appendChild(el('div', 'tRol', K.rolZin(t, m.status, tijd)));
       // 452: welke JARVIS draait er, en loopt hij achter? Alleen als de telefoon zijn versie vers meldde.
       const vz = m.status && m.status.versie && tijd - m.status.versie.t <= K.MAX_LEEFTIJD_MS
@@ -1398,6 +1410,23 @@
           else { const b = el('button', '', 'Toon de QR'); b.dataset.versQr = t.adres; vak.appendChild(b); }
           tegel.appendChild(vak);
         }
+      }
+      {
+        // 492: DE ZELFTEST van de telefoon: een regel met de samenvatting, de punten eronder, en een knop om hem nu te laten kijken.
+        const zt = m.status && m.status.zelftest && m.status.zelftest.waarde;
+        const vak = el('div', 'tZelftest');
+        const sv = zt ? Zelftest.samenvatting(zt) : null;
+        const uur = zt ? new Date(zt.t).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }) : '';
+        vak.appendChild(el('div', 'tZelftestKop', sv ? `Zelftest (${uur}): ${sv}` : 'Zelftest: nog geen uitslag van deze telefoon.'));
+        if (zt) {
+          const lijst = el('details', 'tZelftestLijst');
+          if (Zelftest.regels(zt).some((r) => r.uitslag === 'nee')) lijst.open = true;
+          lijst.appendChild(el('summary', '', 'Alle punten'));
+          for (const r of Zelftest.regels(zt)) lijst.appendChild(el('div', `zt-${r.uitslag}`, `${r.uitslag === 'ok' ? '✓' : r.uitslag === 'nee' ? '✗' : '·'} ${r.titel}: ${r.zin}`));
+          vak.appendChild(lijst);
+        }
+        if (t.jarvis && S.code) { const b = el('button', '', 'Zelftest nu'); b.dataset.zelftest = t.adres; vak.appendChild(b); }
+        tegel.appendChild(vak);
       }
       // 481: geheugen en Android-versie (alleen als de telefoon ze vers meldde).
       { const cp = m.status && m.status.capaciteit && tijd - m.status.capaciteit.t <= K.MAX_LEEFTIJD_MS ? K.toestelZin(m.status.capaciteit.waarde) : null; if (cp) tegel.appendChild(el('div', 'tToestel', cp)); }
@@ -1674,6 +1703,20 @@
     if (b && b.dataset.versAdres) geefVersAdres(b.dataset.versAdres).catch(() => {});
     else if (b && b.dataset.versQr) toonVersQr(b.dataset.versQr);
     if (e.target && e.target.id === 'versQrSluit') { $('versQrPaneel').hidden = true; $('versQrBeeld').removeAttribute('src'); }
+  });
+
+  // 492: "Zelftest nu": EEN roep 'zelftest' met de code. De telefoon kijkt alleen; de uitslag komt met de volgende meting.
+  async function vraagZelftest(adres) {
+    const t = S.telefoons.find((x) => x.adres === adres);
+    if (!t || !t.jarvis || !S.code) return false;
+    let ok = false;
+    try { ok = (await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'zelftest', van: 'veronica' }) }, 3000)).ok; } catch (e) { ok = false; }
+    logRegel(ok ? `${t.naam} doet de zelftest. Over een halve minuut staat de uitslag op de tegel.` : `${t.naam} antwoordt niet. Probeer het zo nog eens.`);
+    return ok;
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-zelftest]') : null;
+    if (b) vraagZelftest(b.dataset.zelftest).catch(() => {});
   });
 
   // 485: SAMENWERKEN op trede 1. De voorstellen van de AI-kern op de baas; een tik stuurt EEN oordeel (/jarvis/roep, soort 'voorstel',
@@ -3315,7 +3358,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

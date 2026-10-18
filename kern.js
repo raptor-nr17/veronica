@@ -185,6 +185,26 @@
     if (m.klaar) return `${kop} · klaar${m.backend ? ` (${m.backend})` : ''}${m.tokensPerSeconde > 0 ? ` · ±${String(m.tokensPerSeconde).replace('.', ',')} tokens/s (geschat)` : ''}${m.klussen ? ` · ${m.klussen} ${m.klussen === 1 ? 'vraag' : 'vragen'}` : ''}`;
     return `${kop} · ${m.zin || m.fase}`;
   }
+  // 490: DE OVERZICHTSREGEL bovenaan elke tegel, zodat de eigenaar zonder foto's ziet hoe het staat: versie, motor aan/uit, hoe ver
+  // het model is, en bezig of rustig. Alleen uit wat de telefoon zelf vers meldde; wat niet bekend is heet "onbekend", nooit een gok.
+  function overzicht(o) {
+    const x = o || {};
+    if (x.bereikbaar === false) return { delen: ['geen antwoord'], tekst: 'Geen antwoord van deze telefoon.' };
+    const delen = [];
+    if (typeof x.versie === 'string' && x.versie) delen.push(`JARVIS ${x.versie}${x.nieuwste && vergelijkVersie(x.versie, x.nieuwste) < 0 ? ' (oud)' : ''}`);
+    else delen.push('versie onbekend');
+    const m = x.motor;
+    if (!m) delen.push('motor onbekend');
+    else if (!m.aan) delen.push('motor uit');
+    else if (m.fase === 'te-oud') delen.push('motor: telefoon te oud');
+    else if (m.fase === 'downloaden') delen.push(`motor aan, model ${m.procent}%`);
+    else if (m.fase === 'laden') delen.push('motor aan, model laden');
+    else if (m.klaar) delen.push('motor aan, model klaar');
+    else if (m.fase === 'fout') delen.push('motor aan, fout');
+    else delen.push(`motor aan, ${m.fase === 'wacht' ? 'wacht op wifi en lader' : m.fase === 'zoeken' ? 'model zoeken' : m.fase === 'gepauzeerd' ? 'gepauzeerd' : m.fase}`);
+    delen.push(x.bezig === true ? 'bezig' : x.bezig === false ? 'rustig' : 'bezig onbekend');
+    return { delen, tekst: delen.join(' · ') };
+  }
   // 468: KLAAR VOOR DE EIGEN MOTOR? Een regel per telefoon die zegt wat al goed is en wat er nog moet gebeuren, uit
   // getallen die Veronica al heeft (RAM, Android, 64-bits, vrije ruimte, aan de lader). Niets wordt gestart: de knop
   // blijft bij de eigenaar. Grenzen: dezelfde als pool.js (4 GB RAM nominaal, 3 GB vrij) en motorkeuze.js (Android 10 = SDK 29).
@@ -259,6 +279,9 @@
     const w = a.voorstellenOpen === 0 ? 'er wacht niets op jou' : a.voorstellenOpen === 1 ? 'er wacht 1 voorstel op jouw goedkeuring' : `er wachten ${a.voorstellenOpen} voorstellen op jouw goedkeuring`;
     return `AI-kern: ${a.klanten} ${a.klanten === 1 ? 'klant' : 'klanten'}, ${w}.`;
   }
+  // 492: de zelftest van de telefoon (zelftest.js staat byte-gelijk in JARVIS en Veronica).
+  const ZT = () => (typeof Zelftest !== 'undefined' ? Zelftest : (typeof require === 'function' ? require('./zelftest.js') : null));
+  const zelftestLees = (z) => { const m = ZT(); return m ? m.lees(z) : null; };
   function leesStatus(k, t) {
     const x = k && typeof k === 'object' ? k : {};
     const b = x.batterij && typeof x.batterij === 'object' ? x.batterij : {};
@@ -285,12 +308,13 @@
       priveSleutel: meting(x.prive && typeof x.prive === 'object' && typeof x.prive.sleutel === 'boolean' ? x.prive.sleutel : null, bron, t),   // 466: ALLEEN ja/nee, nooit inhoud
       versie: meting(typeof x.versie === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(x.versie) ? x.versie : null, bron, t),
       bijwerkFout: meting(x.bijwerkFout === 'verlopen' ? 'verlopen' : null, bron, t),   // 487
+      zelftest: meting(zelftestLees(x.zelftest), bron, t),   // 492: alleen codes per punt (zelftest.js)
     };
   }
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.39';
+  const JARVIS_NIEUWSTE = '1.9.40';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -645,7 +669,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.44';
+  const VERONICA_VERSIE = '1.9.45';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1269,6 +1293,6 @@
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, overzicht, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));
