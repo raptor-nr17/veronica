@@ -328,7 +328,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.44';
+  const JARVIS_NIEUWSTE = '1.9.45';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -463,13 +463,20 @@
       : 'Het postbus-adres van deze telefoon is verlopen. Tik op "Geef een vers adres"; daarna werkt hij zichzelf bij.' };
   }
 
+  // 499: de VASTE link (https://<eigen domein>/jarvis-app/<tien tekens>) verloopt niet; die gaat voor in de QR. Geen query, geen poort.
+  const VASTE_LINK_RE = /^https:\/\/[a-z0-9.-]{3,253}\/jarvis-app\/[a-z2-9]{10}$/;
   function leesNieuweTelefoon(n) {
-    if (!n || typeof n.apk !== 'string' || n.apk.length > 2000) return null;
-    let u;
-    try { u = new URL(n.apk); } catch (e) { return null; }
-    if (u.protocol !== 'https:' || u.port || u.username || u.password || !POSTBUS_HOST.test(u.hostname)) return null;
-    const tot = typeof n.tot === 'string' && !Number.isNaN(Date.parse(n.tot)) ? n.tot : null;
-    return { apk: u.href, tot };
+    if (!n || typeof n !== 'object') return null;
+    const vast = typeof n.vast === 'string' && VASTE_LINK_RE.test(n.vast) ? n.vast : null;
+    let apk = null;
+    if (typeof n.apk === 'string' && n.apk.length <= 2000) {
+      let u = null;
+      try { u = new URL(n.apk); } catch (e) { u = null; }
+      if (u && u.protocol === 'https:' && !u.port && !u.username && !u.password && POSTBUS_HOST.test(u.hostname)) apk = u.href;
+    }
+    if (!apk && !vast) return null;
+    const tot = apk && typeof n.tot === 'string' && !Number.isNaN(Date.parse(n.tot)) ? n.tot : null;
+    return vast ? { apk, tot, vast } : { apk, tot };
   }
   // "Gekoppeld: telefoon A, rektelefoon 1" -- de namen in de volgorde van de lijst, zonder dubbele.
   function gekoppeldZin(telefoons) {
@@ -703,7 +710,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.50';
+  const VERONICA_VERSIE = '1.9.51';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';

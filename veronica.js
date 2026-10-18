@@ -3244,7 +3244,8 @@
   // de postbus, privé, hoogstens zeven dagen). Geen link of verlopen = geen QR, en een eerlijke zin.
   function tekenDownload() {
     const vak = $('downloadQrBeeld'), stand = $('downloadStand');
-    const d = S.download, verlopen = !!(d && d.tot && Date.parse(d.tot) < nu());
+    const d = S.download, vast = d && d.vast ? d.vast : null, verlopen = !vast && !!(d && d.tot && Date.parse(d.tot) < nu());
+    const link = vast || (d && d.apk);
     if (!d || verlopen || typeof window.qrcode !== 'function') {
       vak.replaceChildren();
       vak.hidden = true;
@@ -3254,16 +3255,18 @@
             : 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).';
       return;
     }
-    if (vak.dataset.apk !== d.apk) {
+    if (vak.dataset.apk !== link) {
       const q = window.qrcode(0, 'L');
-      q.addData(d.apk);
+      q.addData(link);
       q.make();
       vak.innerHTML = q.createSvgTag(4, 16);   // alleen uit de QR-bibliotheek: vierkantjes, geen tekst van buiten
       const svg = vak.querySelector('svg');
       if (svg) { svg.classList.add('qr-plaatje'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'QR-code: JARVIS downloaden'); }
-      vak.dataset.apk = d.apk;
+      vak.dataset.apk = link;
     }
     vak.hidden = false;
+    // 499: de vaste link verloopt niet. Na het installeren vraagt JARVIS zelf om mee te doen (Bluetooth); dan is "Laat toe" genoeg.
+    if (vast) { stand.textContent = 'Deze link verloopt niet en geeft altijd de nieuwste JARVIS. Na het installeren JARVIS openen; daarna is "Laat toe" genoeg. Alleen voor je eigen telefoons: deel hem niet.'; return; }
     stand.textContent = `${d.tot ? `Deze link werkt tot ${new Date(d.tot).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long' })}. ` : ''}Alleen voor je eigen telefoons: deel hem niet.`;
   }
   // 1.9.14: MEERDERE TELEFOONS ACHTER ELKAAR. Zolang Koppelen open staat kijkt Veronica elke vijf seconden bij
@@ -3279,7 +3282,7 @@
     } catch (e) { return; }
     if (!l) return;
     l.telefoons = K.herstelKernAdres(l.telefoons, kernNu());   // 450
-    if (l.nieuweTelefoon && (!S.download || S.download.apk !== l.nieuweTelefoon.apk)) { S.download = l.nieuweTelefoon; await Opslag.schrijf('download', S.download); }
+    if (l.nieuweTelefoon && (!S.download || S.download.apk !== l.nieuweTelefoon.apk || S.download.vast !== l.nieuweTelefoon.vast)) { S.download = l.nieuweTelefoon; await Opslag.schrijf('download', S.download); }
     neemPostbusVers(l.postbusAdres);   // 487: alleen in het geheugen
     const namen = l.telefoons.length ? K.nieuweNamen(S.telefoons, l.telefoons) : [];
     if (namen.length) {
