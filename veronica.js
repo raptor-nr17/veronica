@@ -213,6 +213,7 @@
     if (oud && oud.t >= h.t) return true;
     HB.per[h.id] = h;
     await Opslag.schrijf('hartslagen', HB.per);
+    geefPostbusViaBrievenbus(h).catch(() => {});   // 504: een telefoon die zich meldt krijgt de verse code (een keer)
     try { tekenLive(); } catch (e) { /* de volgende keer */ }
     return true;
   }
@@ -1558,7 +1559,7 @@
       const olZin = olGm && olGm.ollite && olGm.ollite.toestand !== 'klaar' && olGm.ollite.toestand !== 'onbekend' ? olGm.ollite.zin : null;
       const jarvisOnbekendeReden = !s.bereikbaar && !olZin && jarvisVers(m.status, tijd) ? `JARVIS antwoordt wel, maar OlliteRT niet. ${oudeJarvisZin(m.status)}` : null;
       const hsT = (() => { const h = (t.id && HB.per[t.id]) || hartslagVoorAdres(t.adres); return h && h.t ? h.t : 0; })();
-      const nietHier = !s.bereikbaar && hsT ? `zit niet op dit wifi · laatst gezien ${window.Hartslag ? window.Hartslag.minutenZin(tijd - hsT) : ''} (via de brievenbus)` : null;   // 502
+      const nietHier = !s.bereikbaar && hsT ? `geen directe wifi-verbinding · laatst gezien ${window.Hartslag ? window.Hartslag.minutenZin(tijd - hsT) : ''} via de brievenbus` : null;   // 502/503
       const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : (!s.bereikbaar && olZin ? olZin : (jarvisOnbekendeReden || nietHier || `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`));
       const installeerKans = !s.bereikbaar && (!olGm || !olGm.ollite || olGm.ollite.toestand === 'niet-geinstalleerd' || olGm.ollite.toestand === 'onbekend');
       tegel.appendChild(el('div', `tBereik${s.bereikbaar && !oud ? '' : ' oud'}`, bereik));
@@ -1754,7 +1755,7 @@
   // logboek). Nieuwe JARVIS: een roep 'postbus' met de code (een tik). Oude JARVIS: de QR "LRWERK1 <adres>", een keer scannen.
   function neemPostbusVers(a) {
     const x = K.leesPostbusAdres(a);
-    if (x && K.adresGetekend(x) > K.adresGetekend(S.postbusVers || '')) S.postbusVers = x;
+    if (x && K.adresGetekend(x) > K.adresGetekend(S.postbusVers || '')) { S.postbusVers = x; try { if (VastV.apk || VastV.klok) tekenVast(); } catch (e) { /* nog niet geladen */ } }
   }
   async function geefVersAdres(adres) {
     const t = S.telefoons.find((x) => x.adres === adres);
@@ -1794,6 +1795,66 @@
     else if (b && b.dataset.versQr) toonVersQr(b.dataset.versQr);
     if (e.target && e.target.id === 'versQrSluit') { $('versQrPaneel').hidden = true; $('versQrBeeld').removeAttribute('src'); }
   });
+
+  // ---- 504: TELEFOON ZIT VAST (gastnetwerk, oude JARVIS met een verlopen postbus-adres). De mail "JARVIS weer bijwerken" plakken:
+  // de downloadlink van jarvis.apk en de koppelcode komen als QR op Koppelen, met tot wanneer ze gelden. ALLEEN in het geheugen
+  // (Veronica is openbaar; een ondertekend adres hoort nergens bewaard). Veronica kan zelf GEEN nieuwe link maken: de sleutel
+  // daarvoor staat alleen op de server. Wel neemt ze een nieuwer adres van de baas vanzelf over (neemPostbusVers), en stuurt ze de
+  // code via de brievenbus naar elke telefoon die zich meldt, een keer per telefoon per adres.
+  const VastV = { apk: null, gestuurd: {}, klok: null };
+  function qrPlaatje(img, tekst) {
+    if (!img || !tekst || typeof window.qrcode !== 'function') return false;
+    try { const q = window.qrcode(0, 'L'); q.addData(tekst); q.make(); img.src = q.createDataURL(5, 16); return true; } catch (e) { return false; }
+  }
+  function tekenVast() {
+    const t = nu();
+    const apkGoed = VastV.apk && K.nogGeldig(VastV.apk, t);
+    if (VastV.apk && !apkGoed) VastV.apk = null;
+    const code = K.adresVers(S.postbusVers, t) && K.nogGeldig(S.postbusVers, t) ? S.postbusVers : null;
+    const ab = $('vastApkBlok'), cb = $('vastCodeBlok');
+    if (ab) {
+      ab.hidden = !(apkGoed && qrPlaatje($('vastApkQr'), VastV.apk));
+      if (ab.hidden) { if ($('vastApkQr')) $('vastApkQr').removeAttribute('src'); }
+      else $('vastApkTijd').textContent = `Deze downloadlink werkt tot ${K.totZin(K.geldigTot(VastV.apk))}. Hij haalt altijd de nieuwste JARVIS.`;
+    }
+    if (cb) {
+      cb.hidden = !(code && qrPlaatje($('vastCodeQr'), K.postbusQrTekst(code)));
+      if (cb.hidden) { if ($('vastCodeQr')) $('vastCodeQr').removeAttribute('src'); }
+      else $('vastCodeTijd').textContent = `Deze koppelcode werkt tot ${K.totZin(K.geldigTot(code))}.`;
+    }
+    const st = $('vastStand');
+    if (st && (VastV.apk || code)) st.textContent = 'Klaar. Scan per telefoon de eerste QR met de camera.';
+    else if (st && st.dataset.geweest) st.textContent = 'De link uit de mail is verlopen. Vraag een nieuwe mail.';
+    return !!(apkGoed || code);
+  }
+  function plakMail(tekst) {
+    const m = K.leesMail(tekst);
+    const t = nu();
+    const st = $('vastStand');
+    if (m.code && K.adresVers(m.code, t)) neemPostbusVers(m.code);
+    if (m.apk && K.nogGeldig(m.apk, t) && (!VastV.apk || K.adresGetekend(m.apk) > K.adresGetekend(VastV.apk))) VastV.apk = m.apk;
+    if ($('mailPlak')) $('mailPlak').value = '';
+    if (!m.apk && !m.code) { if (st) st.textContent = 'Ik vond geen downloadlink en geen koppelcode in deze tekst. Plak de hele mail.'; return false; }
+    if (st) st.dataset.geweest = '1';
+    const goed = tekenVast();
+    if (!goed && st) st.textContent = 'De link en de code uit deze mail zijn al verlopen. Vraag een nieuwe mail.';
+    if (goed) { Object.keys(HB.per).forEach((id) => geefPostbusViaBrievenbus(HB.per[id]).catch(() => {})); }
+    if (!VastV.klok) VastV.klok = setInterval(tekenVast, 60000);
+    try { if (goed) $('kaartVast').scrollIntoView({ block: 'start' }); } catch (e) { /* geen scherm */ }
+    return goed;
+  }
+  async function geefPostbusViaBrievenbus(h) {
+    const a = S.postbusVers; const o = S.ntfy && S.ntfy.onderwerp;
+    if (!h || !h.id || !o || !S.code || !window.Hartslag || volLokaal() || !K.adresVers(a) || !K.nogGeldig(a)) return false;
+    if (VastV.gestuurd[h.id] === a) return false;
+    const v = await window.Hartslag.roepVerzoek(o, { soort: 'postbus', adres: a, naar: h.id }, S.code, nu());
+    if (!v) return false;
+    try { if (!(await fetch(v.url, { method: 'POST', body: v.data, cache: 'no-store' })).ok) return false; } catch (e) { return false; }
+    VastV.gestuurd[h.id] = a;
+    logRegel(`${h.naam || 'Een telefoon'} kreeg de verse koppelcode via de brievenbus. Hij kijkt nu zelf of er een nieuwe versie is.`);
+    return true;
+  }
+  document.addEventListener('click', (e) => { if (e.target && e.target.id === 'mailPlakKnop') plakMail(($('mailPlak') || {}).value); });
 
   // ---- 501: DE MOTOR-INSTELLINGEN OP AFSTAND (motorinstel.js, byte-gelijk met JARVIS). Een paneel buiten de tegels (die worden
   // steeds opnieuw getekend). Bewaren = EEN roep 'motor-instel' met de code; lukt het wifi niet, dan gaat hij via de brievenbus (haal).
@@ -1871,7 +1932,7 @@
   // 497: OPSLAG OP KAARTJE (kaartje.js). Alleen niet-gevoelige kopieën; de koppelcode, het ntfy-onderwerp en het postbus-adres staan
   // in de lijst `verboden`, en de privé-hoek heeft hier geen knop. Een status-tik vraagt nooit om toestemming (dat kan alleen na een tik).
   const KaartjeL = window.Kaartje ? window.Kaartje.maak() : null;
-  const kaartjeVerboden = () => [S.code, S.ntfy && S.ntfy.onderwerp, S.postbusVers].filter((x) => typeof x === 'string' && x);
+  const kaartjeVerboden = () => [S.code, S.ntfy && S.ntfy.onderwerp, S.postbusVers, VastV.apk].filter((x) => typeof x === 'string' && x);
   function kaartjeGegevens(soort) {
     if (soort === 'logboek') return { soort, regels: S.log.map((x) => ({ t: x.t, zin: x.zin })) };
     if (soort === 'nachtproef') return { soort, regels: S.nachtlog };
@@ -1939,13 +2000,16 @@
       const kaartje = await KaartjeL.status() === 'aanwezig';
       for (const t of S.telefoons) {
         const k = kastVan(t);
+        // 503: de kast werkt ALLEEN als Veronica de telefoon direct over het wifi bereikt. Op een gastnetwerk niet: dan zeggen we dat,
+        // en een model haalt de telefoon gewoon zelf (op wifi, aan de lader). Logboeken blijven dan op de telefoon.
+        if (!k && !staat(t.adres).bereikbaar && hartslagVers(t)) { KastV.zin = `Geen directe wifi-verbinding met ${t.naam}: de kast slaat hem over. Een model haalt hij zelf (wifi en lader); zijn logboeken blijven op de telefoon.`; continue; }
         if (!k || !t.jarvis || zandbakNu(t)) continue;
         // 1. het aanbod (klein: een logboek): naar het kaartje of intern, dan "klaar".
         for (const a of k.aanbod) {
           if (a.bytes > 20e6) continue;
           let tekst = null;
           try { const res = await haal(`${t.jarvis}/jarvis/kast/uit/${encodeURIComponent(a.naam)}`, { headers: { 'X-Koppelcode': S.code } }, 30000); if (res.ok) tekst = await res.text(); } catch (e) { tekst = null; }
-          if (tekst === null) { KastV.zin = `${t.naam} antwoordt niet op het eigen wifi; de kast probeert het later.`; continue; }
+          if (tekst === null) { KastV.zin = `Geen directe wifi-verbinding met ${t.naam}; de kast probeert het later. Een model haalt hij zelf.`; continue; }
           const w = await KaartjeL.schrijf('jarvis-logboek', tekst, kaartjeVerboden(), nu(), S.telefoons.indexOf(t) + 1);
           if (w.ok) { try { await haal(`${t.jarvis}/jarvis/kast/klaar?naam=${encodeURIComponent(a.naam)}`, { method: 'POST', headers: { 'X-Koppelcode': S.code } }, 5000); } catch (e) { /* volgende keer */ } }
           KastV.zin = w.ok ? `Logboek van ${t.naam} bewaard (${w.plek === 'kaartje' ? 'op het kaartje' : 'intern'}).` : kaartjeZin(w);
@@ -1968,7 +2032,7 @@
           KastV.zin = `Het model gaat van het kaartje naar ${t.naam} (${window.Kaartje.grootte(v.bytes)}).`;
           let ok = false;
           try { const res = await haal(`${t.jarvis}/jarvis/kast/in?soort=model&naam=${encodeURIComponent(v.naam)}&sha256=${v.sha256}`, { method: 'POST', headers: { 'X-Koppelcode': S.code, 'Content-Type': 'application/octet-stream' }, body: f }, 60 * 60 * 1000); ok = res.ok; } catch (e) { ok = false; }
-          KastV.zin = ok ? `${t.naam} heeft het model van het kaartje gekregen; hij rekent het zelf na.` : `${t.naam} kon het model nu niet aannemen (zelfde wifi?). Later nog eens.`;
+          KastV.zin = ok ? `${t.naam} heeft het model van het kaartje gekregen; hij rekent het zelf na.` : `Geen directe wifi-verbinding met ${t.naam}: het model gaat niet via de kast. Hij haalt het zelf (wifi en lader).`;
           logRegel(KastV.zin);
         }
       }
@@ -3689,7 +3753,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

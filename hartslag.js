@@ -187,9 +187,8 @@
     const delen = [`Laatst gezien ${minutenZin(oud)}`, h.versie ? `JARVIS ${h.versie}` : null, h.adressen.length ? `adres ${h.adressen[0]}` : null].filter(Boolean);
     let waarom = '';
     if (oud > 3 * VERS_MS) waarom = 'Al lang geen hartslag: staat de telefoon uit, of is JARVIS dicht? Open JARVIS een keer.';
-    else if (w.antwoordt === false) waarom = h.adressen.length
-      ? 'Hij leeft, maar antwoordt niet over het wifi: zit de Chromebook op HETZELFDE wifi als de telefoon? Een gastnetwerk houdt toestellen uit elkaar. Opdrachten gaan nu via de brievenbus.'
-      : 'Hij leeft, maar meldt geen adres op het wifi: staat zijn wifi aan? Opdrachten gaan via de brievenbus.';
+    // 503: een gastnetwerk houdt toestellen uit elkaar; dat is GEEN fout. De brievenbus is de hoofdweg, het wifi een bonus.
+    else if (w.antwoordt === false) waarom = 'Geen directe wifi-verbinding (op een gastnetwerk zien toestellen elkaar niet; dat is goed zo). Opdrachten en de hartslag gaan via de brievenbus.';
     return `${delen.join(' · ')}.${waarom ? ` ${waarom}` : ''}`;
   }
   // Motor en model in een regel (Veronica): "motor aan · model binnen · 4,2 tokens/s · 31 °C".

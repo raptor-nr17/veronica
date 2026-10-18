@@ -451,6 +451,59 @@
     const t = String(tekst || '').replace(/\s+/g, ' ').trim().replace(/^LRWERK1 /, '');
     return leesPostbusAdres(t);
   }
+  // 504: DE MAIL "JARVIS weer bijwerken" PLAKKEN. Gmail pakt elke link in (www.google.com/url?q=...): die halen we eraf. Er gaan
+  // er twee uit: de downloadlink van jarvis.apk en de koppelcode (het adres van het pakket). Alles alleen in het geheugen.
+  function leesApkAdres(a) {
+    if (typeof a !== 'string' || a.length > 2000) return null;
+    let u;
+    try { u = new URL(a); } catch (e) { return null; }
+    if (u.protocol !== 'https:' || u.port || u.username || u.password || !POSTBUS_HOST.test(u.hostname)) return null;
+    if (!/[/]gemma-werk[/]jarvis[/]jarvis[.]apk$/.test(u.pathname) || !u.searchParams.get('X-Amz-Signature')) return null;
+    return u.href;
+  }
+  function pakUit(a) {
+    let x = String(a || '').replace(/&amp;/g, '&');
+    for (let i = 0; i < 2; i++) {
+      let u;
+      try { u = new URL(x); } catch (e) { return x; }
+      if (!/(^|[.])google[.][a-z.]+$/.test(u.hostname) || u.pathname !== '/url') return x;
+      const q = u.searchParams.get('q') || u.searchParams.get('url');
+      if (!q) return x;
+      x = q;
+    }
+    return x;
+  }
+  function leesMail(tekst) {
+    const uit = { apk: null, code: null };
+    const links = String(tekst || '').match(/https:[/][/][^\s<>"']+/g) || [];
+    for (const l of links) {
+      const a = pakUit(l);
+      const apk = leesApkAdres(a); const code = leesPostbusAdres(a);
+      if (apk && (!uit.apk || adresGetekend(apk) > adresGetekend(uit.apk))) uit.apk = apk;
+      if (code && (!uit.code || adresGetekend(code) > adresGetekend(uit.code))) uit.code = code;
+    }
+    return uit;
+  }
+  // Tot wanneer een ondertekend adres geldt: ondertekend + X-Amz-Expires (hoogstens zeven dagen), met tien minuten marge.
+  function geldigTot(a) {
+    const t = adresGetekend(a);
+    if (!t) return 0;
+    let s = 0;
+    try { s = Number(new URL(a).searchParams.get('X-Amz-Expires')) || 0; } catch (e) { return 0; }
+    s = Math.min(Math.max(s, 0), 7 * 24 * 3600);
+    return s ? t + s * 1000 - 10 * 60 * 1000 : 0;
+  }
+  const nogGeldig = (a, nu) => geldigTot(a) > (nu || Date.now());
+  // "geldig tot zondag 19 oktober 22:32" in Nederlandse tijd.
+  function totZin(ms) {
+    if (!ms) return '';
+    try {
+      const d = new Date(ms);
+      const dag = d.toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Amsterdam' });
+      const uur = d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Amsterdam' });
+      return `${dag} ${uur}`;
+    } catch (e) { return new Date(ms).toISOString().slice(0, 16).replace('T', ' '); }
+  }
   // Moet deze telefoon geholpen worden met een vers adres? Alleen als hij achterloopt EN (hij zegt zelf "verlopen", of hij is
   // ouder dan 1.9.39: die nemen een nieuwer adres van de baas niet vanzelf over).
   const VERS_ADRES_VANAF = '1.9.39';
@@ -710,7 +763,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.54';
+  const VERONICA_VERSIE = '1.9.55';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -777,8 +830,9 @@
     const lijst = (ns) => (ns || []).map((n) => `${n}.x`).join(', ');
     if (fase === 'zoekt') {
       // 502: na een verhuizing zitten de telefoons op een ander wifi; dat zeggen, niet "geen antwoord op het oude adres".
-      const oud = x.oudeNetten && x.oudeNetten.length ? ` Laatst gezien op een ander wifi (${lijst(x.oudeNetten)}).` : '';
-      return `Geen telefoon antwoordt op dit wifi.${oud} Ander wifi? Na een verhuizing moet elke telefoon dit wifi een keer krijgen (op de telefoon zelf: wifi kiezen). Intussen zoek ik ze opnieuw op dit netwerk (${lijst(x.netten)}); hier hoef je niets te typen.`;
+      const oud = x.oudeNetten && x.oudeNetten.length ? ` Laatst bekend op ${lijst(x.oudeNetten)}.` : '';
+      // 503: op een gastnetwerk zien toestellen elkaar NOOIT; dat is geen fout. De brievenbus is de hoofdweg.
+      return `Geen directe wifi-verbinding met de telefoons.${oud} Op een gastnetwerk is dat normaal: alles gaat dan via de brievenbus. Ander wifi? Ik zoek ze intussen opnieuw op dit netwerk (${lijst(x.netten)}); hier hoef je niets te typen.`;
     }
     if (fase === 'gevonden') {
       const net = x.net ? ` (${x.net}.x)` : '';
@@ -927,8 +981,8 @@
         return 'De baas antwoordt, maar de rekentelefoons niet op het adres dat hij doorgeeft. Werk JARVIS bij op de baas en de telefoons (1.9.20 of nieuwer), en kijk of wifi aan staat op elke telefoon.';
       }
       return o.toestemming === 'granted'
-        ? 'Geen enkele telefoon antwoordt. Staan ze aan, staat JARVIS open, en zitten ze op hetzelfde wifi als deze computer?'
-        : `Geen enkele telefoon antwoordt. Staan ze aan en op hetzelfde wifi? Heeft Chrome gevraagd om het lokale netwerk en zei je nee, dan: ${terug}`;
+        ? 'Geen directe wifi-verbinding met de telefoons. Op een gastnetwerk is dat normaal: alles gaat dan via de brievenbus. Staan ze aan en staat JARVIS open?'
+        : `Geen directe wifi-verbinding met de telefoons. Op een gastnetwerk is dat normaal: alles gaat dan via de brievenbus. Heeft Chrome gevraagd om het lokale netwerk en zei je nee, dan: ${terug}`;
     }
     return '';
   }
@@ -1347,6 +1401,6 @@
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesKast, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

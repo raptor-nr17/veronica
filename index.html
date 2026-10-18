@@ -93,6 +93,7 @@
   #nieuwQrBeeld svg { width: min(80vw, 60vh); height: auto; }
   .qrWit { background: #fff; color: #000; display: inline-block; padding: 8px; border-radius: 10px; max-width: 100%; }
   .qrWit svg { width: min(70vw, 340px); height: auto; display: block; }
+  #vastApkQr, #vastCodeQr { width: 100%; max-width: 340px; height: auto; display: block; }
   #koppelKaarten { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 14px; align-items: start; margin-bottom: 14px; }
   .koppelKaart { border: 1px solid var(--lijn); border-radius: 12px; padding: 12px 14px; min-width: 0; }
   .koppelKaart h2 { margin-top: 0; }
@@ -367,6 +368,25 @@
         <button id="qrPlakKnop">Overnemen uit de tekst</button>
       </div>
     </div>
+      <div class="koppelKaart" id="kaartVast" style="margin-bottom:14px">
+        <h2>Telefoon zit vast? JARVIS bijwerken</h2>
+        <p>Plak hier de hele mail <b>JARVIS weer bijwerken</b>. Veronica haalt de downloadlink en de koppelcode eruit en zet ze als QR neer. Ze onthoudt ze niet: na herladen opnieuw plakken.</p>
+        <textarea id="mailPlak" rows="3" placeholder="Plak hier de mail"></textarea>
+        <button type="button" id="mailPlakKnop">Maak de QR's</button>
+        <p id="vastStand" class="groteMelding" aria-live="polite"></p>
+        <div id="vastApkBlok" hidden>
+          <h3>1. Scan met de gewone camera van de telefoon</h3>
+          <p>Tik op de link, dan op <b>Installeren</b>, en open JARVIS.</p>
+          <div class="qrWit"><img id="vastApkQr" alt="QR met de downloadlink van JARVIS"></div>
+          <p id="vastApkTijd"></p>
+        </div>
+        <div id="vastCodeBlok" hidden>
+          <h3>2. Zegt JARVIS daarna nog "verlopen"?</h3>
+          <p>Meestal hoeft dit niet: zodra de telefoon zich via de brievenbus meldt, stuurt Veronica hem de code zelf. Anders: open JARVIS, tik <b>Beheer</b> en dan <b>Scan de code van de beheerpagina</b>, en houd hem voor deze QR. Leg de telefoon daarna aan de lader.</p>
+          <div class="qrWit"><img id="vastCodeQr" alt="QR met de koppelcode"></div>
+          <p id="vastCodeTijd"></p>
+        </div>
+      </div>
     <p class="eerlijk">Chrome vraagt de eerste keer of Veronica het lokale netwerk mag gebruiken. Zeg ja: anders kan ze de telefoons niet bereiken.
       Alles wat Veronica onthoudt staat alleen in deze browser.</p>
       <button id="karakterKnop" aria-pressed="true">Karakter: aan</button>
