@@ -24,6 +24,11 @@
 //  - werker    vertaalt en controleert met zijn eigen model (E2B).
 //  - handjes   te oud voor een model (te weinig geheugen, of Android 9 of ouder): alleen taken in de browser, zonder model.
 //
+// 505: VIA DE BRIEVENBUS (gastnetwerk, 18 oktober). Een telefoon die Veronica niet over het wifi bereikt maar wel een VERSE
+// hartslag stuurt (viaBrievenbus) is NIET weg: gids-werk loopt via de postbus en de bewaker leest de hartslag. Alleen de klussen
+// die Veronica zelf over het wifi aflevert (Claude-klussen, vragen van Veronica, deelvragen van het zoeken) kunnen dan niet.
+// Een onbekende klasse met een geladen model mag denker worden, als laatste keus.
+//
 // EEN REGEL DIE HIER NIET OMGEZET KAN WORDEN: een te oude telefoon (geen model) krijgt nooit model-werk, ook niet als de
 // eigenaar dat aanzet. Een keuze kan een telefoon alleen UITSLUITEN, nooit iets mogelijk maken dat de telefoon niet kan.
 (function (wortel, fabriek) {
@@ -72,7 +77,9 @@
     }
     const teOud = t.klasse === 'te-oud';
     const model = t.modelGeladen === true || t.motorKlaar === true;
-    const weg = t.vervangen ? 'vervangen: krijgt geen werk' : t.bereikbaar === false ? 'geen antwoord' : null;
+    const brief = t.bereikbaar === false && t.viaBrievenbus === true;   // 505
+    const weg = t.vervangen ? 'vervangen: krijgt geen werk' : t.bereikbaar === false && !brief ? 'geen antwoord' : null;
+    const geenWifi = 'geen directe wifi-verbinding: dit gaat alleen over het wifi (de telefoon leeft via de brievenbus)';
     const stil = t.rust === true ? 'in rust tot de zon' : t.magRekenen === false ? 'onder de accu-reserve' : (t.hitteStand === 'oranje' || t.hitteStand === 'rood') ? 'te warm' : null;
     const modelRegel = (soort, naam) => {
       if (weg) return { soort, naam, mag: false, vast: true, reden: weg };
@@ -80,6 +87,7 @@
       if (!magVan(keuzes, t.adres, soort)) return { soort, naam, mag: false, vast: false, reden: 'door jou uitgezet' };
       if (!model) return { soort, naam, mag: false, vast: true, reden: 'nog geen model geladen (OlliteRT of de eigen motor)' };
       if (stil) return { soort, naam, mag: false, vast: true, reden: stil };
+      if (brief) return { soort, naam, mag: false, vast: true, reden: geenWifi };
       if (soort === 'claude' && t.kern) return { soort, naam, mag: true, vast: false, reden: 'de baas: alleen aan de lader en niet in gebruik, of met de schakelaar "baas mag meerekenen"' };
       return { soort, naam, mag: true, vast: false, reden: t.klasse === 'zwaar' ? 'zwaar werk eerst, dan de rest' : t.klasse === 'midden' ? 'licht en midden werk, zwaar als het moet' : t.klasse === 'licht' ? 'alleen korte klussen' : 'klasse nog niet gemeten' };
     };
@@ -87,24 +95,25 @@
     // Postbus: de telefoon zelf. Lastig werk (vertalen, keuren) alleen met E4B; simpel (ja/nee, buurtpin) ook met E2B.
     if (weg) regels.push({ soort: 'postbus', naam: 'Gids-werk (postbus)', mag: false, vast: true, reden: weg });
     else if (teOud || !model) regels.push({ soort: 'postbus', naam: 'Gids-werk (postbus)', mag: false, vast: true, reden: teOud ? 'geen model' : 'nog geen model geladen' });
-    else regels.push({ soort: 'postbus', naam: 'Gids-werk (postbus)', mag: true, vast: true, reden: t.klasse === 'zwaar' ? 'lastig en simpel werk (de telefoon kiest zelf uit de postbus)' : 'simpel werk; lastig werk alleen met een groot model (de telefoon kiest zelf)' });
+    else regels.push({ soort: 'postbus', naam: 'Gids-werk (postbus)', mag: true, vast: true, reden: (t.klasse === 'zwaar' ? 'lastig en simpel werk (de telefoon kiest zelf uit de postbus)' : 'simpel werk; lastig werk alleen met een groot model (de telefoon kiest zelf)') + (brief ? '; de postbus werkt ook zonder wifi naar Veronica' : '') });
     // Zoeken: de baas verdeelt. Een werker met JARVIS en wifi kan een deelvraag ophalen; de baas zelf ook.
-    regels.push(weg ? { soort: 'zoeken', naam: 'Zoeken (deelvragen)', mag: false, vast: true, reden: weg }
+    regels.push(weg || brief ? { soort: 'zoeken', naam: 'Zoeken (deelvragen)', mag: false, vast: true, reden: weg || geenWifi }
       : { soort: 'zoeken', naam: 'Zoeken (deelvragen)', mag: true, vast: true, reden: t.kern ? 'de baas verdeelt de deelvragen en bewaakt de rem' : 'haalt een deelvraag op via zijn eigen wifi; de baas verdeelt' });
-    regels.push({ soort: 'bewaker', naam: 'Bewaker', mag: !weg, vast: true, reden: weg || 'let op temperatuur, accu en bereikbaarheid; geen model nodig' });
+    regels.push({ soort: 'bewaker', naam: 'Bewaker', mag: !weg, vast: true, reden: weg || (brief ? 'let op temperatuur en accu (uit de hartslag); geen model nodig' : 'let op temperatuur, accu en bereikbaarheid; geen model nodig') });
     return regels;
   }
 
   // 481: per telefoon EEN rol (zie bovenaan). Een te oude, een vervangen of een onbereikbare telefoon wordt nooit denker.
   const ROL_NAAM = Object.freeze({ gespaard: 'Gespaard', dagelijks: 'Dagelijkse telefoon, rust', denker: 'Denker', geheugen: 'Geheugen', werker: 'Werker', handjes: 'Handjes (alleen browser)', weg: 'Weg' });
   const KLASSE_RANG = { zwaar: 0, midden: 1, licht: 2 };
+  const rang = (t) => (t.klasse in KLASSE_RANG ? KLASSE_RANG[t.klasse] : 3);   // 505: onbekend (alleen een hartslag) = laatste keus
   function rollen(telefoons) {
     const lijst = Array.isArray(telefoons) ? telefoons : [];
     const uit = {};
-    const weg = (t) => t.vervangen || t.bereikbaar === false;
+    const weg = (t) => t.vervangen || (t.bereikbaar === false && t.viaBrievenbus !== true);
     const model = (t) => t.modelGeladen === true || t.motorKlaar === true;
-    const kanDenken = lijst.filter((t) => !weg(t) && t.gespaard !== true && t.dagelijks !== true && t.klasse !== 'te-oud' && model(t) && t.klasse in KLASSE_RANG);
-    kanDenken.sort((a, b) => KLASSE_RANG[a.klasse] - KLASSE_RANG[b.klasse] || String(a.naam).localeCompare(String(b.naam)));
+    const kanDenken = lijst.filter((t) => !weg(t) && t.gespaard !== true && t.dagelijks !== true && t.klasse !== 'te-oud' && model(t) && (t.klasse in KLASSE_RANG || !t.klasse));
+    kanDenken.sort((a, b) => rang(a) - rang(b) || String(a.naam).localeCompare(String(b.naam)));
     const denker = kanDenken[0] || null;
     const geheugen = lijst.find((t) => !weg(t) && t.gespaard !== true && t.dagelijks !== true && t.geheugenKlaar === true && t !== denker) || null;
     for (const t of lijst) {

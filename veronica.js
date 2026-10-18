@@ -1910,7 +1910,12 @@
     if (!S.code || !doel) { $('instelStand').textContent = 'Nog niet gekoppeld.'; return false; }
     const lijf = standaard ? { soort: 'motor-instel', standaard: true, van: 'veronica' } : { soort: 'motor-instel', instel: window.MotorInstel.schoon(instelUitPaneel(), {}), van: 'veronica' };
     let r = null;
-    try { r = await haal(`${doel}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(lijf) }, 3000); } catch (e) { r = null; }
+    // 505: over het wifi alleen als de telefoon daar nu antwoordt; anders (gastnetwerk, oud adres) meteen via de brievenbus, op
+    // zijn toestel-id. Zo hangt het niet aan een adres dat niets meer zegt.
+    if (staat(InstV.adres).bereikbaar) {
+      try { r = await haal(`${doel}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(lijf) }, 3000); } catch (e) { r = null; }
+    }
+    if (!(r && r.ok) && InstV.id && await roepNaarId(InstV.id, lijf)) r = { ok: true, brievenbus: true };
     $('instelStand').textContent = r && r.ok ? (r.brievenbus ? 'Verstuurd via de brievenbus: de telefoon neemt het binnen een minuut over. Bij de volgende hartslag zie je het op de tegel.'
       : 'Verstuurd. Bij de volgende hartslag zie je het op de tegel.') : 'Dit kwam niet aan (geen wifi en geen brievenbus). Probeer het straks nog eens.';
     if (r && r.ok) logRegel(`Motor-instellingen ${standaard ? 'terug naar standaard' : 'verstuurd'} (${(HB.per[InstV.id] || {}).naam || 'telefoon'}).`);
@@ -2353,8 +2358,12 @@
       const mo = m.status && m.status.motor && tijd - m.status.motor.t <= K.MAX_LEEFTIJD_MS ? m.status.motor.waarde : null;
       const rol = m.status && m.status.rol && tijd - m.status.rol.t <= K.MAX_LEEFTIJD_MS ? m.status.rol.waarde : null;
       const cp = m.status && m.status.capaciteit && tijd - m.status.capaciteit.t <= K.MAX_LEEFTIJD_MS ? m.status.capaciteit.waarde : null;
-      return { naam: t.naam, adres: t.adres, kern: !!t.kern, rol, klasse: ps.klasse, klasseReden: ps.klasseReden, modelGeladen: ps.modelGeladen, motorKlaar: !!(mo && mo.klaar), bereikbaar: ps.bereikbaar, vervangen: ps.vervangen, hitteStand: ps.hitteStand, rust: ps.rust, magRekenen: ps.magRekenen,
-        gespaard: schuifNu(t), dagelijks: dagelijksRustNu(t), geheugenKlaar: !!(mo && mo.geheugen && mo.geheugen.klaar), sdk: cp && typeof cp.sdk === 'number' ? cp.sdk : null };   // 481
+      // 505: geen wifi maar wel een verse hartslag = via de brievenbus. Wat de wifi-meting niet weet, komt dan uit de hartslag.
+      const h = hartslagVers(t) ? ((t.id && HB.per[t.id]) || hartslagVoorAdres(t.adres)) : null;
+      const brief = !!h && !staat(t.adres).bereikbaar;   // zelfde vraag als de kop van Live (1249)
+      const hm = brief && h.motor ? h.motor : null;
+      return { naam: t.naam, adres: t.adres, kern: !!t.kern, rol: rol || (brief ? h.rol : null), klasse: ps.klasse, klasseReden: ps.klasseReden, modelGeladen: ps.modelGeladen, motorKlaar: !!((mo && mo.klaar) || (hm && hm.klaar)), bereikbaar: brief ? false : ps.bereikbaar, viaBrievenbus: brief, vervangen: ps.vervangen, hitteStand: ps.hitteStand, rust: ps.rust, magRekenen: ps.magRekenen,
+        gespaard: schuifNu(t) || !!(brief && h.sparen), dagelijks: dagelijksRustNu(t) || !!(brief && h.dagelijks), geheugenKlaar: !!(mo && mo.geheugen && mo.geheugen.klaar), sdk: cp && typeof cp.sdk === 'number' ? cp.sdk : null };   // 481
     });
   }
   // 481: gespaard = de schuif Sparen op de telefoon zelf (alleen een verse melding telt). Veronica geeft hem dan niets.
