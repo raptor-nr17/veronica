@@ -1384,7 +1384,7 @@
           : (s.bereikbaar && (hb === false || vers(st.versie) !== null) ? false : null);
         const ov = K.overzicht({ bereikbaar: s.bereikbaar === false ? false : undefined,
           versie: vers(st.versie), nieuwste: K.nieuwsteVersie(S.telefoons.map((y) => ((meet(y.adres).status || {}).versie || {}).waarde)),
-          motor: vers(st.motor), bezig });
+          motor: vers(st.motor), bezig, dagelijks: vers(st.dagelijks) });
         tegel.appendChild(el('div', 'tOverzicht', ov.tekst));
       }
       tegel.appendChild(el('div', 'tRol', K.rolZin(t, m.status, tijd)));
@@ -1723,6 +1723,8 @@
   // 485: SAMENWERKEN op trede 1. De voorstellen van de AI-kern op de baas; een tik stuurt EEN oordeel (/jarvis/roep, soort 'voorstel',
   // met de code). Goedkeuren legt het alleen vast: er wordt niets vanzelf uitgevoerd (dat is trede 2, en die staat dicht).
   const SamenV = { verstuurd: {} };
+  const TOKENPRIJS_SLEUTEL = 'veronica-tokenprijs';
+  function leesTokenprijsOpslag() { try { return localStorage.getItem(TOKENPRIJS_SLEUTEL); } catch (e) { return null; } }
   function tekenSamenwerken() {
     const blok = $('samenBlok');
     if (!blok) return;
@@ -1731,6 +1733,10 @@
     if (blok.hidden) return;
     $('samenTrede').textContent = s ? K.TREDE_ZIN[s.trede] : '';
     $('samenAfnemers').textContent = S.afnemers && window.Afnemers ? window.Afnemers.zin(S.afnemers) : '';
+    // 495: LOKAAL EERST -- hoeveel er op de Gemma's in huis gedaan is, en wat dat ongeveer scheelt (prijs: zelf instellen).
+    $('samenLokaal').textContent = S.afnemers && window.Afnemers ? window.Afnemers.bespaardZin(S.afnemers, K.leesTokenprijs(leesTokenprijsOpslag())) : '';
+    const tpv = $('tokenprijsVeld');
+    if (tpv && document.activeElement !== tpv) tpv.value = String(K.leesTokenprijs(leesTokenprijsOpslag())).replace('.', ',');
     $('samenKennis').textContent = s && s.kennisboek !== null ? `Kennisboek: ${s.kennisboek} ${s.kennisboek === 1 ? 'regel' : 'regels'} (de vaste woorden en regels die elke telefoon meekrijgt).` : '';
     const lijst = (s ? s.voorstellen : []).filter((v) => !SamenV.verstuurd[v.id]);
     const vak = $('samenLijst');
@@ -1965,6 +1971,10 @@
     }
   });
   document.addEventListener('input', (e) => {
+    if (e.target && e.target.id === 'tokenprijsVeld') {   // 495
+      try { localStorage.setItem(TOKENPRIJS_SLEUTEL, String(K.leesTokenprijs(e.target.value))); } catch (x) { /* alleen voor nu */ }
+      tekenSamenwerken();
+    }
     if (e.target && e.target.id === 'tariefVeld') {
       try { localStorage.setItem(TARIEF_SLEUTEL, String(K.leesTarief(e.target.value))); } catch (x) { /* alleen voor nu */ }
       tekenVerbruik(nu());
@@ -1984,11 +1994,17 @@
       const rol = m.status && m.status.rol && tijd - m.status.rol.t <= K.MAX_LEEFTIJD_MS ? m.status.rol.waarde : null;
       const cp = m.status && m.status.capaciteit && tijd - m.status.capaciteit.t <= K.MAX_LEEFTIJD_MS ? m.status.capaciteit.waarde : null;
       return { naam: t.naam, adres: t.adres, kern: !!t.kern, rol, klasse: ps.klasse, klasseReden: ps.klasseReden, modelGeladen: ps.modelGeladen, motorKlaar: !!(mo && mo.klaar), bereikbaar: ps.bereikbaar, vervangen: ps.vervangen, hitteStand: ps.hitteStand, rust: ps.rust, magRekenen: ps.magRekenen,
-        gespaard: gespaardNu(t), geheugenKlaar: !!(mo && mo.geheugen && mo.geheugen.klaar), sdk: cp && typeof cp.sdk === 'number' ? cp.sdk : null };   // 481
+        gespaard: schuifNu(t), dagelijks: dagelijksRustNu(t), geheugenKlaar: !!(mo && mo.geheugen && mo.geheugen.klaar), sdk: cp && typeof cp.sdk === 'number' ? cp.sdk : null };   // 481
     });
   }
   // 481: gespaard = de schuif Sparen op de telefoon zelf (alleen een verse melding telt). Veronica geeft hem dan niets.
-  function gespaardNu(t) { const g = (meet(t.adres).status || {}).gespaard; return !!(g && g.waarde === true && nu() - g.t <= K.MAX_LEEFTIJD_MS); }
+  // 495: de dagelijkse telefoon die rust telt hier net zo: Veronica geeft hem niets.
+  function schuifNu(t) { const g = (meet(t.adres).status || {}).gespaard; return !!(g && g.waarde === true && nu() - g.t <= K.MAX_LEEFTIJD_MS); }
+  function dagelijksRustNu(t) { const g = (meet(t.adres).status || {}).dagelijks; return !!(g && g.waarde === 'rust' && nu() - g.t <= K.MAX_LEEFTIJD_MS); }
+  // Ook als hij "meedoen" meldt: Veronica stuurt hem niets. Alleen de rij op de beheerder-telefoon zelf mag hem inzetten, en dan
+  // pas als er geen werker vrij is (rij.js, zetBeheerder).
+  function dagelijksNu(t) { const g = (meet(t.adres).status || {}).dagelijks; return !!(g && g.waarde && nu() - g.t <= K.MAX_LEEFTIJD_MS); }
+  function gespaardNu(t) { return schuifNu(t) || dagelijksNu(t); }
   const uitgeslotenDoorKeuze = (soort) => Takenverdeling.uitgeslotenVoor(S.telefoons, leesTakenKeuzes(), soort)
     .concat(S.telefoons.filter((t) => gespaardNu(t)).map((t) => t.adres));
   let takenHandtekening = '';
@@ -2004,7 +2020,7 @@
     if (!r.telefoons.length) delen.push(el('p', 'eerlijk', 'Nog geen telefoons gekoppeld.'));
     for (const t of r.telefoons) {
       const kaart = el('section', 'tegel taakTegel');
-      kaart.appendChild(el('h2', '', `${t.naam}${t.rol === 'baas' ? ' · 👑 Baas' : t.rol === 'werker' ? ' · Werker' : ''}${t.klasse ? ` · ${t.klasse === 'te-oud' ? 'te oud voor model' : t.klasse}` : ''}`));
+      kaart.appendChild(el('h2', '', `${t.naam}${t.rol === 'baas' ? ' · 🛠 Beheerder' : t.rol === 'werker' ? ' · Werker' : ''}${t.klasse ? ` · ${t.klasse === 'te-oud' ? 'te oud voor model' : t.klasse}` : ''}`));
       if (t.taak) kaart.appendChild(el('div', `taakRol rol-${t.taak.rol}`, `Rol: ${t.taak.naam}`));   // 481
       for (const regel of t.regels) {
         const rij = el('div', `taakRegel ${regel.mag ? 'mag' : 'magNiet'}`);

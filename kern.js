@@ -210,7 +210,9 @@
     else if (m.klaar) delen.push('motor aan, model klaar');
     else if (m.fase === 'fout') delen.push('motor aan, fout');
     else delen.push(`motor aan, ${m.fase === 'wacht' ? 'wacht op wifi en lader' : m.fase === 'zoeken' ? 'model zoeken' : m.fase === 'gepauzeerd' ? 'gepauzeerd' : m.fase}`);
-    delen.push(x.bezig === true ? 'bezig' : x.bezig === false ? 'rustig' : 'bezig onbekend');
+    // 495: de dagelijkse telefoon zegt het meteen: hij rust, of hij doet alleen nu mee (aan de lader, scherm uit).
+    if (x.dagelijks === 'rust') delen.push('dagelijkse telefoon, rust');
+    else delen.push(`${x.dagelijks === 'meedoen' ? 'dagelijkse telefoon, aan de lader · ' : ''}${x.bezig === true ? 'bezig' : x.bezig === false ? 'rustig' : 'bezig onbekend'}`);
     return { delen, tekst: delen.join(' · ') };
   }
   // 468: KLAAR VOOR DE EIGEN MOTOR? Een regel per telefoon die zegt wat al goed is en wat er nog moet gebeuren, uit
@@ -262,6 +264,7 @@
   function motorKandidaat(t, status, extra, nu) {
     if (!t || !t.jarvis || !status) return false;
     const vers = (x) => x && typeof x.t === 'number' && nu - x.t <= MAX_LEEFTIJD_MS;
+    if (vers(status.dagelijks) && status.dagelijks.waarde) return false;   // 495: de dagelijkse telefoon doet niet mee met 'alles koppelen'
     const mo = vers(status.motor) ? status.motor.waarde : null;
     if (mo && (mo.klaar === true || mo.aan === true)) return false;
     const cap = vers(status.capaciteit) ? status.capaciteit.waarde : null;
@@ -307,6 +310,7 @@
       inGebruik: meting(typeof x.inGebruik === 'boolean' ? x.inGebruik : null, bron, t),
       kernMeerekenen: meting(typeof x.kernMeerekenen === 'boolean' ? x.kernMeerekenen : null, bron, t),
       gespaard: meting(typeof x.gespaard === 'boolean' ? x.gespaard : null, bron, t),   // 481: de schuif Sparen op de telefoon
+      dagelijks: meting(x.dagelijks === 'rust' || x.dagelijks === 'meedoen' ? x.dagelijks : null, bron, t),   // 495: de dagelijkse telefoon (rust, of doet nu mee)
       capaciteit: meting(leesCapaciteit(x.capaciteit), bron, t),
       gemma: meting(leesGemma(x.gemma), bron, t),
       rol: meting(x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, bron, t),
@@ -322,7 +326,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.41';
+  const JARVIS_NIEUWSTE = '1.9.42';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -542,6 +546,13 @@
     const n = Number(String(t === undefined || t === null ? '' : t).trim().replace(',', '.'));
     return Number.isFinite(n) && n > 0 && n <= 5 ? Math.round(n * 1000) / 1000 : TARIEF_STANDAARD;
   }
+  // 495: LOKAAL EERST -- de prijs per miljoen tokens van een betaald model, alleen om te SCHATTEN wat lokaal werk scheelt.
+  // De beheerder stelt hem zelf in (alleen in deze browser); er wordt nergens een extern model aangeroepen.
+  const TOKENPRIJS_STANDAARD = 5;
+  function leesTokenprijs(t) {
+    const n = Number(String(t === undefined || t === null ? '' : t).trim().replace(',', '.'));
+    return Number.isFinite(n) && n >= 0 && n <= 200 ? Math.round(n * 100) / 100 : TOKENPRIJS_STANDAARD;
+  }
   const euro = (x) => `€ ${(Math.round(x * 100) / 100).toFixed(2).replace('.', ',')}`;
   // Een regel voor het verslag: "Nu 123 W · vandaag 0,80 kWh (€ 0,24) · totaal 4,56 kWh (€ 1,37) · tarief € 0,30 per kWh".
   function verbruikRegel(s, tarief) {
@@ -677,7 +688,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.46';
+  const VERONICA_VERSIE = '1.9.47';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1056,10 +1067,11 @@
   function rolZin(t, status, tijd) {
     const r = status && status.rol && tijd - status.rol.t <= MAX_LEEFTIJD_MS ? status.rol.waarde : null;
     const delen = [];
-    if (r === 'baas') delen.push('👑 Baas');
+    if (r === 'baas') delen.push('🛠 Beheerder');   // 495: de telefoon die de rij leidt heet beheerder; Veronica is de andere beheerder
     else if (r === 'werker') delen.push('Werker');
     // 481: de schuif Sparen. Veronica TOONT hem; omzetten kan alleen op de telefoon zelf.
     if (status && status.gespaard && status.gespaard.waarde === true && tijd - status.gespaard.t <= MAX_LEEFTIJD_MS) delen.push('🔋 Gespaard');
+    if (status && status.dagelijks && status.dagelijks.waarde && tijd - status.dagelijks.t <= MAX_LEEFTIJD_MS) delen.push('📱 Dagelijkse telefoon');   // 495
     if (t && PLEK_NAAM[t.plek]) delen.push(PLEK_NAAM[t.plek]);
     return delen.join(' · ') || 'rol onbekend';
   }
@@ -1300,7 +1312,7 @@
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
-    leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
+    leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
     isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

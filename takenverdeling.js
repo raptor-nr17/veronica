@@ -65,8 +65,9 @@
   // telefoon: { naam, adres, kern, rol ('baas'|'werker'|null), klasse, klasseReden, modelGeladen, motorKlaar, bereikbaar, vervangen, hitteStand, rust, magRekenen }
   function regelsVoor(t, keuzes) {
     // 481: gespaard (de schuif op de telefoon) = geen enkel werk; vast, want alleen de telefoon zelf zet hem om.
-    if (t.gespaard === true) {
-      const r = 'gespaard: de schuif Sparen op de telefoon staat aan (alleen jouw eigen vragen)';
+    // 495: de dagelijkse telefoon die rust: hetzelfde, met zijn eigen reden.
+    if (t.gespaard === true || t.dagelijks === true) {
+      const r = t.dagelijks === true && t.gespaard !== true ? 'dagelijkse telefoon, rust: rekent alleen aan de lader met het scherm uit, als dat op de telefoon aan staat' : 'gespaard: de schuif Sparen op de telefoon staat aan (alleen jouw eigen vragen)';
       return SOORTEN.map((x) => ({ soort: x.soort, naam: x.naam, mag: x.soort === 'bewaker', vast: true, reden: x.soort === 'bewaker' ? 'let op temperatuur en accu; geen model nodig' : r }));
     }
     const teOud = t.klasse === 'te-oud';
@@ -95,21 +96,22 @@
   }
 
   // 481: per telefoon EEN rol (zie bovenaan). Een te oude, een vervangen of een onbereikbare telefoon wordt nooit denker.
-  const ROL_NAAM = Object.freeze({ gespaard: 'Gespaard', denker: 'Denker', geheugen: 'Geheugen', werker: 'Werker', handjes: 'Handjes (alleen browser)', weg: 'Weg' });
+  const ROL_NAAM = Object.freeze({ gespaard: 'Gespaard', dagelijks: 'Dagelijkse telefoon, rust', denker: 'Denker', geheugen: 'Geheugen', werker: 'Werker', handjes: 'Handjes (alleen browser)', weg: 'Weg' });
   const KLASSE_RANG = { zwaar: 0, midden: 1, licht: 2 };
   function rollen(telefoons) {
     const lijst = Array.isArray(telefoons) ? telefoons : [];
     const uit = {};
     const weg = (t) => t.vervangen || t.bereikbaar === false;
     const model = (t) => t.modelGeladen === true || t.motorKlaar === true;
-    const kanDenken = lijst.filter((t) => !weg(t) && t.gespaard !== true && t.klasse !== 'te-oud' && model(t) && t.klasse in KLASSE_RANG);
+    const kanDenken = lijst.filter((t) => !weg(t) && t.gespaard !== true && t.dagelijks !== true && t.klasse !== 'te-oud' && model(t) && t.klasse in KLASSE_RANG);
     kanDenken.sort((a, b) => KLASSE_RANG[a.klasse] - KLASSE_RANG[b.klasse] || String(a.naam).localeCompare(String(b.naam)));
     const denker = kanDenken[0] || null;
-    const geheugen = lijst.find((t) => !weg(t) && t.gespaard !== true && t.geheugenKlaar === true && t !== denker) || null;
+    const geheugen = lijst.find((t) => !weg(t) && t.gespaard !== true && t.dagelijks !== true && t.geheugenKlaar === true && t !== denker) || null;
     for (const t of lijst) {
       let rol;
       if (weg(t)) rol = 'weg';
       else if (t.gespaard === true) rol = 'gespaard';
+      else if (t.dagelijks === true) rol = 'dagelijks';   // 495
       else if (t === denker) rol = 'denker';
       else if (t === geheugen) rol = 'geheugen';
       else if (t.klasse === 'te-oud' || (typeof t.sdk === 'number' && t.sdk < 29)) rol = 'handjes';
