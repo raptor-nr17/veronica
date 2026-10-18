@@ -197,8 +197,13 @@
     if (!m) return 'eigen motor: onbekend';
     if (m.teOud) return 'te oud voor de eigen motor';
     const delen = [m.aan ? 'motor aan' : 'motor uit'];
+    // 505: per fase een zin, zodat je ziet waar hij op wacht (de reden zelf reist niet mee in de hartslag).
     if (m.klaar) delen.push(`model binnen${m.backend ? ` (${m.backend})` : ''}`);
     else if (m.fase === 'downloaden') delen.push(`model ophalen: ${m.procent || 0}%`);
+    else if (m.fase === 'zoeken') delen.push('zoekt het model op');
+    else if (m.fase === 'laden') delen.push('model wordt geladen');
+    else if (m.fase === 'gepauzeerd') delen.push('gepauzeerd');
+    else if (m.fase === 'fout') delen.push('liep vast (wordt opnieuw geprobeerd)');
     else if (m.aan) delen.push('model nog niet binnen (komt op wifi aan de lader)');
     const p = m.proef;
     if (p && p.ok && p.tps) delen.push(`${String(p.tps).replace('.', ',')} tokens/s`);
