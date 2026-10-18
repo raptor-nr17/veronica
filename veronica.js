@@ -158,9 +158,59 @@
   async function haal(url, init, ms) {
     const ctrl = new AbortController();
     const klok = setTimeout(() => ctrl.abort(), ms || 3000);
+    let r = null, fout = null;
     try {
-      return await fetch(url, Object.assign({ cache: 'no-store', signal: ctrl.signal }, K.lnaOpties(url), init || {}));
-    } finally { clearTimeout(klok); }
+      r = await fetch(url, Object.assign({ cache: 'no-store', signal: ctrl.signal }, K.lnaOpties(url), init || {}));
+    } catch (e) { fout = e; } finally { clearTimeout(klok); }
+    // 500: een ROEP die over het wifi niet aankwam (geen antwoord) gaat via de brievenbus naar diezelfde telefoon.
+    if (fout && /\/jarvis\/roep$/.test(String(url)) && init && init.method === 'POST') {
+      const via = await roepViaBrievenbus(url, init.body);
+      if (via) return via;
+    }
+    if (fout) throw fout;
+    return r;
+  }
+  // ---- 500: DE HARTSLAG EN DE ROEP VIA DE BRIEVENBUS (hartslag.js, byte-gelijk met JARVIS) ----
+  // HB: per toestel-id de laatste hartslag. Komt via dezelfde ene verbinding als de ledenbrief (ledenStroom).
+  const HB = { per: {}, viaPost: 0 };
+  function hartslagVoorAdres(adres) {
+    let host = '';
+    try { host = new URL(adres).hostname; } catch (e) { return null; }
+    let beste = null;
+    for (const h of Object.values(HB.per)) if (h.adressen.includes(host) && (!beste || h.t > beste.t)) beste = h;
+    if (beste) return beste;
+    const lid = LB.brief && LB.brief.leden.find((l) => l.host === host);
+    return lid && lid.id && HB.per[lid.id] ? HB.per[lid.id] : (lid && lid.id ? { id: lid.id, naam: lid.naam } : null);
+  }
+  async function roepViaBrievenbus(url, lijf) {
+    const o = S.ntfy && S.ntfy.onderwerp;
+    if (!o || !S.code || !window.Hartslag || volLokaal()) return null;
+    let d;
+    try { d = JSON.parse(String(lijf || '{}')); } catch (e) { return null; }
+    const h = hartslagVoorAdres(url);
+    const naar = h && h.id ? h.id : (window.Hartslag.VOOR_IEDEREEN.includes(d.soort) ? '*' : null);
+    if (!naar) return null;
+    const v = await window.Hartslag.roepVerzoek(o, Object.assign({}, d, { naar }), S.code, nu());
+    if (!v) return null;
+    try {
+      const r = await fetch(v.url, { method: 'POST', body: v.data, cache: 'no-store' });
+      if (!r.ok) return null;
+    } catch (e) { return null; }
+    HB.viaPost += 1;
+    logRegel(`Over het wifi kwam ${d.soort} niet aan bij ${h && h.naam ? h.naam : 'de telefoons'}; ik legde het in de brievenbus. De telefoon haalt het binnen een minuut op.`);
+    const antwoord = { ok: true, brievenbus: true, zin: 'Via de brievenbus: de telefoon haalt het binnen een minuut op.' };
+    return { ok: true, status: 202, brievenbus: true, json: async () => antwoord, text: async () => JSON.stringify(antwoord) };
+  }
+  async function hartslagRegel(o, regel) {
+    if (!window.Hartslag) return false;
+    const h = await window.Hartslag.leesHartslag(o, regel);
+    if (!h) return false;
+    const oud = HB.per[h.id];
+    if (oud && oud.t >= h.t) return true;
+    HB.per[h.id] = h;
+    await Opslag.schrijf('hartslagen', HB.per);
+    try { tekenLive(); } catch (e) { /* de volgende keer */ }
+    return true;
   }
   const kop = (t) => (t.sleutel ? { Authorization: `Bearer ${t.sleutel}` } : {});
   // 1.9.13 (punt 7): een vraag die misging, en dan nakijken WAT er mis is: is de telefoon er wel?
@@ -332,8 +382,9 @@
     try {
       const topic = await K.ledenOnderwerp(o);
       if (!topic) return;
+      const hartTopic = window.Hartslag ? await window.Hartslag.onderwerp(o, 'hartslag') : null;   // 500: de hartslagen op dezelfde verbinding
       const sinds = Math.floor(nu() / 1000) - 12 * 3600;
-      const r = await fetch(K.briefStroomUrl([topic], sinds), { signal: st.ctrl.signal, cache: 'no-store' });
+      const r = await fetch(K.briefStroomUrl(hartTopic ? [topic, hartTopic] : [topic], sinds), { signal: st.ctrl.signal, cache: 'no-store' });
       if (!r.ok) fout = true;
       else if (r.body && r.body.getReader) {
         const lezer = r.body.getReader(), dec = new TextDecoder();
@@ -355,6 +406,7 @@
     }
   }
   async function ledenRegel(o, regel) {
+    if (await hartslagRegel(o, regel)) return;   // 500
     const b = await K.leesLedenBrief(o, regel);
     if (!b || (LB.brief && b.t <= LB.brief.t)) return;
     LB.brief = b;
@@ -370,7 +422,7 @@
   async function rondvragen(dwing) {
     if (!S.code || (!dwing && nu() - rondT < 15000)) return;
     rondT = nu();
-    const lijst = K.metLedenBrief(K.rondvraagLijst(S), LB.brief, nu());   // 482: de adressen uit de ledenbrief van de baas eerst
+    const lijst = K.metHartslagen(K.metLedenBrief(K.rondvraagLijst(S), LB.brief, nu()), HB.per, nu());   // 482: de ledenbrief eerst; 500: verse hartslagen nog daarvoor
     let gevonden = null;
     for (let i = 0; i < lijst.length && !gevonden; i += 4) {
       const uit = await Promise.all(lijst.slice(i, i + 4).map(async (a) => {
@@ -384,7 +436,7 @@
       // Die zoeker zet zijn eigen zin in hetzelfde vak; zolang hij loopt blijft die staan.
       // 482: met een VERSE ledenbrief zoekt ze niets af: de baas zei net waar iedereen zit. Antwoordt dan niemand, dan zit
       // deze computer op een ander netwerk; afzoeken helpt daar niet.
-      if (gekoppeld() && !HZ.bezig && !K.ledenBriefVers(LB.brief, nu()) && nu() - stilSinds >= HZ.NA_MS && nu() - HZ.laatst >= HZ.TUSSEN_MS) { herstelZoek(); return; }
+      if (gekoppeld() && !HZ.bezig && !K.ledenBriefVers(LB.brief, nu()) && nu() - stilSinds >= HZ.NA_MS && nu() - HZ.laatst >= HZ.TUSSEN_MS && !K.hartslagVers(HB.per, nu())) { herstelZoek(); return; }
       if (HZ.bezig) return;
       const u = K.vindUitleg({ gekoppeld: !!S.code, bereikbaar: 0, stilMs: nu() - stilSinds, geprobeerd: lijst.length });
       if (v) { v.textContent = u; v.hidden = !u; }
@@ -1386,6 +1438,14 @@
           versie: vers(st.versie), nieuwste: K.nieuwsteVersie(S.telefoons.map((y) => ((meet(y.adres).status || {}).versie || {}).waarde)),
           motor: vers(st.motor), bezig, dagelijks: vers(st.dagelijks) });
         tegel.appendChild(el('div', 'tOverzicht', ov.tekst));
+      }
+      if (window.Hartslag) {
+        // 500: wat de telefoon ZELF via de brievenbus meldde (ook als het wifi hem niet bij Veronica brengt): laatst gezien,
+        // versie, adres, en waarom hij niet antwoordt; plus motor, model, tempo en warmte.
+        const h = (t.id && HB.per[t.id]) || hartslagVoorAdres(t.adres);
+        const echt = h && h.t ? h : null;
+        tegel.appendChild(el('div', 'tHartslag', window.Hartslag.diagnose(echt, { antwoordt: s.bereikbaar === true ? true : (s.bereikbaar === false ? false : null) }, tijd)));
+        if (echt) tegel.appendChild(el('div', 'tMotorRegel', window.Hartslag.motorZin(echt)));
       }
       tegel.appendChild(el('div', 'tRol', K.rolZin(t, m.status, tijd)));
       // 452: welke JARVIS draait er, en loopt hij achter? Alleen als de telefoon zijn versie vers meldde.
@@ -3415,6 +3475,7 @@
       S.bekend = (await Opslag.lees('bekend')) || [];
       S.ntfy = K.leesNtfy(await Opslag.lees('ntfy'));
       { const b = await Opslag.lees('ledenbrief'); if (b && Array.isArray(b.leden)) LB.brief = b; }   // 482
+      { const hs = await Opslag.lees('hartslagen'); if (hs && typeof hs === 'object') HB.per = hs; }   // 500
       if (window.Nachtlog) S.nachtlog = window.Nachtlog.leesLijst(await Opslag.lees('nachtlog'), NACHT_MAX);   // 483
       Wand.auto = (await Opslag.lees('wandAuto')) !== false;
       S.spraak = Object.assign(S.spraak, (await Opslag.lees('spraak')) || {});
@@ -3571,7 +3632,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
