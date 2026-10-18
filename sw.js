@@ -3,7 +3,7 @@
 // DE VERSIE IS EEN VINGERAFDRUK VAN DE BESTANDEN (sha256, eerste 12 tekens). Verandert er iets,
 // dan verandert deze naam, en laadt elke Chromebook vanzelf de nieuwe versie. Een test in de
 // privé-repo eist dat hij klopt (check_veronica.js zegt welke waarde hij moet hebben).
-const VERSIE = 'veronica-c1a2115edcaf';
+const VERSIE = 'veronica-7c0f42b35650';
 const BESTANDEN = ['./index.html', './pool.js', './prive-zoek.js', './zoekkassa.js', './zoekmulti.js', './zoeken.js', './zoekgeheugen.js', './verslag.js', './takenverdeling.js', './nulmeting.js', './nachtlog.js', './afnemers.js', './zelftest.js', './kern.js', './qrcode.js', './jsQR.js', './meters.js', './prive-hoek.js', './prive-model.js', './prive-hoek-ui.js', './veronica.js', './manifest.webmanifest', './icoon-192.png', './icoon-512.png'];
 self.addEventListener('install', (e) => {
   // cache: 'reload' = echt van de server, niet uit de browsercache (anders kan een nieuwe versie

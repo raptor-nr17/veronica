@@ -313,6 +313,7 @@
     if (Array.isArray(d.nachtlog)) neemNachtlogOver(d.nachtlog);   // 483
     S.nalees = K.leesNalees(d.nalees); tekenNalees();   // 483
     S.afnemers = window.Afnemers ? window.Afnemers.lees(d.afnemers) : null; S.samen = K.leesSamenwerken(d.samenwerken); tekenSamenwerken();   // 485
+    S.nieuwKoppel = K.leesNieuwKoppel(d.nieuwKoppel); tekenNieuwKoppel();   // 494
   }
   // 482 (17 oktober): DE LEDENBRIEF. De baas legt de leden met hun adressen versleuteld klaar op de brievenbus (ntfy), met het
   // geheime ntfy-onderwerp van de rij als sleutel (kern.js, leesLedenBrief). EEN doorlopende verbinding (449: nooit vragen in
@@ -1749,6 +1750,42 @@
     if (!lijst.length && !vak.querySelector('.samenLeeg')) vak.appendChild(el('p', 'tBron samenLeeg', 'Geen voorstellen die op jou wachten.'));
     if (lijst.length) for (const x of [...vak.querySelectorAll('.samenLeeg')]) x.remove();
   }
+  // 494: EEN NIEUWE TELEFOON TOELATEN vanaf de Chromebook. De nieuwe telefoon vroeg het zelf via Bluetooth; hier staat dezelfde vraag
+  // als op de baas, met het getal. "Laat toe" = EEN roep 'nieuw-koppel' met de code; de baas geeft dan pas het koppelpakket.
+  const NkV = { verstuurd: {} };
+  function tekenNieuwKoppel() {
+    const vak = $('nieuwKoppelBlok');
+    if (!vak) return;
+    const lijst = (S.nieuwKoppel || []).filter((w) => !NkV.verstuurd[w.id]);
+    vak.hidden = !lijst.length;
+    morphKinderen($('nieuwKoppelLijst'), lijst.map((w) => {
+      const k = el('div', 'nkKaart');
+      k.dataset.nk = w.id;
+      k.appendChild(el('p', '', `${w.wie} wil meedoen. Staat op die telefoon het getal ${w.getal}? Dan: Laat toe.`));
+      const ja = el('button', '', 'Laat toe'); ja.dataset.nkBesluit = 'ja';
+      const nee = el('button', 'tweede', 'Niet'); nee.dataset.nkBesluit = 'nee';
+      k.append(ja, nee, el('p', 'klein', ''));
+      return k;
+    }));
+  }
+  async function stuurNieuwKoppel(kaart, besluit) {
+    const id = kaart.dataset.nk;
+    const zin = kaart.querySelector('p.klein');
+    const kern = kernNu();
+    if (!kern || !S.code) { zin.textContent = 'Geen baas-telefoon bereikbaar. Tik op de baas zelf op OK.'; return; }
+    zin.textContent = 'Even...';
+    try {
+      const r = await haal(`${kern}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'nieuw-koppel', van: 'veronica', id, besluit }) }, 4000);
+      if (!r.ok) { zin.textContent = `De baas-telefoon gaf ${r.status}. Probeer het nog eens.`; return; }
+      NkV.verstuurd[id] = besluit;
+      logRegel(besluit === 'ja' ? 'Nieuwe telefoon toegelaten. Hij koppelt nu zelf en richt zich in.' : 'Nieuwe telefoon niet toegelaten.');
+      tekenNieuwKoppel();
+    } catch (e) { zin.textContent = 'De baas-telefoon antwoordt niet. Tik op de baas zelf op OK.'; }
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-nk-besluit]') : null;
+    if (b) stuurNieuwKoppel(b.closest('[data-nk]'), b.dataset.nkBesluit).catch(() => {});
+  });
   async function stuurVoorstelOordeel(kaart, besluit) {
     const id = kaart.dataset.voorstel;
     const zin = kaart.querySelector('p.klein');
@@ -3358,7 +3395,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
