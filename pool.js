@@ -73,6 +73,9 @@
   const MIN_RAM_GB = 4;            // 462: NOMINAAL (zoals op de doos). Onder de 4 GB past ook een model van 1 GB niet meer fatsoenlijk.
   const MIN_VRIJ_GB = 3;
   const MIN_VRIJ_KLEIN_GB = 1;   // 507
+  // 510: een toestel van 4 GB meldt soms maar 3,3-3,4 GB en viel daardoor net onder 0,86 x 4: "te oud", nooit werk, ook niet
+  // de proef, terwijl de lichte motor er gewoon op draait. Vanaf 3,2 GB GEMELD is het licht: een doos van 3 GB meldt tot ~3,0.
+  const LICHTE_MOTOR_MIN_GB = 3.2;
   const getal = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   // 462: GEMETEN GEHEUGEN IS NIET HET GEHEUGEN OP DE DOOS. Android meldt (totalMem) ongeveer: 4 GB -> 3,6; 6 GB -> 5,5; 8 GB -> 7,4; 12 GB -> 11,2.
   // Zonder omrekenen was een telefoon van 12 GB nooit ZWAAR, een van 8 GB nooit MIDDEN en een van 6 GB TE OUD. nominaalGb() zoekt de grootste
@@ -91,7 +94,7 @@
     const ram = nominaalGb(x.ramGb); const tps = getal(x.tps); const vrij = getal(x.vrijGb);
     const model = /e4b/i.test(x.model || '') ? 'E4B' : /e2b/i.test(x.model || '') ? 'E2B' : null;
     if (x.arm64 === false) return { klasse: 'te-oud', reden: 'geen 64-bits ARM', zin: 'te oud voor model', model: null };
-    if (ram !== null && ram < MIN_RAM_GB) return { klasse: 'te-oud', reden: `${Math.round(ram * 10) / 10} GB RAM (minimaal ${MIN_RAM_GB})`, zin: 'te oud voor model', model: null };
+    if (ram !== null && ram < MIN_RAM_GB && !(getal(x.ramGb) >= LICHTE_MOTOR_MIN_GB)) return { klasse: 'te-oud', reden: `${Math.round(ram * 10) / 10} GB RAM (minimaal ${MIN_RAM_GB})`, zin: 'te oud voor model', model: null };
     // 507: een telefoon van 4 GB krijgt het KLEINE model (de lichte motor, ~0,3-0,8 GB): daar is 1 GB vrij genoeg
     const minVrij = ram !== null && ram < 6 ? MIN_VRIJ_KLEIN_GB : MIN_VRIJ_GB;
     if (vrij !== null && vrij < minVrij && x.modelGeladen !== true) return { klasse: 'te-oud', reden: `${String(Math.round(vrij * 10) / 10).replace('.', ',')} GB vrij, ${minVrij} GB nodig voor het model: maak nog ${String(Math.ceil((minVrij - vrij) * 10) / 10).replace('.', ',')} GB vrij (verwijder apps, foto's of video's op die telefoon)`, zin: 'te oud voor model (te weinig ruimte)', model: null };
