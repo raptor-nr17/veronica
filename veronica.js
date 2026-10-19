@@ -173,6 +173,7 @@
   // ---- 500: DE HARTSLAG EN DE ROEP VIA DE BRIEVENBUS (hartslag.js, byte-gelijk met JARVIS) ----
   // HB: per toestel-id de laatste hartslag. Komt via dezelfde ene verbinding als de ledenbrief (ledenStroom).
   const HB = { per: {}, viaPost: 0 };
+  const NtfyGeefV = { per: {}, mijn: null, mijnVan: '' };   // 508: wie kreeg wanneer de brievenbus van Veronica (zie geefNtfy)
   function hartslagVoorAdres(adres) {
     let host = '';
     try { host = new URL(adres).hostname; } catch (e) { return null; }
@@ -273,6 +274,7 @@
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         m.status = K.leesStatus(await r.json(), nu());
       } catch (e) { m.jarvisNietTot = nu() + 60000; }   // geen JARVIS (of even weg): een minuut niet vragen
+      geefNtfy(t, m.status).catch(() => {});   // 508: een andere of geen brievenbus = de hare geven
     }
     // 460b: OlliteRT zwijgt maar de EIGEN MOTOR van JARVIS is klaar -> dan gaat deze telefoon voortaan via de motor (poort uit de melding,
     // de rij-code als sleutel). Een telefoon die al op zijn motor staat wordt gewoon via de motor gemeten.
@@ -1453,7 +1455,10 @@
         // versie, adres, en waarom hij niet antwoordt; plus motor, model, tempo en warmte.
         const h = (t.id && HB.per[t.id]) || hartslagVoorAdres(t.adres);
         const echt = h && h.t ? h : null;
-        tegel.appendChild(el('div', 'tHartslag', window.Hartslag.diagnose(echt, { antwoordt: s.bereikbaar === true ? true : (s.bereikbaar === false ? false : null) }, tijd)));
+        // 508: JARVIS die vers antwoordt op /jarvis/status IS over het wifi bereikbaar, ook als zijn model (nog) zwijgt
+        const wifiJ = jarvisVers(meet(t.adres).status, tijd);
+        const bb = ((meet(t.adres).status || {}).brievenbus || {}).waarde || null;
+        tegel.appendChild(el('div', 'tHartslag', window.Hartslag.diagnose(echt, { antwoordt: s.bereikbaar === true || wifiJ ? true : (s.bereikbaar === false ? false : null), uitleg: K.brievenbusUitleg(bb, NtfyGeefV.mijn) }, tijd)));
         if (echt) tegel.appendChild(el('div', 'tMotorRegel', window.Hartslag.motorZin(echt)));
         // 501: de motor-instellingen die nu gelden, in gewone taal, en een knop om ze voor deze telefoon aan te passen
         if (echt && echt.instel && window.MotorInstel) {
@@ -1560,7 +1565,8 @@
       const olZin = olGm && olGm.ollite && olGm.ollite.toestand !== 'klaar' && olGm.ollite.toestand !== 'onbekend' ? olGm.ollite.zin : null;
       const jarvisOnbekendeReden = !s.bereikbaar && !olZin && jarvisVers(m.status, tijd) ? `JARVIS antwoordt wel, maar OlliteRT niet. ${oudeJarvisZin(m.status)}` : null;
       const hsT = (() => { const h = (t.id && HB.per[t.id]) || hartslagVoorAdres(t.adres); return h && h.t ? h.t : 0; })();
-      const nietHier = !s.bereikbaar && hsT ? `geen directe wifi-verbinding · laatst gezien ${window.Hartslag ? window.Hartslag.minutenZin(tijd - hsT) : ''} via de brievenbus` : null;   // 502/503
+      const jarvisWifi = jarvisVers(m.status, tijd);   // 508: JARVIS antwoordt over het wifi; alleen het model (nog) niet
+      const nietHier = !s.bereikbaar && jarvisWifi ? 'JARVIS antwoordt over het wifi; het model nog niet' : !s.bereikbaar && hsT ? `geen directe wifi-verbinding · laatst gezien ${window.Hartslag ? window.Hartslag.minutenZin(tijd - hsT) : ''} via de brievenbus` : null;   // 502/503
       const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : (!s.bereikbaar && olZin ? olZin : (jarvisOnbekendeReden || nietHier || `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`));
       const installeerKans = !s.bereikbaar && (!olGm || !olGm.ollite || olGm.ollite.toestand === 'niet-geinstalleerd' || olGm.ollite.toestand === 'onbekend');
       tegel.appendChild(el('div', `tBereik${s.bereikbaar && !oud ? '' : ' oud'}`, bereik));
@@ -1843,6 +1849,26 @@
     if (!VastV.klok) VastV.klok = setInterval(tekenVast, 60000);
     try { if (goed) $('kaartVast').scrollIntoView({ block: 'start' }); } catch (e) { /* geen scherm */ }
     return goed;
+  }
+  // 508: GEEN HARTSLAG TERWIJL JARVIS WEL ANTWOORDT. Een telefoon die de beheerder niet ziet (gastnetwerk) maakt als waarnemend baas
+  // een EIGEN brievenbus-onderwerp; een telefoon die voor de brievenbus gekoppeld werd kent er geen. Dan gaat zijn hartslag ergens heen
+  // waar Veronica niet luistert. JARVIS 1.9.48 meldt een vingerafdruk; wijkt die af (of is er geen), dan geeft Veronica EEN keer per
+  // half uur haar onderwerp, met de code, over het wifi (roep 'ntfy'). Het onderwerp zelf staat nooit open in /jarvis/status.
+  async function geefNtfy(t, st) {
+    const b = st && st.brievenbus && st.brievenbus.waarde;
+    const o = S.ntfy && S.ntfy.onderwerp;
+    if (!b || !o || !S.code || !t || !t.jarvis || !window.Hartslag) return false;
+    if (NtfyGeefV.mijnVan !== o) { NtfyGeefV.mijn = await window.Hartslag.vinger(o); NtfyGeefV.mijnVan = o; }
+    if (b.onderwerp && b.vinger === NtfyGeefV.mijn) return false;
+    if (nu() - (NtfyGeefV.per[t.adres] || 0) < 30 * 60000) return false;
+    NtfyGeefV.per[t.adres] = nu();
+    let ok = false;
+    try {
+      ok = (await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code },
+        body: JSON.stringify({ soort: 'ntfy', van: 'veronica', ntfy: { onderwerp: o, aan: S.ntfy.aan !== false, stil: S.ntfy.stil } }) }, 3000)).ok;
+    } catch (e) { ok = false; }
+    if (ok) logRegel(`${t.naam} ${b.onderwerp ? 'gebruikte een andere brievenbus' : 'kende de brievenbus nog niet'}; ik gaf hem de mijne. Zijn hartslag komt nu bij mij aan.`);
+    return ok;
   }
   // Een roep naar EEN telefoon (op zijn id) via de brievenbus. true = afgeleverd bij ntfy.
   async function roepNaarId(id, roep) {
@@ -3789,7 +3815,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

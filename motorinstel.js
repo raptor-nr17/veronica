@@ -16,8 +16,13 @@
 }(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const MODELLEN = ['auto', 'E2B', 'E4B'];
+  const MODELLEN = ['auto', 'E2B', 'E4B', 'klein'];
   const GPU_MIN_RAM_MB = 11000;   // gelijk aan JarvisMotorKern.GPU_MIN_RAM_MB: daaronder nooit GPU en nooit E4B
+  // 507: de lichte motor. Onder MIN_RAM_MB (JarvisMotorKern, 5200: een telefoon van 4-5 GB) krijgt een telefoon het KLEINE model,
+  // met weinig draden en een kleine context; een wens kan dat niet verruimen (JarvisMotorKern.kleinDraden/kleinContext).
+  const GROOT_MIN_RAM_MB = 5200;
+  const KLEIN = { draden: 2, dradenMax: 4, context: 1024, contextMax: 2048 };
+  const isKlein = (ram) => ram > 0 && ram < GROOT_MIN_RAM_MB;
   const GRENS = { draden: [1, 8], context: [1024, 8192], temp: [0, 1.5], denk: [0, 4096], accuMin: [20, 95], tempMax: [30, 45] };
   const binnen = (x, [min, max], std) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : std);
 
@@ -26,6 +31,10 @@
   function standaard(cap) {
     const c = cap || {};
     const ram = Number(c.ramMb) || 0;
+    if (isKlein(ram)) {   // 507
+      return { bron: 'standaard', model: 'klein', gpu: false, draden: KLEIN.draden, context: KLEIN.context, temp: 0.4, denk: 0,
+        accuMin: c.dagelijks ? 80 : 50, tempMax: c.dagelijks ? 35 : 38, alleenLader: !!c.dagelijks };
+    }
     if (c.dagelijks) {
       return { bron: 'standaard', model: ram >= GPU_MIN_RAM_MB ? 'E4B' : 'E2B', gpu: ram >= GPU_MIN_RAM_MB, draden: 4, context: 4096, temp: 0.4, denk: 0,
         accuMin: 80, tempMax: 35, alleenLader: true };
@@ -40,12 +49,15 @@
     const ram = Number((cap || {}).ramMb) || 0;
     let model = MODELLEN.includes(x.model) ? x.model : s.model;
     if (model === 'E4B' && ram && ram < GPU_MIN_RAM_MB) model = 'E2B';   // past niet: geen 4 GB-model op een telefoon van 8 GB
+    const klein = isKlein(ram);   // 507: op een kleine telefoon ALTIJD het kleine model; op een grote telefoon bestaat 'klein' niet
+    if (klein) model = 'klein';
+    else if (model === 'klein') model = s.model;
     return {
       bron: x.bron === 'veronica' ? 'veronica' : 'standaard',
       model,
-      gpu: typeof x.gpu === 'boolean' ? (x.gpu && (!ram || ram >= GPU_MIN_RAM_MB)) : s.gpu,
-      draden: Math.round(binnen(x.draden, GRENS.draden, s.draden)),
-      context: Math.round(binnen(x.context, GRENS.context, s.context) / 256) * 256,
+      gpu: klein ? false : typeof x.gpu === 'boolean' ? (x.gpu && (!ram || ram >= GPU_MIN_RAM_MB)) : s.gpu,
+      draden: Math.round(binnen(x.draden, klein ? [1, KLEIN.dradenMax] : GRENS.draden, s.draden)),
+      context: Math.round(binnen(x.context, klein ? [GRENS.context[0], KLEIN.contextMax] : GRENS.context, s.context) / 256) * 256,
       temp: Math.round(binnen(x.temp, GRENS.temp, s.temp) * 100) / 100,
       denk: Math.round(binnen(x.denk, GRENS.denk, s.denk)),
       accuMin: Math.round(binnen(x.accuMin, GRENS.accuMin, s.accuMin)),
@@ -64,7 +76,8 @@
   }
 
   // Wat de motor moet weten (JarvisNet.motorZet): alleen dit, zodat een verandering in de grenzen hem niet opnieuw laat laden.
-  function voorMotor(i) { return { gpu: !!i.gpu, instel: { model: i.model, draden: i.draden, context: i.context, temp100: Math.round(i.temp * 100) } }; }
+  // 507: 'klein' kent de motor niet als wens: hij kiest het kleine model zelf op het geheugen ('auto').
+  function voorMotor(i) { return { gpu: !!i.gpu, instel: { model: i.model === 'klein' ? 'auto' : i.model, draden: i.draden, context: i.context, temp100: Math.round(i.temp * 100) } }; }
 
   // In gewone taal: "E2B op de CPU · 4 draden · 4096 tokens · temperatuur 0,4 · denken uit · pauze onder 50% accu of boven 38 °C
   // (standaard voor deze telefoon)". toegepast = { draden, temperatuur } van de motor (false = deze motorversie nam het niet aan).
@@ -73,7 +86,7 @@
     const t = toegepast || {};
     const komma = (x) => String(x).replace('.', ',');
     const delen = [
-      `${i.model === 'auto' ? 'model naar geheugen' : i.model} op de ${i.gpu ? 'GPU' : 'CPU'}`,
+      `${i.model === 'auto' ? 'model naar geheugen' : i.model === 'klein' ? 'klein model (lichte motor)' : i.model} op de ${i.gpu ? 'GPU' : 'CPU'}`,
       `${i.draden} draden${t.draden === false ? ' (niet aangenomen door deze motor)' : ''}`,
       `${i.context} tokens`,
       `temperatuur ${komma(i.temp)}${t.temperatuur === false ? ' (niet aangenomen door deze motor)' : ''}`,
@@ -83,5 +96,5 @@
     return `Instellingen: ${delen.join(' · ')} (${i.bron === 'veronica' ? 'gekozen in Veronica' : 'standaard voor deze telefoon'}).`;
   }
 
-  return { MODELLEN, GRENS, GPU_MIN_RAM_MB, standaard, schoon, grensReden, voorMotor, zin };
+  return { MODELLEN, GRENS, GPU_MIN_RAM_MB, GROOT_MIN_RAM_MB, KLEIN, standaard, schoon, grensReden, voorMotor, zin };
 }));

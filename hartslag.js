@@ -43,6 +43,12 @@
     const voor = soort === 'roep' ? 'veronica-roep:' : 'veronica-hartslag:';
     return (soort === 'roep' ? 'vr' : 'vh') + naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes(voor + o))).slice(0, 30);
   }
+  // 508: een korte VINGERAFDRUK van het geheime onderwerp (8 tekens van een hash). Een telefoon zet hem open in /jarvis/status, zodat
+  // Veronica ziet of hij dezelfde brievenbus gebruikt als zij, zonder dat het onderwerp zelf ooit open op het wifi staat.
+  async function vinger(o, c) {
+    if (!ONDERWERP_RE.test(String(o || ''))) return null;
+    return naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes('brievenbus-vinger:' + o))).slice(0, 8);
+  }
   async function sleutel(o, soort, gebruik, c) {
     const sub = cryptoNu(c).subtle;
     const raw = await sub.digest('SHA-256', tekstBytes((soort === 'roep' ? 'veronica-roep-sleutel:' : 'veronica-hartslag-sleutel:') + o));
@@ -94,6 +100,12 @@
         backend: schoon(m.backend, 10),
         tps: getal(m.tps, 0, 1000),
         teOud: m.teOud === true,
+        // 507: welk model (bestandsnaam zonder .litertlm), welke soort (klein = de lichte motor) en wat de app ECHT aan geheugen
+        // gebruikt met het model geladen (PSS) en hoeveel er nog vrij is. Alleen getallen en een naam; geen inhoud.
+        model: schoon(String(m.model || '').replace(/\.litertlm$/i, ''), 60),
+        soort: ['zwaar', 'groot', 'klein', 'te-oud'].includes(m.soort) ? m.soort : '',
+        procesMb: getal(m.procesMb, 0, 20000),
+        vrijMb: getal(m.vrijMb, 0, 64000),
         proef: p ? { ok: p.ok === true, tps: getal(p.tps, 0, 1000), ms: getal(p.ms, 0, 600000), t: Math.floor(Number(p.t) || 0), temp: getal(p.temp, -20, 90), zin: schoon(p.zin, 120) } : null,
       } : null,
       // 501: de motor-instellingen die nu gelden (motorinstel.js), en of de motor draden en temperatuur aannam
@@ -117,7 +129,8 @@
     const d = schoonHartslag(h);
     const m = d.motor || {};
     const i = d.instel || {};
-    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, d.laadt, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0,
+    // 507: het geheugengebruik telt NIET mee (dat schommelt; anders een hartslag per kleine verandering), het model wel
+    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, d.laadt, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
       i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast].join('|');
   }
   function hartslagNodig(o) {
@@ -180,7 +193,7 @@
   function diagnose(h, wifi, nuMs) {
     const w = wifi || {};
     if (!h) {
-      if (w.antwoordt === true) return 'Antwoordt over het wifi. (Nog geen hartslag via de brievenbus: dat kan pas vanaf JARVIS 1.9.46.)';
+      if (w.antwoordt === true) return `Antwoordt over het wifi. ${w.uitleg || '(Nog geen hartslag via de brievenbus: dat kan pas vanaf JARVIS 1.9.46.)'}`;   // 508: de reden als de telefoon die meldt
       return 'Nog geen hartslag via de brievenbus. Draait JARVIS op deze telefoon (en is hij bijgewerkt naar 1.9.46)? Open JARVIS een keer.';
     }
     const oud = nuMs - h.t;
@@ -198,7 +211,8 @@
     if (m.teOud) return 'te oud voor de eigen motor';
     const delen = [m.aan ? 'motor aan' : 'motor uit'];
     // 505: per fase een zin, zodat je ziet waar hij op wacht (de reden zelf reist niet mee in de hartslag).
-    if (m.klaar) delen.push(`model binnen${m.backend ? ` (${m.backend})` : ''}`);
+    if (m.soort === 'klein') delen.push('lichte motor');   // 507
+    if (m.klaar) delen.push(`model binnen${m.backend ? ` (${m.backend})` : ''}${m.model ? `: ${m.model}` : ''}`);
     else if (m.fase === 'downloaden') delen.push(`model ophalen: ${m.procent || 0}%`);
     else if (m.fase === 'zoeken') delen.push('zoekt het model op');
     else if (m.fase === 'laden') delen.push('model wordt geladen');
@@ -208,10 +222,11 @@
     const p = m.proef;
     if (p && p.ok && p.tps) delen.push(`${String(p.tps).replace('.', ',')} tokens/s`);
     else if (m.tps) delen.push(`${String(m.tps).replace('.', ',')} tokens/s`);
+    if (m.klaar && m.procesMb) delen.push(`gebruikt ${m.procesMb} MB${m.vrijMb ? `, ${m.vrijMb} MB vrij` : ''}`);   // 507: gemeten
     const temp = p && p.temp !== null && p.temp !== undefined ? p.temp : h.temp;
     if (temp !== null && temp !== undefined) delen.push(`${Math.round(temp)} °C`);
     return delen.join(' · ');
   }
 
-  return { SERVER, MIN_MS, VERS_MS, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
+  return { SERVER, MIN_MS, VERS_MS, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
 }));

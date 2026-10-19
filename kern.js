@@ -219,9 +219,14 @@
   // getallen die Veronica al heeft (RAM, Android, 64-bits, vrije ruimte, aan de lader). Niets wordt gestart: de knop
   // blijft bij de eigenaar. Grenzen: dezelfde als pool.js (4 GB RAM nominaal, 3 GB vrij) en motorkeuze.js (Android 10 = SDK 29).
   const MOTOR_MIN_SDK = 29;
-  const MOTOR_MIN_RAM_GB = 4;
+  // 507: gelijk aan JarvisMotorKern (MIN_RAM_KLEIN_MB 3000, MIN_RAM_MB 5200). Een telefoon van 4 GB meldt ~3,5 GB: dat is de lichte
+  // motor (een klein model, ~0,3-0,8 GB), niet "kan niet". Een telefoon van 3 GB meldt ~2,7 GB en kan niet.
+  const MOTOR_MIN_RAM_GB = 2.9;
+  const MOTOR_GROOT_RAM_GB = 5.1;
   const MOTOR_MIN_VRIJ_GB = 3;
+  const MOTOR_MIN_VRIJ_KLEIN_GB = 1;
   const MOTOR_MODEL_GB = { 'Gemma 4 E4B': 3.7, 'Gemma 4 E2B': 2.6 };
+  const MOTOR_MODEL_KLEIN_GB = { 'een klein model (lichte motor)': 0.8 };
   function motorKlaarZin(cap, extra) {
     const c = cap || {};
     const x = extra || {};
@@ -237,11 +242,13 @@
     else if (sdk !== null) goed.push('Android nieuw genoeg'); else onbekend.push('Android-versie');
     const ram = g(c.ramGb);
     if (ram !== null && ram < MOTOR_MIN_RAM_GB) nog.push(`${k1(ram)} GB geheugen (minimaal ${MOTOR_MIN_RAM_GB} nodig; dat is niet te veranderen)`);
-    else if (ram !== null) goed.push(`${k1(ram)} GB geheugen`); else onbekend.push('geheugen');
+    else if (ram !== null) goed.push(`${k1(ram)} GB geheugen${ram < MOTOR_GROOT_RAM_GB ? ' (de lichte motor, met een klein model)' : ''}`); else onbekend.push('geheugen');
+    const klein = ram !== null && ram < MOTOR_GROOT_RAM_GB;
+    const minVrij = klein ? MOTOR_MIN_VRIJ_KLEIN_GB : MOTOR_MIN_VRIJ_GB;
     const vrij = g(c.vrijGb);
-    if (vrij !== null && vrij < MOTOR_MIN_VRIJ_GB && x.modelGeladen !== true) {
-      const modellen = Object.entries(MOTOR_MODEL_GB).map(([n, gb]) => `${k1(gb)} GB voor ${n}`).join(', ');
-      nog.push(`maak nog ${k1(Math.ceil((MOTOR_MIN_VRIJ_GB - vrij) * 10) / 10)} GB vrij (nu ${k1(vrij)} GB vrij; ${modellen}): verwijder apps, foto's of video's op die telefoon`);
+    if (vrij !== null && vrij < minVrij && x.modelGeladen !== true) {
+      const modellen = Object.entries(klein ? MOTOR_MODEL_KLEIN_GB : MOTOR_MODEL_GB).map(([n, gb]) => `${k1(gb)} GB voor ${n}`).join(', ');
+      nog.push(`maak nog ${k1(Math.ceil((minVrij - vrij) * 10) / 10)} GB vrij (nu ${k1(vrij)} GB vrij; ${modellen}): verwijder apps, foto's of video's op die telefoon`);
     } else if (vrij !== null) goed.push(`${k1(vrij)} GB vrij`); else onbekend.push('vrije ruimte');
     if (x.laadt === false) nog.push('zet hem aan de lader (het model wordt alleen aan de lader en op wifi binnengehaald)');
     else if (x.laadt === true) goed.push('aan de lader');
@@ -293,6 +300,21 @@
   // 492: de zelftest van de telefoon (zelftest.js staat byte-gelijk in JARVIS en Veronica).
   const ZT = () => (typeof Zelftest !== 'undefined' ? Zelftest : (typeof require === 'function' ? require('./zelftest.js') : null));
   const zelftestLees = (z) => { const m = ZT(); return m ? m.lees(z) : null; };
+  // 508: wat de telefoon over zijn brievenbus meldt (JARVIS 1.9.48+): een vingerafdruk (8 hex), of hij een onderwerp heeft, en hoe de
+  // laatste hartslag ging (een zin). Nooit het onderwerp zelf.
+  function leesBrievenbus(b) {
+    if (!b || typeof b !== 'object') return null;
+    return { vinger: /^[0-9a-f]{8}$/.test(String(b.vinger || '')) ? String(b.vinger) : null, onderwerp: b.onderwerp === true,
+      hartslag: typeof b.hartslag === 'string' ? b.hartslag.replace(/[<>]/g, '').slice(0, 80) : null, t: typeof b.t === 'number' && b.t > 0 ? b.t : null };
+  }
+  // 508: waarom er geen hartslag komt, terwijl JARVIS wel over het wifi antwoordt. mijnVinger = die van Veronica's eigen onderwerp.
+  function brievenbusUitleg(b, mijnVinger) {
+    if (!b) return null;
+    if (!b.onderwerp) return 'Deze telefoon kent het onderwerp van de brievenbus nog niet; Veronica geeft het hem.';
+    if (mijnVinger && b.vinger && b.vinger !== mijnVinger) return 'Deze telefoon gebruikt een andere brievenbus dan Veronica; Veronica geeft hem de hare.';
+    if (b.hartslag && /niet weg|kon niet/.test(b.hartslag)) return `De telefoon zegt: ${b.hartslag}`;
+    return null;
+  }
   function leesStatus(k, t) {
     const x = k && typeof k === 'object' ? k : {};
     const b = x.batterij && typeof x.batterij === 'object' ? x.batterij : {};
@@ -323,12 +345,13 @@
       versie: meting(typeof x.versie === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(x.versie) ? x.versie : null, bron, t),
       bijwerkFout: meting(x.bijwerkFout === 'verlopen' ? 'verlopen' : null, bron, t),   // 487
       zelftest: meting(zelftestLees(x.zelftest), bron, t),   // 492: alleen codes per punt (zelftest.js)
+      brievenbus: meting(leesBrievenbus(x.brievenbus), bron, t),   // 508: vingerafdruk van het onderwerp en de laatste hartslag
     };
   }
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.47';
+  const JARVIS_NIEUWSTE = '1.9.48';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -763,7 +786,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.57';
+  const VERONICA_VERSIE = '1.9.58';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1401,6 +1424,6 @@
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesKast, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    isEigenNet, normaalAdres, leesBrievenbus, brievenbusUitleg, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));
