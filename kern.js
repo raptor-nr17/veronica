@@ -351,7 +351,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.48';
+  const JARVIS_NIEUWSTE = '1.9.49';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -786,7 +786,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.58';
+  const VERONICA_VERSIE = '1.9.59';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -924,6 +924,29 @@
       }
     }
     return uit;
+  }
+  // 513 (19 oktober): DE RIJBRIEF, de omgekeerde richting van de adresbrief. Een telefoon die de QR van Veronica scant krijgt
+  // via de brievenbus HAAR brievenbus (het geheime ntfy-onderwerp) en de code van de rij, en of er al een baas is (dan wordt
+  // hij werker in plaats van een eigen rij te beginnen). Zelfde sleutel uit de QR, een ANDER onderwerp ('vj') en een andere
+  // sleutelafleiding dan de adresbrief. Vijf minuten bruikbaar, net als de QR. koppel.js (JARVIS) leest hem; een test vergelijkt.
+  const RIJ_CODE_RE = /^\d{6}$/;
+  async function rijBriefOnderwerp(s, c) {
+    return 'vj' + naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes('veronica-rij:' + s))).slice(0, 30);
+  }
+  async function rijBriefVerzoek(s, d, nuMs, c) {
+    if (!TOKEN_RE.test(String(s || '')) || !d || !LEDEN_ONDERWERP_RE.test(String(d.onderwerp || ''))) return null;
+    const inhoud = { o: d.onderwerp, t: Math.floor(Number(nuMs) || 0) };
+    if (RIJ_CODE_RE.test(String(d.code || ''))) inhoud.c = String(d.code);
+    if (d.werker === true) inhoud.w = 1;
+    const naam = String(d.baasNaam || '').replace(/[^\p{L}\p{N} ._-]/gu, '').slice(0, 40);
+    if (naam) inhoud.b = naam;
+    const sub = cryptoNu(c).subtle;
+    const iv = new Uint8Array(12);
+    cryptoNu(c).getRandomValues(iv);
+    const k = await sub.importKey('raw', await sub.digest('SHA-256', tekstBytes('veronica-rijsleutel:' + s)), { name: 'AES-GCM' }, false, ['encrypt']);
+    const data = await sub.encrypt({ name: 'AES-GCM', iv }, k, tekstBytes(JSON.stringify(inhoud)));
+    return { method: 'POST', url: BRIEF_SERVER, headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({ topic: await rijBriefOnderwerp(s, c), message: JSON.stringify({ iv: naarHex(iv), data: naarHex(data) }) }) };
   }
   async function veronicaOpenMet(s, iv, data, voor, c) {
     const sub = cryptoNu(c).subtle;
@@ -1418,7 +1441,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return {
+  return { rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,

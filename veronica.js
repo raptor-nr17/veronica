@@ -3058,11 +3058,26 @@
     zoekTelefoon();
     herstelZoek();
   }
+  // 513 (19 oktober): DE RIJBRIEF (kern.js, rijBriefVerzoek). Bij elke nieuwe QR legt Veronica haar brievenbus en de code van de
+  // rij versleuteld klaar onder een onderwerp dat alleen de scanner van DEZE QR kent. Zo begint een vers geinstalleerde telefoon
+  // geen eigen brievenbus meer, en wordt hij werker als er al een baas is. Een keer per QR; zonder brievenbus niets.
+  async function legRijBrief(s) {
+    const o = S.ntfy && S.ntfy.onderwerp;
+    if (!o || volLokaal()) return false;
+    const baas = (S.telefoons || []).find((t) => t.adres === S.kern);
+    try {
+      const v = await K.rijBriefVerzoek(s, { onderwerp: o, code: S.code, werker: gekoppeld(), baasNaam: baas ? baas.naam : '' }, Date.now());
+      if (!v) return false;
+      const r = await fetch(v.url, { method: v.method, headers: v.headers, body: v.data });
+      return r.ok;
+    } catch (e) { return false; }
+  }
   const herstelVak = () => $(VQ.herstelWaar === 'nieuw' ? 'nieuwQrBeeld' : 'koppelQrBeeld');
   function tekenVeronicaQr(doel) {
     VQ.vorige = VQ.sleutel;
     VQ.sleutel = K.nieuweSleutel();
     VQ.tot = nu() + K.VERONICA_QR_MS;
+    legRijBrief(VQ.sleutel);   // 513: wie deze QR scant, krijgt haar brievenbus en de rij (via de brievenbus, zonder wifi)
     if (!VQ.vorige) VQ.briefSinds = Math.floor(Date.now() / 1000) - 60;
     const vak = doel || (VQ.herstel ? herstelVak() : $('veronicaQrBeeld')), tekst = K.veronicaQrTekst(VQ.sleutel);
     if (typeof window.qrcode !== 'function') { vak.textContent = 'De QR-maker ontbreekt. Herlaad Veronica (Ctrl+Shift+R).'; return; }
@@ -3815,7 +3830,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
