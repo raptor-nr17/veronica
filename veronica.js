@@ -23,6 +23,7 @@
   const VOL_SLEUTEL = 'veronica-vol-lokaal';
   const VolL = { aan: (() => { try { return K.leesVolLokaal(localStorage.getItem(VOL_SLEUTEL)); } catch (e) { return false; } })(), geweigerd: 0 };
   const volLokaal = () => VolL.aan;
+  const NtfyRemV = { post: { tot: 0, wacht: 30 * 60000 }, get: { tot: 0, wacht: 30 * 60000 } };   // 516: de rem op de brievenbus
   {
     const echt = window.fetch.bind(window);
     window.fetch = (u, o) => {
@@ -30,6 +31,21 @@
       if (!K.magNaarBuiten(url, { volLokaal: VolL.aan, basis: location.href })) {
         VolL.geweigerd += 1;
         return Promise.reject(new TypeError('Vol lokaal staat aan: niets gaat naar buiten.'));
+      }
+      // 516: DE REM OP DE BRIEVENBUS (zelfde regel als JARVIS): ntfy.sh geeft het hele huis hoogstens 250 berichten per dag. Na een
+      // 429 hoort ntfy.sh een tijd niets meer van Veronica (versturen en ophalen elk apart), en dan een eerlijke 429 zonder verzoek.
+      if (/^https:\/\/ntfy\.sh(\/|$)/.test(url)) {
+        const kant = String((o && o.method) || 'GET').toUpperCase() === 'POST' ? 'post' : 'get';
+        if (Date.now() < NtfyRemV[kant].tot) return Promise.resolve(new Response('', { status: 429 }));
+        return echt(u, o).then((r) => {
+          const k = NtfyRemV[kant];
+          if (r.status === 429) {
+            const sec = Number(r.headers && r.headers.get ? r.headers.get('Retry-After') : NaN);
+            k.tot = Date.now() + Math.max(60000, Number.isFinite(sec) && sec > 0 ? Math.min(sec * 1000, 4 * 3600000) : k.wacht);
+            k.wacht = Math.min(k.wacht * 2, 4 * 3600000);
+          } else if (r.ok) k.wacht = 30 * 60000;
+          return r;
+        });
       }
       return echt(u, o);
     };
@@ -1964,8 +1980,11 @@
   async function rekWerkerMaken(adres) {
     const t = S.telefoons.find((x) => x.adres === adres);
     if (!t || !t.jarvis || !S.code) return false;
-    let ok = false; let code = 0;
-    try { const r = await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'word-werker', van: 'veronica' }) }, 3000); ok = r.ok; code = r.status; } catch (e) { ok = false; }
+    let ok = false; let code = 0; let via = '';
+    try { const r = await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'word-werker', van: 'veronica' }) }, 3000); ok = r.ok; code = r.status; via = r.brievenbus ? 'brievenbus' : r.postbus ? 'postbus' : ''; } catch (e) { ok = false; }
+    // 516: ging de roep via de brievenbus of de postbus, dan is hij nog NIET werker: hij haalt het pas op (en de rol op de tegel
+    // verandert pas als hij dat zelf meldt). Niet "is nu werker" zeggen als het nog onderweg is.
+    if (ok && via) { logRegel(`${t.naam} antwoordt niet over het wifi; "maak werker" ligt in de ${via}. Hij neemt het over zodra hij die leest (binnen enkele minuten, als de brievenbus niet vol is).`); return true; }
     logRegel(ok ? `${t.naam} is nu werker en rekent mee. Zijn eigen motor gaat zo vanzelf aan.`
       : code === 401 || code === 403 ? `${t.naam} kent de code van de rij niet. Scan op die telefoon een keer de QR van Veronica (Koppelen); daarna kan het met deze knop.`
         : `${t.naam} antwoordt niet. Probeer het zo nog eens.`);
@@ -3975,7 +3994,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

@@ -25,8 +25,11 @@
   const ONDERWERP_RE = /^jv[a-z0-9]{30}$/;
   const ID_RE = /^[a-z0-9]{12,40}$/;
   const IP_RE = /^(10\.\d{1,3}|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}$/;
-  const MIN_MS = 10 * 60 * 1000;      // bij een verandering hoogstens zo vaak
-  const VERS_MS = 60 * 60 * 1000;     // zonder verandering toch eens per uur
+  // 516: ntfy.sh geeft hoogstens 250 berichten per dag voor het HELE huis (een publiek IP). Met 10 minuten / een uur gingen twee
+  // telefoons daar in het echte huis overheen (429). Nu: bij een verandering hoogstens eens per half uur, anders eens per anderhalf uur
+  // (Veronica rekent een hartslag twee uur vers).
+  const MIN_MS = 30 * 60 * 1000;      // bij een verandering hoogstens zo vaak
+  const VERS_MS = 90 * 60 * 1000;     // zonder verandering toch eens per anderhalf uur
   const ROEP_GELDIG_MS = 15 * 60 * 1000;
   // Soorten die naar ALLE telefoons mogen (naar: '*'); de rest moet een toestel bij naam (id) noemen.
   const VOOR_IEDEREEN = ['roep', 'zelftest'];
