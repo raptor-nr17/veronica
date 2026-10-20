@@ -74,6 +74,8 @@
       if (!x || !/^[a-z0-9-]{1,120}$/.test(String(x.taakId || '')) || !['vertaal', 'keuring', 'bord', 'buurtpin'].includes(x.soort)) continue;
       lijst.push({ taakId: x.taakId, soort: x.soort, taal: x.taal === 'en' || x.taal === 'de' ? x.taal : null, naam: tekst(x.naam, 120),
         bron: tekst(x.bron, 3000), concept: tekst(x.concept, 6000), telefoon: tekst(x.telefoon, 60),
+        duurMs: typeof x.duurMs === 'number' && Number.isFinite(x.duurMs) && x.duurMs >= 0 ? Math.round(x.duurMs) : null,   // 515
+        model: tekst(x.model, 60),
         meldingen: Array.isArray(x.meldingen) ? x.meldingen.slice(0, 6).map((m) => tekst(m, 200)) : [] });
     }
     return { lijst, t: Number(n.t) || 0, verstuurd: Math.max(0, Math.min(999, Number(n.verstuurd) || 0)) };
@@ -344,6 +346,8 @@
       priveSleutel: meting(x.prive && typeof x.prive === 'object' && typeof x.prive.sleutel === 'boolean' ? x.prive.sleutel : null, bron, t),   // 466: ALLEEN ja/nee, nooit inhoud
       versie: meting(typeof x.versie === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(x.versie) ? x.versie : null, bron, t),
       bijwerkFout: meting(x.bijwerkFout === 'verlopen' ? 'verlopen' : null, bron, t),   // 487
+      voorkeur: meting(x.voorkeur === 'kern' || x.voorkeur === 'rek' ? x.voorkeur : null, bron, t),   // 515: beheerder of werker (de keuze)
+      bijwerkStap: meting(typeof x.bijwerkStap === 'string' && x.bijwerkStap.trim() ? x.bijwerkStap.replace(/[\u0000-\u001f]/g, ' ').slice(0, 220) : null, bron, t),   // 515: waarom hij (nog) niet bijwerkt
       zelftest: meting(zelftestLees(x.zelftest), bron, t),   // 492: alleen codes per punt (zelftest.js)
       brievenbus: meting(leesBrievenbus(x.brievenbus), bron, t),   // 508: vingerafdruk van het onderwerp en de laatste hartslag
     };
@@ -351,7 +355,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.49';
+  const JARVIS_NIEUWSTE = '1.9.50';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -365,7 +369,54 @@
     if (typeof versie !== 'string' || !/^\d+\.\d+\.\d+$/.test(versie)) return null;
     if (vergelijkVersie(versie, nieuwste) >= 0) return { tekst: `JARVIS ${versie}`, achter: false };
     const wacht = rol === 'baas' ? ' De baas wacht daarbij tot de werkers klaar zijn.' : '';
-    return { tekst: `JARVIS ${versie}: oud, wil bijwerken (loopt achter op ${nieuwste}). Hij werkt zichzelf vanzelf bij zodra hij aan de lader ligt en niets doet (hij kijkt elke zes uur; sneller kan met Instellingen, Kijk of er een nieuwe versie is).${wacht}`, achter: true };
+    return { tekst: `JARVIS ${versie}: oud, wil bijwerken (loopt achter op ${nieuwste}). Hij werkt zichzelf vanzelf bij zodra hij aan de lader ligt en niets doet (hij kijkt elk uur, en Veronica vraagt het hem ook zelf; op sommige telefoons vraagt Android daarna een tik op Installeren).${wacht}`, achter: true };
+  }
+  // 515: REK VANZELF. Wat Veronica uit zichzelf naar EEN telefoon roept zodat hij meerekent, alleen uit een VERSE melding van die
+  // telefoon zelf. Twee dingen, elk met een eigen rem per telefoon:
+  //  - loopt hij achter, dan "kijk nu of er een nieuwe versie is" (roep 'roep' handmatig, 452) -- hoogstens eens per twee uur;
+  //  - is hij een WERKER (geen beheerder, niet de dagelijkse telefoon, geen zandbak, niet gespaard) met de eigen motor UIT, dan
+  //    "motor aan" -- hoogstens eens per twaalf uur. "Te oud" krijgt niets. Het model komt daarna vanzelf (wifi + lader, 460b).
+  // Een beheerder wordt NOOIT vanzelf werker: dat is een knop (rekWerkerKnop), want de dagelijkse telefoon rust (495).
+  const REK_KIJK_MS = 2 * 3600 * 1000;
+  const REK_MOTOR_MS = 12 * 3600 * 1000;
+  function rekBesluit(st, tijd, eerder, nieuwste) {
+    const v = (k) => (st && st[k] && typeof st[k].t === 'number' && tijd - st[k].t <= MAX_LEEFTIJD_MS ? st[k].waarde : null);
+    const e = eerder || {};
+    const uit = [];
+    const versie = v('versie');
+    if (versie && nieuwste && vergelijkVersie(versie, nieuwste) < 0 && tijd - (e.kijk || 0) >= REK_KIJK_MS) {
+      uit.push({ wat: 'kijk', roep: { soort: 'roep', handmatig: true, van: 'veronica' } });
+    }
+    const m = v('motor');
+    if (m && !m.aan && m.fase !== 'te-oud' && rekWerker(st, tijd) && tijd - (e.motor || 0) >= REK_MOTOR_MS) {
+      uit.push({ wat: 'motor', roep: { soort: 'motor-aan', van: 'veronica' } });
+    }
+    return uit;
+  }
+  function rekWerker(st, tijd) {
+    const v = (k) => (st && st[k] && typeof st[k].t === 'number' && tijd - st[k].t <= MAX_LEEFTIJD_MS ? st[k].waarde : null);
+    return v('rol') === 'werker' && v('voorkeur') !== 'kern' && !v('dagelijks') && v('zandbak') !== true && v('gespaard') !== true;
+  }
+  // De knop "Laat meerekenen": alleen bij een telefoon die zelf zegt dat hij beheerder is EN als dagelijkse telefoon rust.
+  function rekWerkerKnop(st, tijd) {
+    const v = (k) => (st && st[k] && typeof st[k].t === 'number' && tijd - st[k].t <= MAX_LEEFTIJD_MS ? st[k].waarde : null);
+    return v('voorkeur') === 'kern' && v('dagelijks') === 'rust';
+  }
+  // Wie deed welk proefverhaal, en hoe snel: uit de concepten (nalees) en het tempo van de motor per telefoon. Alleen wat er staat.
+  function proefPerTelefoon(nalees, tempo) {
+    const per = {};
+    for (const x of (nalees && Array.isArray(nalees.lijst) ? nalees.lijst : [])) {
+      const n = x.telefoon || 'onbekend';
+      const p = per[n] || (per[n] = { naam: n, aantal: 0, duur: [] });
+      p.aantal += 1;
+      if (typeof x.duurMs === 'number' && x.duurMs > 0) p.duur.push(x.duurMs);
+    }
+    return Object.values(per).sort((a, b) => b.aantal - a.aantal || (a.naam < b.naam ? -1 : 1)).map((p) => {
+      const gem = p.duur.length ? Math.round(p.duur.reduce((a, b) => a + b, 0) / p.duur.length / 1000) : null;
+      const tps = tempo && typeof tempo[p.naam] === 'number' && tempo[p.naam] > 0 ? tempo[p.naam] : null;
+      return { naam: p.naam, aantal: p.aantal, gemS: gem,
+        zin: `${p.naam}: ${p.aantal} ${p.aantal === 1 ? 'verhaal' : 'verhalen'}${gem !== null ? `, gemiddeld ${gem} s per verhaal` : ''}${tps !== null ? `, motor ±${String(tps).replace('.', ',')} tokens/s` : ''}` };
+    });
   }
   const hitteNaam = (n) => (Number.isInteger(n) && n >= 0 && n < HITTE.length ? HITTE[n] : 'onbekend');
 
@@ -786,7 +837,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.59';
+  const VERONICA_VERSIE = '1.9.61';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1441,7 +1492,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { rijBriefOnderwerp, rijBriefVerzoek,
+  return { rekBesluit, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,

@@ -163,7 +163,10 @@
       r = await fetch(url, Object.assign({ cache: 'no-store', signal: ctrl.signal }, K.lnaOpties(url), init || {}));
     } catch (e) { fout = e; } finally { clearTimeout(klok); }
     // 500: een ROEP die over het wifi niet aankwam (geen antwoord) gaat via de brievenbus naar diezelfde telefoon.
+    // 514: eerst via de POSTBUS (een telefoon die wel antwoordt legt hem in de opdrachtenbak van de ander); de brievenbus is de terugval.
     if (fout && /\/jarvis\/roep$/.test(String(url)) && init && init.method === 'POST') {
+      const pb = await roepViaPostbus(url, init.body);
+      if (pb) return pb;
       const via = await roepViaBrievenbus(url, init.body);
       if (via) return via;
     }
@@ -201,6 +204,61 @@
     logRegel(`Over het wifi kwam ${d.soort} niet aan bij ${h && h.naam ? h.naam : 'de telefoons'}; ik legde het in de brievenbus. De telefoon haalt het binnen een minuut op.`);
     const antwoord = { ok: true, brievenbus: true, zin: 'Via de brievenbus: de telefoon haalt het binnen een minuut op.' };
     return { ok: true, status: 202, brievenbus: true, json: async () => antwoord, text: async () => JSON.stringify(antwoord) };
+  }
+  // ---- 514: DE POSTBUS ALS ONTMOETINGSPLEK (ontmoet.js, byte-gelijk met JARVIS) ----
+  // Veronica leest de postbus NIET zelf (geen CORS op de opslag, 483): ze ziet de plekken via een telefoon die ze wel bereikt (zijn
+  // stand.json, achter de code) en laat een roep voor een telefoon die ze niet bereikt door die telefoon in de opdrachtenbak leggen
+  // (roep 'doorgeef'). Alleen in het geheugen; geen adres van de postbus.
+  const OM = { per: {}, door: {}, t: 0 };   // per toestel-id: zijn hart; door: via welke telefoon (adres) en wanneer
+  function neemOntmoetOver(o, adres) {
+    if (!o || typeof o !== 'object' || !window.Ontmoet || !Array.isArray(o.harten)) return;
+    const tijd = nu();
+    for (const ruw of o.harten.slice(0, window.Ontmoet.AANTAL)) {
+      const h = window.Ontmoet.leesHart(Object.assign({}, ruw, { v: 1 }));
+      if (!h || h.soort !== 'jarvis') continue;
+      const oud = OM.per[h.id];
+      if (!oud || oud.t <= h.t) OM.per[h.id] = h;
+      OM.door[h.id] = { adres, t: tijd };
+    }
+    OM.t = tijd;
+  }
+  function ontmoetVoorAdres(adres) {
+    let host = '';
+    try { host = new URL(adres).hostname; } catch (e) { return null; }
+    let beste = null;
+    for (const h of Object.values(OM.per)) if (h.adressen.includes(host) && (!beste || h.t > beste.t)) beste = h;
+    return beste;
+  }
+  // Een levend hart in de postbus voor deze telefoon (op id, anders op adres).
+  function ontmoetLevend(t) {
+    const h = (t && t.id && OM.per[t.id]) || (t ? ontmoetVoorAdres(t.adres) : null);
+    return h && window.Ontmoet && window.Ontmoet.levend(h, nu()) ? h : null;
+  }
+  // Een roep voor toestel `naar` via een ANDERE telefoon die nu wel antwoordt en de ander in de postbus ziet.
+  async function doorgeefNaarId(naar, roep) {
+    if (!naar || !S.code || !roep || roep.soort === 'doorgeef' || !OM.per[naar] || volLokaal()) return false;
+    const doel = OM.per[naar];
+    const via = S.telefoons.filter((t) => t.jarvis && staat(t.adres).bereikbaar === true && t.id !== naar
+      && !doel.adressen.some((a) => { try { return new URL(t.adres).hostname === a; } catch (e) { return false; } }));
+    via.sort((a, b) => (OM.door[naar] && OM.door[naar].adres === b.adres ? 1 : 0) - (OM.door[naar] && OM.door[naar].adres === a.adres ? 1 : 0));
+    for (const t of via.slice(0, 3)) {
+      try {
+        const r = await fetch(`${t.jarvis}/jarvis/roep`, Object.assign({ method: 'POST', headers: { 'X-Koppelcode': S.code }, cache: 'no-store',
+          body: JSON.stringify({ soort: 'doorgeef', van: 'veronica', naar, roep: Object.assign({}, roep, { van: 'veronica' }) }) }, K.lnaOpties(t.jarvis)));
+        if (r.ok) return true;
+      } catch (e) { /* de volgende */ }
+    }
+    return false;
+  }
+  async function roepViaPostbus(url, lijf) {
+    let d;
+    try { d = JSON.parse(String(lijf || '{}')); } catch (e) { return null; }
+    const h = ontmoetVoorAdres(url) || (() => { const x = hartslagVoorAdres(url); return x && x.id && OM.per[x.id] ? OM.per[x.id] : null; })();
+    if (!h || !(await doorgeefNaarId(h.id, d))) return null;
+    OM.viaPost = (OM.viaPost || 0) + 1;
+    logRegel(`Over het wifi kwam ${d.soort} niet aan bij ${h.naam || 'de telefoon'}; een andere telefoon legde het in de postbus. Hij neemt het binnen drie minuten over.`);
+    const antwoord = { ok: true, postbus: true, zin: 'Via de postbus: de telefoon neemt het binnen drie minuten over.' };
+    return { ok: true, status: 202, postbus: true, json: async () => antwoord, text: async () => JSON.stringify(antwoord) };
   }
   function hartslagVers(t) {
     const h = (t && t.id && HB.per[t.id]) || (t ? hartslagVoorAdres(t.adres) : null);
@@ -275,6 +333,7 @@
         m.status = K.leesStatus(await r.json(), nu());
       } catch (e) { m.jarvisNietTot = nu() + 60000; }   // geen JARVIS (of even weg): een minuut niet vragen
       geefNtfy(t, m.status).catch(() => {});   // 508: een andere of geen brievenbus = de hare geven
+      rekVanzelf(t, m.status).catch(() => {});   // 515: achterlopen = laten kijken; werker zonder motor = motor aan
     }
     // 460b: OlliteRT zwijgt maar de EIGEN MOTOR van JARVIS is klaar -> dan gaat deze telefoon voortaan via de motor (poort uit de melding,
     // de rij-code als sleutel). Een telefoon die al op zijn motor staat wordt gewoon via de motor gemeten.
@@ -372,6 +431,7 @@
     S.nalees = K.leesNalees(d.nalees); tekenNalees();   // 483
     S.afnemers = window.Afnemers ? window.Afnemers.lees(d.afnemers) : null; S.samen = K.leesSamenwerken(d.samenwerken); tekenSamenwerken();   // 485
     S.nieuwKoppel = K.leesNieuwKoppel(d.nieuwKoppel); tekenNieuwKoppel();   // 494
+    neemOntmoetOver(d.ontmoet, adres);   // 514
   }
   // 482 (17 oktober): DE LEDENBRIEF. De baas legt de leden met hun adressen versleuteld klaar op de brievenbus (ntfy), met het
   // geheime ntfy-onderwerp van de rij als sleutel (kern.js, leesLedenBrief). EEN doorlopende verbinding (449: nooit vragen in
@@ -1248,14 +1308,15 @@
     const warm = st.filter((x) => x.d.temperatuur.waarde !== null && x.d.temperatuur.ms <= OUD).sort((a, b) => b.d.temperatuur.waarde - a.d.temperatuur.waarde)[0];
     const bereik = S.telefoons.filter((t) => staat(t.adres).bereikbaar).length;
     // 502: een telefoon die via de brievenbus een verse hartslag gaf LEEFT, ook als het wifi hem niet bij Veronica brengt.
-    const viaPost = S.telefoons.filter((t) => !staat(t.adres).bereikbaar && hartslagVers(t)).length;
+    const viaPost = S.telefoons.filter((t) => !staat(t.adres).bereikbaar && !ontmoetLevend(t) && hartslagVers(t)).length;
+    const viaPb = S.telefoons.filter((t) => !staat(t.adres).bereikbaar && ontmoetLevend(t)).length;   // 514: levend in de postbus
     const stek = S.stekkers.map((k) => { const m = S.stekkerMeting[k.ip] || {}; return { naam: k.naam, aan: m.aan && tijd - m.aan.t <= OUD ? m.aan.waarde : null }; });
     const z = S.zonStroom && S.zonStroom.zon;
     const duur = (ms) => { const mm = Math.round(ms / 60000); return mm >= 60 ? `${Math.floor(mm / 60)} u ${mm % 60} min` : `${mm} min`; };
     const tegel = (icoon, getal, wat, sleutel) => { const v = el('div', 'vSamen'); v.dataset.samen = sleutel; v.append(el('div', 'vIcoon', icoon), el('div', 'vGetal', getal), el('div', 'vWat2', wat)); return v; };
     tekenRek(st);
     morphKinderen($('vSamen'), [
-      tegel('📱', String(S.telefoons.length), viaPost ? `telefoons · ${bereik + viaPost} leven (${viaPost} via de brievenbus)` : `telefoons · ${bereik} bereikbaar`, 'telefoons'),
+      tegel('📱', String(S.telefoons.length), viaPost || viaPb ? `telefoons · ${bereik + viaPost + viaPb} leven (${[bereik ? `${bereik} rechtstreeks` : '', viaPb ? `${viaPb} via de postbus` : '', viaPost ? `${viaPost} via de brievenbus` : ''].filter(Boolean).join(', ')})` : `telefoons · ${bereik} bereikbaar`, 'telefoons'),
       tegel('⚡', snel.length ? String(Math.round(snel.reduce((a, x) => a + x.d.snelheid.waarde, 0) * 10) / 10).replace('.', ',') : 'geen meting', 'tokens/s samen', 'snelheid'),
       tegel('🌡️', warm ? `${String(Math.round(warm.d.temperatuur.waarde * 10) / 10).replace('.', ',')} °C` : 'geen meting', warm ? `warmste: ${warm.t.naam}` : 'warmste telefoon', 'warmste'),
       tegel('🔌', stek.length ? stek.map((x) => (x.aan === true ? 'aan' : x.aan === false ? 'uit' : '?')).join(' · ') : 'geen', stek.length ? stek.map((x) => x.naam).join(' · ') : 'geen stekker', 'stekkers'),
@@ -1473,6 +1534,18 @@
         ? K.versieZin(m.status.versie.waarde, K.nieuwsteVersie(S.telefoons.map((x) => ((meet(x.adres).status || {}).versie || {}).waarde)), m.status.rol && m.status.rol.waarde) : null;
       if (vz) tegel.appendChild(el('div', `tVersie${vz.achter ? ' achter' : ''}`, vz.tekst));
       {
+        // 515: de telefoon zegt ZELF waarom hij (nog) niet bijwerkt (bijvoorbeeld: Android wacht op een tik op Installeren).
+        const stap = m.status && m.status.bijwerkStap && tijd - m.status.bijwerkStap.t <= K.MAX_LEEFTIJD_MS ? m.status.bijwerkStap.waarde : null;
+        if (stap && vz && vz.achter) tegel.appendChild(el('div', 'tBron', `De telefoon zegt: ${stap}`));
+        // 515: beheerder die als dagelijkse telefoon rust: een knop om hem te laten meerekenen (een tik, nooit vanzelf).
+        if (K.rekWerkerKnop(m.status, tijd)) {
+          const b = el('button', '', 'Laat meerekenen (maak werker)');
+          b.dataset.rekWerker = t.adres;
+          tegel.appendChild(el('div', 'tBron', 'Deze telefoon is beheerder en rust daarom (dagelijkse telefoon): geen motor, geen werk. Is dit een rektelefoon, tik dan hieronder.'));
+          tegel.appendChild(b);
+        }
+      }
+      {
         // 487: zit hij vast op een oude versie (verlopen postbus-adres)? Dan een tik (nieuwe JARVIS) of een QR (oude JARVIS).
         const fout = m.status && m.status.bijwerkFout && tijd - m.status.bijwerkFout.t <= K.MAX_LEEFTIJD_MS ? m.status.bijwerkFout.waarde : null;
         const h = vz && vz.achter ? K.bijwerkHulp(m.status.versie.waarde, K.nieuwsteVersie(S.telefoons.map((x) => ((meet(x.adres).status || {}).versie || {}).waarde)), fout) : null;
@@ -1566,8 +1639,11 @@
       const jarvisOnbekendeReden = !s.bereikbaar && !olZin && jarvisVers(m.status, tijd) ? `JARVIS antwoordt wel, maar OlliteRT niet. ${oudeJarvisZin(m.status)}` : null;
       const hsT = (() => { const h = (t.id && HB.per[t.id]) || hartslagVoorAdres(t.adres); return h && h.t ? h.t : 0; })();
       const jarvisWifi = jarvisVers(m.status, tijd);   // 508: JARVIS antwoordt over het wifi; alleen het model (nog) niet
-      const nietHier = !s.bereikbaar && jarvisWifi ? 'JARVIS antwoordt over het wifi; het model nog niet' : !s.bereikbaar && hsT ? `geen directe wifi-verbinding · laatst gezien ${window.Hartslag ? window.Hartslag.minutenZin(tijd - hsT) : ''} via de brievenbus` : null;   // 502/503
-      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar' : (!s.bereikbaar && olZin ? olZin : (jarvisOnbekendeReden || nietHier || `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`));
+      const omH = ontmoetLevend(t);   // 514: levend in de postbus (gezien via een telefoon die wel antwoordt)
+      const nietHier = !s.bereikbaar && jarvisWifi ? 'JARVIS antwoordt over het wifi; het model nog niet'
+        : !s.bereikbaar && omH ? `geen directe wifi-verbinding · via de postbus · laatst gezien ${window.Hartslag ? window.Hartslag.minutenZin(tijd - omH.t) : ''}`
+          : !s.bereikbaar && hsT ? `geen directe wifi-verbinding · laatst gezien ${window.Hartslag ? window.Hartslag.minutenZin(tijd - hsT) : ''} via de brievenbus` : null;   // 502/503
+      const bereik = s.vervangen ? 'vervangen: krijgt geen werk' : s.bereikbaar && !oud ? 'bereikbaar · rechtstreeks' : (!s.bereikbaar && olZin ? olZin : (jarvisOnbekendeReden || nietHier || `${s.bereikbaar ? '' : 'geen antwoord · '}${oud}`));
       const installeerKans = !s.bereikbaar && (!olGm || !olGm.ollite || olGm.ollite.toestand === 'niet-geinstalleerd' || olGm.ollite.toestand === 'onbekend');
       tegel.appendChild(el('div', `tBereik${s.bereikbaar && !oud ? '' : ' oud'}`, bereik));
       // De taak, en de tekst die NU binnenkomt (eigen werk, of wat de hoofdtelefoon meldt).
@@ -1854,6 +1930,58 @@
   // een EIGEN brievenbus-onderwerp; een telefoon die voor de brievenbus gekoppeld werd kent er geen. Dan gaat zijn hartslag ergens heen
   // waar Veronica niet luistert. JARVIS 1.9.48 meldt een vingerafdruk; wijkt die af (of is er geen), dan geeft Veronica EEN keer per
   // half uur haar onderwerp, met de code, over het wifi (roep 'ntfy'). Het onderwerp zelf staat nooit open in /jarvis/status.
+  // 515: REK VANZELF (kern.js rekBesluit). Staat standaard AAN (opdracht van de eigenaar, 20 oktober: "rekenkracht delen laten
+  // werken"); de knop op Live zet hem uit. De rem per telefoon staat in deze browser (alleen tijden, geen sleutel), zodat een
+  // herlaadbeurt de telefoons niet opnieuw bestookt.
+  const RekV = { per: (() => { try { return JSON.parse(localStorage.getItem('veronica-rek-rem') || '{}') || {}; } catch (e) { return {}; } })() };
+  const rekAan = () => { try { return localStorage.getItem('veronica-rek-vanzelf') !== 'uit'; } catch (e) { return true; } };
+  async function rekVanzelf(t, st) {
+    if (!rekAan() || !t || !t.jarvis || !S.code || !st || volLokaal()) return [];
+    const tijd = nu();
+    const sleutel = t.id || t.adres;
+    const eerder = RekV.per[sleutel] || {};
+    const nieuwste = K.nieuwsteVersie(S.telefoons.map((x) => { const v = (meet(x.adres).status || {}).versie; return v && v.waarde; }));
+    const besluit = K.rekBesluit(st, tijd, eerder, nieuwste);
+    const gedaan = [];
+    for (const b of besluit) {
+      eerder[b.wat] = tijd;   // ook als het misgaat: de rem geldt, anders elke meting opnieuw
+      let ok = false; let code = 0;
+      try { const r = await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(b.roep) }, 3000); ok = r.ok; code = r.status; } catch (e) { ok = false; }
+      if (ok) gedaan.push(b.wat);
+      const waarom = code === 401 || code === 403 ? 'deze telefoon kent de code van de rij niet (een keer de QR van Veronica scannen op die telefoon lost dat op)' : 'geen antwoord';
+      logRegel(b.wat === 'kijk'
+        ? (ok ? `${t.naam} loopt achter (${(st.versie || {}).waarde || '?'}); ik vroeg hem nu te kijken of er een nieuwe versie is.` : `${t.naam} loopt achter, maar de vraag om te kijken kwam niet aan: ${waarom}.`)
+        : (ok ? `${t.naam} is werker en zijn eigen motor stond uit; ik zette hem aan. Het model komt vanzelf binnen (wifi en lader).` : `${t.naam}: motor aanzetten kwam niet aan: ${waarom}.`));
+    }
+    if (besluit.length) {
+      RekV.per[sleutel] = eerder;
+      try { localStorage.setItem('veronica-rek-rem', JSON.stringify(RekV.per)); } catch (e) { /* alleen voor nu */ }
+    }
+    return gedaan;
+  }
+  // De knop "Laat meerekenen" bij een telefoon die beheerder is en als dagelijkse telefoon rust: hij wordt werker ('word-werker',
+  // met de code), en rekent daarna mee. Een tik van een mens, nooit vanzelf (495).
+  async function rekWerkerMaken(adres) {
+    const t = S.telefoons.find((x) => x.adres === adres);
+    if (!t || !t.jarvis || !S.code) return false;
+    let ok = false; let code = 0;
+    try { const r = await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'word-werker', van: 'veronica' }) }, 3000); ok = r.ok; code = r.status; } catch (e) { ok = false; }
+    logRegel(ok ? `${t.naam} is nu werker en rekent mee. Zijn eigen motor gaat zo vanzelf aan.`
+      : code === 401 || code === 403 ? `${t.naam} kent de code van de rij niet. Scan op die telefoon een keer de QR van Veronica (Koppelen); daarna kan het met deze knop.`
+        : `${t.naam} antwoordt niet. Probeer het zo nog eens.`);
+    if (ok) { delete (RekV.per[t.id || t.adres] || {}).motor; }
+    return ok;
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target;
+    if (b && b.dataset && b.dataset.rekWerker) rekWerkerMaken(b.dataset.rekWerker);
+    if (b && b.id === 'rekVanzelfKnop') {
+      try { localStorage.setItem('veronica-rek-vanzelf', rekAan() ? 'uit' : 'aan'); } catch (x) { /* alleen voor nu */ }
+      b.textContent = `Rek vanzelf: ${rekAan() ? 'aan' : 'uit'}`;
+      logRegel(rekAan() ? 'Rek vanzelf staat aan: telefoons die achterlopen kijken naar een nieuwe versie, werkers krijgen hun motor aan.' : 'Rek vanzelf staat uit.');
+    }
+  });
+  if ($('rekVanzelfKnop')) $('rekVanzelfKnop').textContent = `Rek vanzelf: ${rekAan() ? 'aan' : 'uit'}`;
   async function geefNtfy(t, st) {
     const b = st && st.brievenbus && st.brievenbus.waarde;
     const o = S.ntfy && S.ntfy.onderwerp;
@@ -1872,6 +2000,7 @@
   }
   // Een roep naar EEN telefoon (op zijn id) via de brievenbus. true = afgeleverd bij ntfy.
   async function roepNaarId(id, roep) {
+    if (await doorgeefNaarId(id, roep)) return true;   // 514: eerst de postbus via een telefoon die wel antwoordt
     const o = S.ntfy && S.ntfy.onderwerp;
     if (!id || !o || !S.code || !window.Hartslag || volLokaal()) return false;
     const v = await window.Hartslag.roepVerzoek(o, Object.assign({}, roep, { naar: id }), S.code, nu());
@@ -2410,7 +2539,7 @@
     if (!vak || ($('scherm-wachtrij').hidden && !forceer)) return;
     const keuzes = leesTakenKeuzes();
     const r = Takenverdeling.verdeel(takenTelefoons(), keuzes);
-    const hand = JSON.stringify(r);
+    const hand = JSON.stringify([r, S.nalees && Array.isArray(S.nalees.lijst) ? S.nalees.lijst.map((x) => [x.taakId, x.telefoon, x.duurMs]) : null]);   // 515: ook de proef
     if (hand === takenHandtekening && !forceer) return;
     takenHandtekening = hand;
     const delen = [];
@@ -2433,6 +2562,22 @@
         kaart.appendChild(rij);
       }
       delen.push(kaart);
+    }
+    // 515: WIE DEED WAT. De proefverhalen (concepten in de postbus) per telefoon, met de tijd per verhaal als de telefoon die meldt,
+    // en het tempo van zijn eigen motor. Alleen wat er staat; geen concept = nog niets gedaan.
+    {
+      const tempo = {};
+      for (const t of S.telefoons) {
+        const mo = (meet(t.adres).status || {}).motor;
+        if (mo && mo.waarde && nu() - mo.t <= K.MAX_LEEFTIJD_MS && mo.waarde.tokensPerSeconde > 0) tempo[t.naam] = mo.waarde.tokensPerSeconde;
+      }
+      const proef = K.proefPerTelefoon(S.nalees, tempo);
+      const blok = el('section', 'tegel taakTegel');
+      blok.dataset.proef = '1';
+      blok.appendChild(el('h2', '', 'Wie deed wat (de verhalen van de gids)'));
+      if (!proef.length) blok.appendChild(el('p', 'eerlijk', 'Nog geen verhaal klaar. Een telefoon begint vanzelf zodra zijn eigen motor een model heeft en hij aan de lader ligt.'));
+      for (const p of proef) blok.appendChild(el('div', 'taakRegel mag', p.zin));
+      delen.push(blok);
     }
     const sam = el('div', 'taakSamen');
     for (const z of r.samenvatting) sam.appendChild(el('div', '', z));
@@ -3830,7 +3975,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
