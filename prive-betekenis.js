@@ -45,6 +45,9 @@
     const o = opt || {};
     const embedder = typeof o.embedder === 'function' ? o.embedder : null;
     const naam = embedder ? String(o.embedderNaam || 'eigen model') : 'woorddelen';
+    // 523b: een model met eigen voorvoegsels (EmbeddingGemma schrijft ze voor) geeft ze mee; anders die van zoekgeheugen.js.
+    const pv = typeof o.prefixVraag === 'string' ? o.prefixVraag : PREFIX_VRAAG;
+    const ps = typeof o.prefixStuk === 'string' ? o.prefixStuk : PREFIX_STUK;
     const cache = new Map();
     const onthoud = (k, v) => { if (cache.size >= MAX_CACHE) cache.delete(cache.keys().next().value); cache.set(k, v); };
 
@@ -69,8 +72,8 @@
       let vq; let vs;
       if (embedder) {
         try {
-          vq = normaal((await vectoren([q], PREFIX_VRAAG))[0]);
-          vs = (await vectoren(stukken.map((s) => s.tekst), PREFIX_STUK)).map(normaal);
+          vq = normaal((await vectoren([q], pv))[0]);
+          vs = (await vectoren(stukken.map((s) => s.tekst), ps)).map(normaal);
           methode = naam;
         } catch (e) { vq = null; vs = null; }   // niet gemengd: alles terug naar de woorddelen
       }

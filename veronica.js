@@ -3830,15 +3830,43 @@
   // ---- 523: ZOEKEN OP BETEKENIS IN DE PRIVÉ-HOEK (prive-betekenis.js) ----
   // De rekenlaag rekent; een betekenismodel (BetekenisM.embedder) komt er pas bij als het LOKAAL klaarstaat, en tot dan rekenen de
   // woorddelen. Dit stuk raakt geen netwerk en bewaart niets.
-  const BetekenisM = { embedder: null, naam: '' };
+  const BetekenisM = { embedder: null, naam: '', stand: 'geen', procent: 0, prefixVraag: null, prefixStuk: null };
+  // 523b: EmbeddingGemma in de browser (betekenis-model.js). Alleen na een tik ophalen (of als het eerder al eens gehaald is: dan
+  // komt het uit de opslag van de browser). Het ophalen gaat door de ene poort van Veronica, dus Vol lokaal houdt het tegen.
+  const BETEKENIS_SLEUTEL = 'veronica-betekenis-model';
+  async function betekenisModelLaden() {
+    if (typeof BetekenisModel === 'undefined' || BetekenisM.stand === 'laden' || BetekenisM.stand === 'klaar') return BetekenisM.stand;
+    if (volLokaal()) { BetekenisM.stand = 'lokaal'; return BetekenisM.stand; }
+    BetekenisM.stand = 'laden'; BetekenisM.procent = 0;
+    try {
+      const m = await BetekenisModel.laad({ importeer: (pad) => import(pad), opVoortgang: (p) => { BetekenisM.procent = p; } });
+      Object.assign(BetekenisM, { embedder: m.embedder, naam: m.naam, stand: 'klaar', prefixVraag: BetekenisModel.PREFIX_VRAAG, prefixStuk: BetekenisModel.PREFIX_STUK });
+      try { localStorage.setItem(BETEKENIS_SLEUTEL, '1'); } catch (e) { /* dan de volgende keer weer een tik */ }
+    } catch (e) { BetekenisM.stand = volLokaal() ? 'lokaal' : 'fout'; }
+    return BetekenisM.stand;
+  }
   function priveBetekenisLaag() {
     if (typeof PriveBetekenis === 'undefined') return null;
     let laag = null; let met;
     const huidig = () => {
-      if (!laag || met !== BetekenisM.embedder) { met = BetekenisM.embedder; laag = PriveBetekenis.maak(met ? { embedder: met, embedderNaam: BetekenisM.naam } : {}); }
+      if (!laag || met !== BetekenisM.embedder) {
+        met = BetekenisM.embedder;
+        laag = PriveBetekenis.maak(met ? { embedder: met, embedderNaam: BetekenisM.naam, prefixVraag: BetekenisM.prefixVraag || undefined, prefixStuk: BetekenisM.prefixStuk || undefined } : {});
+      }
       return laag;
     };
-    return { zoek: (store, vraag, n) => huidig().zoek(store, vraag, n), methode: () => huidig().methode() };
+    const model = typeof BetekenisModel === 'undefined' ? null : {
+      stand: () => BetekenisM.stand,
+      zin: () => BetekenisModel.zin(BetekenisM.stand, BetekenisM.stand === 'laden' && BetekenisM.procent ? `${BetekenisM.procent}%` : ''),
+      laad: () => betekenisModelLaden(),
+    };
+    // Eerder al eens gehaald: dan laadt het bij de eerste zoekvraag vanzelf uit de opslag van de browser (geen tweede tik).
+    const eerder = () => { try { return localStorage.getItem(BETEKENIS_SLEUTEL) === '1'; } catch (e) { return false; } };
+    const zoek = async (store, vraag, n) => {
+      if (model && BetekenisM.stand === 'geen' && eerder()) await betekenisModelLaden();
+      return huidig().zoek(store, vraag, n);
+    };
+    return { zoek, methode: () => huidig().methode(), model };
   }
 
   // ---- 470: DE WEG VAN DE PRIVÉ-HOEK NAAR EEN MODEL (prive-model.js) ----
@@ -4101,7 +4129,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

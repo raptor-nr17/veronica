@@ -200,6 +200,18 @@
     };
     k.append(vraag, knop('Zoek', zoek), lijst);
     vraag.addEventListener('keydown', (e) => { if (e.key === 'Enter') zoek(); });
+    // 523b: het betekenismodel (EmbeddingGemma) ophalen kan alleen met een tik; het halen zelf doet Veronica, niet dit blok.
+    const m = d.betekenis.model;
+    if (m) {
+      const stand = el('p', 'phKlein', m.zin()); stand.id = 'phBetekenisModel';
+      const haal = knop('Haal het betekenismodel (een keer)', async () => {
+        raak(); haal.disabled = true;
+        const tik = setInterval(() => { stand.textContent = m.zin(); }, 1000);
+        try { await m.laad(); } finally { clearInterval(tik); stand.textContent = m.zin(); haal.disabled = m.stand() === 'klaar'; }
+      });
+      haal.id = 'phBetekenisHaal'; haal.disabled = m.stand() === 'klaar';
+      k.append(stand, haal);
+    }
     return k;
   }
   function logBlok() {
