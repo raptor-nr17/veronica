@@ -146,11 +146,20 @@
     return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
       i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast].join('|');
   }
+  // 522d: HET DAGBUDGET VERDELEN. ntfy.sh telt berichten per dag; een telefoon heeft er NTFY_DAG_MAX (40) en houdt er een paar
+  // achter de hand voor iets anders dan de hartslag. Waren er overdag veel veranderingen, dan ging elke half uur een hartslag weg
+  // en was het budget 's avonds op: dan zag Veronica uren niets. Met `over` (wat er vandaag nog mag) en `totEinde` (ms tot het
+  // einde van de dag) wordt de tussentijd minstens de rest van de dag gedeeld door wat er over is. Niets meer over = geen hartslag.
   function hartslagNodig(o) {
     const x = o || {};
     const sinds = (x.nu || 0) - (x.laatstT || 0);
-    if (x.sleutel !== x.laatstSleutel) return sinds >= MIN_MS;
-    return sinds >= VERS_MS;
+    let spreid = 0;
+    if (typeof x.over === 'number') {
+      if (x.over <= 0) return false;
+      spreid = Math.max(0, Number(x.totEinde) || 0) / x.over;
+    }
+    if (x.sleutel !== x.laatstSleutel) return sinds >= Math.max(MIN_MS, spreid);
+    return sinds >= Math.max(VERS_MS, Math.min(spreid, 4 * 3600 * 1000));
   }
   async function leesHartslag(o, regel, c) {
     const r = await open(o, 'hartslag', regel, c);

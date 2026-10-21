@@ -1501,15 +1501,22 @@
     }
     {
       // 522: WIE REKENT NU, bovenaan Live (ook na "Dit is de baas": dan zie je meteen of de werkers echt meerekenen).
-      const w = K.wieRekent(Object.values(HB.per || {}), nu());
+      const w = K.wieRekent(Object.values(HB.per || {}), nu(), bekendeTelefoons());
       $('wieRekentKop').textContent = w.kop;
-      morphKinderen($('wieRekentLijst'), w.regels.map((r) => {
+      // 522d: wie geen verse hartslag heeft staat eronder, met de knop Maak werker (wat hij nu is weten we dan niet).
+      const oudRegels = w.oud.map((r) => {
+        const d = el('li', 'rekentNee', `${r.naam}: ${r.zin}`);
+        d.dataset.sleutel = `oud|${r.id}`;
+        const k = el('button', '', 'Maak werker (rektelefoon)'); k.dataset.maakWerker = r.id; d.append(' ', k);
+        return d;
+      });
+      morphKinderen($('wieRekentLijst'), oudRegels.concat(w.regels.map((r) => {
         const d = el('li', r.rekent ? 'rekentJa' : 'rekentNee', `${r.naam} (${r.rol}): ${r.zin}`);
         d.dataset.sleutel = `${r.id}|${r.pauze ? 'p' : ''}|${r.magWerker ? 'w' : ''}`;
         if (r.pauze) { const k = el('button', '', 'Noodstop opheffen'); k.dataset.noodstopOp = r.id; d.append(' ', k); }   // 522
         if (r.magWerker) { const k = el('button', '', 'Maak werker (rektelefoon)'); k.dataset.maakWerker = r.id; d.append(' ', k); }   // 522c
         return d;
-      }));
+      })));
     }
     $('bureauKnop').textContent = `Claude-bureau: ${S.bureau ? 'aan' : 'uit'}`;
     $('bureauKnop').setAttribute('aria-pressed', String(S.bureau));
@@ -2018,10 +2025,26 @@
   document.addEventListener('click', (e) => { const b = e.target; if (b && b.dataset && b.dataset.noodstopOp) noodstopOpheffen(b.dataset.noodstopOp); });
   // 522c: MAAK WERKER, uit de hartslag (ook op het gastnetwerk). Een tik van een mens; JARVIS zet zichzelf dan VAST op werker
   // (jarvis-rek-vast), rust niet meer als dagelijkse telefoon en zet zijn eigen motor aan.
-  async function maakWerkerViaHart(id) {
-    const h = HB.per[id];
+  // 522d: ook ZONDER verse hartslag (of zonder hartslag): de naam komt dan uit de ledenbrief of de postbus. Eerst bevestigen,
+  // want een werker rust nooit meer als dagelijkse telefoon.
+  function bekendeTelefoons() {
+    const uit = [];
+    for (const l of (LB.brief && Array.isArray(LB.brief.leden) ? LB.brief.leden : [])) if (l && l.id) uit.push({ id: l.id, naam: l.naam });
+    for (const h of Object.values(OM.per || {})) if (h && h.id) uit.push({ id: h.id, naam: h.naam });
+    return uit;
+  }
+  async function maakWerkerViaHart(id, bevestigd) {
+    const h = HB.per[id] || bekendeTelefoons().find((b) => b.id === id) || (id ? { id } : null);
     if (!h || !S.code) return false;
-    const ok = await roepNaarId(id, { soort: 'word-werker', van: 'veronica' });
+    if (!bevestigd) {
+      let ja = false;
+      try { ja = window.confirm(`${h.naam || 'Deze telefoon'} wordt een werker (rektelefoon): hij rekent mee en rust niet meer als dagelijkse telefoon. Staat JARVIS daar uit (noodstop), dan gaat hij weer aan. Nooit doen bij de telefoon die je zelf elke dag gebruikt. Doorgaan?`); } catch (e) { ja = false; }
+      if (!ja) return false;
+    }
+    // Eerst jarvis-aan (een JARVIS in de noodstop leest alleen die), dan word-werker in DEZELFDE brievenbus erachter: zo komen ze
+    // in deze volgorde binnen. Een JARVIS die niet uit staat laat jarvis-aan gewoon liggen.
+    await roepNaarId(id, { soort: 'jarvis-aan', van: 'veronica' }, true);
+    const ok = (await roepNaarId(id, { soort: 'word-werker', van: 'veronica' }, true)) || (await roepNaarId(id, { soort: 'word-werker', van: 'veronica' }));
     logRegel(ok ? `${h.naam || 'Een telefoon'}: "maak werker" is onderweg. Hij neemt het over zodra hij de brievenbus leest, zet zijn motor aan en meldt het in zijn volgende hartslag.`
       : `${h.naam || 'Een telefoon'}: "maak werker" kwam niet aan (de brievenbus was niet te bereiken). Probeer het zo nog eens.`);
     return ok;
@@ -2651,6 +2674,12 @@
       for (const t of S.telefoons) {
         const mo = (meet(t.adres).status || {}).motor;
         if (mo && mo.waarde && nu() - mo.t <= K.MAX_LEEFTIJD_MS && mo.waarde.tokensPerSeconde > 0) tempo[t.naam] = mo.waarde.tokensPerSeconde;
+      }
+      // 522d: op het gastnetwerk komt het tempo alleen uit de hartslag (de gemeten proefzin, anders het tempo van de motor).
+      for (const h of Object.values(HB.per || {})) {
+        const m = h && h.motor;
+        const tps = m && ((m.proef && m.proef.ok && Number(m.proef.tps)) || Number(m.tps)) || 0;
+        if (h && h.naam && tps > 0 && !tempo[h.naam]) tempo[h.naam] = tps;
       }
       const proef = K.proefPerTelefoon(S.nalees, tempo);
       const blok = el('section', 'tegel taakTegel');

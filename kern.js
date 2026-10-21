@@ -356,7 +356,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.58';
+  const JARVIS_NIEUWSTE = '1.9.59';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -406,10 +406,24 @@
     return [{ wat: 'motor', roep: { soort: 'motor-aan', van: 'veronica' } }];
   }
   // 522: WIE REKENT NU. Een regel per telefoon, alleen uit verse hartslagen (wat er niet gemeld is, zeggen we niet).
-  function wieRekent(harten, tijd) {
+  // 522d: een telefoon ZONDER verse hartslag (oud, of alleen bekend uit de ledenbrief of de postbus) staat eronder in `oud`, met
+  // wanneer hij zich voor het laatst meldde en ALTIJD de knop Maak werker: wat hij nu is weten we niet, en een rektelefoon die als
+  // dagelijkse telefoon rust stuurt juist geen hartslag meer. De knop vraagt Veronica eerst te bevestigen (nooit de dagelijkse telefoon).
+  const OUD_LIJST_MS = 30 * 24 * 3600 * 1000;
+  function wieRekent(harten, tijd, bekend) {
     const regels = [];
+    const oud = [];
+    const gezien = new Set();
     for (const h of (Array.isArray(harten) ? harten : [])) {
-      if (!h || typeof h.t !== 'number' || tijd - h.t > HARTSLAG_VERS_MS) continue;
+      if (!h || typeof h.t !== 'number') continue;
+      if (tijd - h.t > HARTSLAG_VERS_MS) {
+        if (h.id && tijd - h.t <= OUD_LIJST_MS && !gezien.has(h.id)) {
+          gezien.add(h.id);
+          oud.push({ id: h.id, naam: h.naam || 'Een telefoon', zin: `geen verse hartslag (laatste ${klokZin(h.t)}${tijd - h.t > 20 * 3600 * 1000 ? `, ${Math.round((tijd - h.t) / 3600000)} uur geleden` : ''}${h.rol ? `, toen ${h.rol === 'baas' ? 'beheerder' : 'werker'}` : ''})`, magWerker: true });
+        }
+        continue;
+      }
+      if (h.id) gezien.add(h.id);
       const m = h.motor;
       const naam = h.naam || 'Een telefoon';
       const tps = m && (Number(m.tps) || (m.proef && Number(m.proef.tps))) || 0;
@@ -433,8 +447,13 @@
       // 522c: een beheerder die als dagelijkse telefoon RUST kan per ongeluk een rektelefoon zijn (de QR van Veronica gescand).
       regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: h.rol === 'baas' ? 'beheerder' : 'werker' });
     }
+    for (const b of (Array.isArray(bekend) ? bekend : [])) {
+      if (!b || !b.id || gezien.has(b.id)) continue;
+      gezien.add(b.id);
+      oud.push({ id: b.id, naam: b.naam || 'Een telefoon', zin: 'nog geen hartslag ontvangen', magWerker: true });
+    }
     const n = regels.filter((r) => r.rekent).length;
-    return { kop: regels.length ? `Wie rekent nu: ${n} van ${regels.length} ${regels.length === 1 ? 'telefoon' : 'telefoons'}` : 'Wie rekent nu: nog geen hartslag binnen', regels };
+    return { kop: regels.length ? `Wie rekent nu: ${n} van ${regels.length} ${regels.length === 1 ? 'telefoon' : 'telefoons'}` : 'Wie rekent nu: nog geen hartslag binnen', regels, oud };
   }
   function rekWerker(st, tijd) {
     const v = (k) => (st && st[k] && typeof st[k].t === 'number' && tijd - st[k].t <= MAX_LEEFTIJD_MS ? st[k].waarde : null);
@@ -459,7 +478,11 @@
       const tps = tempo && typeof tempo[p.naam] === 'number' && tempo[p.naam] > 0 ? tempo[p.naam] : null;
       return { naam: p.naam, aantal: p.aantal, gemS: gem,
         zin: `${p.naam}: ${p.aantal} ${p.aantal === 1 ? 'verhaal' : 'verhalen'}${gem !== null ? `, gemiddeld ${gem} s per verhaal` : ''}${tps !== null ? `, motor ±${String(tps).replace('.', ',')} tokens/s` : ''}` };
-    });
+    }).concat(Object.keys(tempo || {}).filter((n) => !per[n] && typeof tempo[n] === 'number' && tempo[n] > 0).sort().map((n) => ({
+      // 522d: een telefoon met een gemeten tempo maar nog geen verhaal: dan staat in elk geval zijn tempo er (en hoe lang een verhaal
+      // van ongeveer 350 tokens dan ongeveer duurt).
+      naam: n, aantal: 0, gemS: null,
+      zin: `${n}: nog geen verhaal, motor ±${String(tempo[n]).replace('.', ',')} tokens/s (een verhaal van ±350 tokens duurt dan ±${Math.max(1, Math.round(350 / tempo[n] / 60))} min)` })));
   }
   const hitteNaam = (n) => (Number.isInteger(n) && n >= 0 && n < HITTE.length ? HITTE[n] : 'onbekend');
 
@@ -880,7 +903,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.72';
+  const VERONICA_VERSIE = '1.9.73';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
