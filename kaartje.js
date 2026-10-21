@@ -212,7 +212,36 @@
       if (st !== 'aanwezig') return { ok: false, fout: st };
       try { const m = await eigenMap(await leesHandvat()); const f = await (await m.getFileHandle(naam)).getFile(); return { ok: true, tekst: await f.text() }; } catch (e) { return { ok: false, fout: 'niet-gevonden' }; }
     }
-    return { status, kies, vraagToestemming, schrijf, lijst, lees, kanKiezen, kastHeeft, kastBestand, kastSchrijfStroom, ruimte };
+    // 522: TERUG NAAR HET KAARTJE. Wat intern belandde toen het kaartje er niet was, gaat er vanzelf heen zodra het terug is:
+    // eerst schrijven en teruglezen (zelfde lengte), pas dan intern wissen. Staat er op het kaartje al een bestand met die naam,
+    // dan blijft dat staan en gaat alleen de interne kopie weg. Alleen bestanden met onze eigen naamvorm, en weer langs controleer().
+    async function verhuisIntern() {
+      if (await status() !== 'aanwezig') return { verhuisd: 0 };
+      const im = await internMap();
+      if (!im) return { verhuisd: 0 };
+      let km;
+      try { km = await eigenMap(await leesHandvat()); } catch (e) { return { verhuisd: 0 }; }
+      const namen = [];
+      try { for await (const x of im.values()) if (x.kind === 'file' && NAAM_RE.test(x.name)) namen.push(x.name); } catch (e) { return { verhuisd: 0 }; }
+      let verhuisd = 0;
+      for (const n of namen) {
+        try {
+          const tekst = await (await (await im.getFileHandle(n)).getFile()).text();
+          if (!controleer(n.match(NAAM_RE)[1], tekst, []).ok) continue;
+          let al = null;
+          try { al = await (await (await km.getFileHandle(n)).getFile()).text(); } catch (e) { al = null; }
+          if (al === null) {
+            await schrijfIn(km, n, tekst);
+            const terug = await (await (await km.getFileHandle(n)).getFile()).text();
+            if (terug.length !== tekst.length) continue;
+          }
+          await im.removeEntry(n);
+          verhuisd += 1;
+        } catch (e) { /* het kaartje ging weer weg: de volgende keer */ }
+      }
+      return { verhuisd };
+    }
+    return { status, kies, vraagToestemming, schrijf, lijst, lees, kanKiezen, kastHeeft, kastBestand, kastSchrijfStroom, ruimte, verhuisIntern };
   }
 
   // Bytes in gewone taal.

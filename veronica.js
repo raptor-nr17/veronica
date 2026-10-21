@@ -1503,7 +1503,12 @@
       // 522: WIE REKENT NU, bovenaan Live (ook na "Dit is de baas": dan zie je meteen of de werkers echt meerekenen).
       const w = K.wieRekent(Object.values(HB.per || {}), nu());
       $('wieRekentKop').textContent = w.kop;
-      morphKinderen($('wieRekentLijst'), w.regels.map((r) => { const d = el('li', r.rekent ? 'rekentJa' : 'rekentNee', `${r.naam} (${r.rol}): ${r.zin}`); d.dataset.sleutel = r.id; return d; }));
+      morphKinderen($('wieRekentLijst'), w.regels.map((r) => {
+        const d = el('li', r.rekent ? 'rekentJa' : 'rekentNee', `${r.naam} (${r.rol}): ${r.zin}`);
+        d.dataset.sleutel = `${r.id}|${r.pauze ? 'p' : ''}`;
+        if (r.pauze) { const k = el('button', '', 'Noodstop opheffen'); k.dataset.noodstopOp = r.id; d.append(' ', k); }   // 522
+        return d;
+      }));
     }
     $('bureauKnop').textContent = `Claude-bureau: ${S.bureau ? 'aan' : 'uit'}`;
     $('bureauKnop').setAttribute('aria-pressed', String(S.bureau));
@@ -1999,6 +2004,17 @@
     if (!ok) { eerder.motor = 0; try { localStorage.setItem('veronica-rek-rem', JSON.stringify(RekV.per)); } catch (e) { /* alleen voor nu */ } }
     return ok;
   }
+  // 522: NOODSTOP OPHEFFEN. Een tik van een mens hier; de telefoon (die verder uit blijft) luistert alleen naar deze roep, met de
+  // rij-code, via de brievenbus. Hij zet daarna zichzelf weer aan en meldt dat in zijn volgende hartslag.
+  async function noodstopOpheffen(id) {
+    const h = HB.per[id];
+    if (!h || !S.code) return false;
+    const ok = await roepNaarId(id, { soort: 'jarvis-aan', van: 'veronica' }, true);
+    logRegel(ok ? `${h.naam || 'Een telefoon'}: noodstop opheffen staat in de brievenbus. Hij leest hem binnen enkele minuten en gaat dan weer aan.`
+      : `${h.naam || 'Een telefoon'}: noodstop opheffen kwam niet aan (de brievenbus was niet te bereiken). Probeer het zo nog eens.`);
+    return ok;
+  }
+  document.addEventListener('click', (e) => { const b = e.target; if (b && b.dataset && b.dataset.noodstopOp) noodstopOpheffen(b.dataset.noodstopOp); });
   // De knop "Laat meerekenen" bij een telefoon die beheerder is en als dagelijkse telefoon rust: hij wordt werker ('word-werker',
   // met de code), en rekent daarna mee. Een tik van een mens, nooit vanzelf (495).
   async function rekWerkerMaken(adres) {
@@ -2042,8 +2058,9 @@
     return ok;
   }
   // Een roep naar EEN telefoon (op zijn id) via de brievenbus. true = afgeleverd bij ntfy.
-  async function roepNaarId(id, roep) {
-    if (await doorgeefNaarId(id, roep)) return true;   // 514: eerst de postbus via een telefoon die wel antwoordt
+  // 522: alleenBrievenbus = niet via de postbus van een andere telefoon (een uitgezette JARVIS leest alleen de brievenbus).
+  async function roepNaarId(id, roep, alleenBrievenbus) {
+    if (!alleenBrievenbus && await doorgeefNaarId(id, roep)) return true;   // 514: eerst de postbus via een telefoon die wel antwoordt
     const o = S.ntfy && S.ntfy.onderwerp;
     if (!id || !o || !S.code || !window.Hartslag || volLokaal()) return false;
     const v = await window.Hartslag.roepVerzoek(o, Object.assign({}, roep, { naar: id }), S.code, nu());
@@ -2173,9 +2190,17 @@
     if (soort === 'vertalingen') return { soort, concepten: S.nalees && Array.isArray(S.nalees.lijst) ? S.nalees.lijst.map((x) => ({ taakId: x.taakId, soort: x.soort, taal: x.taal, naam: x.naam, bron: x.bron, concept: x.concept })) : [] };
     return null;
   }
+  // 522: wat intern bewaard werd toen het kaartje er niet was, verhuist vanzelf zodra het terug is.
+  async function kaartjeTerug() {
+    if (!KaartjeL || typeof KaartjeL.verhuisIntern !== 'function') return 0;
+    const r = await KaartjeL.verhuisIntern();
+    if (r.verhuisd) logRegel(`Het kaartje is terug: ${r.verhuisd} ${r.verhuisd === 1 ? 'bestand' : 'bestanden'} van intern naar het kaartje gezet.`);
+    return r.verhuisd;
+  }
   async function tekenKaartje() {
     if (!KaartjeL || !$('kaartjeStatus')) return;
     const st = await KaartjeL.status();
+    if (st === 'aanwezig') await kaartjeTerug().catch(() => 0);
     $('kaartjeStatus').textContent = window.Kaartje.STATUSZIN[st] || st;
     try { $('kaartjeRuimte').textContent = window.Kaartje.ruimteZin(await KaartjeL.ruimte()); } catch (e) { $('kaartjeRuimte').textContent = ''; }
     if ($('kaartjeKast')) $('kaartjeKast').textContent = KastV.zin;
@@ -2212,6 +2237,7 @@
     const vandaag = new Date(nu()).toISOString().slice(0, 10);
     let laatste = null;
     try { laatste = localStorage.getItem(KAARTJE_DAG); } catch (e) { laatste = null; }
+    await kaartjeTerug().catch(() => 0);   // 522
     if (laatste === vandaag) return;
     const a = await KaartjeL.schrijf('logboek', kaartjeGegevens('logboek'), kaartjeVerboden(), nu());
     if (S.nachtlog.length) await KaartjeL.schrijf('nachtproef', kaartjeGegevens('nachtproef'), kaartjeVerboden(), nu());
@@ -3760,6 +3786,20 @@
 
   // ---- Start ----
 
+  // ---- 523: ZOEKEN OP BETEKENIS IN DE PRIVÉ-HOEK (prive-betekenis.js) ----
+  // De rekenlaag rekent; een betekenismodel (BetekenisM.embedder) komt er pas bij als het LOKAAL klaarstaat, en tot dan rekenen de
+  // woorddelen. Dit stuk raakt geen netwerk en bewaart niets.
+  const BetekenisM = { embedder: null, naam: '' };
+  function priveBetekenisLaag() {
+    if (typeof PriveBetekenis === 'undefined') return null;
+    let laag = null; let met;
+    const huidig = () => {
+      if (!laag || met !== BetekenisM.embedder) { met = BetekenisM.embedder; laag = PriveBetekenis.maak(met ? { embedder: met, embedderNaam: BetekenisM.naam } : {}); }
+      return laag;
+    };
+    return { zoek: (store, vraag, n) => huidig().zoek(store, vraag, n), methode: () => huidig().methode() };
+  }
+
   // ---- 470: DE WEG VAN DE PRIVÉ-HOEK NAAR EEN MODEL (prive-model.js) ----
   // Het enige stukje rond de hoek dat het netwerk aanraakt, en alleen naar het lokale adres dat de eigenaar in de hoek koos,
   // met de schakelaar aan. Standaard uit. De regels en de test: prive-model.js, check_prive_model.js.
@@ -3836,10 +3876,12 @@
       noodstop: () => noodstop(), stop: () => { if (S.aan) $('pantserKnop').click(); }, pantserAan: () => S.aan === true,
       bevestig: (zin) => window.confirm(zin),
       koppelQr: maakPriveKoppelQr,   // 481: de telefoon koppelen aan de hoek (QR met de privé-sleutel)
+      betekenis: priveBetekenisLaag(),   // 523: zoeken op betekenis (rekenen, geen netwerk; het model komt van buiten dit blok)
       model: priveModelLaag(),   // 470: zie hierboven (buiten dit blok: het is het ENIGE stukje van de hoek dat het netwerk aanraakt)
       downloadBestand: (naam, tekst) => {
         // 498: de VERSLEUTELDE back-up van de privé-hoek gaat naar het kaartje als dat er is (soort 'backup' laat alleen die vorm door).
-        if (KaartjeL && /^prive-hoek-/.test(naam)) { KaartjeL.status().then((st) => (st === 'aanwezig' ? KaartjeL.schrijf('backup', tekst, kaartjeVerboden(), nu()) : null)).catch(() => {}); }   // stil: dit blok schrijft nooit in het logboek
+        // 522: zonder kaartje intern (versleuteld); zodra het kaartje terug is gaat hij er vanzelf heen (verhuisIntern).
+        if (KaartjeL && /^prive-hoek-/.test(naam)) { KaartjeL.schrijf('backup', tekst, kaartjeVerboden(), nu()).catch(() => {}); }   // stil: dit blok schrijft nooit in het logboek
         const b = new Blob([tekst], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = naam; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); },
     });
     laadPriveMotorSleutel();
@@ -4018,7 +4060,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

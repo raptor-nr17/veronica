@@ -356,7 +356,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.57';
+  const JARVIS_NIEUWSTE = '1.9.58';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -401,7 +401,7 @@
     const e = eerder || {};
     if (!h || !h.id || typeof h.t !== 'number' || tijd - h.t > HARTSLAG_VERS_MS) return [];
     const m = h.motor;
-    if (h.rol !== 'werker' || h.dagelijks || h.sparen || !m || m.aan || m.teOud) return [];
+    if (h.rol !== 'werker' || h.pauze || h.dagelijks || h.sparen || !m || m.aan || m.teOud) return [];
     if (tijd - (e.motor || 0) < REK_MOTOR_MS) return [];
     return [{ wat: 'motor', roep: { soort: 'motor-aan', van: 'veronica' } }];
   }
@@ -414,7 +414,10 @@
       const naam = h.naam || 'Een telefoon';
       const tps = m && (Number(m.tps) || (m.proef && Number(m.proef.tps))) || 0;
       let zin; let rekent = false;
-      if (h.dagelijks) zin = 'rust (dagelijkse telefoon)';
+      // 522: JARVIS staat uit (de Uit-knop = ook de noodstop van de AI-kern). Dan start er niets, ook geen motor.
+      const p = h.pauze && typeof h.pauze === 'object' ? h.pauze : null;
+      if (p) zin = `JARVIS staat uit (noodstop${p.door && p.door !== 'onbekend' ? `, door ${p.door}` : ''}${p.t ? `, sinds ${klokZin(p.t)}` : ''}); er start niets`;
+      else if (h.dagelijks) zin = 'rust (dagelijkse telefoon)';
       else if (h.sparen) zin = 'spaart (de schuif Sparen staat aan)';
       else if (!m) zin = 'meldt geen eigen motor (oude JARVIS?)';
       else if (m.teOud) zin = 'te oud voor een eigen motor';
@@ -425,7 +428,9 @@
       else if (m.fase === 'fout') zin = 'motor liep vast; ik zet hem opnieuw aan';
       else if (m.fase === 'wacht') zin = 'motor aan, wacht op wifi of de lader';
       else zin = `motor aan (${m.fase || 'onbekend'})`;
-      regels.push({ id: h.id || naam, naam, zin, rekent, rol: h.rol === 'baas' ? 'beheerder' : 'werker' });
+      // 522: de laatste zin van de werker van de gids op die telefoon (waarom hij wel of niet werkt), als hij er een meldt.
+      if (typeof h.werk === 'string' && h.werk.trim()) zin += `. Werker: ${h.werk.trim().replace(/\.$/, '')}`;
+      regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, rol: h.rol === 'baas' ? 'beheerder' : 'werker' });
     }
     const n = regels.filter((r) => r.rekent).length;
     return { kop: regels.length ? `Wie rekent nu: ${n} van ${regels.length} ${regels.length === 1 ? 'telefoon' : 'telefoons'}` : 'Wie rekent nu: nog geen hartslag binnen', regels };
@@ -874,7 +879,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.70';
+  const VERONICA_VERSIE = '1.9.71';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';

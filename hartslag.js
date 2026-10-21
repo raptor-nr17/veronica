@@ -123,6 +123,11 @@
       // "klaargezet in de postbus" tot "deze telefoon begon" (alleen een getal; geen adres, geen inhoud).
       lijnen: l ? { brievenbus: getal(l.brievenbus, 0, 120000), postbus: getal(l.postbus, 0, 120000), wifi: getal(l.wifi, 0, 120000) } : null,
       oppakMs: getal(x.oppakMs, 0, 7 * 24 * 3600000),
+      // 522: de laatste zin van de werker van de gids op deze telefoon ("Wacht: niet aan de lader", "Niets gedaan: ..."), zodat
+      // Veronica ziet WAAROM er niets gebeurt. Telt niet mee in hartslagSleutel (anders een hartslag per zin).
+      werk: schoon(x.werk, 120),
+      // 522: JARVIS staat uit (de Uit-knop = ook de noodstop van de AI-kern): sinds wanneer en waardoor. null = staat aan.
+      pauze: x.pauze && typeof x.pauze === 'object' ? { t: Math.floor(Number(x.pauze.t) || 0), door: schoon(x.pauze.door, 40) } : null,
     };
   }
   async function hartslagVerzoek(o, h, c) {
@@ -138,7 +143,7 @@
     const m = d.motor || {};
     const i = d.instel || {};
     // 507: het geheugengebruik telt NIET mee (dat schommelt; anders een hartslag per kleine verandering), het model wel
-    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, d.laadt, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
+    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
       i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast].join('|');
   }
   function hartslagNodig(o) {

@@ -182,6 +182,26 @@
     return k;
   }
 
+  // 523: ZOEKEN OP BETEKENIS. De rekenlaag (d.betekenis, prive-betekenis.js) komt van Veronica; dit blok raakt geen netwerk.
+  function betekenisBlok() {
+    const k = el('section', 'phBlok'); k.append(kop('Zoek op betekenis in mijn hoek'));
+    if (!d.betekenis) { k.append(el('p', 'phKlein', 'Niet beschikbaar in deze versie.')); return k; }
+    k.append(el('p', 'phKlein', `Zoekt in je kern, karakter, samenvattingen, logboek en voorstellen naar wat er in betekenis bij past, niet alleen naar dezelfde woorden. Alles op deze Chromebook; er gaat niets naar buiten. Rekent nu met: ${d.betekenis.methode()}.`));
+    const vraag = el('input'); vraag.type = 'search'; vraag.id = 'phBetekenis'; vraag.placeholder = 'bijvoorbeeld: wat zei ik over de boot?'; vraag.setAttribute('aria-label', 'Zoek op betekenis');
+    const lijst = el('div', 'phLog'); lijst.id = 'phBetekenisLijst';
+    const zoek = async () => {
+      raak();
+      const r = await d.betekenis.zoek(U.store, vraag.value, 10);
+      lijst.replaceChildren();
+      if (!vraag.value.trim()) return;
+      if (!r.resultaten.length) { lijst.append(el('p', '', 'Niets gevonden dat in betekenis dichtbij ligt.')); return; }
+      for (const x of r.resultaten) { const c = el('div', 'phLogRegel'); c.append(el('span', 'phLabel', x.soort), el('span', 'phKlein', ` ${x.dag ? `${x.dag} ` : ''}(${Math.round(x.score * 100)}%) `), el('span', '', x.tekst)); lijst.append(c); }
+      lijst.append(el('p', 'phKlein', `Gerekend met ${r.methode}.`));
+    };
+    k.append(vraag, knop('Zoek', zoek), lijst);
+    vraag.addEventListener('keydown', (e) => { if (e.key === 'Enter') zoek(); });
+    return k;
+  }
   function logBlok() {
     const k = el('section', 'phBlok'); k.append(kop('5. Logboek inzien en zoeken'));
     const zoek = el('input'); zoek.type = 'search'; zoek.id = 'phZoek'; zoek.value = U.zoek; zoek.placeholder = 'zoek in het logboek'; zoek.setAttribute('aria-label', 'Zoek in het logboek');
@@ -319,7 +339,7 @@
     if (!U.klaar) { wortelEl.append(el('p', '', 'Even laden…')); return; }
     wortelEl.append(bovenbalk());
     if (U.melding) wortelEl.append(el('p', 'phMelding', U.melding));
-    wortelEl.append(statusBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
+    wortelEl.append(statusBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), betekenisBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
   }
 
   return {
