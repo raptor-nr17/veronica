@@ -394,6 +394,42 @@
     }
     return uit;
   }
+  // 522: HETZELFDE BESLUIT UIT EEN HARTSLAG. Op het gastnetwerk komt /jarvis/status nooit binnen (alleen de hartslag via de
+  // brievenbus), en dan kreeg een werker met de motor uit nooit zijn "motor aan" -- zo bleef een werker op 21 oktober stil. Alleen
+  // motor-aan, alleen een verse hartslag van een werker die niet de dagelijkse telefoon is en niet spaart, en dezelfde rem.
+  function rekBesluitHart(h, tijd, eerder) {
+    const e = eerder || {};
+    if (!h || !h.id || typeof h.t !== 'number' || tijd - h.t > HARTSLAG_VERS_MS) return [];
+    const m = h.motor;
+    if (h.rol !== 'werker' || h.dagelijks || h.sparen || !m || m.aan || m.teOud) return [];
+    if (tijd - (e.motor || 0) < REK_MOTOR_MS) return [];
+    return [{ wat: 'motor', roep: { soort: 'motor-aan', van: 'veronica' } }];
+  }
+  // 522: WIE REKENT NU. Een regel per telefoon, alleen uit verse hartslagen (wat er niet gemeld is, zeggen we niet).
+  function wieRekent(harten, tijd) {
+    const regels = [];
+    for (const h of (Array.isArray(harten) ? harten : [])) {
+      if (!h || typeof h.t !== 'number' || tijd - h.t > HARTSLAG_VERS_MS) continue;
+      const m = h.motor;
+      const naam = h.naam || 'Een telefoon';
+      const tps = m && (Number(m.tps) || (m.proef && Number(m.proef.tps))) || 0;
+      let zin; let rekent = false;
+      if (h.dagelijks) zin = 'rust (dagelijkse telefoon)';
+      else if (h.sparen) zin = 'spaart (de schuif Sparen staat aan)';
+      else if (!m) zin = 'meldt geen eigen motor (oude JARVIS?)';
+      else if (m.teOud) zin = 'te oud voor een eigen motor';
+      else if (m.klaar) { rekent = true; zin = `rekent mee${m.model ? ` met ${m.model}` : ''}${tps ? `, ongeveer ${tps} tokens per seconde` : ''}`; }
+      else if (!m.aan) zin = h.rol === 'werker' ? 'motor staat uit; ik zet hem aan' : 'motor staat uit (beheerder)';
+      else if (m.fase === 'downloaden') zin = `haalt het model binnen (${Number(m.procent) || 0}%)`;
+      else if (m.fase === 'laden') zin = 'laadt het model';
+      else if (m.fase === 'fout') zin = 'motor liep vast; ik zet hem opnieuw aan';
+      else if (m.fase === 'wacht') zin = 'motor aan, wacht op wifi of de lader';
+      else zin = `motor aan (${m.fase || 'onbekend'})`;
+      regels.push({ id: h.id || naam, naam, zin, rekent, rol: h.rol === 'baas' ? 'beheerder' : 'werker' });
+    }
+    const n = regels.filter((r) => r.rekent).length;
+    return { kop: regels.length ? `Wie rekent nu: ${n} van ${regels.length} ${regels.length === 1 ? 'telefoon' : 'telefoons'}` : 'Wie rekent nu: nog geen hartslag binnen', regels };
+  }
   function rekWerker(st, tijd) {
     const v = (k) => (st && st[k] && typeof st[k].t === 'number' && tijd - st[k].t <= MAX_LEEFTIJD_MS ? st[k].waarde : null);
     return v('rol') === 'werker' && v('voorkeur') !== 'kern' && !v('dagelijks') && v('zandbak') !== true && v('gespaard') !== true;
@@ -838,7 +874,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.69';
+  const VERONICA_VERSIE = '1.9.70';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1493,7 +1529,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { rekBesluit, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { rekBesluit, rekBesluitHart, wieRekent, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,

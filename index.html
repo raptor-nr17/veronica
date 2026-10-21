@@ -31,6 +31,7 @@
   .tRol { font-size: 16px; color: var(--zacht); margin-top: 2px; }
   .tOverzicht { font-size: 17px; font-weight: 600; margin-top: 4px; }
   .tZelftest { font-size: 15px; margin-top: 6px; } .tZelftestKop { font-weight: 600; } .zt-nee { color: var(--rood); } .zt-info { color: var(--zacht); }
+  #wieRekentLijst { margin: 0 0 12px; padding-left: 20px; font-size: 17px; } .rekentJa { color: #4caf50; } .rekentNee { color: var(--zacht); }
   .tVersie { font-size: 14px; color: var(--zacht); margin-top: 2px; }
   .tVersie.achter { font-size: 16px; color: #f5a524; }
   .tGemma { font-size: 16px; color: #f5a524; margin-top: 4px; line-height: 1.35; }   /* 456b: twee Gemma-apps of twee modelkopieen */
@@ -181,6 +182,8 @@
     Elk getal komt van een meting: eronder staat de bron en hoe oud hij is. Ouder dan 10 seconden is grijs. Niet gemeten = onbekend.</p>
   <section id="scherm-live">
     <p id="leeg">Nog geen telefoons. Tik op Koppelen en neem de vertrouwde telefoons over van de hoofdtelefoon.</p>
+    <!-- 522: wie rekent nu (uit de hartslagen) -->
+    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><ul id="wieRekentLijst"></ul></div>
     <div id="vSamen"></div>
     <div id="rekBlok" hidden><p id="rekZin" class="groteMelding"></p><ul id="rekRegels"></ul>
       <!-- 1.9.14: EEN grote schuif, twee standen: de reserve waarop een rektelefoon stopt met rekenen. -->

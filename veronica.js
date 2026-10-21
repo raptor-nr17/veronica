@@ -290,6 +290,7 @@
     await Opslag.schrijf('hartslagen', HB.per);
     geefPostbusViaBrievenbus(h).catch(() => {});   // 504: een telefoon die zich meldt krijgt de verse code (een keer)
     herstelMotor(h).catch(() => {});   // 505: een vastgelopen motor weer op gang
+    rekVanzelfHart(h).catch(() => {});   // 522: een werker met de motor uit, ook op het gastnetwerk
     try { tekenLive(); } catch (e) { /* de volgende keer */ }
     return true;
   }
@@ -1498,6 +1499,12 @@
       k.hidden = !S.aan || !kand.length;
       k.textContent = `Zet de eigen motor aan op ${kand.length === 1 ? kand[0].naam : `${kand.length} telefoons (${kand.map((t) => t.naam).join(', ')})`}`;
     }
+    {
+      // 522: WIE REKENT NU, bovenaan Live (ook na "Dit is de baas": dan zie je meteen of de werkers echt meerekenen).
+      const w = K.wieRekent(Object.values(HB.per || {}), nu());
+      $('wieRekentKop').textContent = w.kop;
+      morphKinderen($('wieRekentLijst'), w.regels.map((r) => { const d = el('li', r.rekent ? 'rekentJa' : 'rekentNee', `${r.naam} (${r.rol}): ${r.zin}`); d.dataset.sleutel = r.id; return d; }));
+    }
     $('bureauKnop').textContent = `Claude-bureau: ${S.bureau ? 'aan' : 'uit'}`;
     $('bureauKnop').setAttribute('aria-pressed', String(S.bureau));
     $('bureauZin').textContent = S.bureau ? `${S.tellers.klussen} ${S.tellers.klussen === 1 ? 'klus' : 'klussen'}${S.tellers.ms > 0 && S.tellers.tokens > 0 ? ` · ±${Math.round(S.tellers.tokens * 1000 / S.tellers.ms * 10) / 10} tokens/s` : ''}` : '';
@@ -1975,6 +1982,22 @@
       try { localStorage.setItem('veronica-rek-rem', JSON.stringify(RekV.per)); } catch (e) { /* alleen voor nu */ }
     }
     return gedaan;
+  }
+  // 522: Rek vanzelf UIT EEN HARTSLAG, via de brievenbus (roepNaarId). Zelfde knop, zelfde rem (per toestel-id).
+  async function rekVanzelfHart(h) {
+    if (!rekAan() || !h || !h.id || !S.code || volLokaal()) return false;
+    const tijd = nu();
+    const eerder = RekV.per[h.id] || {};
+    const besluit = K.rekBesluitHart(h, tijd, eerder);
+    if (!besluit.length) return false;
+    eerder.motor = tijd;
+    RekV.per[h.id] = eerder;
+    try { localStorage.setItem('veronica-rek-rem', JSON.stringify(RekV.per)); } catch (e) { /* alleen voor nu */ }
+    const ok = await roepNaarId(h.id, besluit[0].roep);
+    logRegel(ok ? `${h.naam || 'Een telefoon'} is werker en zijn eigen motor stond uit; ik zette hem aan via de brievenbus. Het model komt vanzelf binnen (wifi en lader).`
+      : `${h.naam || 'Een telefoon'}: motor aanzetten kwam niet aan (de brievenbus was niet te bereiken). Ik probeer het later.`);
+    if (!ok) { eerder.motor = 0; try { localStorage.setItem('veronica-rek-rem', JSON.stringify(RekV.per)); } catch (e) { /* alleen voor nu */ } }
+    return ok;
   }
   // De knop "Laat meerekenen" bij een telefoon die beheerder is en als dagelijkse telefoon rust: hij wordt werker ('word-werker',
   // met de code), en rekent daarna mee. Een tik van een mens, nooit vanzelf (495).
