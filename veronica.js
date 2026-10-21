@@ -1537,6 +1537,7 @@
         const bb = ((meet(t.adres).status || {}).brievenbus || {}).waarde || null;
         tegel.appendChild(el('div', 'tHartslag', window.Hartslag.diagnose(echt, { antwoordt: s.bereikbaar === true || wifiJ ? true : (s.bereikbaar === false ? false : null), uitleg: K.brievenbusUitleg(bb, NtfyGeefV.mijn) }, tijd)));
         if (echt) tegel.appendChild(el('div', 'tMotorRegel', window.Hartslag.motorZin(echt)));
+        if (echt && window.Hartslag.lijnZin && window.Hartslag.lijnZin(echt)) tegel.appendChild(el('div', 'tLijnen', window.Hartslag.lijnZin(echt)));   // 520
         // 501: de motor-instellingen die nu gelden, in gewone taal, en een knop om ze voor deze telefoon aan te passen
         if (echt && echt.instel && window.MotorInstel) {
           const i = echt.instel;

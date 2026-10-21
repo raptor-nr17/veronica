@@ -81,6 +81,7 @@
     const m = x.motor && typeof x.motor === 'object' ? x.motor : null;
     const p = m && m.proef && typeof m.proef === 'object' ? m.proef : null;
     const i = x.instel && typeof x.instel === 'object' ? x.instel : null;
+    const l = x.lijnen && typeof x.lijnen === 'object' ? x.lijnen : null;
     return {
       v: 1,
       t: Math.floor(Number(x.t) || 0),
@@ -118,6 +119,10 @@
         accuMin: getal(i.accuMin, 0, 100), tempMax: getal(i.tempMax, 0, 90), alleenLader: i.alleenLader === true,
         geladen: i.geladen === true, dradenToegepast: i.dradenToegepast === true, temperatuurToegepast: i.temperatuurToegepast === true,
       } : null,
+      // 520: hoe snel de lijnen van deze telefoon zijn (middelste van de laatste metingen, in ms), en hoe lang het duurde van
+      // "klaargezet in de postbus" tot "deze telefoon begon" (alleen een getal; geen adres, geen inhoud).
+      lijnen: l ? { brievenbus: getal(l.brievenbus, 0, 120000), postbus: getal(l.postbus, 0, 120000), wifi: getal(l.wifi, 0, 120000) } : null,
+      oppakMs: getal(x.oppakMs, 0, 7 * 24 * 3600000),
     };
   }
   async function hartslagVerzoek(o, h, c) {
@@ -231,5 +236,15 @@
     return delen.join(' · ');
   }
 
-  return { SERVER, MIN_MS, VERS_MS, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
+  // 520: de lijnen in gewone taal (Veronica): "lijnen: brievenbus 0,9 s · postbus 0,3 s · taak opgepakt na 4 min".
+  function lijnZin(h) {
+    const l = h && h.lijnen;
+    const tijd = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${String(Math.round(ms / 100) / 10).replace('.', ',')} s`);
+    const delen = [];
+    if (l) for (const [k, naam] of [['wifi', 'wifi'], ['brievenbus', 'brievenbus'], ['postbus', 'postbus']]) if (typeof l[k] === 'number') delen.push(`${naam} ${tijd(l[k])}`);
+    if (h && typeof h.oppakMs === 'number') delen.push(`taak opgepakt na ${h.oppakMs < 90000 ? tijd(h.oppakMs) : `${Math.round(h.oppakMs / 60000)} min`}`);
+    return delen.length ? `lijnen: ${delen.join(' · ')}` : '';
+  }
+
+  return { lijnZin, SERVER, MIN_MS, VERS_MS, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
 }));
