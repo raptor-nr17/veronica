@@ -430,7 +430,8 @@
       else zin = `motor aan (${m.fase || 'onbekend'})`;
       // 522: de laatste zin van de werker van de gids op die telefoon (waarom hij wel of niet werkt), als hij er een meldt.
       if (typeof h.werk === 'string' && h.werk.trim()) zin += `. Werker: ${h.werk.trim().replace(/\.$/, '')}`;
-      regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, rol: h.rol === 'baas' ? 'beheerder' : 'werker' });
+      // 522c: een beheerder die als dagelijkse telefoon RUST kan per ongeluk een rektelefoon zijn (de QR van Veronica gescand).
+      regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: h.rol === 'baas' ? 'beheerder' : 'werker' });
     }
     const n = regels.filter((r) => r.rekent).length;
     return { kop: regels.length ? `Wie rekent nu: ${n} van ${regels.length} ${regels.length === 1 ? 'telefoon' : 'telefoons'}` : 'Wie rekent nu: nog geen hartslag binnen', regels };
@@ -879,7 +880,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.71';
+  const VERONICA_VERSIE = '1.9.72';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
