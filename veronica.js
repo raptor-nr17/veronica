@@ -3834,12 +3834,17 @@
   // 523b: EmbeddingGemma in de browser (betekenis-model.js). Alleen na een tik ophalen (of als het eerder al eens gehaald is: dan
   // komt het uit de opslag van de browser). Het ophalen gaat door de ene poort van Veronica, dus Vol lokaal houdt het tegen.
   const BETEKENIS_SLEUTEL = 'veronica-betekenis-model';
+  const BETEKENIS_CACHE = 'veronica-betekenis';   // 523c: de service worker laat deze staan bij een nieuwe versie
   async function betekenisModelLaden() {
     if (typeof BetekenisModel === 'undefined' || BetekenisM.stand === 'laden' || BetekenisM.stand === 'klaar') return BetekenisM.stand;
     if (volLokaal()) { BetekenisM.stand = 'lokaal'; return BetekenisM.stand; }
     BetekenisM.stand = 'laden'; BetekenisM.procent = 0;
     try {
-      const m = await BetekenisModel.laad({ importeer: (pad) => import(pad), opVoortgang: (p) => { BetekenisM.procent = p; } });
+      // 523c: eerst het kaartje (de kast), anders de opslag van de browser.
+      let browser = null;
+      try { browser = typeof caches !== 'undefined' ? await caches.open(BETEKENIS_CACHE) : null; } catch (e) { browser = null; }
+      const cache = BetekenisModel.kaartjeCache(KaartjeL, browser);
+      const m = await BetekenisModel.laad({ importeer: (pad) => import(pad), opVoortgang: (p) => { BetekenisM.procent = p; }, cache });
       Object.assign(BetekenisM, { embedder: m.embedder, naam: m.naam, stand: 'klaar', prefixVraag: BetekenisModel.PREFIX_VRAAG, prefixStuk: BetekenisModel.PREFIX_STUK });
       try { localStorage.setItem(BETEKENIS_SLEUTEL, '1'); } catch (e) { /* dan de volgende keer weer een tik */ }
     } catch (e) { BetekenisM.stand = volLokaal() ? 'lokaal' : 'fout'; }

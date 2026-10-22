@@ -31,7 +31,43 @@
     return 'Het betekenismodel is er nog niet (een keer ophalen, ongeveer 200 MB). Tot dan zoek ik met de woorddelen.';
   }
 
-  // laad({ importeer, opVoortgang }) -> { embedder(teksten) -> number[][], naam }
+  // 523c: HET MODEL OP HET KAARTJE. Het model is openbaar (geen privé-inhoud), dus het mag in de KAST van het kaartje (kaartje.js,
+  // dezelfde map waar de modellen voor de telefoons staan). De cache van transformers.js kijkt eerst op het kaartje, dan in de
+  // opslag van de browser; een nieuw opgehaald bestand gaat naar het kaartje als dat erin zit, anders naar de browser.
+  // Alleen bestanden van DIT model krijgen een kastnaam; al het andere gaat gewoon naar de browser.
+  function kastNaam(url) {
+    const m = /\/onnx-community\/embeddinggemma-300m-ONNX\/resolve\/[^/]+\/(.+)$/.exec(String(url || '').split('?')[0]);
+    if (!m) return null;
+    const n = `betekenis-${m[1].replace(/\//g, '_')}`;
+    return /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(n) && !n.includes('..') ? n : null;
+  }
+  // kaartje: { kastBestand(naam) -> File|null, kastSchrijfStroom(naam, stroom, bytes) -> {ok} }; browser: een Cache (caches.open)
+  // of null. Geeft de vorm die transformers.js als customCache verwacht: match(verzoek) en put(verzoek, antwoord).
+  function kaartjeCache(kaartje, browser) {
+    const sleutel = (v) => (typeof v === 'string' ? v : (v && v.url) || '');
+    return {
+      async match(verzoek) {
+        const naam = kastNaam(sleutel(verzoek));
+        if (naam && kaartje) { try { const f = await kaartje.kastBestand(naam); if (f) return new Response(f); } catch (e) { /* dan de browser */ } }
+        return browser ? browser.match(sleutel(verzoek)) : undefined;
+      },
+      async put(verzoek, antwoord) {
+        const naam = kastNaam(sleutel(verzoek));
+        if (naam && kaartje && antwoord && antwoord.body) {
+          try {
+            const [a, b] = antwoord.body.tee();
+            const r = await kaartje.kastSchrijfStroom(naam, a, Number(antwoord.headers && antwoord.headers.get && antwoord.headers.get('content-length')) || 0);
+            if (r && r.ok) { b.cancel().catch(() => {}); return; }
+            if (browser) { await browser.put(sleutel(verzoek), new Response(b, { headers: antwoord.headers })); return; }
+            return;
+          } catch (e) { /* dan de browser, met het hele antwoord als dat nog kan */ }
+        }
+        if (browser) { try { await browser.put(sleutel(verzoek), antwoord); } catch (e) { /* niet bewaard: de volgende keer opnieuw */ } }
+      },
+    };
+  }
+
+  // laad({ importeer, opVoortgang, cache }) -> { embedder(teksten) -> number[][], naam }
   // importeer is de functie die de bibliotheek inleest (in Veronica: (pad) => import(pad)); zo is dit los te toetsen.
   async function laad(opt) {
     const o = opt || {};
@@ -40,6 +76,7 @@
     const env = T.env;
     env.allowLocalModels = false;
     env.useBrowserCache = true;
+    if (o.cache) { env.useCustomCache = true; env.customCache = o.cache; env.useBrowserCache = false; }   // 523c: kaartje eerst
     try {
       env.backends.onnx.wasm.wasmPaths = new URL(o.basis || BASIS, (typeof location !== 'undefined' && location.href) || 'http://localhost/').href;
       env.backends.onnx.wasm.numThreads = (typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated) ? Math.min(4, (navigator.hardwareConcurrency || 2)) : 1;
@@ -60,5 +97,5 @@
     return { embedder, naam: 'EmbeddingGemma (op deze computer)' };
   }
 
-  return { laad, zin, MODEL, DTYPE, BASIS, PREFIX_VRAAG, PREFIX_STUK, MAX_PER_KEER };
+  return { laad, zin, kastNaam, kaartjeCache, MODEL, DTYPE, BASIS, PREFIX_VRAAG, PREFIX_STUK, MAX_PER_KEER };
 }));
