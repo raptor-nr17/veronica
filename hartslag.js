@@ -35,6 +35,12 @@
   // Soorten die naar ALLE telefoons mogen (naar: '*'); de rest moet een toestel bij naam (id) noemen.
   const VOOR_IEDEREEN = ['roep', 'zelftest'];
   const CODE_OVERNEMEN = ['word-werker'];   // 527: alleen deze roep mag een andere rij-code meebrengen (zie leesRoep)
+  // 529: DE RELAY (tools/relay, 528) als EERSTE weg, naast ntfy.sh. Hij bootst ntfy na, dus alleen het adres verandert; de
+  // versleuteling, de onderwerpen en de controles blijven precies dezelfde. Leeg adres = uit (zo staat het tot de relay bestaat).
+  // Alleen een workers.dev-adres van Cloudflare via https: een getypt of geplakt ander adres doet niets.
+  const RELAY_RE = /^https:\/\/[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63}){0,3}\.workers\.dev$/;
+  const RELAY_MIN_MS = 60 * 1000;          // via de relay telt ntfy's dagbudget niet: bij een verandering hoogstens eens per minuut
+  const RELAY_VERS_MS = 10 * 60 * 1000;    // en zonder verandering eens per tien minuten
 
   const tekstBytes = (t) => new TextEncoder().encode(t);
   const naarHex = (b) => Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -43,6 +49,10 @@
   const schoon = (t, n) => String(t === null || t === undefined ? '' : t).replace(/[^\p{L}\p{N} .,:%()·_/-]/gu, '').slice(0, n);
   const getal = (x, min, max) => (typeof x === 'number' && Number.isFinite(x) && x >= min && x <= max ? x : null);
 
+  function relayGeldig(u) {
+    const a = String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+    return RELAY_RE.test(a) ? a : null;
+  }
   async function onderwerp(o, soort, c) {
     if (!ONDERWERP_RE.test(String(o || ''))) return null;
     const voor = soort === 'roep' ? 'veronica-roep:' : 'veronica-hartslag:';
@@ -109,6 +119,16 @@
       laadt: x.laadt === true,
       // 527: mag Android JARVIS stilzetten? false = de batterij van JARVIS staat niet op Onbeperkt; zonder lader slaapt hij dan.
       batterijVrij: typeof x.batterijVrij === 'boolean' ? x.batterijVrij : null,
+      // 529: gaat deze hartslag via de relay (true) of via ntfy.sh (false)?
+      relay: x.relay === true,
+      // 529: DE WAAKHOND. Lag JARVIS stil (geen tik van zijn eigen klok, meestal: Android liet hem slapen), dan meldt hij dat zelf:
+      // de laatste vijf keer, begin en duur in minuten, en of hij toen aan de lader hing. Zo is te METEN of de dienst het volhoudt.
+      slaap: (Array.isArray(x.slaap) ? x.slaap : []).slice(-5).map((g) => ({ t: Math.floor(Number(g && g.t) || 0), min: getal(Number(g && g.min), 0, 100000), laadt: g && typeof g.laadt === 'boolean' ? g.laadt : null }))
+        .filter((g) => g.t > 0 && g.min !== null),
+      // 529: WAAROM STOPTE DE APP (Android 11+, ApplicationExitInfo): de laatste vijf keer, tijdstip, de redencode van Android en
+      // hoe belangrijk de app toen was. Alleen getallen; Veronica maakt er een zin van.
+      stops: (Array.isArray(x.stops) ? x.stops : []).slice(-5).map((g) => ({ t: Math.floor(Number(g && g.t) || 0), reden: getal(Number(g && g.reden), 0, 99), belang: getal(Number(g && g.belang), 0, 1000) }))
+        .filter((g) => g.t > 0 && g.reden !== null),
       temp: getal(x.temp, -20, 90),
       motor: m ? {
         aan: m.aan === true,
@@ -148,12 +168,15 @@
       pauze: x.pauze && typeof x.pauze === 'object' ? { t: Math.floor(Number(x.pauze.t) || 0), door: schoon(x.pauze.door, 40) } : null,
     };
   }
-  async function hartslagVerzoek(o, h, c) {
+  // server: leeg = ntfy.sh, anders een geldig relay-adres (529); een ongeldig adres = geen verzoek.
+  const naarServer = (server) => (server ? relayGeldig(server) : SERVER);
+  async function hartslagVerzoek(o, h, c, server) {
     const topic = await onderwerp(o, 'hartslag', c);
-    if (!topic) return null;
+    const url = naarServer(server);
+    if (!topic || !url) return null;
     const d = schoonHartslag(h);
     if (!d.id) return null;
-    return { method: 'POST', url: SERVER, data: JSON.stringify({ topic, message: await sluit(o, 'hartslag', d, c) }) };
+    return { method: 'POST', url, data: JSON.stringify({ topic, message: await sluit(o, 'hartslag', d, c) }) };
   }
   // Wat er in een hartslag verandert telt (niet de tijd en niet het precieze accuprocent); anders eens per uur.
   function hartslagSleutel(h) {
@@ -164,7 +187,7 @@
     // 524: een nieuw concept of een afkeuring telt WEL (de tellers, niet de tijd): zo ziet Veronica het werk binnen het half uur.
     // Het dagbudget (hartslagNodig) blijft de rem.
     // 507: het geheugengebruik telt NIET mee (dat schommelt; anders een hartslag per kleine verandering), het model wel
-    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, d.batterijVrij, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
+    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, d.batterijVrij, d.relay, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
       i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast, g.klaar || 0, g.afgekeurd || 0].join('|');
   }
   // 522d: HET DAGBUDGET VERDELEN. ntfy.sh telt berichten per dag; een telefoon heeft er NTFY_DAG_MAX (40) en houdt er een paar
@@ -174,6 +197,7 @@
   function hartslagNodig(o) {
     const x = o || {};
     const sinds = (x.nu || 0) - (x.laatstT || 0);
+    if (x.relay === true) return sinds >= (x.sleutel !== x.laatstSleutel ? RELAY_MIN_MS : RELAY_VERS_MS);   // 529
     let spreid = 0;
     if (typeof x.over === 'number') {
       if (x.over <= 0) return false;
@@ -194,9 +218,10 @@
 
   // ---- De roep ----
   // { naar: <toestel-id> of '*', soort, ...velden }. De code reist mee BINNEN de versleuteling.
-  async function roepVerzoek(o, roep, code, nu, c) {
+  async function roepVerzoek(o, roep, code, nu, c, server) {
     const topic = await onderwerp(o, 'roep', c);
-    if (!topic || !/^\d{6}$/.test(String(code || '')) || !roep || typeof roep.soort !== 'string') return null;
+    const url = naarServer(server);
+    if (!topic || !url || !/^\d{6}$/.test(String(code || '')) || !roep || typeof roep.soort !== 'string') return null;
     const naar = roep.naar === '*' ? '*' : (ID_RE.test(String(roep.naar || '')) ? String(roep.naar) : null);
     if (!naar || (naar === '*' && !VOOR_IEDEREEN.includes(roep.soort))) return null;
     const n = new Uint8Array(8);
@@ -204,7 +229,7 @@
     const d = Object.assign({}, roep, { naar, code: String(code), t: Math.floor(nu), n: naarHex(n), van: 'veronica' });
     const tekst = JSON.stringify(d);
     if (tekst.length > 2048) return null;   // zelfde grens als /jarvis/roep
-    return { method: 'POST', url: SERVER, data: JSON.stringify({ topic, message: await sluit(o, 'roep', d, c) }) };
+    return { method: 'POST', url, data: JSON.stringify({ topic, message: await sluit(o, 'roep', d, c) }) };
   }
   // Een regel van ntfy -> de roep (ZONDER code, als tekst zoals /jarvis/roep hem geeft), of null. `gezien` is een Set van
   // eenmalige nummers die deze telefoon al deed.
@@ -232,7 +257,7 @@
   }
 
   // Ophalen (de telefoon, eens per minuut) en luisteren (Veronica, een doorlopende verbinding).
-  function pollUrl(topic, sinds) { return `${SERVER}/${topic}/json?poll=1&since=${encodeURIComponent(String(sinds || '15m'))}`; }
+  function pollUrl(topic, sinds, server) { return `${naarServer(server) || SERVER}/${topic}/json?poll=1&since=${encodeURIComponent(String(sinds || '15m'))}`; }
 
   // ---- De diagnose in gewone taal (Veronica) ----
   // h = de laatste hartslag of null; wifi = { antwoordt: true/false/null }; nuMs.
@@ -291,5 +316,5 @@
     return delen.length ? `lijnen: ${delen.join(' · ')}` : '';
   }
 
-  return { lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
+  return { lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
 }));

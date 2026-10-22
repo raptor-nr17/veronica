@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.62';
+  const JARVIS_NIEUWSTE = '1.9.63';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -443,6 +443,38 @@
   // wanneer hij zich voor het laatst meldde en ALTIJD de knop Maak werker: wat hij nu is weten we niet, en een rektelefoon die als
   // dagelijkse telefoon rust stuurt juist geen hartslag meer. De knop vraagt Veronica eerst te bevestigen (nooit de dagelijkse telefoon).
   const OUD_LIJST_MS = 30 * 24 * 3600 * 1000;
+  // 529: WANNEER EN LANGS WELKE WEG zag Veronica deze telefoon het laatst: de hartslag (via de relay of de brievenbus), het wifi
+  // (zijn eigen status) en de postbus (zijn hart daar). Alleen wat er gemeten is; een weg zonder meting noemen we niet.
+  function gezienZin(h, lijnen) {
+    const delen = [];
+    if (h && typeof h.t === 'number' && h.t > 0) delen.push(`hartslag ${klokZin(h.t).slice(0, 5)} (${h.relay ? 'relay' : 'brievenbus'})`);
+    const l = lijnen || {};
+    if (typeof l.wifi === 'number' && l.wifi > 0) delen.push(`wifi ${klokZin(l.wifi).slice(0, 5)}`);
+    if (typeof l.postbus === 'number' && l.postbus > 0) delen.push(`postbus ${klokZin(l.postbus).slice(0, 5)}`);
+    return delen.length ? `laatst gezien: ${delen.join(', ')}` : 'nog nergens gezien';
+  }
+  // 529: HOE VAAK LAG HIJ STIL? De waakhond van JARVIS (1.9.63) meldt zelf de laatste vijf keer dat zijn klok meer dan vijf minuten
+  // niet tikte (meestal: Android liet hem slapen). Alleen het laatste etmaal; met de lader erbij, want dat is wat helpt.
+  const duurZin = (min) => (min >= 90 ? `${Math.round(min / 60)} uur` : `${min} minuten`);
+  // 529: WAAROM STOPTE JARVIS (Android 11+, de redencode van ApplicationExitInfo). Alleen het laatste etmaal, de laatste keer.
+  const STOP_REDEN = { 0: 'onbekend', 1: 'stopte zelf', 2: 'door het systeem beëindigd', 3: 'te weinig geheugen', 4: 'vastgelopen', 5: 'vastgelopen',
+    6: 'reageerde niet (ANR)', 7: 'kon niet starten', 8: 'een toestemming veranderde', 9: 'gebruikte te veel (accu of geheugen)', 10: 'gestopt door een mens',
+    11: 'gestopt door een mens (Instellingen)', 12: 'een onderdeel waar hij van afhing stopte', 13: 'door het systeem gestopt (fabrikant)', 14: 'bevroren door het systeem',
+    15: 'uitgezet of verborgen', 16: 'bijgewerkt' };
+  function stopZin(h, tijd) {
+    const g = (h && Array.isArray(h.stops) ? h.stops : []).filter((x) => x && typeof x.t === 'number' && typeof x.reden === 'number' && tijd - x.t <= 24 * 3600 * 1000 && x.reden !== 16);
+    if (!g.length) return '';
+    const l = g.reduce((a, b) => (b.t > a.t ? b : a));
+    return `stopte het laatst om ${klokZin(l.t).slice(0, 5)}: ${STOP_REDEN[l.reden] || `reden ${l.reden}`}${g.length > 1 ? ` (${g.length} keer in een etmaal)` : ''}`;
+  }
+  function slaapZin(h, tijd) {
+    const g = (h && Array.isArray(h.slaap) ? h.slaap : []).filter((x) => x && typeof x.t === 'number' && typeof x.min === 'number' && tijd - x.t <= 24 * 3600 * 1000);
+    if (!g.length) return '';
+    const l = g[g.length - 1];
+    const lader = (x) => (x.laadt === false ? ', niet aan de lader' : x.laadt === true ? ', aan de lader' : '');
+    const steeds = g.length > 1 && g.every((x) => x.laadt === false) ? '; steeds zonder lader' : '';
+    return `lag het laatste etmaal ${g.length === 1 ? 'een keer' : `${g.length} keer`} stil, het laatst om ${klokZin(l.t).slice(0, 5)} voor ${duurZin(l.min)}${lader(l)}${steeds}`;
+  }
   // 527: WAAROM ZWIJGT HIJ? Zonder lader mag Android een app laten slapen (Doze), tenzij de batterij van JARVIS op Onbeperkt staat;
   // dan haalt hij ook geen roep op. Een rektelefoon zweeg zo op 22 oktober uren (80%, de lader buiten de zonuren uit). We zeggen
   // alleen wat de laatste hartslag meldde; batterijVrij kent pas JARVIS 1.9.62.
@@ -454,7 +486,8 @@
       ? `. Hij hing niet aan de lader en Android mag JARVIS dan laten slapen; dan haalt hij ook geen roep op. Wat helpt: ${hoe}.`
       : `. Hij hing niet aan de lader; dan kan Android JARVIS laten slapen en haalt hij geen roep op. Wat helpt: ${hoe}.`;
   }
-  function wieRekent(harten, tijd, bekend) {
+  function wieRekent(harten, tijd, bekend, lijnen) {
+    const lijn = (id) => (lijnen && id && lijnen[id]) || null;   // 529: { wifi, postbus } per toestel-id
     const regels = [];
     const oud = [];
     const gezien = new Set();
@@ -463,7 +496,8 @@
       if (tijd - h.t > HARTSLAG_VERS_MS) {
         if (h.id && tijd - h.t <= OUD_LIJST_MS && !gezien.has(h.id)) {
           gezien.add(h.id);
-          oud.push({ id: h.id, naam: h.naam || 'Een telefoon', zin: `geen verse hartslag (laatste ${klokZin(h.t)}${tijd - h.t > 20 * 3600 * 1000 ? `, ${Math.round((tijd - h.t) / 3600000)} uur geleden` : ''}${h.rol ? `, toen ${h.rol === 'baas' ? 'beheerder' : 'werker'}` : ''}${typeof h.accu === 'number' ? `, accu ${h.accu}%${h.laadt ? ', aan de lader' : ', niet aan de lader'}` : ''})${stilUitleg(h)}`, magWerker: true });
+          oud.push({ id: h.id, naam: h.naam || 'Een telefoon', zin: `geen verse hartslag (laatste ${klokZin(h.t)}${tijd - h.t > 20 * 3600 * 1000 ? `, ${Math.round((tijd - h.t) / 3600000)} uur geleden` : ''}${h.rol ? `, toen ${h.rol === 'baas' ? 'beheerder' : 'werker'}` : ''}${typeof h.accu === 'number' ? `, accu ${h.accu}%${h.laadt ? ', aan de lader' : ', niet aan de lader'}` : ''})${stilUitleg(h)}`, magWerker: true,
+            gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd), werk: typeof h.werk === 'string' ? h.werk.trim() : '' });
         }
         continue;
       }
@@ -492,12 +526,13 @@
       // 522: de laatste zin van de werker van de gids op die telefoon (waarom hij wel of niet werkt), als hij er een meldt.
       if (typeof h.werk === 'string' && h.werk.trim()) zin += `. Werker: ${h.werk.trim().replace(/\.$/, '')}`;
       // 522c: een beheerder die als dagelijkse telefoon RUST kan per ongeluk een rektelefoon zijn (de QR van Veronica gescand).
-      regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: h.rol === 'baas' ? 'beheerder' : 'werker' });
+      regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: h.rol === 'baas' ? 'beheerder' : 'werker',
+        gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd) });   // 529
     }
     for (const b of (Array.isArray(bekend) ? bekend : [])) {
       if (!b || !b.id || gezien.has(b.id)) continue;
       gezien.add(b.id);
-      oud.push({ id: b.id, naam: b.naam || 'Een telefoon', zin: 'nog geen hartslag ontvangen', magWerker: true });
+      oud.push({ id: b.id, naam: b.naam || 'Een telefoon', zin: 'nog geen hartslag ontvangen', magWerker: true, gezien: gezienZin(null, lijn(b.id)), slaap: '', werk: '' });
     }
     const n = regels.filter((r) => r.rekent).length;
     return { kop: regels.length ? `Wie rekent nu: ${n} van ${regels.length} ${regels.length === 1 ? 'telefoon' : 'telefoons'}` : 'Wie rekent nu: nog geen hartslag binnen', regels, oud };
@@ -984,7 +1019,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.79';
+  const VERONICA_VERSIE = '1.9.80';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1639,7 +1674,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
