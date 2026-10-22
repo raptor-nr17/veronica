@@ -76,6 +76,16 @@
 
   // ---- De hartslag ----
   // Alleen wat Veronica nodig heeft om te zeggen hoe het met een telefoon gaat. Geen code, geen sleutel, geen model-tekst.
+  function gidsBlok(g) {
+    if (!g || typeof g !== 'object') return null;
+    const l = g.laatst && typeof g.laatst === 'object' ? g.laatst : null;
+    return {
+      klaar: getal(g.klaar, 0, 1e6) || 0, afgekeurd: getal(g.afgekeurd, 0, 1e6) || 0,
+      laatst: l ? { t: Math.floor(Number(l.t) || 0), soort: ['vertaal', 'keuring', 'bord', 'buurtpin'].includes(l.soort) ? l.soort : '',
+        taal: ['nl', 'de', 'en'].includes(l.taal) ? l.taal : '', ok: l.ok === true, ms: getal(l.ms, 0, 3600000) || 0,
+        tokens: getal(l.tokens, 0, 100000) || 0, tps: getal(l.tps, 0, 1000) || 0, reden: schoon(l.reden, 80) } : null,
+    };
+  }
   function schoonHartslag(h) {
     const x = h || {};
     const m = x.motor && typeof x.motor === 'object' ? x.motor : null;
@@ -126,6 +136,10 @@
       // 522: de laatste zin van de werker van de gids op deze telefoon ("Wacht: niet aan de lader", "Niets gedaan: ..."), zodat
       // Veronica ziet WAAROM er niets gebeurt. Telt niet mee in hartslagSleutel (anders een hartslag per zin).
       werk: schoon(x.werk, 120),
+      // 524: wat de werker van de gids deed: hoeveel concepten klaar, hoeveel afgekeurd door de eigen controle, en het laatste
+      // stuk werk als getallen (soort, taal, duur, tempo) met een korte reden bij een afkeuring. Nooit de tekst zelf. In
+      // hartslagSleutel tellen alleen de twee tellers (binnen het dagbudget van hartslagNodig).
+      gids: gidsBlok(x.gids),
       // 522: JARVIS staat uit (de Uit-knop = ook de noodstop van de AI-kern): sinds wanneer en waardoor. null = staat aan.
       pauze: x.pauze && typeof x.pauze === 'object' ? { t: Math.floor(Number(x.pauze.t) || 0), door: schoon(x.pauze.door, 40) } : null,
     };
@@ -142,9 +156,12 @@
     const d = schoonHartslag(h);
     const m = d.motor || {};
     const i = d.instel || {};
+    const g = d.gids || {};
+    // 524: een nieuw concept of een afkeuring telt WEL (de tellers, niet de tijd): zo ziet Veronica het werk binnen het half uur.
+    // Het dagbudget (hartslagNodig) blijft de rem.
     // 507: het geheugengebruik telt NIET mee (dat schommelt; anders een hartslag per kleine verandering), het model wel
     return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
-      i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast].join('|');
+      i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast, g.klaar || 0, g.afgekeurd || 0].join('|');
   }
   // 522d: HET DAGBUDGET VERDELEN. ntfy.sh telt berichten per dag; een telefoon heeft er NTFY_DAG_MAX (40) en houdt er een paar
   // achter de hand voor iets anders dan de hartslag. Waren er overdag veel veranderingen, dan ging elke half uur een hartslag weg

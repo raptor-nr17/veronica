@@ -356,7 +356,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.60';
+  const JARVIS_NIEUWSTE = '1.9.61';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -483,6 +483,38 @@
       // van ongeveer 350 tokens dan ongeveer duurt).
       naam: n, aantal: 0, gemS: null,
       zin: `${n}: nog geen verhaal, motor ±${String(tempo[n]).replace('.', ',')} tokens/s (een verhaal van ±350 tokens duurt dan ±${Math.max(1, Math.round(350 / tempo[n] / 60))} min)` })));
+  }
+  // 524: DE KORTE SAMENVATTING VAN HET GIDSWERK, uit de hartslagen (dus ook op het gastnetwerk, waar de lijst met concepten niet
+  // te lezen is). Per telefoon de nieuwste hartslag (tot 30 dagen oud): hoeveel concepten klaar, hoeveel de eigen controle
+  // afkeurde, en het laatste stuk werk met duur en tempo. Alleen wat de telefoons melden; een oude JARVIS zonder blok telt niet mee.
+  const SOORT_NAAM = { vertaal: 'vertaling', keuring: 'tekstkeuring', bord: 'bordfoto', buurtpin: 'buurtpin' };
+  function gidsSamenvatting(harten, tijd) {
+    const per = {};
+    for (const h of (Array.isArray(harten) ? harten : [])) {
+      if (!h || typeof h.t !== 'number' || tijd - h.t > OUD_LIJST_MS || !h.gids || typeof h.gids !== 'object') continue;
+      const k = h.id || h.naam || '?';
+      if (!per[k] || per[k].t < h.t) per[k] = h;
+    }
+    const lijst = Object.values(per).sort((a, b) => ((a.naam || '') < (b.naam || '') ? -1 : 1));
+    const klaar = lijst.reduce((n, h) => n + (Number(h.gids.klaar) || 0), 0);
+    const afgekeurd = lijst.reduce((n, h) => n + (Number(h.gids.afgekeurd) || 0), 0);
+    const tempo = {};
+    const regels = lijst.filter((h) => h.gids.klaar || h.gids.afgekeurd || h.gids.laatst).map((h) => {
+      const g = h.gids; const l = g.laatst;
+      const naam = h.naam || 'Een telefoon';
+      if (l && l.ok && l.tps > 0) tempo[naam] = l.tps;
+      let zin = `${naam}: ${g.klaar || 0} klaar${g.afgekeurd ? `, ${g.afgekeurd} afgekeurd door de eigen controle` : ''}`;
+      if (l) {
+        const wat = `${SOORT_NAAM[l.soort] || 'werk'}${l.taal ? ` (${l.taal})` : ''}`;
+        const duur = l.ms > 0 ? (l.ms >= 90000 ? `${Math.round(l.ms / 60000)} min` : `${Math.round(l.ms / 1000)} s`) : '';
+        zin += l.ok
+          ? `; laatste: ${wat}${duur ? ` in ${duur}` : ''}${l.tps > 0 ? `, ±${String(l.tps).replace('.', ',')} tokens/s` : ''} (${klokZin(l.t)})`
+          : `; laatste ${wat} afgekeurd${l.reden ? `: ${l.reden}` : ''} (${klokZin(l.t)})`;
+      }
+      return { id: h.id || naam, naam, zin, klaar: g.klaar || 0, afgekeurd: g.afgekeurd || 0 };
+    });
+    const kop = !regels.length ? '' : `Gids-proef: ${klaar} ${klaar === 1 ? 'concept' : 'concepten'} klaar om na te lezen${afgekeurd ? `, ${afgekeurd} afgekeurd door de eigen controle (die worden geen concept)` : ''}`;
+    return { kop, regels, tempo, klaar, afgekeurd };
   }
   const hitteNaam = (n) => (Number.isInteger(n) && n >= 0 && n < HITTE.length ? HITTE[n] : 'onbekend');
 
@@ -903,7 +935,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.75';
+  const VERONICA_VERSIE = '1.9.76';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1558,7 +1590,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { rekBesluit, rekBesluitHart, wieRekent, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,

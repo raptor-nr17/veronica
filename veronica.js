@@ -1503,6 +1503,10 @@
       // 522: WIE REKENT NU, bovenaan Live (ook na "Dit is de baas": dan zie je meteen of de werkers echt meerekenen).
       const w = K.wieRekent(Object.values(HB.per || {}), nu(), bekendeTelefoons());
       $('wieRekentKop').textContent = w.kop;
+      // 524: de korte samenvatting van het gidswerk, uit de hartslagen (ook zonder wifi)
+      const g = K.gidsSamenvatting(Object.values(HB.per || {}), nu());
+      $('gidsSamen').textContent = g.kop;
+      $('gidsSamen').hidden = !g.kop;
       // 522d: wie geen verse hartslag heeft staat eronder, met de knop Maak werker (wat hij nu is weten we dan niet).
       const oudRegels = w.oud.map((r) => {
         const d = el('li', 'rekentNee', `${r.naam}: ${r.zin}`);
@@ -2681,11 +2685,17 @@
         const tps = m && ((m.proef && m.proef.ok && Number(m.proef.tps)) || Number(m.tps)) || 0;
         if (h && h.naam && tps > 0 && !tempo[h.naam]) tempo[h.naam] = tps;
       }
+      // 524: het tempo van ECHT werk (het laatste gelukte stuk) wint van de proefzin
+      const gs = K.gidsSamenvatting(Object.values(HB.per || {}), nu());
+      Object.assign(tempo, gs.tempo);
       const proef = K.proefPerTelefoon(S.nalees, tempo);
       const blok = el('section', 'tegel taakTegel');
       blok.dataset.proef = '1';
       blok.appendChild(el('h2', '', 'Wie deed wat (de verhalen van de gids)'));
-      if (!proef.length) blok.appendChild(el('p', 'eerlijk', 'Nog geen verhaal klaar. Een telefoon begint vanzelf zodra zijn eigen motor een model heeft en hij aan de lader ligt.'));
+      // 524: de concepten-lijst komt alleen over het wifi; de hartslag zegt het ook op het gastnetwerk
+      if (gs.kop) blok.appendChild(el('p', '', gs.kop));
+      for (const r of gs.regels) blok.appendChild(el('div', 'taakRegel mag', r.zin));
+      if (!proef.length && !gs.regels.length) blok.appendChild(el('p', 'eerlijk', 'Nog geen verhaal klaar. Een telefoon begint vanzelf zodra zijn eigen motor een model heeft en hij aan de lader ligt.'));
       for (const p of proef) blok.appendChild(el('div', 'taakRegel mag', p.zin));
       delen.push(blok);
     }
