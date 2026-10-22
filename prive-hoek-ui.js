@@ -303,7 +303,7 @@
     // 476b: geen pincode en geen wachtwoord op deze hoek (besluit van de eigenaar). Wissen kan wel, met een bevestiging.
     k.append(el('p', '', 'Er zit geen pincode op deze hoek: wie aan deze computer mag, mag hier. De inlog van de Chromebook is het slot.'));
     k.append(knop('Wis de hele privé-hoek', async () => {
-      if (!d.bevestig('De hele privé-hoek wissen? Dit kan niet terug (zonder back-up).')) return;
+      if (!(await d.bevestig('De hele privé-hoek wissen? Dit kan niet terug (zonder back-up).'))) return;   // 526: mag een belofte zijn
       U.store = P.nieuweStore(); await d.opslag.schrijf('store', U.store); meld('Alles gewist.');
     }, 'phGevaar'));
     return k;

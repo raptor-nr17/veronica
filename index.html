@@ -31,6 +31,14 @@
   .tRol { font-size: 16px; color: var(--zacht); margin-top: 2px; }
   .tOverzicht { font-size: 17px; font-weight: 600; margin-top: 4px; }
   .tZelftest { font-size: 15px; margin-top: 6px; } .tZelftestKop { font-weight: 600; } .zt-nee { color: var(--rood); } .zt-info { color: var(--zacht); }
+  /* 526: bevestigen in de pagina (geen venster van de browser): onderaan, boven alles, groot genoeg om op te tikken */
+  #vraagVak { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2147483000; width: min(560px, calc(100vw - 32px));
+    background: var(--paneel); color: var(--tekst); border: 2px solid var(--zacht); border-radius: 14px; padding: 16px 18px; box-shadow: 0 8px 32px rgba(0,0,0,.6); }
+  #vraagVak p { margin: 0 0 12px; font-size: 17px; line-height: 1.4; }
+  #vraagVeld { width: 100%; box-sizing: border-box; font-size: 20px; padding: 8px 10px; margin: 0 0 12px; }
+  #vraagVak .vraagKnoppen { display: flex; gap: 12px; flex-wrap: wrap; }
+  #vraagVak button { min-height: 48px; padding: 0 18px; font-size: 17px; }
+  #vraagJa { background: #15803D; color: #fff; border: 0; border-radius: 10px; }
   #wieRekentLijst { margin: 0 0 12px; padding-left: 20px; font-size: 17px; } .rekentJa { color: #4caf50; } .rekentNee { color: var(--zacht); }
   .tVersie { font-size: 14px; color: var(--zacht); margin-top: 2px; }
   .tVersie.achter { font-size: 16px; color: #f5a524; }

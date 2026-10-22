@@ -18,6 +18,33 @@
   const K = window.VeronicaKern;
   const Pool = window.VeronicaPool;
   const $ = (id) => document.getElementById(id);
+  // 526: BEVESTIGEN IN DE PAGINA, nooit window.confirm/alert/prompt. Een ingebouwd venster van de browser blokkeert de hele pagina
+  // en is op afstand niet aan te klikken (een hulp die Veronica bedient viel er op 22 oktober over). Een vraag in de pagina wel.
+  // vraagJa -> Promise<boolean>, vraagTekst -> Promise<string|null>. Een nieuwe vraag sluit een open vraag af met "nee".
+  const VraagV = { open: null };
+  function vraagVak(zin, jaTekst, invoer) {
+    if (VraagV.open) VraagV.open();
+    return new Promise((klaar) => {
+      const vak = document.createElement('div');
+      vak.id = 'vraagVak'; vak.setAttribute('role', 'dialog'); vak.setAttribute('aria-modal', 'true');
+      const p = document.createElement('p'); p.textContent = zin;
+      let veld = null;
+      if (invoer) { veld = document.createElement('input'); veld.id = 'vraagVeld'; veld.autocomplete = 'off'; if (invoer.inputMode) veld.inputMode = invoer.inputMode; }
+      const ja = document.createElement('button'); ja.id = 'vraagJa'; ja.textContent = jaTekst || 'Ja, doe het';
+      const nee = document.createElement('button'); nee.id = 'vraagNee'; nee.textContent = 'Nee';
+      const rij = document.createElement('div'); rij.className = 'vraagKnoppen'; rij.append(ja, nee);
+      vak.append(p); if (veld) vak.append(veld); vak.append(rij);
+      const sluit = (w) => { VraagV.open = null; vak.remove(); klaar(w); };
+      VraagV.open = () => sluit(invoer ? null : false);
+      ja.addEventListener('click', () => sluit(invoer ? veld.value : true));
+      nee.addEventListener('click', () => sluit(invoer ? null : false));
+      if (veld) veld.addEventListener('keydown', (e) => { if (e.key === 'Enter') ja.click(); if (e.key === 'Escape') nee.click(); });
+      document.body.appendChild(vak);
+      try { (veld || ja).focus(); } catch (e) { /* geen focus: niets aan de hand */ }
+    });
+  }
+  const vraagJa = (zin, jaTekst) => vraagVak(zin, jaTekst, null);
+  const vraagTekst = (zin, opties) => vraagVak(zin, (opties && opties.jaTekst) || 'OK', opties || {});
   // 483: VOL LOKAAL (schakelaar in de privé-hoek, standaard UIT). EEN poort voor elk verzoek van deze pagina: window.fetch zelf.
   // Aan = alleen de eigen telefoons en Veronica's eigen bestanden (K.magNaarBuiten); de rest wordt geweigerd voor hij vertrekt.
   const VOL_SLEUTEL = 'veronica-vol-lokaal';
@@ -708,7 +735,7 @@
     if ($('zoekGeheugenKnop')) $('zoekGeheugenKnop').addEventListener('click', () => { toonGeheugen(false); });
     if ($('zoekGeheugenWis')) $('zoekGeheugenWis').addEventListener('click', async () => {
       if (!zoekGeheugen) return;
-      if (!window.confirm('Alles wissen wat Veronica onthouden heeft van eerdere zoekvragen? Dit staat alleen op deze computer.')) return;
+      if (!(await vraagJa('Alles wissen wat Veronica onthouden heeft van eerdere zoekvragen? Dit staat alleen op deze computer.', 'Ja, wis het'))) return;
       await zoekGeheugen.wisAlles(); geheugenTel(); $('zoekUitslag').replaceChildren(); $('zoekStand').textContent = 'Het zoekgeheugen is leeg.';
     });
   }
@@ -1363,7 +1390,7 @@
     const gm = (meet(t.adres).status || {}).gemma;
     const g = gm && gm.waarde;
     if (!g || !g.kanOpruimen) return;
-    if (typeof window.confirm === 'function' && !window.confirm(`${t.naam}: de dubbele kopie van het model wissen (${String(Math.round(g.opruimbaarMb / 100) / 10).replace('.', ',')} GB)? Alleen de kopie in JARVIS. Je Gemma-apps blijven staan.`)) return;
+    if (!(await vraagJa(`${t.naam}: de dubbele kopie van het model wissen (${String(Math.round(g.opruimbaarMb / 100) / 10).replace('.', ',')} GB)? Alleen de kopie in JARVIS. Je Gemma-apps blijven staan.`, 'Ja, wis de kopie'))) return;
     let ok = false;
     try { ok = (await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'ruim-gemma-op', van: 'veronica' }) }, 3000)).ok; } catch (e) { ok = false; }
     logRegel(ok ? `${t.naam}: opruimen gevraagd. Binnen een halve minuut staat hier het resultaat.` : `${t.naam} antwoordt niet. Er is niets gewist.`);
@@ -1437,7 +1464,7 @@
     const nul = S.nulmeting[t.adres] = S.nulmeting[t.adres] || {};
     if (nul.loopt) { nul.zin = 'Nulmeting: loopt al.'; tekenLive(); return; }
     if (s.bezig || !s.bereikbaar) { nul.zin = 'Nulmeting: deze telefoon is nu niet vrij of niet bereikbaar. Probeer het zo nog eens.'; tekenLive(); return; }
-    if (typeof window.confirm === 'function' && !window.confirm(`${t.naam} twintig minuten meten? Hij krijgt in die tijd geen ander werk. Laat hem aan de lader liggen en laat dit tabblad open.`)) return;
+    if (!(await vraagJa(`${t.naam} twintig minuten meten? Hij krijgt in die tijd geen ander werk. Laat hem aan de lader liggen en laat dit tabblad open.`, 'Ja, meet hem'))) return;
     NulS.stop = false; nul.loopt = true; nul.uitslag = null; nul.zin = 'Nulmeting loopt: nog ongeveer twintig minuten.';
     s.bezig = true; tekenLive();
     const begin = nu();
@@ -1480,7 +1507,7 @@
   }
   async function maakBaas(t) {
     if (!S.code || !t || !t.jarvis || t.kern) return;
-    if (typeof window.confirm === 'function' && !window.confirm(`${t.naam} de baas maken?`)) return;
+    if (!(await vraagJa(`${t.naam} de baas maken?`, 'Ja, maak de baas'))) return;
     const oud = S.telefoons.find((x) => x.kern) || null;
     let ok = false;
     try {
@@ -2060,7 +2087,7 @@
     if (!h || !S.code) return false;
     if (!bevestigd) {
       let ja = false;
-      try { ja = window.confirm(`${h.naam || 'Deze telefoon'} wordt een werker (rektelefoon): hij rekent mee en rust niet meer als dagelijkse telefoon. Staat JARVIS daar uit (noodstop), dan gaat hij weer aan. Nooit doen bij de telefoon die je zelf elke dag gebruikt. Doorgaan?`); } catch (e) { ja = false; }
+      try { ja = await vraagJa(`${h.naam || 'Deze telefoon'} wordt een werker (rektelefoon): hij rekent mee en rust niet meer als dagelijkse telefoon. Staat JARVIS daar uit (noodstop), dan gaat hij weer aan. Nooit doen bij de telefoon die je zelf elke dag gebruikt. Doorgaan?`, 'Ja, maak werker'); } catch (e) { ja = false; }
       if (!ja) return false;
     }
     // Eerst jarvis-aan (een JARVIS in de noodstop leest alleen die), dan word-werker in DEZELFDE brievenbus erachter: zo komen ze
@@ -2273,7 +2300,7 @@
   document.addEventListener('click', (e) => {
     const b = e.target && e.target.closest ? e.target.closest('button[data-zandbak]') : null;
     if (!b) return;
-    if (b.dataset.zandbakDoe === 'maak') { if (window.confirm('Deze telefoon als zandbak gebruiken? Hij stopt met rekenen en wist alle sleutels van het systeem.')) maakZandbak(b.dataset.zandbak).catch(() => {}); }
+    if (b.dataset.zandbakDoe === 'maak') { const id = b.dataset.zandbak; vraagJa('Deze telefoon als zandbak gebruiken? Hij stopt met rekenen en wist alle sleutels van het systeem.', 'Ja, maak zandbak').then((ja) => { if (ja) maakZandbak(id).catch(() => {}); }); }
     else zandbakKlaar(b.dataset.zandbak);
   });
   // 497: OPSLAG OP KAARTJE (kaartje.js). Alleen niet-gevoelige kopieën; de koppelcode, het ntfy-onderwerp en het postbus-adres staan
@@ -2652,10 +2679,10 @@
       try { await Promise.race([navigator.clipboard.writeText($('verslagTekst').textContent), new Promise((_, mis) => setTimeout(() => mis(new Error('te lang')), 2500))]); gelukt = true; } catch (x) { gelukt = false; }
       $('verslagMelding').textContent = gelukt ? 'Gekopieerd. Je kunt het nu plakken in een bericht of mail.' : 'Kopieren lukte niet. Selecteer de tekst van het verslag en kopieer met Ctrl+C.';
     } else if (id === 'nachtWis') {
-      if (!window.confirm('De nachtproef op deze computer wissen? De baas houdt zijn eigen regels.')) return;
+      if (!(await vraagJa('De nachtproef op deze computer wissen? De baas houdt zijn eigen regels.', 'Ja, wis het'))) return;
       S.nachtlog = []; await Opslag.schrijf('nachtlog', []); tekenNachtlog();
     } else if (id === 'verslagWis') {
-      if (!dagboek || !window.confirm('Het hele verbruiksdagboek wissen? Dit staat alleen op deze computer.')) return;
+      if (!dagboek || !(await vraagJa('Het hele verbruiksdagboek wissen? Dit staat alleen op deze computer.', 'Ja, wis het'))) return;
       await dagboek.wisAlles(); $('verslagMelding').textContent = 'Het dagboek is leeg.'; tekenVerslag();
     }
   });
@@ -2849,7 +2876,7 @@
     const sch = S.scherm[t.adres] = S.scherm[t.adres] || {};
     if (sch.aan) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; tekenLive(); return; }
     if (!sch.code) {
-      const c = window.prompt(`De code van ${t.naam} (staat op die telefoon bij Apparaten, Veronica):`, '');
+      const c = await vraagTekst(`De code van ${t.naam} (staat op die telefoon bij Apparaten, Veronica):`, { inputMode: 'numeric' });
       if (!/^\d{6}$/.test(String(c || '').trim())) return;
       sch.code = String(c).trim();
     }
@@ -4019,7 +4046,7 @@
       rijen: priveRijen, verbruik: priveVerbruik,
       noodstopKern: () => { for (const t of S.telefoons) { const a = (meet(t.adres).status || {}).aikern; if (a && a.waarde && nu() - a.t <= K.MAX_LEEFTIJD_MS) return a.waarde.noodstop === true; } return null; },
       noodstop: () => noodstop(), stop: () => { if (S.aan) $('pantserKnop').click(); }, pantserAan: () => S.aan === true,
-      bevestig: (zin) => window.confirm(zin),
+      bevestig: (zin) => vraagJa(zin, 'Ja, wis alles'),   // 526: in de pagina, nooit window.confirm
       koppelQr: maakPriveKoppelQr,   // 481: de telefoon koppelen aan de hoek (QR met de privé-sleutel)
       betekenis: priveBetekenisLaag(),   // 523: zoeken op betekenis (rekenen, geen netwerk; het model komt van buiten dit blok)
       model: priveModelLaag(),   // 470: zie hierboven (buiten dit blok: het is het ENIGE stukje van de hoek dat het netwerk aanraakt)
@@ -4205,7 +4232,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
