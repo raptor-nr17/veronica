@@ -223,6 +223,7 @@
   // 529: DE RELAY (tools/relay) als eerste weg. Het adres staat alleen hier (localStorage, geen geheim: wat erdoor gaat is versleuteld
   // met het geheime onderwerp); leeg = uit. Veronica geeft het via de brievenbus aan elke telefoon (roep 'relay'), haalt de hartslagen
   // er elke tien seconden op, en roept een telefoon die zegt dat hij de relay gebruikt eerst daarlangs. ntfy blijft de terugval.
+  const MeetV = { boek: null };   // 529: het meetboek (stiltes, stops, meetuur), in de IndexedDB van Veronica
   const RelayV = { adres: '', sinds: '', bezig: false, wachtTot: 0, fouten: 0, open: false, laatst: 0, gegeven: {}, GEEF_MS: 30 * 60 * 1000 };
   try { RelayV.adres = (window.Hartslag && window.Hartslag.relayGeldig(localStorage.getItem('veronica-relay'))) || ''; } catch (e) { RelayV.adres = ''; }   // 508: wie kreeg wanneer de brievenbus van Veronica (zie geefNtfy)
   // 525: de wens "maak werker" per toestel-id (zie werkerWensTik)
@@ -331,6 +332,7 @@
     herstelMotor(h).catch(() => {});   // 505: een vastgelopen motor weer op gang
     rekVanzelfHart(h).catch(() => {});   // 522: een werker met de motor uit, ook op het gastnetwerk
     geefRelay(h).catch(() => {});   // 529: het relay-adres (of uit) als zijn hartslag iets anders zegt
+    MeetV.boek = K.meetboekBij(MeetV.boek, h, nu()); Opslag.schrijf('meetboek', MeetV.boek).catch(() => {});   // 529: meetplan B en D
     if (WensV.per[h.id]) werkerWensTik(h.id, { rol: h.rol, voorkeur: null, dagelijks: !!h.dagelijks }, null).catch(() => {});   // 525
     try { tekenLive(); } catch (e) { /* de volgende keer */ }
     return true;
@@ -1333,6 +1335,12 @@
       if (!a.ok) throw new Error(String(a.status));
       logRegel(`${naam}: ${stand === 'auto' ? 'automatisch' : `met de hand ${stand}`} doorgegeven aan de baas.`);
     } catch (e) {
+      // 529: op het gastnetwerk komt het wifi niet aan: dan via de brievenbus naar de beheerder (die schakelt de stekker zelf)
+      const baas = Object.values(HB.per).filter((x) => x && x.rol === 'baas').sort((a, b) => b.t - a.t)[0];
+      if (baas && await roepNaarId(baas.id, { soort: 'stekker', naam, stand, van: 'veronica' }, true)) {
+        logRegel(`${naam}: ${stand === 'auto' ? 'automatisch' : `met de hand ${stand}`} via de brievenbus aan de beheerder doorgegeven.`);
+        return;
+      }
       delete HandV.gekozen[naam];
       logRegel(`${naam}: de handknop kon niet naar de baas (geen antwoord). Probeer het zo nog eens.`);
       tekenLive();
@@ -1558,6 +1566,10 @@
       const g = K.gidsSamenvatting(Object.values(HB.per || {}), nu());
       $('gidsSamen').textContent = g.kop;
       $('gidsSamen').hidden = !g.kop;
+      // 529: EEN samenvatting van het meten (B: stiltes en stops, D: het meetuur)
+      const ms = K.meetSamenvatting(MeetV.boek, nu());
+      $('meetSamen').textContent = ms.kop ? `${ms.kop}. ${ms.regels.map((x) => x.zin).join('. ')}.` : '';
+      $('meetSamen').hidden = !ms.kop;
       // 522d: wie geen verse hartslag heeft staat eronder, met de knop Maak werker (wat hij nu is weten we dan niet).
       const oudRegels = w.oud.map((r) => {
         // 525: antwoordt hij wel over het wifi, dan zeggen we wat hij daar meldt (en of "maak werker" nog loopt)
@@ -1567,13 +1579,15 @@
         const d = el('li', 'rekentNee', `${r.naam}: ${r.zin}${wu ? `; ${wu}` : ''}.${wens}${regelExtra(r)}`);
         d.dataset.sleutel = `oud|${r.id}`;
         const k = el('button', '', 'Maak werker (rektelefoon)'); k.dataset.maakWerker = r.id; d.append(' ', k);
+        const w = el('button', '', 'Wek met de lader'); w.dataset.wekLader = r.id; d.append(' ', w);   // 529
         return d;
       });
       morphKinderen($('wieRekentLijst'), oudRegels.concat(w.regels.map((r) => {
         const d = el('li', r.rekent ? 'rekentJa' : 'rekentNee', `${r.naam} (${r.rol}): ${r.zin}${regelExtra(r)}`);
-        d.dataset.sleutel = `${r.id}|${r.pauze ? 'p' : ''}|${r.magWerker ? 'w' : ''}`;
+        d.dataset.sleutel = `${r.id}|${r.pauze ? 'p' : ''}|${r.magWerker ? 'w' : ''}|${r.meetbaar ? 'm' : ''}`;
         if (r.pauze) { const k = el('button', '', 'Noodstop opheffen'); k.dataset.noodstopOp = r.id; d.append(' ', k); }   // 522
         if (r.magWerker) { const k = el('button', '', 'Maak werker (rektelefoon)'); k.dataset.maakWerker = r.id; d.append(' ', k); }   // 522c
+        if (r.meetbaar) { const k = el('button', '', 'Meetuur'); k.dataset.meetuur = r.id; d.append(' ', k); }   // 529: meetplan D
         return d;
       })));
     }
@@ -2101,7 +2115,7 @@
   }
   // 529: wat er achter een regel van Wie rekent nu komt: wanneer en langs welke weg gezien, en of hij stil lag (de waakhond).
   function regelExtra(r) {
-    const delen = [r.gezien, r.slaap, r.stop].filter(Boolean);
+    const delen = [r.gezien, r.slaap, r.stop, r.meet].filter(Boolean);
     return delen.length ? ` (${delen.join('; ')})` : '';
   }
   function bekendeTelefoons() {
@@ -2170,6 +2184,34 @@
     await roepNaarId(id, { soort: 'word-werker', van: 'veronica' }, true);
   }
   document.addEventListener('click', (e) => { const b = e.target; if (b && b.dataset && b.dataset.maakWerker) maakWerkerViaHart(b.dataset.maakWerker); });
+  document.addEventListener('click', (e) => { const b = e.target; if (b && b.dataset && b.dataset.meetuur) meetuurVraag(b.dataset.meetuur); if (b && b.dataset && b.dataset.wekLader) wekMetLader(b.dataset.wekLader); });   // 529
+  // 529: MEETPLAN D. Een uur lang meet de telefoon zelf tempo, warmte en accu; de samenvatting komt in de hartslag.
+  async function meetuurVraag(id) {
+    const h = HB.per[id];
+    const ja = await vraagJa(`${h && h.naam ? h.naam : 'Deze telefoon'} een uur laten meten: elke drie minuten een vraag aan zijn eigen motor, met de warmte en de accu. Hij stopt zelf bij 45 graden of een lege accu.`, 'Ja, start het meetuur');
+    if (!ja) return false;
+    const ok = await roepNaarId(id, { soort: 'meetuur', minuten: 60, van: 'veronica' });
+    logRegel(ok ? `${h && h.naam ? h.naam : 'De telefoon'} begint aan een meetuur (zodra hij de roep ophaalt). Over een uur staat de uitslag onder Meten.` : 'Het meetuur kon niet weg (geen brievenbus of geen code).');
+    return ok;
+  }
+  // 529: EEN STILLE TELEFOON WEKKEN MET ZIJN LADER. Aan de lader laat Android een app niet slapen. Veronica vraagt de beheerder (die de
+  // stekkers schakelt) de lader van die telefoon een uur aan te zetten; daarna weer automatisch (of eerder als een telefoon warm wordt).
+  // Eerst over het wifi, anders via de brievenbus. Een beheerder van voor 1.9.63 kent deze roep niet.
+  async function wekMetLader(id) {
+    const h = HB.per[id];
+    const naam = h && h.naam ? h.naam : 'de telefoon';
+    const roep = { soort: 'wek-lader', id, minuten: 60, van: 'veronica' };
+    let ok = false;
+    const kern = kernNu();
+    if (kern && S.code) { try { ok = (await haal(`${kern}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(roep) }, 3000)).ok; } catch (e) { ok = false; } }
+    if (!ok) {
+      const baas = Object.values(HB.per).filter((x) => x && x.rol === 'baas' && x.id !== id).sort((a, b) => b.t - a.t)[0];
+      if (baas) ok = await roepNaarId(baas.id, roep, true);
+      if (!baas) { logRegel(`Ik ken geen beheerder die de stekkers schakelt; ${naam} kan ik zo niet wekken.`); return false; }
+    }
+    logRegel(ok ? `De beheerder zet de lader van ${naam} een uur aan (eerst over het wifi, anders via de brievenbus). Aan de lader slaapt hij niet; zijn hartslag hoort binnen een paar minuten terug te komen.` : `De vraag om ${naam} te wekken kon niet weg.`);
+    return ok;
+  }
   // De knop "Laat meerekenen" bij een telefoon die beheerder is en als dagelijkse telefoon rust: hij wordt werker ('word-werker',
   // met de code), en rekent daarna mee. Een tik van een mens, nooit vanzelf (495).
   async function rekWerkerMaken(adres) {
@@ -4158,6 +4200,7 @@
       S.updateRepo = (await Opslag.lees('updateRepo')) || null;
       S.bekend = (await Opslag.lees('bekend')) || [];
       S.ntfy = K.leesNtfy(await Opslag.lees('ntfy'));
+      try { const mb = await Opslag.lees('meetboek'); if (mb && mb.per) MeetV.boek = mb; } catch (e) { /* leeg boek */ }   // 529
       { const b = await Opslag.lees('ledenbrief'); if (b && Array.isArray(b.leden)) LB.brief = b; }   // 482
       { const hs = await Opslag.lees('hartslagen'); if (hs && typeof hs === 'object') HB.per = hs; }   // 500
       if (window.Nachtlog) S.nachtlog = window.Nachtlog.leesLijst(await Opslag.lees('nachtlog'), NACHT_MAX);   // 483
@@ -4328,7 +4371,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

@@ -49,9 +49,38 @@
   const schoon = (t, n) => String(t === null || t === undefined ? '' : t).replace(/[^\p{L}\p{N} .,:%()·_/-]/gu, '').slice(0, n);
   const getal = (x, min, max) => (typeof x === 'number' && Number.isFinite(x) && x >= min && x <= max ? x : null);
 
+  function meetuurBlok(x) {
+    if (!x || typeof x !== 'object') return null;
+    const g = (v, a, b) => getal(typeof v === 'number' ? v : NaN, a, b);
+    if (x.bezig === true) return { bezig: true, start: Math.floor(Number(x.start) || 0), n: g(x.n, 0, 1000), tot: Math.floor(Number(x.tot) || 0) };
+    const REDEN = ['klaar', 'te warm', 'accu laag', 'motor weg', 'gestopt', 'drie fouten'];
+    return { bezig: false, start: Math.floor(Number(x.start) || 0), min: g(x.min, 0, 1000), n: g(x.n, 0, 1000), gelukt: g(x.gelukt, 0, 1000),
+      tpsMid: g(x.tpsMid, 0, 1000), tpsMin: g(x.tpsMin, 0, 1000), tpsMax: g(x.tpsMax, 0, 1000), tpsBegin: g(x.tpsBegin, 0, 1000), tpsEind: g(x.tpsEind, 0, 1000),
+      tempBegin: g(x.tempBegin, -20, 90), tempMax: g(x.tempMax, -20, 90), accuBegin: g(x.accuBegin, 0, 100), accuEind: g(x.accuEind, 0, 100),
+      laadt: ['steeds', 'soms', 'nooit'].includes(x.laadt) ? x.laadt : null, reden: REDEN.includes(x.reden) ? x.reden : '' };
+  }
   function relayGeldig(u) {
     const a = String(u || '').trim().replace(/\/+$/, '').toLowerCase();
     return RELAY_RE.test(a) ? a : null;
+  }
+  // 529: HET MEETUUR (meetplan D). De telefoon meet zelf, met zijn eigen motor, een uur lang elke drie minuten het tempo bij een
+  // middellange vraag, en de warmte en de accu. Dit maakt van de monsters EEN samenvatting (alleen getallen); de hartslag draagt die.
+  function meetuurUit(monsters, start, reden) {
+    const m = (Array.isArray(monsters) ? monsters : []).filter((x) => x && typeof x.t === 'number');
+    const tps = m.map((x) => x.tps).filter((x) => typeof x === 'number' && x > 0).sort((a, b) => a - b);
+    const temp = m.map((x) => x.temp).filter((x) => typeof x === 'number');
+    const accu = m.map((x) => x.accu).filter((x) => typeof x === 'number');
+    const r1 = (x) => Math.round(x * 10) / 10;
+    return {
+      start: Math.floor(Number(start) || 0), min: m.length ? Math.round((m[m.length - 1].t - (Number(start) || m[0].t)) / 60000) : 0,
+      n: m.length, gelukt: tps.length,
+      tpsMid: tps.length ? r1(tps[Math.floor(tps.length / 2)]) : null, tpsMin: tps.length ? r1(tps[0]) : null, tpsMax: tps.length ? r1(tps[tps.length - 1]) : null,
+      tpsBegin: tps.length ? r1(m.find((x) => x.tps > 0).tps) : null, tpsEind: tps.length ? r1(m.slice().reverse().find((x) => x.tps > 0).tps) : null,
+      tempBegin: temp.length ? r1(temp[0]) : null, tempMax: temp.length ? r1(Math.max(...temp)) : null,
+      accuBegin: accu.length ? accu[0] : null, accuEind: accu.length ? accu[accu.length - 1] : null,
+      laadt: m.length ? (m.every((x) => x.laadt === true) ? 'steeds' : m.some((x) => x.laadt === true) ? 'soms' : 'nooit') : null,
+      reden: String(reden || ''),
+    };
   }
   async function onderwerp(o, soort, c) {
     if (!ONDERWERP_RE.test(String(o || ''))) return null;
@@ -125,6 +154,8 @@
       // de laatste vijf keer, begin en duur in minuten, en of hij toen aan de lader hing. Zo is te METEN of de dienst het volhoudt.
       slaap: (Array.isArray(x.slaap) ? x.slaap : []).slice(-5).map((g) => ({ t: Math.floor(Number(g && g.t) || 0), min: getal(Number(g && g.min), 0, 100000), laadt: g && typeof g.laadt === 'boolean' ? g.laadt : null }))
         .filter((g) => g.t > 0 && g.min !== null),
+      // 529: het meetuur (meetplan D): bezig, of de samenvatting van het laatste
+      meetuur: meetuurBlok(x.meetuur),
       // 529: WAAROM STOPTE DE APP (Android 11+, ApplicationExitInfo): de laatste vijf keer, tijdstip, de redencode van Android en
       // hoe belangrijk de app toen was. Alleen getallen; Veronica maakt er een zin van.
       stops: (Array.isArray(x.stops) ? x.stops : []).slice(-5).map((g) => ({ t: Math.floor(Number(g && g.t) || 0), reden: getal(Number(g && g.reden), 0, 99), belang: getal(Number(g && g.belang), 0, 1000) }))
@@ -188,7 +219,7 @@
     // Het dagbudget (hartslagNodig) blijft de rem.
     // 507: het geheugengebruik telt NIET mee (dat schommelt; anders een hartslag per kleine verandering), het model wel
     return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, d.batterijVrij, d.relay, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
-      i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast, g.klaar || 0, g.afgekeurd || 0].join('|');
+      i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast, g.klaar || 0, g.afgekeurd || 0, d.meetuur ? `${d.meetuur.bezig ? 'b' : 'u'}${d.meetuur.start}` : ''].join('|');
   }
   // 522d: HET DAGBUDGET VERDELEN. ntfy.sh telt berichten per dag; een telefoon heeft er NTFY_DAG_MAX (40) en houdt er een paar
   // achter de hand voor iets anders dan de hartslag. Waren er overdag veel veranderingen, dan ging elke half uur een hartslag weg
@@ -316,5 +347,5 @@
     return delen.length ? `lijnen: ${delen.join(' · ')}` : '';
   }
 
-  return { lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
+  return { lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, meetuurUit, meetuurBlok, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
 }));

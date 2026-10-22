@@ -467,6 +467,64 @@
     const l = g.reduce((a, b) => (b.t > a.t ? b : a));
     return `stopte het laatst om ${klokZin(l.t).slice(0, 5)}: ${STOP_REDEN[l.reden] || `reden ${l.reden}`}${g.length > 1 ? ` (${g.length} keer in een etmaal)` : ''}`;
   }
+  // 529: HET MEETUUR (meetplan D) in een zin, uit de hartslag.
+  const komma = (x) => String(x).replace('.', ',');
+  function meetuurZin(h) {
+    const m = h && h.meetuur;
+    if (!m) return '';
+    if (m.bezig) return `meetuur loopt (sinds ${klokZin(m.start).slice(0, 5)}, ${m.n || 0} ${m.n === 1 ? 'meting' : 'metingen'})`;
+    const delen = [];
+    if (m.tpsMid !== null && m.tpsMid !== undefined) delen.push(`tempo ${komma(m.tpsMid)} tokens per seconde (${komma(m.tpsMin)} tot ${komma(m.tpsMax)}; begin ${komma(m.tpsBegin)}, eind ${komma(m.tpsEind)})`);
+    if (m.tempMax !== null && m.tempMax !== undefined) delen.push(`warmte ${komma(m.tempBegin)} tot ${komma(m.tempMax)} graden`);
+    if (m.accuBegin !== null && m.accuBegin !== undefined) delen.push(`accu ${m.accuBegin} naar ${m.accuEind}%${m.laadt ? ` (lader: ${m.laadt})` : ''}`);
+    return `meetuur ${klokZin(m.start).slice(0, 5)}, ${m.min} minuten, ${m.gelukt} van ${m.n} gelukt${delen.length ? `: ${delen.join(', ')}` : ''}${m.reden && m.reden !== 'klaar' ? `; gestopt: ${m.reden}` : ''}`;
+  }
+  // 529: HET MEETBOEK (meetplan B): elke stilte en elke stop die een telefoon in zijn hartslag meldt, een keer (op tijdstip), hoogstens
+  // acht dagen. Een hartslag draagt er maar vijf; het boek onthoudt de hele week. Alleen getallen.
+  const BOEK_MS = 8 * 24 * 3600 * 1000;
+  function meetboekBij(boek, h, tijd) {
+    const b = boek && typeof boek === 'object' && boek.per ? boek : { sinds: tijd, per: {} };
+    if (!h || !h.id) return b;
+    const p = b.per[h.id] || (b.per[h.id] = { naam: h.naam || 'Een telefoon', slaap: [], stops: [] });
+    p.naam = h.naam || p.naam;
+    const voeg = (lijst, nieuw, sleutel) => {
+      for (const x of (Array.isArray(nieuw) ? nieuw : [])) if (x && typeof x.t === 'number' && !lijst.some((y) => y.t === x.t)) lijst.push(sleutel(x));
+      return lijst.filter((x) => tijd - x.t <= BOEK_MS).sort((a, c) => a.t - c.t).slice(-200);
+    };
+    p.slaap = voeg(p.slaap, h.slaap, (x) => ({ t: x.t, min: x.min, laadt: x.laadt }));
+    p.stops = voeg(p.stops, h.stops, (x) => ({ t: x.t, reden: x.reden }));
+    if (h.meetuur && !h.meetuur.bezig) p.meetuur = h.meetuur;
+    return b;
+  }
+  // EEN samenvatting van het meten (B en D), per telefoon.
+  function meetSamenvatting(boek, tijd) {
+    const per = boek && boek.per ? boek.per : {};
+    const regels = [];
+    let stil = 0, stops = 0;
+    for (const [id, p] of Object.entries(per)) {
+      const sl = (p.slaap || []).filter((x) => tijd - x.t <= 7 * 24 * 3600 * 1000);
+      const st = (p.stops || []).filter((x) => tijd - x.t <= 7 * 24 * 3600 * 1000 && x.reden !== 16);
+      if (!sl.length && !st.length && !p.meetuur) continue;
+      stil += sl.length; stops += st.length;
+      const delen = [];
+      if (sl.length) {
+        const som = sl.reduce((n, x) => n + (Number(x.min) || 0), 0);
+        const zonder = sl.filter((x) => x.laadt === false).length;
+        delen.push(`lag ${sl.length === 1 ? 'een keer' : `${sl.length} keer`} stil (samen ${duurZin(som)}${zonder ? `; ${zonder === sl.length ? 'steeds' : `${zonder} keer`} zonder lader` : ''})`);
+      } else delen.push('lag niet stil');
+      if (st.length) {
+        const tel = {};
+        for (const x of st) tel[x.reden] = (tel[x.reden] || 0) + 1;
+        delen.push(`stopte ${st.length === 1 ? 'een keer' : `${st.length} keer`} (${Object.entries(tel).map(([r, n]) => `${STOP_REDEN[r] || `reden ${r}`}${n > 1 ? ` ${n} keer` : ''}`).join(', ')})`);
+      }
+      const mz = meetuurZin({ meetuur: p.meetuur });
+      if (mz) delen.push(mz);
+      regels.push({ id, naam: p.naam, zin: `${p.naam}: ${delen.join('; ')}` });
+    }
+    const sinds = boek && boek.sinds ? new Date(boek.sinds).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long' }) : '';
+    const kop = regels.length ? `Meten${sinds ? ` (sinds ${sinds})` : ''}: ${stil} keer stil gelegen, ${stops} keer gestopt` : '';
+    return { kop, regels };
+  }
   function slaapZin(h, tijd) {
     const g = (h && Array.isArray(h.slaap) ? h.slaap : []).filter((x) => x && typeof x.t === 'number' && typeof x.min === 'number' && tijd - x.t <= 24 * 3600 * 1000);
     if (!g.length) return '';
@@ -527,7 +585,7 @@
       if (typeof h.werk === 'string' && h.werk.trim()) zin += `. Werker: ${h.werk.trim().replace(/\.$/, '')}`;
       // 522c: een beheerder die als dagelijkse telefoon RUST kan per ongeluk een rektelefoon zijn (de QR van Veronica gescand).
       regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: h.rol === 'baas' ? 'beheerder' : 'werker',
-        gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd) });   // 529
+        gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd), meet: meetuurZin(h), meetbaar: h.rol === 'werker' && !h.dagelijks && !p && !!(m && m.klaar) });   // 529
     }
     for (const b of (Array.isArray(bekend) ? bekend : [])) {
       if (!b || !b.id || gezien.has(b.id)) continue;
@@ -1019,7 +1077,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.80';
+  const VERONICA_VERSIE = '1.9.81';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1674,7 +1732,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
