@@ -193,6 +193,9 @@
   // HB: per toestel-id de laatste hartslag. Komt via dezelfde ene verbinding als de ledenbrief (ledenStroom).
   const HB = { per: {}, viaPost: 0 };
   const NtfyGeefV = { per: {}, mijn: null, mijnVan: '' };   // 508: wie kreeg wanneer de brievenbus van Veronica (zie geefNtfy)
+  // 525: de wens "maak werker" per toestel-id (zie werkerWensTik)
+  const WensV = { per: (() => { try { return JSON.parse(localStorage.getItem('veronica-werker-wens') || '{}') || {}; } catch (e) { return {}; } })(), code: {} };
+  function bewaarWens() { try { localStorage.setItem('veronica-werker-wens', JSON.stringify(WensV.per)); } catch (e) { /* alleen voor nu */ } }
   function hartslagVoorAdres(adres) {
     let host = '';
     try { host = new URL(adres).hostname; } catch (e) { return null; }
@@ -291,6 +294,7 @@
     geefPostbusViaBrievenbus(h).catch(() => {});   // 504: een telefoon die zich meldt krijgt de verse code (een keer)
     herstelMotor(h).catch(() => {});   // 505: een vastgelopen motor weer op gang
     rekVanzelfHart(h).catch(() => {});   // 522: een werker met de motor uit, ook op het gastnetwerk
+    if (WensV.per[h.id]) werkerWensTik(h.id, { rol: h.rol, voorkeur: null, dagelijks: !!h.dagelijks }, null).catch(() => {});   // 525
     try { tekenLive(); } catch (e) { /* de volgende keer */ }
     return true;
   }
@@ -322,10 +326,12 @@
     try {
       // 460b: de eigen motor van JARVIS praat met de rij-code als Bearer-token; OlliteRT met zijn eigen sleutel (als die er is).
       const r = await haal(`${adres}/health?metrics=true`, { headers: motor ? { Authorization: `Bearer ${S.code}` } : kop(t) }, 2500);
+      if (motor) MotorProefV[adres] = r.status;   // 525: wat de motor antwoordde (401/403 = een andere rij-code)
       if (!r.ok) return null;
       return K.leesHealth(await r.json(), nu(), motor ? 'JARVIS-motor /health (tokens per seconde geschat)' : undefined);
-    } catch (e) { return null; }
+    } catch (e) { if (motor) MotorProefV[adres] = 0; return null; }
   }
+  const MotorProefV = {};
   // 460: is er een VERSE melding van JARVIS op die telefoon? Een oude melding bewijst niets: de telefoon kan er sindsdien uit zijn.
   const jarvisVers = (st, tijd) => !!st && Object.values(st).some((x) => x && typeof x.t === 'number' && tijd - x.t <= K.MAX_LEEFTIJD_MS);
   // 460: een JARVIS van voor 1.9.25 kan niet zeggen WELKE van de drie het is (niet geinstalleerd / server niet gestart / geen model).
@@ -351,6 +357,8 @@
       } catch (e) { m.jarvisNietTot = nu() + 60000; }   // geen JARVIS (of even weg): een minuut niet vragen
       geefNtfy(t, m.status).catch(() => {});   // 508: een andere of geen brievenbus = de hare geven
       rekVanzelf(t, m.status).catch(() => {});   // 515: achterlopen = laten kijken; werker zonder motor = motor aan
+      { const to = m.status && m.status.toestel && m.status.toestel.waarde; const wid = t.id || (to && to.id);   // 525: de wens herhalen
+        if (wid && WensV.per[wid] && jarvisVers(m.status, nu())) werkerWensTik(wid, wifiMelding(m.status), t).catch(() => {}); }
     }
     // 460b: OlliteRT zwijgt maar de EIGEN MOTOR van JARVIS is klaar -> dan gaat deze telefoon voortaan via de motor (poort uit de melding,
     // de rij-code als sleutel). Een telefoon die al op zijn motor staat wordt gewoon via de motor gemeten.
@@ -394,7 +402,13 @@
       }
       if (s.bereikbaar === false) {
         const sl = `${t.naam}|zwijgt`;
-        if (!adresGelogd.has(sl)) { adresGelogd.add(sl); logRegel(`${t.naam}: JARVIS antwoordt wel, maar OlliteRT niet op ${kand.length ? 'de adressen die ik probeerde' : 'dit adres'}. ${oudeJarvisZin(m.status)}`); }
+        // 525: had hij een eigen motor die klaar is, dan zeggen we wat die antwoordde -- niet "OlliteRT" (die gebruikt hij niet).
+        const ma = K.motorAdres(t, m.status);
+        const mc = ma ? MotorProefV[ma] : undefined;
+        const zin = ma && (mc === 401 || mc === 403) ? `${t.naam}: zijn eigen motor draait (${ma.slice(7)}), maar weigert mijn sleutel: hij kent een andere rij-code. Daarom zie ik hem niet, komt "maak werker" niet aan en lees ik zijn hartslag niet. Dit lost een scan op: op die telefoon een keer de QR van Veronica (Koppelen).`
+          : ma && mc === 0 ? `${t.naam}: zijn eigen motor is klaar, maar ${ma.slice(7)} antwoordt niet over het wifi (ander netwerk, of de motor laat alleen het eigen net toe).`
+            : `${t.naam}: JARVIS antwoordt wel, maar OlliteRT niet op ${kand.length ? 'de adressen die ik probeerde' : 'dit adres'}. ${oudeJarvisZin(m.status)}`;
+        if (!adresGelogd.has(sl)) { adresGelogd.add(sl); logRegel(zin); }
       } else adresGelogd.delete(`${t.naam}|zwijgt`);
     }
     const st = m.status || {};
@@ -1509,7 +1523,11 @@
       $('gidsSamen').hidden = !g.kop;
       // 522d: wie geen verse hartslag heeft staat eronder, met de knop Maak werker (wat hij nu is weten we dan niet).
       const oudRegels = w.oud.map((r) => {
-        const d = el('li', 'rekentNee', `${r.naam}: ${r.zin}`);
+        // 525: antwoordt hij wel over het wifi, dan zeggen we wat hij daar meldt (en of "maak werker" nog loopt)
+        const tw = telefoonMetId(r.id);
+        const wu = tw ? K.wifiUitleg(meet(tw.adres).status, NtfyGeefV.mijn, nu()) : null;
+        const wens = WensV.per[r.id] ? ` "Maak werker" loopt nog (sinds ${new Date(WensV.per[r.id].t).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}); ik herhaal het tot hij het meldt.` : '';
+        const d = el('li', 'rekentNee', `${r.naam}: ${r.zin}${wu ? `; ${wu}` : ''}.${wens}`);
         d.dataset.sleutel = `oud|${r.id}`;
         const k = el('button', '', 'Maak werker (rektelefoon)'); k.dataset.maakWerker = r.id; d.append(' ', k);
         return d;
@@ -2047,11 +2065,54 @@
     }
     // Eerst jarvis-aan (een JARVIS in de noodstop leest alleen die), dan word-werker in DEZELFDE brievenbus erachter: zo komen ze
     // in deze volgorde binnen. Een JARVIS die niet uit staat laat jarvis-aan gewoon liggen.
+    // 525: de wens blijft staan tot de telefoon zelf "werker" meldt; antwoordt hij over het wifi, dan gaat het eerst die kant op.
+    WensV.per[id] = { t: nu(), naam: h.naam || '', wifi: 0, bus: 0 };
+    bewaarWens();
+    const t = telefoonMetId(id);
+    if (t && await werkerWensWifi(t, id)) return true;
     await roepNaarId(id, { soort: 'jarvis-aan', van: 'veronica' }, true);
     const ok = (await roepNaarId(id, { soort: 'word-werker', van: 'veronica' }, true)) || (await roepNaarId(id, { soort: 'word-werker', van: 'veronica' }));
-    logRegel(ok ? `${h.naam || 'Een telefoon'}: "maak werker" is onderweg. Hij neemt het over zodra hij de brievenbus leest, zet zijn motor aan en meldt het in zijn volgende hartslag.`
-      : `${h.naam || 'Een telefoon'}: "maak werker" kwam niet aan (de brievenbus was niet te bereiken). Probeer het zo nog eens.`);
+    if (ok) { WensV.per[id].bus = nu(); bewaarWens(); }
+    logRegel(ok ? `${h.naam || 'Een telefoon'}: "maak werker" is onderweg. Hij neemt het over zodra hij de brievenbus leest, zet zijn motor aan en meldt het in zijn volgende hartslag. Ik blijf het een dag lang herhalen tot hij het meldt.`
+      : `${h.naam || 'Een telefoon'}: "maak werker" kwam nu niet aan (de brievenbus was niet te bereiken). Ik probeer het vanzelf opnieuw.`);
     return ok;
+  }
+  // 525: DE WENS "MAAK WERKER" (kern.werkerWensStap). Alleen gezet door de klik met bevestiging hierboven; hier alleen herhaald.
+  function telefoonMetId(id) {
+    return S.telefoons.find((x) => x.jarvis && (x.id === id || (() => { const st = meet(x.adres).status || {}; const to = st.toestel && st.toestel.waarde; return !!(to && to.id === id); })()));
+  }
+  const wifiMelding = (st) => { const v = (k) => (st && st[k] ? st[k].waarde : null); return st ? { rol: v('rol'), voorkeur: v('voorkeur'), dagelijks: !!v('dagelijks') } : null; };
+  function wensAfronden(id, stap) {
+    const w = WensV.per[id];
+    if (!w || (stap !== 'klaar' && stap !== 'verlopen')) return false;
+    delete WensV.per[id]; bewaarWens();
+    logRegel(stap === 'klaar' ? `${w.naam || 'De telefoon'} meldt zich nu als werker. Zijn eigen motor gaat vanzelf aan; het model komt binnen op wifi en aan de lader.`
+      : `${w.naam || 'De telefoon'}: "maak werker" kwam in een dag niet aan. Ik stop met herhalen; klik nog eens op Maak werker om het opnieuw te proberen.`);
+    return true;
+  }
+  // Over het wifi: eerst jarvis-aan (een JARVIS in de noodstop leest alleen die), dan word-werker. true = de telefoon nam het aan.
+  async function werkerWensWifi(t, id) {
+    const w = WensV.per[id];
+    if (!w || !t || !t.jarvis || !S.code) return false;
+    w.wifi = nu(); bewaarWens();
+    const roep = async (r) => { try { const a = await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(r) }, 3000); return a.status; } catch (e) { return 0; } };
+    await roep({ soort: 'jarvis-aan', van: 'veronica' });
+    const code = await roep({ soort: 'word-werker', van: 'veronica' });
+    if (code >= 200 && code < 300) { logRegel(`${w.naam || t.naam}: "maak werker" is over het wifi aangekomen. Zijn motor gaat zo vanzelf aan.`); return true; }
+    if ((code === 401 || code === 403) && WensV.code[id] !== code) {
+      WensV.code[id] = code;
+      logRegel(`${w.naam || t.naam} antwoordt over het wifi, maar kent de code van de rij niet; daardoor komt "maak werker" niet aan en stuurt hij geen hartslag die ik kan lezen. Dit lost alleen een scan op: op die telefoon een keer de QR van Veronica (Koppelen).`);
+    }
+    return false;
+  }
+  async function werkerWensTik(id, melding, t) {
+    const via = t && t.jarvis ? 'wifi' : 'bus';
+    const stap = K.werkerWensStap(WensV.per[id], melding, nu(), via);
+    if (wensAfronden(id, stap) || stap !== 'stuur') return;
+    if (via === 'wifi') { await werkerWensWifi(t, id); return; }
+    WensV.per[id].bus = nu(); bewaarWens();
+    await roepNaarId(id, { soort: 'jarvis-aan', van: 'veronica' }, true);
+    await roepNaarId(id, { soort: 'word-werker', van: 'veronica' }, true);
   }
   document.addEventListener('click', (e) => { const b = e.target; if (b && b.dataset && b.dataset.maakWerker) maakWerkerViaHart(b.dataset.maakWerker); });
   // De knop "Laat meerekenen" bij een telefoon die beheerder is en als dagelijkse telefoon rust: hij wordt werker ('word-werker',

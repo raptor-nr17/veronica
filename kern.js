@@ -351,6 +351,8 @@
       bijwerkStap: meting(typeof x.bijwerkStap === 'string' && x.bijwerkStap.trim() ? x.bijwerkStap.replace(/[\u0000-\u001f]/g, ' ').slice(0, 220) : null, bron, t),   // 515: waarom hij (nog) niet bijwerkt
       zelftest: meting(zelftestLees(x.zelftest), bron, t),   // 492: alleen codes per punt (zelftest.js)
       brievenbus: meting(leesBrievenbus(x.brievenbus), bron, t),   // 508: vingerafdruk van het onderwerp en de laatste hartslag
+      // 525: het vaste toestel-id (geen naam: die staat niet in de open stand), zodat een wens per id ook over het wifi aankomt
+      toestel: meting(x.toestel && typeof x.toestel === 'object' && /^[A-Za-z0-9_-]{4,64}$/.test(String(x.toestel.id || '')) ? { id: String(x.toestel.id) } : null, bron, t),
     };
   }
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
@@ -405,6 +407,37 @@
     if (tijd - (e.motor || 0) < REK_MOTOR_MS) return [];
     return [{ wat: 'motor', roep: { soort: 'motor-aan', van: 'veronica' } }];
   }
+  // 525: WAAROM KOMT ER GEEN HARTSLAG, terwijl de telefoon wel over het wifi antwoordt? Uit zijn eigen /jarvis/status: zijn rol,
+  // de motor, en wat de brievenbus zegt. Alleen wat hij meldt (hoogstens vijf minuten oud); anders null.
+  function wifiUitleg(st, mijnVinger, tijd) {
+    const v = (k) => (st && st[k] && typeof st[k].t === 'number' && tijd - st[k].t <= 5 * 60000 ? st[k].waarde : null);
+    if (!v('versie') && !v('rol')) return null;
+    const delen = [`antwoordt wel over het wifi${v('versie') ? ` (JARVIS ${v('versie')})` : ''}`];
+    if (v('voorkeur') === 'kern' || v('rol') === 'baas') delen.push(v('dagelijks') ? 'staat als beheerder en rust als dagelijkse telefoon' : 'staat als beheerder');
+    else if (v('rol') === 'werker') delen.push('staat als werker');
+    const m = v('motor');
+    if (m) delen.push(m.klaar ? 'motor klaar' : m.aan ? `motor aan (${m.fase}${m.procent ? `, ${m.procent}%` : ''})` : 'motor uit');
+    const b = brievenbusUitleg(v('brievenbus'), mijnVinger);
+    if (b) delen.push(b.charAt(0).toLowerCase() + b.slice(1).replace(/\.$/, ''));
+    return delen.join('; ');
+  }
+  // 525: EEN WENS "MAAK WERKER" BLIJFT STAAN TOT DE TELEFOON HET ZELF MELDT. Een klik ging tot nu toe EEN keer de brievenbus in;
+  // las de telefoon die niet (geen of een andere brievenbus, of de rij-code niet), dan verdween hij stil -- zo bleef een rektelefoon op
+  // 22 oktober beheerder. Nu onthoudt Veronica de wens (alleen na de klik met bevestiging; nooit vanzelf) en stuurt hem opnieuw:
+  // over het wifi zodra de telefoon daar antwoordt (elke tien minuten), anders via de brievenbus (elk half uur, ntfy telt per
+  // huis). Klaar = de telefoon meldt zelf werker, geen beheerder-voorkeur en niet de dagelijkse telefoon. Na een dag vervalt hij.
+  const WERKER_WENS_MS = 24 * 3600 * 1000;
+  const WERKER_WIFI_MS = 10 * 60 * 1000;
+  const WERKER_BUS_MS = 30 * 60 * 1000;
+  // melding: { rol, voorkeur, dagelijks } uit /jarvis/status (wifi) of een hartslag (die kent geen voorkeur). via: 'wifi' | 'bus'.
+  function werkerWensStap(wens, melding, tijd, via) {
+    if (!wens || typeof wens.t !== 'number') return 'geen';
+    const m = melding || null;
+    if (m && m.rol === 'werker' && m.voorkeur !== 'kern' && !m.dagelijks) return 'klaar';
+    if (tijd - wens.t > WERKER_WENS_MS) return 'verlopen';
+    const laatst = via === 'wifi' ? wens.wifi : wens.bus;
+    return tijd - (Number(laatst) || 0) >= (via === 'wifi' ? WERKER_WIFI_MS : WERKER_BUS_MS) ? 'stuur' : 'wacht';
+  }
   // 522: WIE REKENT NU. Een regel per telefoon, alleen uit verse hartslagen (wat er niet gemeld is, zeggen we niet).
   // 522d: een telefoon ZONDER verse hartslag (oud, of alleen bekend uit de ledenbrief of de postbus) staat eronder in `oud`, met
   // wanneer hij zich voor het laatst meldde en ALTIJD de knop Maak werker: wat hij nu is weten we niet, en een rektelefoon die als
@@ -426,7 +459,10 @@
       if (h.id) gezien.add(h.id);
       const m = h.motor;
       const naam = h.naam || 'Een telefoon';
-      const tps = m && (Number(m.tps) || (m.proef && Number(m.proef.tps))) || 0;
+      // 525: het tempo van ECHT werk (de laatste gelukte vertaling) gaat voor; m.tps is het laatste antwoord van de motor, en na een
+      // kort antwoord (een ja/nee-controle, de proefzin) is dat laag omdat het inlezen van de vraag dan zwaar weegt (0,9 tegen 3,5).
+      const gl = h.gids && h.gids.laatst && h.gids.laatst.ok && Number(h.gids.laatst.tps) > 0 ? Number(h.gids.laatst.tps) : 0;
+      const tps = gl || (m && ((m.proef && m.proef.ok && Number(m.proef.tps)) || Number(m.tps))) || 0;
       let zin; let rekent = false;
       // 522: JARVIS staat uit (de Uit-knop = ook de noodstop van de AI-kern). Dan start er niets, ook geen motor.
       const p = h.pauze && typeof h.pauze === 'object' ? h.pauze : null;
@@ -435,7 +471,7 @@
       else if (h.sparen) zin = 'spaart (de schuif Sparen staat aan)';
       else if (!m) zin = 'meldt geen eigen motor (oude JARVIS?)';
       else if (m.teOud) zin = 'te oud voor een eigen motor';
-      else if (m.klaar) { rekent = true; zin = `rekent mee${m.model ? ` met ${m.model}` : ''}${tps ? `, ongeveer ${tps} tokens per seconde` : ''}`; }
+      else if (m.klaar) { rekent = true; zin = `rekent mee${m.model ? ` met ${m.model}` : ''}${tps ? `, ongeveer ${String(tps).replace('.', ',')} tokens per seconde${gl ? ' (bij het laatste verhaal)' : ''}` : ''}`; }
       else if (!m.aan) zin = h.rol === 'werker' ? 'motor staat uit; ik zet hem aan' : 'motor staat uit (beheerder)';
       else if (m.fase === 'downloaden') zin = `haalt het model binnen (${Number(m.procent) || 0}%)`;
       else if (m.fase === 'laden') zin = 'laadt het model';
@@ -935,7 +971,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.76';
+  const VERONICA_VERSIE = '1.9.77';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1590,7 +1626,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
