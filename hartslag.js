@@ -30,9 +30,11 @@
   // (Veronica rekent een hartslag twee uur vers).
   const MIN_MS = 30 * 60 * 1000;      // bij een verandering hoogstens zo vaak
   const VERS_MS = 90 * 60 * 1000;     // zonder verandering toch eens per anderhalf uur
+  const HOOGST_MS = 100 * 60 * 1000;  // 527: nooit langer stil dan dit (zolang er vandaag nog berichten over zijn)
   const ROEP_GELDIG_MS = 15 * 60 * 1000;
   // Soorten die naar ALLE telefoons mogen (naar: '*'); de rest moet een toestel bij naam (id) noemen.
   const VOOR_IEDEREEN = ['roep', 'zelftest'];
+  const CODE_OVERNEMEN = ['word-werker'];   // 527: alleen deze roep mag een andere rij-code meebrengen (zie leesRoep)
 
   const tekstBytes = (t) => new TextEncoder().encode(t);
   const naarHex = (b) => Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -105,6 +107,8 @@
       sparen: x.sparen === true,
       accu: getal(x.accu, 0, 100),
       laadt: x.laadt === true,
+      // 527: mag Android JARVIS stilzetten? false = de batterij van JARVIS staat niet op Onbeperkt; zonder lader slaapt hij dan.
+      batterijVrij: typeof x.batterijVrij === 'boolean' ? x.batterijVrij : null,
       temp: getal(x.temp, -20, 90),
       motor: m ? {
         aan: m.aan === true,
@@ -160,7 +164,7 @@
     // 524: een nieuw concept of een afkeuring telt WEL (de tellers, niet de tijd): zo ziet Veronica het werk binnen het half uur.
     // Het dagbudget (hartslagNodig) blijft de rem.
     // 507: het geheugengebruik telt NIET mee (dat schommelt; anders een hartslag per kleine verandering), het model wel
-    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
+    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, d.batterijVrij, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
       i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast, g.klaar || 0, g.afgekeurd || 0].join('|');
   }
   // 522d: HET DAGBUDGET VERDELEN. ntfy.sh telt berichten per dag; een telefoon heeft er NTFY_DAG_MAX (40) en houdt er een paar
@@ -175,8 +179,11 @@
       if (x.over <= 0) return false;
       spreid = Math.max(0, Number(x.totEinde) || 0) / x.over;
     }
-    if (x.sleutel !== x.laatstSleutel) return sinds >= Math.max(MIN_MS, spreid);
-    return sinds >= Math.max(VERS_MS, Math.min(spreid, 4 * 3600 * 1000));
+    // 527: HOOGSTENS HOOGST_MS STIL, met of zonder verandering. Was het budget krap, dan kon een telefoon met een verandering
+    // (de accu) tot het einde van de dag zwijgen, en zonder verandering vier uur; Veronica noemt hem na twee uur al oud. Zo zag
+    // een rektelefoon op 22 oktober er uren dood uit. HOOGST_MS ligt onder de twee uur van Veronica en kost hoogstens ~15 per dag.
+    if (x.sleutel !== x.laatstSleutel) return sinds >= Math.max(MIN_MS, Math.min(spreid, HOOGST_MS));
+    return sinds >= Math.max(VERS_MS, Math.min(spreid, HOOGST_MS));
   }
   async function leesHartslag(o, regel, c) {
     const r = await open(o, 'hartslag', regel, c);
@@ -205,7 +212,12 @@
     const r = await open(o, 'roep', regel, c);
     const d = r && r.d;
     if (!d || typeof d !== 'object' || typeof d.soort !== 'string') return null;
-    if (!/^\d{6}$/.test(String(x.code || '')) || String(d.code) !== String(x.code)) return null;
+    // 527: EEN ANDERE RIJ-CODE. Alleen "Maak werker" (word-werker), na de klik met bevestiging in Veronica, mag met een andere
+    // code binnenkomen: de telefoon neemt dan de code van Veronica over (nieuweCode). De brievenbus zelf is het bewijs: de roep is
+    // versleuteld met een sleutel uit het geheime onderwerp, net als de rijbrief (513). Elke andere roep vraagt dezelfde code.
+    if (!/^\d{6}$/.test(String(x.code || '')) || !/^\d{6}$/.test(String(d.code || ''))) return null;
+    const andereCode = String(d.code) !== String(x.code);
+    if (andereCode && !(x.codeOvernemen === true && CODE_OVERNEMEN.includes(d.soort))) return null;
     if (!(d.naar === x.id || (d.naar === '*' && VOOR_IEDEREEN.includes(d.soort)))) return null;
     const t = Number(d.t) || 0;
     if (Math.abs((x.nu || 0) - t) > ROEP_GELDIG_MS) return null;
@@ -214,6 +226,8 @@
     const uit = Object.assign({}, d);
     delete uit.code; delete uit.naar; delete uit.n; delete uit.t;
     uit.van = 'veronica';
+    delete uit.nieuweCode;
+    if (andereCode) uit.nieuweCode = String(d.code);
     return JSON.stringify(uit);
   }
 
@@ -277,5 +291,5 @@
     return delen.length ? `lijnen: ${delen.join(' · ')}` : '';
   }
 
-  return { lijnZin, SERVER, MIN_MS, VERS_MS, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
+  return { lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
 }));

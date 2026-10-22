@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.61';
+  const JARVIS_NIEUWSTE = '1.9.62';
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -443,6 +443,17 @@
   // wanneer hij zich voor het laatst meldde en ALTIJD de knop Maak werker: wat hij nu is weten we niet, en een rektelefoon die als
   // dagelijkse telefoon rust stuurt juist geen hartslag meer. De knop vraagt Veronica eerst te bevestigen (nooit de dagelijkse telefoon).
   const OUD_LIJST_MS = 30 * 24 * 3600 * 1000;
+  // 527: WAAROM ZWIJGT HIJ? Zonder lader mag Android een app laten slapen (Doze), tenzij de batterij van JARVIS op Onbeperkt staat;
+  // dan haalt hij ook geen roep op. Een rektelefoon zweeg zo op 22 oktober uren (80%, de lader buiten de zonuren uit). We zeggen
+  // alleen wat de laatste hartslag meldde; batterijVrij kent pas JARVIS 1.9.62.
+  function stilUitleg(h) {
+    if (!h || h.laadt) return '';
+    if (h.batterijVrij === true) return '. Hij hing niet aan de lader maar mag van Android doorwerken: kijk of hij nog aan staat (wifi, accu).';
+    const hoe = 'zet zijn lader aan (Stekkers, handknop Aan) of zet op de telefoon de batterij van JARVIS op Onbeperkt';
+    return h.batterijVrij === false
+      ? `. Hij hing niet aan de lader en Android mag JARVIS dan laten slapen; dan haalt hij ook geen roep op. Wat helpt: ${hoe}.`
+      : `. Hij hing niet aan de lader; dan kan Android JARVIS laten slapen en haalt hij geen roep op. Wat helpt: ${hoe}.`;
+  }
   function wieRekent(harten, tijd, bekend) {
     const regels = [];
     const oud = [];
@@ -452,7 +463,7 @@
       if (tijd - h.t > HARTSLAG_VERS_MS) {
         if (h.id && tijd - h.t <= OUD_LIJST_MS && !gezien.has(h.id)) {
           gezien.add(h.id);
-          oud.push({ id: h.id, naam: h.naam || 'Een telefoon', zin: `geen verse hartslag (laatste ${klokZin(h.t)}${tijd - h.t > 20 * 3600 * 1000 ? `, ${Math.round((tijd - h.t) / 3600000)} uur geleden` : ''}${h.rol ? `, toen ${h.rol === 'baas' ? 'beheerder' : 'werker'}` : ''})`, magWerker: true });
+          oud.push({ id: h.id, naam: h.naam || 'Een telefoon', zin: `geen verse hartslag (laatste ${klokZin(h.t)}${tijd - h.t > 20 * 3600 * 1000 ? `, ${Math.round((tijd - h.t) / 3600000)} uur geleden` : ''}${h.rol ? `, toen ${h.rol === 'baas' ? 'beheerder' : 'werker'}` : ''}${typeof h.accu === 'number' ? `, accu ${h.accu}%${h.laadt ? ', aan de lader' : ', niet aan de lader'}` : ''})${stilUitleg(h)}`, magWerker: true });
         }
         continue;
       }
@@ -549,7 +560,9 @@
       }
       return { id: h.id || naam, naam, zin, klaar: g.klaar || 0, afgekeurd: g.afgekeurd || 0 };
     });
-    const kop = !regels.length ? '' : `Gids-proef: ${klaar} ${klaar === 1 ? 'concept' : 'concepten'} klaar om na te lezen${afgekeurd ? `, ${afgekeurd} afgekeurd door de eigen controle (die worden geen concept)` : ''}`;
+    // 527: `klaar` is een TELLER van de telefoon (alles wat hij ooit teruglegde), niet wat er nu wacht: gekeurde en weggezette
+    // concepten tellen mee. Wat nu op een oordeel wacht staat alleen bij Nalezen; zeg dus niet "klaar om na te lezen".
+    const kop = !regels.length ? '' : `Gids-proef: ${klaar} ${klaar === 1 ? 'concept' : 'concepten'} gemaakt (alles samen, ook wat al gekeurd of weggezet is; wat nu wacht staat bij Nalezen)${afgekeurd ? `, ${afgekeurd} afgekeurd door de eigen controle (die worden geen concept)` : ''}`;
     return { kop, regels, tempo, klaar, afgekeurd };
   }
   const hitteNaam = (n) => (Number.isInteger(n) && n >= 0 && n < HITTE.length ? HITTE[n] : 'onbekend');
@@ -971,7 +984,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.78';
+  const VERONICA_VERSIE = '1.9.79';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
