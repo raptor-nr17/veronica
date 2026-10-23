@@ -779,7 +779,7 @@
       S.stekkerMeting[k.ip] = K.leesStekker(await a.json(), await b.json(), nu());
     } catch (e) {
       // 463b: Veronica mag een stekker alleen lezen als die CORS toestaat. Lukt het niet, dan geldt wat de BAAS meet (met zijn leeftijd).
-      const b = S.zonStroom && S.zonStroom.stekkerPer ? S.zonStroom.stekkerPer[k.naam] : null;
+      const per = S.zonStroom && S.zonStroom.stekkerPer; const b = per ? per[K.stekkerSleutel(k, per)] : null;   // 533: per stekker, niet per naam
       if (b) {
         const bron = (w) => ({ waarde: w, bron: 'Tasmota Status 8, via de hoofdtelefoon', t: b.t });
         const vorig = S.stekkerMeting[k.ip];
@@ -1326,30 +1326,38 @@
   const ResV = { gekozen: null, t: 0 };
   // 1.9.15: de handknop van een stekker, net getikt (tot de baas het bevestigt, of twee minuten).
   const HandV = { gekozen: {}, t: {} };
-  async function kiesHand(naam, stand) {
+  // 533: per SLEUTEL (K.stekkerSleutel). Het verzoek draagt naam, rol en (als de baas hem kent) het id: JARVIS 1.9.64 zoekt op id,
+  // dan op naam + rol; een oudere JARVIS alleen op naam.
+  const stekkerVoor = (sleutel) => S.stekkers.find((x) => K.stekkerSleutels(x).includes(sleutel)) || null;
+  async function kiesHand(sleutel, stand) {
     if (!S.code || !['auto', 'aan', 'uit'].includes(stand)) return;
-    HandV.gekozen[naam] = stand; HandV.t[naam] = nu();
+    const st = stekkerVoor(sleutel);
+    if (!st) return;
+    const naam = st.naam;
+    const lijf = { soort: 'stekker', naam, rol: st.rol, stand, van: 'veronica' };
+    if (st.id) lijf.id = st.id;
+    HandV.gekozen[sleutel] = stand; HandV.t[sleutel] = nu();
     tekenLive();
     try {
-      const a = await haal(`${kernNu()}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'stekker', naam, stand, van: 'veronica' }) }, 3000);
+      const a = await haal(`${kernNu()}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(lijf) }, 3000);
       if (!a.ok) throw new Error(String(a.status));
       logRegel(`${naam}: ${stand === 'auto' ? 'automatisch' : `met de hand ${stand}`} doorgegeven aan de baas.`);
     } catch (e) {
       // 529: op het gastnetwerk komt het wifi niet aan: dan via de brievenbus naar de beheerder (die schakelt de stekker zelf)
       const baas = Object.values(HB.per).filter((x) => x && x.rol === 'baas').sort((a, b) => b.t - a.t)[0];
-      if (baas && await roepNaarId(baas.id, { soort: 'stekker', naam, stand, van: 'veronica' }, true)) {
+      if (baas && await roepNaarId(baas.id, lijf, true)) {
         logRegel(`${naam}: ${stand === 'auto' ? 'automatisch' : `met de hand ${stand}`} via de brievenbus aan de beheerder doorgegeven.`);
         return;
       }
-      delete HandV.gekozen[naam];
+      delete HandV.gekozen[sleutel];
       logRegel(`${naam}: de handknop kon niet naar de baas (geen antwoord). Probeer het zo nog eens.`);
       tekenLive();
     }
   }
   function ruimHandOp() {
-    for (const naam of Object.keys(HandV.gekozen)) {
-      const vanBaas = S.zonStroom && S.zonStroom.handPer ? S.zonStroom.handPer[naam] : null;
-      if (vanBaas === HandV.gekozen[naam] || nu() - HandV.t[naam] > 120000) delete HandV.gekozen[naam];
+    for (const sl of Object.keys(HandV.gekozen)) {
+      const vanBaas = S.zonStroom && S.zonStroom.handPer ? S.zonStroom.handPer[sl] : null;
+      if (vanBaas === HandV.gekozen[sl] || nu() - HandV.t[sl] > 120000) delete HandV.gekozen[sl];
     }
   }
   function reserveNu() {
@@ -1867,7 +1875,7 @@
       const rolRij = el('div', 'tKnoppen vRol');
       for (const [rol, tekst] of [['laden', 'Lader'], ['meter', 'Meter'], ['ventilator', 'Ventilator']]) {
         const b = el('button', `vRol-${rol}`, tekst);
-        b.dataset.rolNaam = k.naam; b.dataset.nieuweRol = rol;
+        b.dataset.rolNaam = K.stekkerSleutels(k)[0]; b.dataset.nieuweRol = rol;
         b.setAttribute('aria-pressed', String(k.rol === rol));
         rolRij.appendChild(b);
       }
@@ -1875,19 +1883,23 @@
       if (k.rol === 'meter') { tegel.appendChild(el('div', 'tBron', 'Meter: alleen lezen. Deze stekker schakelt nooit.')); return tegel; }
       // 1.9.15: DE HANDKNOP. Automatisch, Aan of Uit; met de hand gaat altijd voor. Veronica stuurt het verzoek naar
       // de baas (/jarvis/roep, met de code); de baas schakelt. De stand hier is wat de baas zegt.
-      const hand = HandV.gekozen[k.naam] || (S.zonStroom && S.zonStroom.handPer && S.zonStroom.handPer[k.naam]) || null;
+      const handPer = (S.zonStroom && S.zonStroom.handPer) || {};
+      const sleutel = K.stekkerSleutel(k, handPer);
+      const hand = HandV.gekozen[sleutel] || handPer[sleutel] || null;
       const rij = el('div', 'tKnoppen vHand');
       for (const [stand, tekst] of [['auto', 'Automatisch'], ['aan', 'Aan'], ['uit', 'Uit']]) {
         const b = el('button', `vHand-${stand}`, tekst);
         b.dataset.hand = stand;
-        b.dataset.stekker = k.naam;
+        b.dataset.stekker = sleutel;
         b.setAttribute('aria-pressed', String(hand === stand));
         rij.appendChild(b);
       }
       tegel.appendChild(rij);
       tegel.appendChild(el('div', 'tBron', hand === null ? 'Handknop: onbekend (de baas meldt het nog niet).'
         : hand === 'auto' ? (k.rol === 'laden' ? "Automatisch: in de zonuren aan, daarbuiten uit; zakt een telefoon onder de reserve, dan toch aan." : 'Automatisch: aan vanaf 35 °C, uit als alles 33 °C of koeler is.')
-          : `Met de hand ${hand}: dat gaat voor, tot je Automatisch kiest.${HandV.gekozen[k.naam] ? ' (doorgegeven)' : ''}`));
+          : `Met de hand ${hand}: dat gaat voor, tot je Automatisch kiest.${HandV.gekozen[sleutel] ? ' (doorgegeven)' : ''}`));
+      // 533: twee stekkers met dezelfde naam: een JARVIS van voor 1.9.64 schakelt dan de EERSTE met die naam. Eerlijk zeggen, met de uitweg.
+      if (K.dubbeleStekkerNamen(S.stekkers).includes(k.naam)) tegel.appendChild(el('div', 'tBron', `Twee stekkers heten "${k.naam}". De handknop kan dan de verkeerde raken. Geef ze in Tasmota elk een eigen naam (Configuration, Other, Friendly Name); vanaf de volgende JARVIS hoeft dat niet meer.`));
       return tegel;
     })));
     $('stekkerKop').hidden = !S.stekkers.length;
@@ -3455,7 +3467,8 @@
     if (!['laden', 'meter', 'ventilator'].includes(rol)) return;
     await stekkerRoep({ soort: 'stekker-adres', ip: m[1], rol }, `Stekker op ${m[1]} doorgegeven aan de baas als ${rol === 'laden' ? 'lader' : rol === 'meter' ? 'meter' : 'ventilator'}. Hij kijkt of het Tasmota is en voegt hem toe.`, `Het adres ${m[1]} kon niet naar de baas (geen antwoord). Probeer het zo nog eens.`);
   }
-  const kiesStekkerNieuweRol = (naam, rol) => stekkerRoep({ soort: 'stekker-rol', naam, rol }, `${naam}: nieuwe rol (${rol === 'laden' ? 'lader' : rol === 'meter' ? 'meter' : 'ventilator'}) doorgegeven aan de baas.`, `${naam}: de nieuwe rol kon niet naar de baas. Probeer het zo nog eens.`);
+  // 533: de knop draagt de sleutel van de stekker; het verzoek naam, huidige rol en (als bekend) id, zodat JARVIS 1.9.64 de goede kiest.
+  const kiesStekkerNieuweRol = (sleutel, rol) => { const st = stekkerVoor(sleutel); if (!st) return; const naam = st.naam; return stekkerRoep(Object.assign({ soort: 'stekker-rol', naam, huidigeRol: st.rol, rol }, st.id ? { id: st.id } : {}), `${naam}: nieuwe rol (${rol === 'laden' ? 'lader' : rol === 'meter' ? 'meter' : 'ventilator'}) doorgegeven aan de baas.`, `${naam}: de nieuwe rol kon niet naar de baas. Probeer het zo nog eens.`); };
   async function kiesStekkerRol(mac, rol) {
     if (!S.code || !['ventilator', 'laden', 'meter'].includes(rol) || !/^[0-9A-F:]{12,17}$/.test(mac)) return;
     const g = S.stekkersGevonden.find((x) => x.mac === mac);
@@ -4438,7 +4451,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { meetStekker, kiesStekkerNieuweRol, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

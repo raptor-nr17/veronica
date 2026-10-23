@@ -1103,7 +1103,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.83';
+  const VERONICA_VERSIE = '1.9.84';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1615,6 +1615,18 @@
   // (leeftijdMs, op het moment van samenstellen); hier wordt dat een meting met een tijdstip op
   // DEZE klok: ontvangen - leeftijd. Zo maakt een andere klok op de telefoon niets uit.
   // Terug: { rijen: [{ label, m }], staaf: meting | null } of null (niets bruikbaars).
+  // 533: EEN STEKKER, EEN SLEUTEL. Met een id (JARVIS 1.9.64) is dat het id; anders naam + rol. Een oude JARVIS meldt geen id,
+  // dan staat de stekker onder naam + rol. stekkerSleutel(k) is wat de kaart vraagt: het eerste dat de baas kent.
+  function stekkerSleutels(s) {
+    const naam = typeof s.naam === 'string' ? s.naam.slice(0, 200) : '';
+    const uit = [];
+    if (typeof s.id === 'string' && s.id) uit.push(`id:${s.id.slice(0, 40)}`);
+    uit.push(`${naam}|${typeof s.rol === 'string' ? s.rol : ''}`);
+    return uit;
+  }
+  const stekkerSleutel = (s, per) => { const ks = stekkerSleutels(s); return (per && ks.find((k) => k in per)) || ks[0]; };
+  // 533: twee stekkers met dezelfde naam en geen id = een oude JARVIS schakelt met de handknop de EERSTE met die naam.
+  const dubbeleStekkerNamen = (lijst) => { const n = {}; for (const s of lijst || []) if (s && !s.id && s.naam) n[s.naam] = (n[s.naam] || 0) + 1; return Object.keys(n).filter((x) => n[x] > 1); };
   function leesZonStroom(d, ontvangen) {
     if (!d || typeof d !== 'object' || !d.zon) return null;
     const bij = (ms) => (typeof ms === 'number' && ms >= 0 ? ontvangen - ms : null);
@@ -1627,7 +1639,8 @@
     const accuPer = {};                       // naam -> de accu-zin (voor de tegel)
     const rustPer = {};                       // 1.9.14: naam -> true (rust tot de zon) / false (rekent)
     const handPer = {};                       // 1.9.15: stekkernaam -> 'auto' | 'aan' | 'uit' (de handknop)
-    for (const s of Array.isArray(d.stekkers) ? d.stekkers : []) if (s && tekst(s.naam) && ['auto', 'aan', 'uit'].includes(s.hand)) handPer[tekst(s.naam)] = s.hand;
+    // 533: per SLEUTEL (stekkerSleutel), niet per naam: twee stekkers met dezelfde Tasmota-naam ("Tasmota") liepen in elkaar over.
+    for (const s of Array.isArray(d.stekkers) ? d.stekkers : []) if (s && tekst(s.naam) && ['auto', 'aan', 'uit'].includes(s.hand)) for (const k of stekkerSleutels(s)) handPer[k] = s.hand;
     const z = d.zon;
     const zonStand = { open: !!z.open, nogMs: g(z.nogMs), totOpenMs: g(z.totOpenMs), geen: !z.venster, t: ontvangen };
     const zb = `${tekst(z.bron) || 'zonneklok'} · via de hoofdtelefoon`;
@@ -1648,7 +1661,8 @@
     const stekkerPer = {};
     for (const s of Array.isArray(d.stekkers) ? d.stekkers : []) {
       if (!s || !tekst(s.naam) || bij(s.leeftijdMs) === null) continue;
-      stekkerPer[tekst(s.naam)] = { t: bij(s.leeftijdMs), aan: s.aan === true ? true : s.aan === false ? false : null, watt: g(s.watt), kwh: g(s.kwh), vandaag: g(s.vandaag), spanning: g(s.spanning), meet: s.meet === false ? false : s.meet === true ? true : null };
+      const m = { t: bij(s.leeftijdMs), aan: s.aan === true ? true : s.aan === false ? false : null, watt: g(s.watt), kwh: g(s.kwh), vandaag: g(s.vandaag), spanning: g(s.spanning), meet: s.meet === false ? false : s.meet === true ? true : null };
+      for (const k of stekkerSleutels(s)) stekkerPer[k] = m;
     }
     // De meter(s): het totale verbruik, ALS GEMETEN WAARDE met bron en leeftijd. Meet de stekker niet, dan staat dat er duidelijk.
     for (const s of Array.isArray(d.stekkers) ? d.stekkers : []) {
@@ -1760,7 +1774,7 @@
   }
   return { meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
-    leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
+    leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesKast, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
