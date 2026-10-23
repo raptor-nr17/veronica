@@ -139,6 +139,8 @@
       id: ID_RE.test(String(x.id || '')) ? String(x.id) : '',
       naam: schoon(x.naam, 40),
       rol: x.rol === 'baas' ? 'baas' : 'werker',
+      // 533: rektelefoon of de dagelijkse beheerder (de rol 'baas' kan ook een rektelefoon zijn die de rij even leidt). Leeg = oude JARVIS.
+      voorkeur: x.voorkeur === 'kern' || x.voorkeur === 'rek' ? x.voorkeur : '',
       versie: /^\d+\.\d+\.\d+$/.test(String(x.versie || '')) ? String(x.versie) : '',
       adressen: (Array.isArray(x.adressen) ? x.adressen : []).map(String).filter((a) => IP_RE.test(a)).filter((a, i, l) => l.indexOf(a) === i).slice(0, 4),
       poort: Number.isInteger(x.poort) && x.poort > 0 && x.poort < 65536 ? x.poort : 8080,

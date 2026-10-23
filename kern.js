@@ -359,6 +359,32 @@
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
   const JARVIS_NIEUWSTE = '1.9.63';
+  // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
+  // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
+  function rolNaam(h) {
+    const w = (x) => (x && typeof x === 'object' && 'waarde' in x ? x.waarde : x);   // ook een meting uit /jarvis/status
+    if (!h || w(h.rol) !== 'baas') return 'werker';
+    const voorkeur = w(h.voorkeur);
+    if (voorkeur === 'kern') return 'beheerder';
+    const rek = voorkeur === 'rek' || (!voorkeur && !w(h.dagelijks) && /^rektelefoon\s+\d+$/i.test(String(h.naam || '').trim()));
+    return rek ? 'werker, leidt de rij even' : 'beheerder';
+  }
+  // 533: EEN TOESTEL = EEN REGEL in "Wie doet wat". Na een ander wifi staat dezelfde telefoon er met een oud EN een nieuw adres in
+  // (hetzelfde vaste toestel-id); allebei hingen ze aan dezelfde hartslag en zo stond hij er dubbel. Blijft: de regel die bereikbaar
+  // is, anders het adres dat zijn hartslag noemt, anders de laatste. Alleen voor de weergave; de opgeslagen lijst blijft zoals hij is.
+  function ontdubbelTelefoons(lijst, bereikbaar, hartAdressen) {
+    const host = (a) => { try { return new URL(a).hostname; } catch (e) { return ''; } };
+    const uit = []; const per = new Map();
+    for (const t of (Array.isArray(lijst) ? lijst : [])) {
+      if (!t || !t.id) { uit.push(t); continue; }
+      const i = per.get(t.id);
+      if (i === undefined) { per.set(t.id, uit.length); uit.push(t); continue; }
+      const oud = uit[i];
+      const score = (x) => (bereikbaar(x) ? 2 : 0) + ((hartAdressen(x) || []).includes(host(x.adres)) ? 1 : 0);
+      if (score(t) >= score(oud)) uit[i] = t;
+    }
+    return uit;
+  }
   function vergelijkVersie(a, b) {
     const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
@@ -554,7 +580,7 @@
       if (tijd - h.t > HARTSLAG_VERS_MS) {
         if (h.id && tijd - h.t <= OUD_LIJST_MS && !gezien.has(h.id)) {
           gezien.add(h.id);
-          oud.push({ id: h.id, naam: h.naam || 'Een telefoon', zin: `geen verse hartslag (laatste ${klokZin(h.t)}${tijd - h.t > 20 * 3600 * 1000 ? `, ${Math.round((tijd - h.t) / 3600000)} uur geleden` : ''}${h.rol ? `, toen ${h.rol === 'baas' ? 'beheerder' : 'werker'}` : ''}${typeof h.accu === 'number' ? `, accu ${h.accu}%${h.laadt ? ', aan de lader' : ', niet aan de lader'}` : ''})${stilUitleg(h)}`, magWerker: true,
+          oud.push({ id: h.id, naam: h.naam || 'Een telefoon', zin: `geen verse hartslag (laatste ${klokZin(h.t)}${tijd - h.t > 20 * 3600 * 1000 ? `, ${Math.round((tijd - h.t) / 3600000)} uur geleden` : ''}${h.rol ? `, toen ${rolNaam(h)}` : ''}${typeof h.accu === 'number' ? `, accu ${h.accu}%${h.laadt ? ', aan de lader' : ', niet aan de lader'}` : ''})${stilUitleg(h)}`, magWerker: true,
             gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd), werk: typeof h.werk === 'string' ? h.werk.trim() : '' });
         }
         continue;
@@ -584,7 +610,7 @@
       // 522: de laatste zin van de werker van de gids op die telefoon (waarom hij wel of niet werkt), als hij er een meldt.
       if (typeof h.werk === 'string' && h.werk.trim()) zin += `. Werker: ${h.werk.trim().replace(/\.$/, '')}`;
       // 522c: een beheerder die als dagelijkse telefoon RUST kan per ongeluk een rektelefoon zijn (de QR van Veronica gescand).
-      regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: h.rol === 'baas' ? 'beheerder' : 'werker',
+      regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: rolNaam(h),
         gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd), meet: meetuurZin(h), meetbaar: h.rol === 'werker' && !h.dagelijks && !p && !!(m && m.klaar) });   // 529
     }
     for (const b of (Array.isArray(bekend) ? bekend : [])) {
@@ -1077,7 +1103,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.82';
+  const VERONICA_VERSIE = '1.9.83';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1733,7 +1759,7 @@
     return uit.slice(0, 6);
   }
   return { meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
-    alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
+    alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     leesZonStroom, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,

@@ -2829,7 +2829,8 @@
   function bewaarTakenKeuzes(k) { try { localStorage.setItem(TAKEN_SLEUTEL, JSON.stringify(Takenverdeling.schoonKeuzes(k, S.telefoons.map((t) => t.adres)))); } catch (e) { /* alleen voor nu */ } }
   function takenTelefoons() {
     const tijd = nu();
-    return S.telefoons.map((t) => {
+    const lijst = K.ontdubbelTelefoons(S.telefoons, (t) => !!staat(t.adres).bereikbaar, (t) => { const h = t.id && HB.per[t.id]; return h && Array.isArray(h.adressen) ? h.adressen : []; });   // 533
+    return lijst.map((t) => {
       const ps = poolStaat(t);
       const m = meet(t.adres);
       const mo = m.status && m.status.motor && tijd - m.status.motor.t <= K.MAX_LEEFTIJD_MS ? m.status.motor.waarde : null;
@@ -2868,7 +2869,7 @@
     if (!r.telefoons.length) delen.push(el('p', 'eerlijk', 'Nog geen telefoons gekoppeld.'));
     for (const t of r.telefoons) {
       const kaart = el('section', 'tegel taakTegel');
-      kaart.appendChild(el('h2', '', `${t.naam}${t.rol === 'baas' ? ' · 🛠 Beheerder' : t.rol === 'werker' ? ' · Werker' : ''}${t.klasse ? ` · ${t.klasse === 'te-oud' ? 'te oud voor model' : t.klasse}` : ''}`));
+      kaart.appendChild(el('h2', '', `${t.naam}${t.rol === 'baas' ? (K.rolNaam(t) === 'beheerder' ? ' · 🛠 Beheerder' : ' · Werker, leidt de rij even') : t.rol === 'werker' ? ' · Werker' : ''}${t.klasse ? ` · ${t.klasse === 'te-oud' ? 'te oud voor model' : t.klasse}` : ''}`));
       if (t.taak) kaart.appendChild(el('div', `taakRol rol-${t.taak.rol}`, `Rol: ${t.taak.naam}`));   // 481
       for (const regel of t.regels) {
         const rij = el('div', `taakRegel ${regel.mag ? 'mag' : 'magNiet'}`);
