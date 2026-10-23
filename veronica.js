@@ -3124,6 +3124,13 @@
         if (t) { draai(taak, t); gedaan = true; break; }
       }
       if (gedaan) continue;
+      // 532: GEEN ENKELE telefoon over het wifi te bereiken (het gastnetwerk): een Claude-klus gaat als versleuteld kaartje via de
+      // brievenbus. De telefoons halen die zelf op (rekenpostbus.js, al sinds JARVIS 1.9.24). Zodra er WEL een telefoon over het wifi
+      // is, gaat het weer rechtstreeks: dat is sneller.
+      if (!S.telefoons.some((t) => staten[t.adres] && staten[t.adres].bereikbaar === true) && postbusKan()) {
+        const k = wachtend.find((x) => x.claude && x.ruw);
+        if (k) { postbusDraai(k); continue; }
+      }
       // Niemand vrij voor de belangrijkste klus: mag een LAGERE voorrang worden afgebroken? Die klus gaat dan opnieuw de wachtrij in.
       const lopend = [...S.stromen.entries()].map(([adres, st]) => ({ adres, voorrang: Pool.rangVan(S.taken.find((x) => x.id === st.taakId)), sinds: st.sinds || 0 }));
       const weg = Pool.verdring(wachtend[0], lopend, S.telefoons, staten, nu());
@@ -3250,15 +3257,17 @@
     if (!S.rem.mag(v.soort)) return Promise.reject({ fout: 'rem', reden: `Te veel klussen van de soort ${v.soort} dit uur (hoogstens ${Pool.SOORTEN[v.soort].limiet}).`, let_op: Pool.LET_OP });
     S.rem.tel(v.soort);
     const id = nieuwId();
+    // Een eigen deadline: een klus die zo lang niets oplevert krijgt een eerlijke tijdsuitslag (nooit eeuwig wachten).
+    const wacht = Math.min(Number(inv && inv.wacht_s) > 0 ? Number(inv.wacht_s) * 1000 : 180000, 600000);
     const taak = {
       id, claude: true, soort: v.soort, tekst: Pool.maakPrompt(v.soort, v.tekst, v.opties), max_tokens: v.max_tokens, gewicht: v.gewicht, maat: undefined,
       voorrang: Pool.VOORRANG.claude, status: 'wacht', pogingen: 0, sinds: nu(), telefoon: null, uitkomst: null, uitgesloten: [],
+      // 532: de klus zoals Claude hem gaf, voor de weg via de brievenbus (de telefoon maakt de prompt dan zelf, met dezelfde pool.js).
+      ruw: { soort: v.soort, tekst: v.tekst, opties: v.opties }, deadline: nu() + wacht,
     };
     return new Promise((resolve, reject) => {
       S.beloften.set(id, { resolve, reject });
       S.taken.push(taak);
-      // Een eigen deadline: een klus die zo lang niets oplevert krijgt een eerlijke tijdsuitslag (nooit eeuwig wachten).
-      const wacht = Math.min(Number(inv && inv.wacht_s) > 0 ? Number(inv.wacht_s) * 1000 : 180000, 600000);
       setTimeout(() => {
         if (S.beloften.has(id) && (taak.status === 'wacht' || taak.status === 'bezig')) {
           const st = [...S.stromen.entries()].find(([, x]) => x.taakId === id);
@@ -3271,6 +3280,62 @@
       werkTik();
     });
   }
+  // ---- 532: CLAUDE-KLUSSEN VIA DE BRIEVENBUS (als geen telefoon over het wifi te bereiken is) ----
+  //
+  // Dezelfde kaartjes als `tools/claude-postbus/stuur.mjs` (rekenpostbus.js, byte-gelijk met JARVIS): AES-GCM met een sleutel uit het
+  // geheime ntfy-onderwerp, en de telefoon die het kaartje pakt stuurt het antwoord versleuteld terug. Alles gaat door de fetch-poort van
+  // Veronica (Vol lokaal, de rem op ntfy). Langzamer dan het wifi: een telefoon kijkt eens per anderhalve minuut.
+  const PostbusV = { verstuurd: 0, klaar: 0, mislukt: 0, POLL_MS: 10000 };
+  async function postbusHttp(v) {
+    try {
+      const r = await fetch(v.url, { method: v.method || 'GET', headers: v.headers || {}, body: v.method === 'POST' ? v.data : undefined });
+      return { status: r.status, data: await r.text() };
+    } catch (e) { return { status: 0, data: '' }; }
+  }
+  // De relay pas als ELKE telefoon die zich meldt hem voor kaartjes leest (JARVIS 1.9.64); tot dan ntfy.sh, dat lezen ze allemaal al.
+  function postbusBasis() {
+    const harten = Object.values(HB.per).filter((h) => h && h.t && nu() - h.t <= K.HARTSLAG_VERS_MS);
+    const allemaal = harten.length > 0 && harten.every((h) => h.versie && K.vergelijkVersie(h.versie, '1.9.64') >= 0);
+    return RelayV.adres && allemaal ? RelayV.adres.replace(/\/+$/, '') : 'https://ntfy.sh';
+  }
+  // Kan het? Een geheim (het ntfy-onderwerp), de code, en minstens een telefoon die zich via de brievenbus meldt.
+  function postbusKan() {
+    if (!window.RekenPostbus || !S.ntfy || !S.ntfy.onderwerp || S.ntfy.aan === false || volLokaal()) return false;
+    return Object.values(HB.per).some((h) => h && h.t && nu() - h.t <= K.HARTSLAG_VERS_MS);
+  }
+  async function postbusDraai(taak) {
+    taak.status = 'bezig';
+    taak.telefoon = 'via de brievenbus';
+    PostbusV.verstuurd += 1;
+    tekenWachtrij();
+    const ruw = taak.ruw; taak.ruw = null;                                     // niets van Claude's inhoud blijft langer liggen dan nodig
+    try {
+      const r = await window.RekenPostbus.stuurKaartje({
+        http: postbusHttp, basis: postbusBasis(), geheim: S.ntfy.onderwerp, id: taak.id,
+        soort: ruw.soort, tekst: ruw.tekst, opties: ruw.opties, max_tokens: taak.max_tokens,
+        wachtMs: Math.max(30000, (taak.deadline || nu() + 180000) - nu() - 2000), pollMs: PostbusV.POLL_MS,
+        // Afgebroken (tijd, stop)? Dan niet langer de brievenbus bekijken: dat spaart verzoeken aan ntfy.
+        wacht: (ms) => new Promise((klaar, weg) => setTimeout(() => (S.beloften.has(taak.id) ? klaar() : weg(new Error('afgebroken'))), ms)),
+      });
+      if (!S.beloften.has(taak.id)) return;                                     // al afgebroken (tijd, stop)
+      if (r && !r.fout) {
+        taak.status = 'klaar'; taak.klaar = nu();
+        PostbusV.klaar += 1;
+        S.tellers.klussen += 1; S.tellers.gelukt += 1;
+        S.tellers.soort[taak.soort] = (S.tellers.soort[taak.soort] || 0) + 1;
+        const b = S.beloften.get(taak.id);
+        S.beloften.delete(taak.id);
+        b.resolve(Object.assign({}, r, { via: 'brievenbus' }));
+        taak.tekst = '';
+      } else {
+        PostbusV.mislukt += 1;
+        afgebroken(taak, r && r.fout === 'geen-antwoord' ? 'tijd' : ((r && r.fout) || 'mislukt'), (r && r.reden) || 'De telefoon kon de klus niet afmaken.');
+      }
+    } catch (e) {
+      PostbusV.mislukt += 1;
+      if (S.beloften.has(taak.id)) afgebroken(taak, 'mislukt', 'De brievenbus nam het kaartje niet aan.');
+    } finally { tekenWachtrij(); }
+  }
   function brugStatus() {
     const ps = pantserStand();
     const staten = poolStaten();
@@ -3281,6 +3346,7 @@
       bezig: S.taken.filter((x) => x.claude && x.status === 'bezig').length,
       tellers: JSON.parse(JSON.stringify(S.tellers)),
       soorten: Object.keys(Pool.SOORTEN),
+      brievenbus: { kan: postbusKan(), verstuurd: PostbusV.verstuurd, klaar: PostbusV.klaar, mislukt: PostbusV.mislukt },
       let_op: Pool.LET_OP,
     };
   }
@@ -4371,7 +4437,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

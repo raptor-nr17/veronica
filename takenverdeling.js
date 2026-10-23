@@ -26,7 +26,8 @@
 //
 // 505: VIA DE BRIEVENBUS (gastnetwerk, 18 oktober). Een telefoon die Veronica niet over het wifi bereikt maar wel een VERSE
 // hartslag stuurt (viaBrievenbus) is NIET weg: gids-werk loopt via de postbus en de bewaker leest de hartslag. Alleen de klussen
-// die Veronica zelf over het wifi aflevert (Claude-klussen, vragen van Veronica, deelvragen van het zoeken) kunnen dan niet.
+// die Veronica zelf over het wifi aflevert (vragen van Veronica, deelvragen van het zoeken) kunnen dan niet. 532: Claude-klussen WEL,
+// als versleuteld kaartje via de brievenbus (rekenpostbus.js); de telefoon haalt ze zelf op.
 // Een onbekende klasse met een geladen model mag denker worden, als laatste keus.
 //
 // EEN REGEL DIE HIER NIET OMGEZET KAN WORDEN: een te oude telefoon (geen model) krijgt nooit model-werk, ook niet als de
@@ -87,6 +88,8 @@
       if (!magVan(keuzes, t.adres, soort)) return { soort, naam, mag: false, vast: false, reden: 'door jou uitgezet' };
       if (!model) return { soort, naam, mag: false, vast: true, reden: 'nog geen model geladen (OlliteRT of de eigen motor)' };
       if (stil) return { soort, naam, mag: false, vast: true, reden: stil };
+      // 532: een Claude-klus kan WEL via de brievenbus (versleutelde kaartjes, rekenpostbus.js); de telefoon pakt hem zelf op.
+      if (brief && soort === 'claude') return { soort, naam, mag: true, vast: false, reden: 'via de brievenbus: de telefoon haalt de klus zelf op (eens per anderhalve minuut, langzamer dan het wifi)' };
       if (brief) return { soort, naam, mag: false, vast: true, reden: geenWifi };
       if (soort === 'claude' && t.kern) return { soort, naam, mag: true, vast: false, reden: 'de baas: alleen aan de lader en niet in gebruik, of met de schakelaar "baas mag meerekenen"' };
       return { soort, naam, mag: true, vast: false, reden: t.klasse === 'zwaar' ? 'zwaar werk eerst, dan de rest' : t.klasse === 'midden' ? 'licht en midden werk, zwaar als het moet' : t.klasse === 'licht' ? 'alleen korte klussen' : 'klasse nog niet gemeten' };
