@@ -100,6 +100,16 @@
       inv.value = '';
       U.rijGesprek.push({ wie: 'jij', tekst: vraag });
       if (P.leesOnthoud(vraag)) {
+        // 551: "vergeet dat ..." gaat alleen naar het lange geheugen (een grafsteen met een versie); de kern zelf pas je aan in de hoek
+        const vg = /^\s*vergeet\s+(dat\s+)?(.{3,300})$/i.exec(vraag);
+        if (vg && d.lang) {
+          const voor = d.lang.stand ? d.lang.stand().tellingen : null;
+          await d.lang.schrijf({ op: 'vergeet', t: d.nu(), tekst: vg[2].trim() });
+          const na = d.lang.stand ? d.lang.stand().tellingen : null;
+          const weg = voor && na ? voor.feiten - na.feiten : null;
+          U.rijGesprek.push({ wie: 'hoek', tekst: weg ? `Vergeten: ${weg} ${weg === 1 ? 'regel' : 'regels'} uit Fenna's lange geheugen (met een versienummer, niet stil gewist).` : 'Daar vond ik geen regel over in het lange geheugen. Staat het in je kern, haal het daar weg.' });
+          inv.value = ''; teken(); return;
+        }
         const o = P.onthoud(U.store, vraag, 'eigenaar');
         if (o.ok) { P.logToevoegen(U.store, 'Een regel aan de kern toegevoegd ("onthoud dat").', 'eigenaar', d.nu()); await bewaar(); }
         if (o.ok && d.lang) await d.lang.schrijf({ op: 'onthoud', t: d.nu(), tekst: o.regel });   // 547: ook in Fenna's lange geheugen

@@ -178,6 +178,18 @@
       if (geschreven !== bytes) { try { await m.removeEntry(naam); } catch (e) { /* al weg */ } return { ok: false, fout: 'weg' }; }
       return { ok: true, naam, bytes };
     }
+    // 551: de kluisbestanden van Fenna (fenna-kluis-JJJJ-MM-DD.vkl) opsommen en weggooien. Alleen die naamvorm; al het andere niet.
+    const KLUIS_RE = /^fenna-kluis-\d{4}-\d{2}-\d{2}\.vkl$/;
+    async function kastLijst() {
+      if (await status() !== 'aanwezig') return [];
+      const uit = [];
+      try { for await (const x of (await kastMap()).values()) if (x.kind === 'file' && KLUIS_RE.test(x.name)) uit.push(x.name); } catch (e) { /* weg */ }
+      return uit.sort();
+    }
+    async function kastWis(naam) {
+      if (!KLUIS_RE.test(String(naam)) || await status() !== 'aanwezig') return false;
+      try { await (await kastMap()).removeEntry(naam); return true; } catch (e) { return false; }
+    }
     async function telMap(m) {
       let bytes = 0, n = 0;
       if (!m) return { bytes, n };
@@ -241,7 +253,7 @@
       }
       return { verhuisd };
     }
-    return { status, kies, vraagToestemming, schrijf, lijst, lees, kanKiezen, kastHeeft, kastBestand, kastSchrijfStroom, ruimte, verhuisIntern };
+    return { status, kies, vraagToestemming, schrijf, lijst, lees, kanKiezen, kastHeeft, kastBestand, kastSchrijfStroom, kastLijst, kastWis, ruimte, verhuisIntern };
   }
 
   // Bytes in gewone taal.

@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.66';
+  const JARVIS_NIEUWSTE = '1.9.67';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
@@ -1161,7 +1161,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.91';
+  const VERONICA_VERSIE = '1.9.92';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1692,6 +1692,33 @@
     return j;
   }
   // '' = vers; anders de zin voor een grijze kaart.
+  // 548: DE VERBINDING IN EEN KLEUR, met de reden. De relay is de vaste route (hartslag elke 30 s, Veronica kijkt elke 15 s), het
+  // wifi-adres een versnelling. Groen = binnen 90 s een teken van leven, oranje = 90 tot 300 s, rood = langer of nog nooit. De tijd
+  // van de hartslag is die van de RELAY (ontvangen), niet die van de telefoon. o: { direct (ms, laatste antwoord over het wifi),
+  // hart (ms), relay (true = Veronica kent een relay), adres (het bewaarde adres), hartAdressen (wat de telefoon zelf meldt) }.
+  const VERBINDING_GROEN_MS = 90 * 1000;
+  const VERBINDING_ORANJE_MS = 300 * 1000;
+  function verbinding(o, tijd) {
+    const x = o || {};
+    const getal = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+    const d = getal(x.direct);
+    const h = getal(x.hart);
+    const laatst = Math.max(d, h);
+    const adres = String(x.adres || '').replace(/^https?:\/\//, '');
+    const gemeld = (Array.isArray(x.hartAdressen) ? x.hartAdressen : []).map((a) => String(a).replace(/^https?:\/\//, ''));
+    const host = adres.split(':')[0];
+    const ander = host && gemeld.length && !gemeld.some((a) => a.split(':')[0] === host) ? gemeld[0] : '';
+    const oudAdres = ander ? ` Het adres ${adres} is oud; de telefoon meldt nu ${ander}.` : '';
+    if (!laatst) return { kleur: 'rood', zin: `Nog niets gehoord: geen antwoord over het wifi en geen hartslag${x.relay ? '' : ' (en de relay staat uit)'}.${oudAdres}` };
+    const oud = Math.max(0, (tijd || Date.now()) - laatst);
+    const weg = d && d >= h ? 'rechtstreeks over het wifi' : (x.relay ? 'via de relay' : 'via de brievenbus');
+    const sec = Math.round(oud / 1000);
+    const wanneer = sec < 120 ? `${sec} s geleden` : `${Math.round(sec / 60)} min geleden`;
+    if (oud < VERBINDING_GROEN_MS) return { kleur: 'groen', zin: `Verbonden, ${weg} (${wanneer}).${d && d >= h ? '' : ' Rechtstreeks lukt nu niet; dat is geen probleem.'}${oudAdres}` };
+    const zonderRelay = x.relay ? '' : ' Zonder relay komt de hartslag hoogstens eens per half uur: zet de relay aan in Instellingen.';
+    if (oud < VERBINDING_ORANJE_MS) return { kleur: 'oranje', zin: `Laatste teken ${wanneer}, ${weg}. Een hartslag of twee gemist: wifi even weg, of de telefoon slaapt net.${zonderRelay}${oudAdres}` };
+    return { kleur: 'rood', zin: `Al ${wanneer} niets gehoord (laatst ${weg}). Staat de telefoon uit, is JARVIS dicht, of zet het systeem hem stil? Kijk in de zelftest van de telefoon.${zonderRelay}${oudAdres}` };
+  }
   function oudZin(jongste, tijd) {
     if (jongste === null || jongste === undefined) return 'nog geen meting';
     const ms = tijd - jongste;
@@ -1902,7 +1929,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { verbinding, VERBINDING_GROEN_MS, VERBINDING_ORANJE_MS, kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,

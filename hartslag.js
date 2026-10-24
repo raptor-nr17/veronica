@@ -39,8 +39,10 @@
   // versleuteling, de onderwerpen en de controles blijven precies dezelfde. Leeg adres = uit (zo staat het tot de relay bestaat).
   // Alleen een workers.dev-adres van Cloudflare via https: een getypt of geplakt ander adres doet niets.
   const RELAY_RE = /^https:\/\/[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63}){0,3}\.workers\.dev$/;
-  const RELAY_MIN_MS = 60 * 1000;          // via de relay telt ntfy's dagbudget niet: bij een verandering hoogstens eens per minuut
-  const RELAY_VERS_MS = 10 * 60 * 1000;    // en zonder verandering eens per tien minuten
+  // 548: via de relay is de hartslag de VASTE ROUTE: elke 30 s, met of zonder verandering (de klok van JARVIS tikt elke 30 s;
+  // 2 s speling zodat een tik die net te vroeg valt niet een hele ronde overslaat). ntfy's dagbudget telt hier niet.
+  const RELAY_MIN_MS = 28 * 1000;
+  const RELAY_VERS_MS = 28 * 1000;
 
   const tekstBytes = (t) => new TextEncoder().encode(t);
   const naarHex = (b) => Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -150,8 +152,9 @@
       // deze telefoon de geheugen-telefoon is. Alleen getallen en een ja/nee.
       ram: getal(x.ram, 0, 64),
       vrij: getal(x.vrij, 0, 4096),
+      kaartje: getal(x.kaartje, 0, 4096),   // 551: GB vrij op het SD-kaartje (null = geen kaartje of onbekend)
       geheugen: x.geheugen === true,
-      // 546: het gast-brein (de dagelijkse telefoon die 's nachts meerekent): mag hij nu, en zo niet, de code waarom. Alleen bij hem.
+      // 546: het gast-brein (de dagelijkse telefoon die meerekent als hij niet in gebruik is, 548b): mag hij nu, en zo niet, de code waarom. Alleen bij hem.
       gast: x.gast && typeof x.gast === 'object' ? { mag: x.gast.mag === true, reden: schoon(x.gast.reden, 20) } : null,
       accu: getal(x.accu, 0, 100),
       laadt: x.laadt === true,

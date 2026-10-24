@@ -20,6 +20,14 @@
   /* 542: elke knop minstens 48 x 48 beeldpunten (toegankelijkheid, ook de kleine tegelknoppen). */
   button, select, a[role="button"] { min-height: 48px; min-width: 48px; }
   header select { width: auto; max-width: 18em; }
+  #hoofdKnoppen[hidden] { display: none; }
+  #hoofdKnoppen { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 4px 0 8px; }
+  #slimTabel { border-collapse: collapse; font-size: 15px; } #slimTabel th, #slimTabel td { border-bottom: 1px solid var(--lijn); padding: 4px 6px; text-align: left; }
+  #slimGrafiek svg { max-width: 100%; }
+  #avengersKnop { font-size: 20px; font-weight: 800; padding: 12px 18px; border: 3px solid #b8860b; }
+  #avLijst li, #avNieuw li { padding: 6px 0; border-bottom: 1px solid var(--lijn); font-size: 17px; }
+  #avLijst li.avMee::before { content: "✓ "; font-weight: 800; } #avLijst li.avNiet::before { content: "✗ "; font-weight: 800; }
+  #avModiLijst button { display: block; margin: 8px 0; min-height: 48px; text-align: left; } #avModiLijst .avUitleg { display: block; font-weight: 400; font-size: 15px; }
   /* 542: DE PRIVÉ-HOEK ALS EIGEN PAGINA (index.html#hoek). Veiligheid vast bovenaan; breed scherm: rail links, kaarten in een raster;
      staand/smal: een onderbalk met vier knoppen en een kaart per rij. Elke knop staat op elk scherm op dezelfde plek. */
   body.hoekModus > header, body.hoekModus > nav, body.hoekModus > main, body.hoekModus > #wandBalk, body.hoekModus > #volLokaalBalk { display: none !important; }
@@ -72,6 +80,10 @@
   .tegel.oud .tBereik { font-size: 18px; font-weight: 700; }
   .tRol { font-size: 16px; color: var(--zacht); margin-top: 2px; }
   .tOverzicht { font-size: 17px; font-weight: 600; margin-top: 4px; }
+  .tVerbinding { margin-top: 4px; padding: 4px 8px; border-radius: 8px; border-left: 6px solid; }
+  .tVerbinding.v-groen { border-color: #15803D; }
+  .tVerbinding.v-oranje { border-color: #C2410C; }
+  .tVerbinding.v-rood { border-color: #B91C1C; font-weight: 600; }
   .tZelftest { font-size: 15px; margin-top: 6px; } .tZelftestKop { font-weight: 600; } .zt-nee { color: var(--rood); } .zt-info { color: var(--zacht); }
   /* 526: bevestigen in de pagina (geen venster van de browser): onderaan, boven alles, groot genoeg om op te tikken */
   #vraagVak { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2147483000; width: min(560px, calc(100vw - 32px));
@@ -218,6 +230,7 @@
   <button id="noodstop">NOODSTOP</button>
 </header>
 <div id="volLokaalBalk" hidden role="status" style="background:#1b5e20;color:#fff;padding:8px 16px;font-weight:600">🔒 Vol lokaal staat AAN: niets gaat naar buiten. Alleen je eigen telefoons.</div>
+<div id="alleenLokaalBalk" hidden role="status" style="background:#0d47a1;color:#fff;padding:8px 16px;font-weight:600">🏠 Alleen lokaal staat AAN: niets gaat naar Claude of een ander model buiten huis. Alleen de Gemma's op je telefoons rekenen; lukt iets daar niet, dan zeg ik dat.</div>
 <div id="wandBalk"><span id="wandKlok"></span><span id="wandZin"></span><button id="wandUit">← Terug</button></div>
 <nav>
   <button id="tab-live" aria-pressed="true">Live</button>
@@ -228,12 +241,28 @@
   <a id="tab-besturen" href="besturen.html" style="color: var(--tekst); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; text-decoration: none; background: var(--paneel);">📱 Telefoon besturen</a>
 </nav>
 <main>
+  <!-- 549: de grote knop staat BUITEN de vaste kop (die moet laag blijven: hij ligt over de pagina). -->
+  <div id="hoofdKnoppen"><button id="avengersKnop" class="avengersGroot" title="Alle telefoons bij elkaar roepen; eerst zie je wie meedoet">🛡 Avengers assemble</button> <button id="alleenLokaalKnop" aria-pressed="false" title="Niets naar Claude of een ander model buiten huis; alleen de Gemma's op de telefoons">Alleen lokaal: uit</button></div>
+  <div id="lnaRegel" role="status" hidden><span id="lnaZin"></span> <button type="button" id="lnaKnop" hidden>Sta lokaal netwerk toe</button></div>
+  <!-- 549: AVENGERS ASSEMBLE. Een paneel in de pagina (geen laag erover): de NOODSTOP in de vaste kop blijft altijd te raken. -->
+  <section id="avengersPaneel" class="blok" hidden aria-labelledby="avKop">
+    <h2 id="avKop">🛡 Avengers assemble</h2>
+    <p id="avZin" class="groteMelding" aria-live="polite"></p>
+    <ul id="avLijst"></ul>
+    <ul id="avNieuw"></ul>
+    <div id="avBevestig"><button type="button" id="avNee" class="tweede">Nee, laat staan</button> <button type="button" id="avJa">Ja, roep ze bij elkaar</button></div>
+    <div id="avModi" hidden><h3>Wat gaan ze doen?</h3><div id="avModiLijst"></div></div>
+    <p id="avStand" aria-live="polite"></p>
+    <p class="eerlijk">Niets met effect op de echte wereld zonder jouw goedkeuring: de modi rekenen, zoeken of doen voorstellen. De NOODSTOP bovenaan stopt alles, altijd.
+      Een nieuwe telefoon doet pas mee na "Laat toe" (een mens), en een telefoon die met de Uit-knop is stilgezet blijft uit.</p>
+    <button type="button" id="avSluit" class="tweede">Sluit dit paneel</button>
+  </section>
   <p class="eerlijk" id="wakkerZin">Veronica werkt alleen zolang deze computer aan is en niet slaapt. Tik op "Houd het scherm aan", of zet slapen uit.
     Elk getal komt van een meting: eronder staat de bron en hoe oud hij is. Ouder dan 10 seconden is grijs. Niet gemeten = onbekend.</p>
   <section id="scherm-live">
     <p id="leeg">Nog geen telefoons. Tik op Koppelen en neem de vertrouwde telefoons over van de hoofdtelefoon.</p>
     <!-- 522: wie rekent nu (uit de hartslagen) -->
-    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="geheugenZin" hidden></p><div id="fennaMetingBlok" hidden><h3>Meting per telefoon</h3><ul id="fennaMeting"></ul></div><p id="gidsSamen" hidden></p><p id="meetSamen" hidden></p><p id="gezondSamen" hidden></p><ul id="wieRekentLijst"></ul><div id="wieDoetWat" hidden><h3>Wie doet wat</h3><ul id="wieDoetWatLijst"></ul></div></div>
+    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="geheugenZin" hidden></p><div id="fennaMetingBlok" hidden><h3>Meting per telefoon</h3><ul id="fennaMeting"></ul></div><div id="slimBlok"><h3>Slimheid van Fenna</h3><button type="button" id="meetFennaKnop">Meet Fenna nu</button> <button type="button" id="meetFennaStop" class="tweede" hidden>Stop de meting</button><p id="slimStand" aria-live="polite"></p><div id="slimGrafiek"></div><div class="tabelVak"><table id="slimTabel"></table></div></div><p id="gidsSamen" hidden></p><p id="meetSamen" hidden></p><p id="gezondSamen" hidden></p><ul id="wieRekentLijst"></ul><div id="wieDoetWat" hidden><h3>Wie doet wat</h3><ul id="wieDoetWatLijst"></ul></div></div>
     <div id="vSamen"></div>
     <div id="rekBlok" hidden><p id="rekZin" class="groteMelding"></p><ul id="rekRegels"></ul>
       <!-- 1.9.14: EEN grote schuif, twee standen: de reserve waarop een rektelefoon stopt met rekenen. -->
@@ -391,6 +420,19 @@
     </section>
   </section>
   <section id="scherm-prive" hidden>
+    <div class="zsPaneel" id="alleenLokaalVak">
+      <h2>Alleen lokaal</h2>
+      <button type="button" id="alleenLokaalHoekKnop" aria-pressed="false">Alleen lokaal: uit</button>
+      <p class="eerlijk">Aan = niets naar Claude of een ander model buiten huis; alleen de Gemma's op je telefoons. Zoeken via de telefoons mag wel (dat is geen model). Wil je dat er helemaal niets naar buiten gaat: Vol lokaal.</p>
+    </div>
+    <div class="zsPaneel" id="kluisVak">
+      <h2>Kluis op het kaartje</h2>
+      <p class="eerlijk">Fenna's lange geheugen staat op de geheugen-telefoon (de werkplek). Hier haal je er een VERSLEUTELDE kopie van naar het kaartje van deze Chromebook (de kluis):
+        met een wachtwoord uit je wachtwoordkluis, dat nergens bewaard wordt. Een richting: telefoon naar kaartje. Zolang dit tabblad open is, gebeurt het elke nacht vanzelf. Bewaard: zeven dagen en vier weken.</p>
+      <button type="button" id="kluisKnop">Back-up halen</button>
+      <p id="kluisStand" aria-live="polite"></p>
+      <ul id="kluisLijst"></ul>
+    </div>
     <div class="zsPaneel" id="volLokaalVak">
       <h2>Vol lokaal</h2>
       <button type="button" id="volLokaalKnop" aria-pressed="false">Vol lokaal: UIT</button>
@@ -628,6 +670,9 @@
 <script src="ontmoet.js"></script>
 <script src="geheugentel.js"></script>
 <script src="gastbrein.js"></script>
+<script src="avengers.js"></script>
+<script src="slimheid.js"></script>
+<script src="fenna-kluis.js"></script>
 <script src="fenna.js"></script>
 <script src="fenna-geheugen.js"></script>
 <script src="motorinstel.js"></script>
