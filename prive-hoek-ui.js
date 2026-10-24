@@ -16,7 +16,7 @@
   // d = { doc, nu(), opslag{lees,schrijf,wis}, rijen(), verbruik(), noodstopKern(), noodstop(), stop(), pantserAan(), crypto?, downloadBestand(naam, tekst), bevestig(zin), model? }
   const doc = d.doc;
   const el = (tag, klasse, tekst) => { const e = doc.createElement(tag); if (klasse) e.className = klasse; if (tekst !== undefined) e.textContent = tekst; return e; };
-  const U = { store: null, open: true, melding: '', test: null, proef: null, zoek: '', filter: '', klaar: false, inactiefT: 0, proefModel: null, gesprek: [] };
+  const U = { store: null, open: true, melding: '', test: null, proef: null, zoek: '', filter: '', klaar: false, inactiefT: 0, proefModel: null, gesprek: [], rijGesprek: [] };
   let wortelEl = null;
   const INACTIEF_MS = 10 * 60 * 1000;
 
@@ -29,7 +29,7 @@
   async function bewaar() { await d.opslag.schrijf('store', U.store); }
   function raak() { U.inactiefT = d.nu(); }
   // 476b: 'dicht' ruimt alleen het tijdelijke op (gesprek, proef); de hoek zelf blijft open, er is geen slot.
-  function dicht() { U.open = true; U.test = null; U.proef = null; U.proefModel = null; U.koppelQr = null; U.gesprek = []; U.melding = ''; teken(); }
+  function dicht() { U.open = true; U.test = null; U.proef = null; U.proefModel = null; U.koppelQr = null; U.gesprek = []; U.rijGesprek = []; U.melding = ''; teken(); }
   function meld(zin) { U.melding = zin || ''; teken(); }
 
   function kop(tekst) { return el('h3', '', tekst); }
@@ -79,6 +79,51 @@
     return k;
   }
 
+  // 536: PRAAT MET DE RIJ. Een vraag gaat (versleuteld met de privé-sleutel van de hoek) via de RELAY naar een vrije rektelefoon die
+  // aan de hoek gekoppeld is; nooit via de brievenbus. Het netwerk zit NIET in dit bestand: d.rij (veronica.js, privepost.js) doet het.
+  // "Onthoud dat ..." gaat niet naar een telefoon: dat zet deze code zelf onderaan je kern (jij typt het, dus jij schrijft het).
+  function rijBlok() {
+    const k = el('section', 'phBlok'); k.id = 'phRijBlok'; k.append(kop('Praat met de rij'));
+    const R = d.rij && typeof d.rij.stand === 'function' ? d.rij : null;
+    const st = R ? R.stand() : { klaar: false, reden: 'Deze Veronica kent de weg naar de rij nog niet.' };
+    k.append(el('p', st.klaar ? 'phKlein' : 'phEerlijk', st.klaar ? 'Je vraag gaat versleuteld via de relay naar een vrije rektelefoon die aan de hoek gekoppeld is. Het antwoord komt hier terug.' : `Praten met de rij kan nu niet: ${st.reden}`));
+    k.append(el('p', 'phKlein', 'Typ "onthoud dat ..." om iets aan je geheugen toe te voegen: dat komt onderaan je kern (hierboven) en gaat voortaan als achtergrond mee. Dat gaat niet naar een telefoon.'));
+    const inv = el('textarea'); inv.rows = 2; inv.id = 'phRijVraag'; inv.placeholder = 'Je vraag aan de rij, of "onthoud dat ..."'; inv.setAttribute('aria-label', 'Vraag aan de rij');
+    const b = el('button', '', 'Stuur naar de rij'); b.type = 'button'; b.id = 'phRijStuur';
+    b.addEventListener('click', async () => {
+      const vraag = inv.value.trim();
+      if (!vraag) return;
+      raak();
+      inv.value = '';
+      U.rijGesprek.push({ wie: 'jij', tekst: vraag });
+      if (P.leesOnthoud(vraag)) {
+        const o = P.onthoud(U.store, vraag, 'eigenaar');
+        if (o.ok) { P.logToevoegen(U.store, 'Een regel aan de kern toegevoegd ("onthoud dat").', 'eigenaar', d.nu()); await bewaar(); }
+        U.rijGesprek.push(o.ok ? { wie: 'hoek', tekst: `Onthouden: ${o.regel}` } : { wie: 'fout', tekst: o.fout === 'vol' ? 'Je kern is vol; haal er eerst iets uit.' : 'Dat kon ik niet onthouden.' });
+        teken();
+        return;
+      }
+      if (!R || !R.stand().klaar) { U.rijGesprek.push({ wie: 'fout', tekst: `Niet verstuurd: ${R ? R.stand().reden : 'geen weg naar de rij.'}` }); teken(); return; }
+      U.rijGesprek.push({ wie: 'model', tekst: 'Even wachten op een rektelefoon...', bezig: true }); teken();
+      const g = P.geheugenVoorVraag(U.store, vraag);
+      const r = await R.vraag(vraag, { systeem: g.systeem });
+      U.rijGesprek.pop();
+      U.rijGesprek.push(r.ok ? { wie: 'model', tekst: r.antwoord || '(leeg antwoord)', telefoon: r.telefoon } : { wie: 'fout', tekst: r.zin });
+      teken();
+    });
+    k.append(inv, b);
+    if (U.rijGesprek.length) {
+      const g = el('div', 'phGesprek'); g.id = 'phRijGesprek';
+      for (const z of U.rijGesprek) {
+        const r = el('div', `phZin ${z.wie}`);
+        r.append(el('strong', '', z.wie === 'jij' ? 'Jij' : z.wie === 'hoek' ? 'Je hoek' : z.wie === 'model' ? `${z.telefoon || 'De rij'} (data, geen bevel)` : 'Niet gelukt'), el('div', '', z.tekst));
+        g.append(r);
+      }
+      g.append(el('p', 'phKlein', 'Dit gesprek staat alleen op het scherm en verdwijnt als de hoek dichtgaat. De rektelefoon bewaart niets.'));
+      k.append(g);
+    }
+    return k;
+  }
   function chatBlok() {
     const k = el('section', 'phBlok'); k.append(kop('2. Praten met mijn privé-AI'));
     const M = d.model && typeof d.model.stand === 'function' ? d.model : null;
@@ -351,7 +396,7 @@
     if (!U.klaar) { wortelEl.append(el('p', '', 'Even laden…')); return; }
     wortelEl.append(bovenbalk());
     if (U.melding) wortelEl.append(el('p', 'phMelding', U.melding));
-    wortelEl.append(statusBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), betekenisBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
+    wortelEl.append(statusBlok(), rijBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), betekenisBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
   }
 
   return {

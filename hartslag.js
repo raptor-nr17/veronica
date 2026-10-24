@@ -152,6 +152,7 @@
       batterijVrij: typeof x.batterijVrij === 'boolean' ? x.batterijVrij : null,
       // 529: gaat deze hartslag via de relay (true) of via ntfy.sh (false)?
       relay: x.relay === true,
+      privePost: x.privePost === true,   // 536: deze telefoon is aan de privé-hoek gekoppeld en leest "Praat met de rij" (alleen ja/nee)
       // 529: DE WAAKHOND. Lag JARVIS stil (geen tik van zijn eigen klok, meestal: Android liet hem slapen), dan meldt hij dat zelf:
       // de laatste vijf keer, begin en duur in minuten, en of hij toen aan de lader hing. Zo is te METEN of de dienst het volhoudt.
       slaap: (Array.isArray(x.slaap) ? x.slaap : []).slice(-5).map((g) => ({ t: Math.floor(Number(g && g.t) || 0), min: getal(Number(g && g.min), 0, 100000), laadt: g && typeof g.laadt === 'boolean' ? g.laadt : null }))
@@ -220,7 +221,7 @@
     // 524: een nieuw concept of een afkeuring telt WEL (de tellers, niet de tijd): zo ziet Veronica het werk binnen het half uur.
     // Het dagbudget (hartslagNodig) blijft de rem.
     // 507: het geheugengebruik telt NIET mee (dat schommelt; anders een hartslag per kleine verandering), het model wel
-    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, d.batterijVrij, d.relay, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
+    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, d.batterijVrij, d.relay, d.privePost, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
       i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast, g.klaar || 0, g.afgekeurd || 0, d.meetuur ? `${d.meetuur.bezig ? 'b' : 'u'}${d.meetuur.start}` : ''].join('|');
   }
   // 522d: HET DAGBUDGET VERDELEN. ntfy.sh telt berichten per dag; een telefoon heeft er NTFY_DAG_MAX (40) en houdt er een paar
@@ -246,6 +247,40 @@
     const r = await open(o, 'hartslag', regel, c);
     if (!r || !r.d || r.d.v !== 1) return null;
     const d = schoonHartslag(r.d);
+    return d.id && d.t ? d : null;
+  }
+
+  // ---- 535: Het gezondheidsrapport ----
+  // Wat JARVIS zelf niet kan oplossen, gaat NIET meer via het deelvenster van Android maar naar Veronica: op DEZELFDE lijn en met
+  // DEZELFDE sleutel als de hartslag (geen extra luisterverbinding), maar met v: 2, zodat een oudere Veronica het laat liggen
+  // (leesHartslag eist v: 1). Alleen codes, korte zinnen en tellers; geen sleutel, geen koppelcode, geen gesprekstekst.
+  const GEZOND_MAX = 6;
+  const getalTussen = (x, min, max) => { const n = Math.floor(Number(x)); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : 0; };
+  function schoonGezond(g) {
+    const x = g || {};
+    const open = (Array.isArray(x.open) ? x.open : []).slice(0, GEZOND_MAX).map((m) => ({
+      code: schoon(m && m.code, 40).replace(/[^A-Za-z0-9_-]/g, ''), adres: schoon(m && m.adres, 60), zin: schoon(m && m.zin, 200),
+      eerst: getalTussen(m && m.eerst, 0, 9e15), keren: getalTussen(m && m.keren, 1, 9999),
+    })).filter((m) => m.code && m.zin);
+    return {
+      v: 2, soort: 'gezond', t: getalTussen(x.t, 0, 9e15), id: ID_RE.test(String(x.id || '')) ? String(x.id) : '', naam: schoon(x.naam, 40), versie: schoon(x.versie, 20),
+      telefoons: getalTussen(x.telefoons, 0, 50), mee: getalTussen(x.mee, 0, 50), open, opgelost: getalTussen(x.opgelost, 0, 999),
+    };
+  }
+  // Wat telt als verandering: de SET open problemen (code + adres), niet de zin of de teller.
+  function gezondSleutel(g) { return schoonGezond(g).open.map((m) => `${m.code}|${m.adres}`).sort().join(','); }
+  async function gezondVerzoek(o, g, c, server) {
+    const topic = await onderwerp(o, 'hartslag', c);
+    const url = naarServer(server);
+    if (!topic || !url) return null;
+    const d = schoonGezond(g);
+    if (!d.id || !d.t) return null;
+    return { method: 'POST', url, data: JSON.stringify({ topic, message: await sluit(o, 'hartslag', d, c) }) };
+  }
+  async function leesGezond(o, regel, c) {
+    const r = await open(o, 'hartslag', regel, c);
+    if (!r || !r.d || r.d.v !== 2 || r.d.soort !== 'gezond') return null;
+    const d = schoonGezond(r.d);
     return d.id && d.t ? d : null;
   }
 
@@ -349,5 +384,5 @@
     return delen.length ? `lijnen: ${delen.join(' · ')}` : '';
   }
 
-  return { lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, meetuurUit, meetuurBlok, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
+  return { schoonGezond, gezondSleutel, gezondVerzoek, leesGezond, GEZOND_MAX, lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, meetuurUit, meetuurBlok, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
 }));

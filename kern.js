@@ -654,6 +654,17 @@
   // te lezen is). Per telefoon de nieuwste hartslag (tot 30 dagen oud): hoeveel concepten klaar, hoeveel de eigen controle
   // afkeurde, en het laatste stuk werk met duur en tempo. Alleen wat de telefoons melden; een oude JARVIS zonder blok telt niet mee.
   const SOORT_NAAM = { vertaal: 'vertaling', keuring: 'tekstkeuring', bord: 'bordfoto', buurtpin: 'buurtpin' };
+  // 535: HET GEZONDHEIDSRAPPORT VAN DE TELEFOONS (hartslag.js leesGezond), in EEN regel op Live. Alleen rapporten van de laatste 24 uur;
+  // zonder open problemen staat er niets (geen ruis). Wat er staat komt letterlijk van de telefoon, ingekort.
+  const GEZOND_VERS_MS = 24 * 3600 * 1000;
+  function gezondSamenvatting(rapporten, tijd) {
+    const vers = (Array.isArray(rapporten) ? rapporten : []).filter((r) => r && r.t && tijd - r.t <= GEZOND_VERS_MS && Array.isArray(r.open) && r.open.length)
+      .sort((a, b) => b.t - a.t);
+    if (!vers.length) return { kop: '', regels: [] };
+    const n = vers.reduce((x, r) => x + r.open.length, 0);
+    const regels = vers.map((r) => ({ naam: r.naam || 'een telefoon', zin: `${r.naam || 'Een telefoon'} (${r.versie ? `JARVIS ${r.versie}, ` : ''}${klokZin(r.t).slice(0, 5)}): ${r.open.map((m) => m.zin).join(' ')}` }));
+    return { kop: `Gezondheid: ${n} ${n === 1 ? 'probleem' : 'problemen'} dat JARVIS niet zelf kan oplossen, op ${vers.length} ${vers.length === 1 ? 'telefoon' : 'telefoons'}`, regels };
+  }
   function gidsSamenvatting(harten, tijd) {
     const per = {};
     for (const h of (Array.isArray(harten) ? harten : [])) {
@@ -1103,7 +1114,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.84';
+  const VERONICA_VERSIE = '1.9.85';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1774,7 +1785,7 @@
   }
   return { meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
-    leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
+    gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesKast, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,

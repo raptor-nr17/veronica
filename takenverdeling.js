@@ -27,7 +27,8 @@
 // 505: VIA DE BRIEVENBUS (gastnetwerk, 18 oktober). Een telefoon die Veronica niet over het wifi bereikt maar wel een VERSE
 // hartslag stuurt (viaBrievenbus) is NIET weg: gids-werk loopt via de postbus en de bewaker leest de hartslag. Alleen de klussen
 // die Veronica zelf over het wifi aflevert (vragen van Veronica, deelvragen van het zoeken) kunnen dan niet. 532: Claude-klussen WEL,
-// als versleuteld kaartje via de brievenbus (rekenpostbus.js); de telefoon haalt ze zelf op.
+// als versleuteld kaartje via de brievenbus (rekenpostbus.js); de telefoon haalt ze zelf op. 534: vragen van Veronica ook, als de
+// telefoon JARVIS 1.9.64 of nieuwer heeft (de eigen soort `vraag`). Zoeken blijft alleen over het wifi.
 // Een onbekende klasse met een geladen model mag denker worden, als laatste keus.
 //
 // EEN REGEL DIE HIER NIET OMGEZET KAN WORDEN: een te oude telefoon (geen model) krijgt nooit model-werk, ook niet als de
@@ -90,6 +91,9 @@
       if (stil) return { soort, naam, mag: false, vast: true, reden: stil };
       // 532: een Claude-klus kan WEL via de brievenbus (versleutelde kaartjes, rekenpostbus.js); de telefoon pakt hem zelf op.
       if (brief && soort === 'claude') return { soort, naam, mag: true, vast: false, reden: 'via de brievenbus: de telefoon haalt de klus zelf op (eens per anderhalve minuut, langzamer dan het wifi)' };
+      // 534: een vraag van Veronica ook, maar alleen als de telefoon die soort al kent (JARVIS 1.9.64; vraagViaBrief).
+      if (brief && soort === 'veronica') return t.vraagViaBrief === true ? { soort, naam, mag: true, vast: false, reden: 'via de brievenbus: de telefoon haalt de vraag zelf op (eens per anderhalve minuut, langzamer dan het wifi)' }
+        : { soort, naam, mag: false, vast: true, reden: 'geen directe wifi-verbinding; via de brievenbus kan het pas vanaf JARVIS 1.9.64' };
       if (brief) return { soort, naam, mag: false, vast: true, reden: geenWifi };
       if (soort === 'claude' && t.kern) return { soort, naam, mag: true, vast: false, reden: 'de baas: alleen aan de lader en niet in gebruik, of met de schakelaar "baas mag meerekenen"' };
       return { soort, naam, mag: true, vast: false, reden: t.klasse === 'zwaar' ? 'zwaar werk eerst, dan de rest' : t.klasse === 'midden' ? 'licht en midden werk, zwaar als het moet' : t.klasse === 'licht' ? 'alleen korte klussen' : 'klasse nog niet gemeten' };

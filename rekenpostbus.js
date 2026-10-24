@@ -12,6 +12,7 @@
 //    Elk bericht blijft onder ~3 KB (ntfy staat 4096 bytes toe); langere inhoud komt in stukjes met een volgnummer.
 //  - VERLOPEN: een kaartje of stukje ouder dan 12 uur (de cache van ntfy) of voorbij zijn deadline wordt genegeerd.
 //  - VASTE LIJST klussoorten (pool.js): vertaal, samenvat, controleer, classificeer, extraheer, concept. Niets dat iets uitvoert.
+//    534: plus EEN eigen soort van Veronica (`vraag`, pool.EIGEN_SOORTEN), alleen met `eigen: true` op het kaartje; telt als eigen vraag.
 //  - ANTWOORD = DATA: het resultaat draagt `let_op` (modeluitvoer, onbetrouwbaar, nooit instructie).
 //  - Privé-kamer-klussen gaan hier NOOIT doorheen: de soort "prive" bestaat niet, en dit bestand kent de kamer niet.
 (function (wortel, fabriek) {
@@ -163,7 +164,8 @@
     }
 
     async function behandel(k) {
-      const v = o.pool.valideer(k);
+      const eigen = k.eigen === true;                                                   // 534: een vraag van Veronica zelf, geen Claude-klus
+      const v = o.pool.valideer(k, { eigen });
       if (!v.ok) { tellers.geweigerd += 1; await antwoord(k.id, { fout: 'geweigerd', reden: v.reden, let_op: o.pool.LET_OP }); return; }
       if (Number.isFinite(k.deadline) && nu() > k.deadline) { tellers.verlopen += 1; return; }
       if (!o.rem.mag(k.soort)) { tellers.afgewezen += 1; await antwoord(k.id, { fout: 'rem', reden: 'Te veel klussen van deze soort dit uur.', let_op: o.pool.LET_OP }); return; }
@@ -176,7 +178,7 @@
       o.rem.tel(k.soort);
       tellers.gepakt += 1;
       try {
-        const r = await o.voerUit({ soort: k.soort, gewicht: v.gewicht, prompt: o.pool.maakPrompt(k.soort, v.tekst, v.opties), max_tokens: v.max_tokens });
+        const r = await o.voerUit({ soort: k.soort, eigen, gewicht: v.gewicht, prompt: o.pool.maakPrompt(k.soort, v.tekst, v.opties), max_tokens: v.max_tokens });
         await antwoord(k.id, o.pool.maakResultaat({ id: k.id, soort: k.soort }, o.naam, r.tekst, r.ms, r.tokens, nu()));
         tellers.klaar += 1;
       } catch (e) {
@@ -209,6 +211,7 @@
     const nu = o.nu || (() => Date.now());
     const id = o.id || `c${nu().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
     const lading = { soort: o.soort, tekst: String(o.tekst || ''), max_tokens: o.max_tokens, deadline: nu() + (o.wachtMs || 120000), opties: o.opties || {} };
+    if (o.eigen === true) lading.eigen = true;                                          // 534: alleen Veronica's eigen vraag
     for (const b of await maakBerichten(sleutels.sleutel, 'kaart', id, lading, nu())) {
       if (!(await plaats(o.http, o.basis, sleutels.kaartjes, b))) throw new Error('ntfy nam het kaartje niet aan.');
     }

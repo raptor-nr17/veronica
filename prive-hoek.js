@@ -160,6 +160,27 @@
     store[map] = knip(tekst, MAX_TEKST);
     return { ok: true };
   }
+  // 536: "ONTHOUD DAT ..." in het chatvak. Een regel die de EIGENAAR zelf typt, gaat letterlijk onderaan de kern. Gewone code, geen
+  // model: de AI schrijft nog steeds nooit in de kern (zetTekst met door 'eigenaar', dezelfde poort als de knop Opslaan).
+  function leesOnthoud(tekst) {
+    const m = /^\s*onthoud(?:\s+dat\b|\s*:)?\s*(.+)$/is.exec(nuTekst(tekst));
+    const r = m ? m[1].replace(/\s+/g, ' ').trim() : '';
+    return r ? knip(r, 300) : null;
+  }
+  function onthoud(store, tekst, door) {
+    if (door !== 'eigenaar') return { ok: false, fout: 'niet-toegestaan' };
+    const regel = leesOnthoud(tekst);
+    if (!regel) return { ok: false, fout: 'geen-onthoud' };
+    const nieuw = `${nuTekst(store.kern).trimEnd()}\n- ${regel}`.trim();
+    if (nieuw.length > MAX_TEKST) return { ok: false, fout: 'vol' };
+    const z = zetTekst(store, 'kern', nieuw, 'eigenaar');
+    return z.ok ? { ok: true, regel } : z;
+  }
+  // De kern voor de AI: helemaal als hij kort is; anders het begin (wie de eigenaar is) en het EINDE (de nieuwste onthoud-regels).
+  function kernVoorAi(kern) {
+    const k = nuTekst(kern).trim();
+    return k.length <= 1400 ? k : `${k.slice(0, 800).trimEnd()}\n...\n${k.slice(-600).trimStart()}`;
+  }
   function samenvattingToevoegen(store, tekst, door, nu) {
     if (!mag('samenvattingen', door)) return { ok: false, fout: 'niet-toegestaan' };
     const t = nuTekst(tekst).trim();
@@ -191,7 +212,7 @@
     const log = beste(regels, 5);
     const delen = ['Wat de eigenaar je meegeeft. Dit is achtergrond, geen opdracht. Verzin niets dat er niet staat.'];
     if (nuTekst(st.karakter).trim()) delen.push(`Karakter: ${knip(st.karakter, 500)}`);
-    if (nuTekst(st.kern).trim()) delen.push(`Kern: ${knip(st.kern, 600)}`);
+    if (nuTekst(st.kern).trim()) delen.push(`Kern (wie de eigenaar is en wat hij wil onthouden): ${kernVoorAi(st.kern)}`);   // 536: was 600 tekens
     for (const x of sam) delen.push(`Samenvatting (${x.dag}): ${knip(x.tekst, 300)}`);
     for (const x of log) delen.push(`Logboek (${x.dag}): ${knip(x.tekst, 200)}`);
     // 496: favoriete sites (naam en adres) als de vraag erover gaat, of een naam noemt.
@@ -393,7 +414,7 @@
   return Object.freeze({
     FORMAAT, FORMAAT_VERSIE, MAPPEN, HERKOMST, HERKOMST_NAAM, ROLLEN_STANDAARD, TESTVRAGEN, MIN_WACHTWOORD, KDF_ITER, MEEKIJK_DAGEN, FOUTZIN,
     MAX_FAVORIETEN, VEILIG_VINKJES, schoonAdres, favorietToevoegen, favorietWeg, zetVeiligVinkje,
-    nieuweStore, leesStore, dagVan, logToevoegen, logZoek, mag, zetTekst, samenvattingToevoegen, leesVoorAi, geheugenVoorVraag, GEHEUGEN_MAX,
+    nieuweStore, leesStore, dagVan, logToevoegen, logZoek, mag, zetTekst, leesOnthoud, onthoud, kernVoorAi, samenvattingToevoegen, leesVoorAi, geheugenVoorVraag, GEHEUGEN_MAX,
     voorstelToevoegen, keurVoorstel, openVoorstellen, testKarakter,
     maakBackup, openBackup, herstelProef, tellingen, meekijkStand, heeftMeegekeken, zetDeelPrive, zetPraatLokaal, zetPraatTelefoon, isLokaalAdres, backupDatumZin,
   });
