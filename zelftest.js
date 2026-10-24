@@ -79,7 +79,26 @@
     const ok = r.filter((x) => x.uitslag === 'ok').length;
     return nee.length ? `${ok} goed, ${nee.length} niet goed: ${nee.map((x) => x.titel).join(', ')}.` : `Alles goed (${ok} punten).`;
   }
-  const uit = { PUNTEN, SYSTEEM_PUNT, VOLGORDE, UITSLAGEN, beoordeel, lees, regels, samenvatting };
+  // 557: DE STAPPEN PER SYSTEEM, elk met EEN tik op OK (de telefoon opent dan het juiste scherm; omzetten doe je zelf, dat laat
+  // Android een app niet doen). "Onbeperkt" kan Android uitlezen: staat hij goed (vrij), dan valt die stap weg. De rest kan het
+  // systeem niet zeggen; die stap is klaar zodra je hem met OK hebt geopend. o: { vrij: true|false|null, gedaan: ['slaap', ...] }.
+  const SYSTEEM_STAPPEN = {
+    hyper: [['onbeperkt', 'Stap {i} van {n}: zet de batterij van JARVIS op Onbeperkt. Tik OK, dan vraagt Android het; kies Toestaan.'],
+      ['autostart', 'Stap {i} van {n}: zet Autostart aan voor JARVIS. Tik OK, dan open ik die lijst; zet het schuifje bij JARVIS aan.'],
+      ['beperkingen', 'Stap {i} van {n}: batterijbesparing op "Geen beperkingen". Tik OK, dan open ik het scherm van JARVIS; kies "Geen beperkingen".']],
+    oneui: [['onbeperkt', 'Stap {i} van {n}: zet de batterij van JARVIS op Onbeperkt. Tik OK, dan vraagt Android het; kies Toestaan.'],
+      ['slaap', 'Stap {i} van {n}: JARVIS bij "Apps die nooit in slaapstand gaan". Tik OK, dan open ik het batterijscherm; kies Limieten achtergrondgebruik en voeg JARVIS toe.']],
+    overig: [['onbeperkt', 'Stap {i} van {n}: zet de batterij van JARVIS op Onbeperkt. Tik OK, dan vraagt Android het; kies Toestaan.']],
+  };
+  function systeemStappen(soort, o) {
+    const x = o || {};
+    const gedaan = Array.isArray(x.gedaan) ? x.gedaan : [];
+    const lijst = (SYSTEEM_STAPPEN[soort] || SYSTEEM_STAPPEN.overig).filter(([stap]) => (stap === 'onbeperkt' ? x.vrij !== true : true));
+    const n = lijst.length;
+    return lijst.map(([stap, zin], i) => ({ stap, zin: zin.replace('{i}', String(i + 1)).replace('{n}', String(n)), klaar: stap === 'onbeperkt' ? x.vrij === true : gedaan.includes(stap) }))
+      .filter((s) => !s.klaar);
+  }
+  const uit = { PUNTEN, SYSTEEM_PUNT, VOLGORDE, UITSLAGEN, beoordeel, lees, regels, samenvatting, SYSTEEM_STAPPEN, systeemStappen };
   if (typeof module !== 'undefined' && module.exports) module.exports = uit;
   else wereld.Zelftest = uit;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -218,5 +218,14 @@
     return `Voeg deze deelantwoorden samen tot een antwoord op het doel. Verzin niets wat niet in de delen staat. Het doel: ${tekst(doel).slice(0, 300)}\n${d}\nAntwoord in het Nederlands.${soort === 'json' ? ' Geef een JSON-object.' : ''}`;
   }
 
-  return { TRAP, SOORTEN, DREMPEL, MAX_STUKKEN, MAX_RIJ, F8_REDEN, volgende, trede, score, kaartje, kaartjeZin, beginTrede, knip, kies, plan, samenvoeger, controle, opdracht, samenvoegOpdracht };
+  // 556: FENNA BEPAALT ZELF DE SOORT KLUS (het keuzevak is weg). Gewone code op de woorden van de vraag; twijfel = algemeen.
+  function raadSoort(tekst) {
+    const t = String(tekst || '').toLowerCase();
+    if (/\bjson\b|als (een )?(lijst|tabel) met (velden|kolommen)|in velden/.test(t)) return 'json';
+    if (/vat .*samen|samenvatting|samenvatten|in het kort|kort samen/.test(t)) return 'samenvatten';
+    if (/\blabel|\bcategorie|indelen|sorteer .* in|welke soort|classificeer/.test(t)) return 'labelen';
+    if (/^(wat|wie|wanneer|waar|hoeveel|welk|welke|hoe laat|in welk)\b.{0,160}\?\s*$/.test(t.trim()) && t.length < 200) return 'feit';
+    return 'algemeen';
+  }
+  return { raadSoort, TRAP, SOORTEN, DREMPEL, MAX_STUKKEN, MAX_RIJ, F8_REDEN, volgende, trede, score, kaartje, kaartjeZin, beginTrede, knip, kies, plan, samenvoeger, controle, opdracht, samenvoegOpdracht };
 }));

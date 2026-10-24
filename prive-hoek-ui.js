@@ -44,19 +44,6 @@
     w.append(l, i); return { w, i };
   }
 
-  function bovenbalk() {
-    const k = el('section', 'phBoven');
-    k.append(knop('Stop', async () => { d.stop(); meld('Gestopt: het pantser staat uit. Er start geen nieuw werk.'); }, 'phStop'),
-      knop('NOODSTOP', async () => { await d.noodstop(); meld('Noodstop gegeven. Alles is gestopt.'); }, 'phNood'),
-      knop('Sluiten', async () => dicht(), 'phSluit'));
-    k.append(el('p', 'phKlein', `${d.pantserAan() ? 'Het pantser staat aan.' : 'Het pantser staat uit.'} Stop zet het werk stil. NOODSTOP stopt alles en meldt het.`));
-    const m = P.meekijkStand(U.store, d.nu());
-    const w = el('div', m.moet ? 'phKijk moet' : 'phKijk');
-    w.append(el('span', '', m.zin), knop('Ik heb meegekeken', async () => { P.heeftMeegekeken(U.store, d.nu()); await bewaar(); teken(); }));
-    k.append(w);
-    return k;
-  }
-
   function statusBlok() {
     const k = el('section', 'phBlok'); k.append(kop('1. Status in een oogopslag'));
     const rijen = d.rijen();
@@ -83,6 +70,24 @@
   // aan de hoek gekoppeld is; nooit via de brievenbus. Het netwerk zit NIET in dit bestand: d.rij (veronica.js, privepost.js) doet het.
   // "Onthoud dat ..." gaat niet naar een telefoon: dat zet deze code zelf onderaan je kern (jij typt het, dus jij schrijft het).
   // 545: fenna.js (in de browser een globale; zonder: de oude weg met alleen het geheugen).
+  // 556: "onthoud dat" en "vergeet dat" (het vraagveld en Praat met de rij gebruiken dezelfde code).
+  async function onthoudDoe(vraag, gesprek) {
+    // 551: "vergeet dat ..." gaat alleen naar het lange geheugen (een grafsteen met een versie); de kern zelf pas je aan in de hoek
+    const vg = /^\s*vergeet\s+(dat\s+)?(.{3,300})$/i.exec(vraag);
+    if (vg && d.lang) {
+      const voor = d.lang.stand ? d.lang.stand().tellingen : null;
+      await d.lang.schrijf({ op: 'vergeet', t: d.nu(), tekst: vg[2].trim() });
+      const na = d.lang.stand ? d.lang.stand().tellingen : null;
+      const weg = voor && na ? voor.feiten - na.feiten : null;
+      gesprek.push({ wie: 'hoek', tekst: weg ? `Vergeten: ${weg} ${weg === 1 ? 'regel' : 'regels'} uit Fenna's lange geheugen (met een versienummer, niet stil gewist).` : 'Daar vond ik geen regel over in het lange geheugen. Staat het in je kern, haal het daar weg.' });
+      return true;
+    }
+    const o = P.onthoud(U.store, vraag, 'eigenaar');
+    if (o.ok) { P.logToevoegen(U.store, 'Een regel aan de kern toegevoegd ("onthoud dat").', 'eigenaar', d.nu()); await bewaar(); }
+    if (o.ok && d.lang) await d.lang.schrijf({ op: 'onthoud', t: d.nu(), tekst: o.regel });   // 547: ook in Fenna's lange geheugen
+    gesprek.push(o.ok ? { wie: 'hoek', tekst: `Onthouden: ${o.regel}` } : { wie: 'fout', tekst: o.fout === 'vol' ? 'Je kern is vol; haal er eerst iets uit.' : 'Dat kon ik niet onthouden.' });
+    return true;
+  }
   function Fn() { return (typeof window !== 'undefined' && window.Fenna) || null; }
   function rijBlok() {
     const Fenna = Fn();
@@ -99,24 +104,7 @@
       raak();
       inv.value = '';
       U.rijGesprek.push({ wie: 'jij', tekst: vraag });
-      if (P.leesOnthoud(vraag)) {
-        // 551: "vergeet dat ..." gaat alleen naar het lange geheugen (een grafsteen met een versie); de kern zelf pas je aan in de hoek
-        const vg = /^\s*vergeet\s+(dat\s+)?(.{3,300})$/i.exec(vraag);
-        if (vg && d.lang) {
-          const voor = d.lang.stand ? d.lang.stand().tellingen : null;
-          await d.lang.schrijf({ op: 'vergeet', t: d.nu(), tekst: vg[2].trim() });
-          const na = d.lang.stand ? d.lang.stand().tellingen : null;
-          const weg = voor && na ? voor.feiten - na.feiten : null;
-          U.rijGesprek.push({ wie: 'hoek', tekst: weg ? `Vergeten: ${weg} ${weg === 1 ? 'regel' : 'regels'} uit Fenna's lange geheugen (met een versienummer, niet stil gewist).` : 'Daar vond ik geen regel over in het lange geheugen. Staat het in je kern, haal het daar weg.' });
-          inv.value = ''; teken(); return;
-        }
-        const o = P.onthoud(U.store, vraag, 'eigenaar');
-        if (o.ok) { P.logToevoegen(U.store, 'Een regel aan de kern toegevoegd ("onthoud dat").', 'eigenaar', d.nu()); await bewaar(); }
-        if (o.ok && d.lang) await d.lang.schrijf({ op: 'onthoud', t: d.nu(), tekst: o.regel });   // 547: ook in Fenna's lange geheugen
-        U.rijGesprek.push(o.ok ? { wie: 'hoek', tekst: `Onthouden: ${o.regel}` } : { wie: 'fout', tekst: o.fout === 'vol' ? 'Je kern is vol; haal er eerst iets uit.' : 'Dat kon ik niet onthouden.' });
-        teken();
-        return;
-      }
+      if (P.leesOnthoud(vraag)) { await onthoudDoe(vraag, U.rijGesprek); teken(); return; }
       if (!R || !R.stand().klaar) { U.rijGesprek.push({ wie: 'fout', tekst: `Niet verstuurd: ${R ? R.stand().reden : 'geen weg naar de rij.'}` }); teken(); return; }
       U.rijGesprek.push({ wie: 'model', tekst: 'Even wachten op een rektelefoon...', bezig: true }); teken();
       const g = P.geheugenVoorVraag(U.store, vraag);
@@ -197,15 +185,23 @@
     const feiten = veld('feiten', 'Feiten', 'Wat Fenna als waar mag aannemen.');
     const sam = veld('samenvatting', 'Samenvatting', 'Waar eerdere gesprekken over gingen.');
     const stijl = veld('stijl', 'Stijl (alleen van jou)', 'Gaat NOOIT via de brievenbus of het internet, ook niet via de relay: alleen als Fenna rechtstreeks over je eigen wifi praat.');
-    const b = el('button', '', 'Bewaar Fenna'); b.type = 'button'; b.id = 'phFennaBewaar';
-    b.addEventListener('click', async () => {
+    // 556: Fenna bewaart zelf (na elke wijziging); de knop "Bewaar Fenna" is weg.
+    const bewaarFenna = async () => {
       // 547: feiten en stijl gaan naar de geheugen-telefoon (eerst in de wachtrij); in de hoek blijft alleen de kaart en de samenvatting.
       if (d.lang) { await d.lang.schrijf({ op: 'feiten', tekst: feiten.t.value.slice(0, 2000) }); await d.lang.schrijf({ op: 'stijl', tekst: stijl.t.value.slice(0, 2000) }); }
       U.store.persona = { kaart: kaart.t.value.slice(0, 3000), feiten: d.lang ? '' : feiten.t.value.slice(0, 2000), samenvatting: sam.t.value.slice(0, 2000), stijl: d.lang ? '' : stijl.t.value.slice(0, 2000), modus: (U.store.persona || {}).modus === 'werk' ? 'werk' : 'gesprek' };
       P.logToevoegen(U.store, 'Fenna bijgewerkt (persoonlijkheid).', 'eigenaar', d.nu()); await bewaar(); meld('Fenna is bewaard. De volgende vraag gebruikt het al.');
-    });
-    k.append(kaart.w, feiten.w, sam.w, stijl.w, b);
+    };
+    for (const v of [kaart, feiten, sam, stijl]) v.t.addEventListener('change', () => { bewaarFenna().catch(() => {}); });
+    k.append(kaart.w, feiten.w, sam.w, stijl.w);
     return k;
+  }
+  // 557: een andere telefoon of de schakelaar om = meteen proeven (niet pas binnen het uur van tik). Er gaat geen woord van de hoek mee.
+  function proefNu() {
+    const M = d.model && typeof d.model.proef === 'function' ? d.model : null;
+    if (!M) return;
+    U.proefT = d.nu();
+    Promise.resolve(M.proef()).then((r) => { U.proefModel = r; teken(); }).catch(() => {});
   }
   function chatBlok() {
     const k = el('section', 'phBlok'); k.append(kop('2. Praten met mijn privé-AI'));
@@ -213,7 +209,7 @@
     const st = M ? M.stand() : { klaar: false, reden: 'Geen model geladen.' };
     // 470: de schakelaar en de telefoonkeuze. Standaard uit; alleen een telefoon in de hoek, alleen op het eigen wifi.
     const rij = el('label', 'phSchakel'); const c = el('input'); c.type = 'checkbox'; c.checked = U.store.instellingen.praatLokaal === true; c.id = 'phPraat';
-    c.addEventListener('change', async () => { raak(); P.zetPraatLokaal(U.store, c.checked, 'eigenaar'); P.logToevoegen(U.store, c.checked ? 'Schakelaar "praten met een telefoon in de hoek" aangezet.' : 'Schakelaar "praten met een telefoon in de hoek" uitgezet.', 'eigenaar', d.nu()); await bewaar(); teken(); });
+    c.addEventListener('change', async () => { raak(); P.zetPraatLokaal(U.store, c.checked, 'eigenaar'); P.logToevoegen(U.store, c.checked ? 'Schakelaar "praten met een telefoon in de hoek" aangezet.' : 'Schakelaar "praten met een telefoon in de hoek" uitgezet.', 'eigenaar', d.nu()); await bewaar(); proefNu(); teken(); });
     rij.append(c, el('span', '', 'Praten met een telefoon in de hoek (alleen eigen wifi; standaard uit)'));
     k.append(rij);
     const keuze = el('select'); keuze.id = 'phPraatTelefoon'; keuze.setAttribute('aria-label', 'Welke telefoon');
@@ -224,7 +220,7 @@
       if (r.motorAdres) { const o2 = el('option', '', `${r.naam} (eigen motor van JARVIS)`); o2.value = r.motorAdres; keuze.append(o2); }
     }
     keuze.value = U.store.instellingen.praatTelefoon || '';
-    keuze.addEventListener('change', async () => { raak(); const u = P.zetPraatTelefoon(U.store, keuze.value, 'eigenaar'); if (u.ok) { P.logToevoegen(U.store, keuze.value ? 'Telefoon voor het praten gekozen.' : 'Telefoonkeuze voor het praten weggehaald.', 'eigenaar', d.nu()); await bewaar(); } teken(); });
+    keuze.addEventListener('change', async () => { raak(); const u = P.zetPraatTelefoon(U.store, keuze.value, 'eigenaar'); if (u.ok) { P.logToevoegen(U.store, keuze.value ? 'Telefoon voor het praten gekozen.' : 'Telefoonkeuze voor het praten weggehaald.', 'eigenaar', d.nu()); await bewaar(); proefNu(); } teken(); });
     k.append(keuze);
     if (keuze.options.length === 1) k.append(el('p', 'phKlein', 'Er zit nog geen telefoon in de hoek (geen telefoon met een privé-sleutel).'));
     k.append(el('p', st.klaar ? 'phKlein' : 'phEerlijk', st.klaar ? `Klaar om te proberen via ${st.adres}. Let op: de telefoons nemen privé-werk vanaf Veronica nu nog niet aan; de proef laat zien wat er gebeurt.` : `Geen model geladen om vanuit Veronica mee te praten. ${st.reden} Er komen dus geen antwoorden. Ik verzin er geen.`));
@@ -241,31 +237,8 @@
         k.append(img, el('p', 'phKlein', 'Scan deze QR met JARVIS op de telefoon (Koppel met Veronica, of de scanner). Daarna neemt alleen die telefoon jouw privé-vragen aan, en alleen van deze Chromebook. De QR verdwijnt als de hoek dichtgaat.'));
       } else if (U.koppelQr && U.koppelQr.zin) k.append(el('p', 'phEerlijk', U.koppelQr.zin));
     }
-    if (M) k.append(knop('Proef de verbinding (stuurt geen woord van de hoek)', async () => { raak(); U.proefModel = { zin: 'Bezig...' }; teken(); U.proefModel = await M.proef(); teken(); }));
-    if (U.proefModel) k.append(el('p', U.proefModel.ok ? 'phKlein' : 'phEerlijk', U.proefModel.zin));
-    const inv = el('textarea'); inv.rows = 2; inv.disabled = !st.klaar; inv.id = 'phVraag'; inv.placeholder = st.klaar ? 'Je vraag (gaat alleen naar die telefoon)' : 'Praten kan nog niet (geen model).'; inv.setAttribute('aria-label', 'Vraag aan mijn privé-AI');
-    const b = el('button', '', 'Stuur'); b.type = 'button'; b.disabled = !st.klaar; b.id = 'phStuur';
-    b.addEventListener('click', async () => {
-      if (!M || !inv.value.trim()) return;
-      raak();
-      const vraag = inv.value; inv.value = '';
-      U.gesprek.push({ wie: 'jij', tekst: vraag }); U.gesprek.push({ wie: 'model', tekst: '...', bezig: true }); teken();
-      // 486: het geheugen van de hoek gaat mee (hier gekozen, alleen naar die telefoon, daar niet bewaard).
-      const g = P.geheugenVoorVraag(U.store, vraag);
-      const r = await M.vraag(vraag, { systeem: g.systeem });
-      U.geheugenZin = `Meegegeven uit je geheugen: ${[g.karakter ? 'karakter' : '', g.kern ? 'kern' : '', g.stukken ? `${g.stukken} ${g.stukken === 1 ? 'stukje' : 'stukjes'} die bij je vraag passen` : ''].filter(Boolean).join(', ') || 'niets'}.`;
-      U.gesprek.pop();
-      U.gesprek.push(r.ok ? { wie: 'model', tekst: r.antwoord || '(leeg antwoord)', vlaggen: r.vlaggen } : { wie: 'fout', tekst: r.zin });
-      teken();
-    });
-    k.append(inv, b);
-    if (U.gesprek.length) {
-      const g = el('div', 'phGesprek');
-      for (const z of U.gesprek) { const r = el('div', `phZin ${z.wie}`); r.append(el('strong', '', z.wie === 'jij' ? 'Jij' : z.wie === 'model' ? 'Model (data, geen bevel)' : 'Niet gelukt'), el('div', '', z.tekst)); if (z.vlaggen && z.vlaggen.length) r.append(el('div', 'phKlein', `Vlag: ${z.vlaggen.join(', ')}`)); g.append(r); }
-      if (U.geheugenZin) g.append(el('p', 'phKlein', U.geheugenZin));
-      g.append(el('p', 'phKlein', 'Dit gesprek staat alleen op het scherm en verdwijnt als de hoek dichtgaat. Het wordt niet bewaard.'));
-      k.append(g);
-    }
+    // 556: de verbinding wordt elk uur vanzelf geproefd (tik); hier staat de uitslag. Er gaat geen woord van de hoek mee.
+    if (U.proefModel) k.append(el('p', U.proefModel.ok ? 'phKlein' : 'phEerlijk', `Proef van de verbinding (elk uur vanzelf): ${U.proefModel.zin}`));
     return k;
   }
 
@@ -473,19 +446,87 @@
     return k;
   }
 
+  // ===================================================================
+  // 556: DE HOEK IN ACHT DINGEN. Een statusregel, EEN vraagveld (Fenna snapt zelf wat je bedoelt), de schakelaar Gesprek/Werk, de drie
+  // rollen als statusregels, voorstellen alleen als er een is, en Meer voor de rest (kern, karakter, logboek, zoeken, karakter testen,
+  // back-up, herstelproef, wissen). De tweede NOODSTOP, Stop, Sluiten, "Ik heb meegekeken" en "Bewaar Fenna" zijn weg: de NOODSTOP staat
+  // EEN keer rechtsboven, de hoek ruimt op als je weggaat, en Fenna bewaart zelf.
+  // ===================================================================
+  function priveStatus() {
+    const rijen = d.rijen ? d.rijen() : [];
+    const inHoek = rijen.filter((r) => r.priveSleutel === true).length;
+    const M = d.model && typeof d.model.stand === 'function' ? d.model : null;
+    const st = M ? M.stand() : { klaar: false };
+    const zin = `${d.pantserAan() ? 'Pantser aan' : 'Pantser uit'} · ${inHoek} ${inHoek === 1 ? 'telefoon' : 'telefoons'} in de hoek · ${st.klaar ? 'praten kan, alleen over je eigen wifi' : 'praten kan nog niet: geen telefoon in de hoek klaar'}`;
+    const p = el('p', 'phStatus', zin); p.id = 'phStatus';
+    return p;
+  }
+  function vraagBlok() {
+    const k = el('section', 'phBlok phVraagBlok');
+    const M = d.model && typeof d.model.stand === 'function' ? d.model : null;
+    const st = M ? M.stand() : { klaar: false, reden: 'Geen model geladen.' };
+    const modus = ((U.store.persona || {}).modus === 'werk') ? 'werk' : 'gesprek';
+    const sch = el('button', '', modus === 'werk' ? 'Werk' : 'Gesprek'); sch.type = 'button'; sch.id = 'phModus'; sch.setAttribute('aria-pressed', String(modus === 'werk'));
+    sch.title = 'Gesprek: Fenna met haar hele karakter. Werk: kort en zakelijk.';
+    sch.addEventListener('click', async () => { raak(); U.store.persona = Object.assign({}, U.store.persona, { modus: modus === 'werk' ? 'gesprek' : 'werk' }); await bewaar(); teken(); });
+    const inv = el('textarea'); inv.rows = 2; inv.id = 'phVraag'; inv.placeholder = 'Vraag het Fenna, of zeg "onthoud dat ..."'; inv.setAttribute('aria-label', 'Vraag aan Fenna');
+    const b = el('button', '', 'Stuur'); b.type = 'button'; b.id = 'phStuur';
+    b.addEventListener('click', async () => {
+      const vraag = inv.value.trim();
+      if (!vraag) return;
+      raak(); inv.value = '';
+      U.gesprek.push({ wie: 'jij', tekst: vraag });
+      if (P.leesOnthoud(vraag)) { await onthoudDoe(vraag, U.gesprek); teken(); return; }
+      // Alleen over het eigen wifi, naar een telefoon in de hoek. Is er geen, dan gaat er NIETS: niet via de relay of de brievenbus.
+      if (!M || !M.stand().klaar) { U.gesprek.push({ wie: 'fout', tekst: `Niet verstuurd: praten kan nu alleen met een telefoon in de hoek over je eigen wifi, en die is er nog niet. ${st.reden || ''}`.trim() }); teken(); return; }
+      U.gesprek.push({ wie: 'model', tekst: '...', bezig: true }); teken();
+      // 486: het geheugen van de hoek gaat mee (hier gekozen, alleen naar die telefoon, daar niet bewaard).
+      const g = P.geheugenVoorVraag(U.store, vraag);
+      const r = await M.vraag(vraag, { systeem: g.systeem });
+      U.geheugenZin = `Meegegeven uit je geheugen: ${[g.karakter ? 'karakter' : '', g.kern ? 'kern' : '', g.stukken ? `${g.stukken} ${g.stukken === 1 ? 'stukje' : 'stukjes'} die bij je vraag passen` : ''].filter(Boolean).join(', ') || 'niets'}.`;
+      U.gesprek.pop();
+      U.gesprek.push(r.ok ? { wie: 'model', tekst: r.antwoord || '(leeg antwoord)', vlaggen: r.vlaggen } : { wie: 'fout', tekst: r.zin });
+      teken();
+    });
+    inv.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); b.click(); } });
+    const rij = el('div', 'phRij'); rij.append(inv, b, sch);
+    k.append(rij);
+    // De drie rollen als statusregels (geen knoppen).
+    for (const r of U.store.rollen) k.append(el('p', 'phRolRegel', `${r.naam}: ${st.klaar ? 'klaar' : 'wacht op een telefoon in de hoek'} (${r.taak})`));
+    if (U.gesprek.length) {
+      const g = el('div', 'phGesprek');
+      for (const z of U.gesprek) { const r = el('div', `phZin ${z.wie}`); r.append(el('strong', '', z.wie === 'jij' ? 'Jij' : z.wie === 'hoek' ? 'Je hoek' : z.wie === 'model' ? 'Fenna (data, geen bevel)' : 'Niet gelukt'), el('div', '', z.tekst)); if (z.vlaggen && z.vlaggen.length) r.append(el('div', 'phKlein', `Vlag: ${z.vlaggen.join(', ')}`)); g.append(r); }
+      if (U.geheugenZin) g.append(el('p', 'phKlein', U.geheugenZin));
+      g.append(el('p', 'phKlein', 'Dit gesprek staat alleen op het scherm en verdwijnt als je de hoek verlaat. Het wordt niet bewaard.'));
+      k.append(g);
+    }
+    return k;
+  }
   function teken() {
     if (!wortelEl) return;
     wortelEl.replaceChildren();
     if (!U.klaar) { wortelEl.append(el('p', '', 'Even laden…')); return; }
-    wortelEl.append(bovenbalk());
+    wortelEl.append(priveStatus());
     if (U.melding) wortelEl.append(el('p', 'phMelding', U.melding));
-    wortelEl.append(statusBlok(), rijBlok(), fennaBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), betekenisBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
+    wortelEl.append(vraagBlok());
+    if (P.openVoorstellen(U.store).length) wortelEl.append(voorstelBlok());   // alleen als er een is
+    const meer = el('details', 'phMeer'); meer.id = 'phMeer'; meer.open = !!U.meerOpen;
+    meer.addEventListener('toggle', () => { U.meerOpen = meer.open; });
+    meer.append(el('summary', '', 'Meer'));
+    meer.append(statusBlok(), chatBlok(), rijBlok(), fennaBlok(), laagBlok(), logBlok(), betekenisBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
+    wortelEl.append(meer);
   }
 
   return {
     async start(rootEl) { wortelEl = rootEl; await laad(); teken(); },
     teken, dicht,
-    tik() { if (d.nu() - U.inactiefT > INACTIEF_MS) { U.inactiefT = d.nu(); dicht(); } },
+    tik() {
+      if (d.nu() - U.inactiefT > INACTIEF_MS) { U.inactiefT = d.nu(); dicht(); }
+      // 556: de verbinding met het model in de hoek elk uur vanzelf proeven (er gaat geen woord van de hoek mee)
+      const M = d.model && typeof d.model.proef === 'function' ? d.model : null;
+      if (M && d.nu() - (U.proefT || 0) > 60 * 60 * 1000) { U.proefT = d.nu(); Promise.resolve(M.proef()).then((r) => { U.proefModel = r; teken(); }).catch(() => {}); }
+    },
+    meer(open) { U.meerOpen = open !== false; teken(); },
     get open() { return U.open; },
     get store() { return U.store; },
     async ontvangVoorstel(voorstel) { const r = P.voorstelToevoegen(U.store, voorstel, d.nu()); if (r.ok) { await bewaar(); teken(); } return r; },

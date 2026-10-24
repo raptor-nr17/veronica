@@ -11,7 +11,7 @@
 <style>
   :root { --nacht: #04070c; --paneel: #0b121c; --lijn: #17304a; --tekst: #e8f3ff; --zacht: #8fa8bf; --oud: #5d6b78; --rood: #e5484d; }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--nacht); color: var(--tekst); font: 18px/1.4 system-ui, sans-serif; }
+  body { margin: 0; background: var(--nacht); color: var(--tekst); font: 18px/1.5 system-ui, sans-serif; }
   header { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--lijn); position: sticky; top: 0; background: var(--nacht); z-index: 2; }
   header h1 { font-size: 24px; margin: 0 12px 0 0; letter-spacing: 1px; }
   #pantserZin { color: var(--zacht); margin-right: auto; }
@@ -71,7 +71,22 @@
   button.groot { display: block; width: 100%; max-width: 520px; font-size: 24px; font-weight: 700; padding: 18px 20px; margin: 10px 0; border-color: #45d8ff; }
   .groteMelding { font-size: 22px; font-weight: 700; min-height: 1.4em; margin: 8px 0 14px; }
   .groteMelding.slecht { color: #ffb4b6; }
-  #noodstop { background: var(--rood); border-color: var(--rood); color: #fff; font-weight: 800; font-size: 22px; padding: 12px 22px; }
+  /* 556: EEN kleine rode NOODSTOP rechtsboven, nergens dubbel; de statusregel is de rest van de kop. */
+  #noodstop { background: var(--rood); border-color: var(--rood); color: #fff; font-weight: 800; font-size: 18px; padding: 8px 16px; margin-left: auto; }
+  #statusRegel { flex: 1 1 20em; margin: 0; font-size: 20px; font-weight: 600; }
+  #meldRegel { padding: 8px 16px; background: var(--paneel); border-bottom: 1px solid var(--lijn); font-size: 18px; }
+  #meldRegel[hidden] { display: none; }
+  .verborgen { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  #vraagRij { display: flex; gap: 8px; align-items: center; flex: 1 1 30em; }
+  #hoofdVraag { flex: 1; font: inherit; font-size: 20px; padding: 10px 12px; min-height: 52px; color: var(--tekst); background: var(--paneel); border: 1px solid var(--lijn); border-radius: 12px; }
+  #startStopKnop { font-size: 20px; font-weight: 800; padding: 12px 22px; border: 3px solid #b8860b; }
+  #startStopKnop[aria-pressed="true"] { border-color: var(--rood); }
+  #lokaalKeus { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 4px; }
+  #lokaalKeus [aria-checked="true"] { border: 3px solid #45d8ff; font-weight: 700; }
+  #lokaalKeus [aria-checked="true"]::before { content: "✓ "; }
+  #scherm-meer > .tKnoppen { margin: 8px 0; }
+  /* 556: nergens kleiner dan 18 punt */
+  .klein, .tBron, .eerlijk, .phKlein, .tAdres, .zwFeiten, .zwAdres, .zwKop { font-size: 18px !important; }
   nav { display: flex; gap: 8px; padding: 8px 16px; }
   main { padding: 8px 16px 24px; }
   .eerlijk { color: var(--zacht); font-size: 15px; margin: 4px 0 10px; }
@@ -223,44 +238,30 @@
 </head>
 <body>
 <header>
-  <h1>VERONICA</h1>
-  <span id="pantserZin" aria-live="polite"></span>
-  <button id="bureauKnop" aria-pressed="true" title="Mag Claude kleine klussen naar de telefoons sturen?">Claude-bureau: aan</button>
-  <span id="bureauZin" aria-live="polite"></span>
-  <span id="veronicaZegt" aria-live="polite"></span>
-  <div id="pantserHelp" role="status"></div>
-  <button id="motorAlleKnop" hidden>Zet de eigen motor aan</button>
-  <button id="rekVanzelfKnop" title="Telefoons die achterlopen laten kijken naar een nieuwe versie, en werkers hun eigen motor aan laten zetten">Rek vanzelf: aan</button>
+  <h1>Veronica</h1>
+  <p id="statusRegel" aria-live="polite"></p>
   <div id="lnaUitleg" role="alert" hidden></div>
   <div id="vindUitleg" role="status" hidden></div>
-  <button id="heyKnop">Hé Veronica</button>
-  <button id="micKnop" aria-pressed="false" aria-label="Spreek een opdracht in">🎤</button>
   <button id="noodstopBevestig" hidden>Bevestig noodstop</button>
-  <span id="spraakZin" aria-live="polite"></span>
-  <button id="roepKnop">📣 Roep de rij op</button>
-  <button id="pantserKnop" aria-pressed="false">Pantser uit</button>
-  <select id="vervangKeus" aria-label="Welk onderdeel vervangen"></select>
-  <button id="vervangKnop">Vervang onderdeel</button>
-  <button id="wakkerKnop" aria-pressed="false">Houd het scherm aan</button>
-  <button id="volKnop">Volledig scherm</button>
-  <button id="wandKnop" aria-pressed="false">🖥 Wandstand</button>
-  <button id="nieuwQrKnop">📱 QR voor een nieuwe telefoon</button>
   <button id="noodstop">NOODSTOP</button>
 </header>
+<div id="meldRegel" role="status" aria-live="polite" hidden></div>
 <div id="volLokaalBalk" hidden role="status" style="background:#1b5e20;color:#fff;padding:8px 16px;font-weight:600">🔒 Vol lokaal staat AAN: niets gaat naar buiten. Alleen je eigen telefoons.</div>
 <div id="alleenLokaalBalk" hidden role="status" style="background:#0d47a1;color:#fff;padding:8px 16px;font-weight:600">🏠 Alleen lokaal staat AAN: niets gaat naar Claude of een ander model buiten huis. Alleen de Gemma's op je telefoons rekenen; lukt iets daar niet, dan zeg ik dat.</div>
 <div id="wandBalk"><span id="wandKlok"></span><span id="wandZin"></span><button id="wandUit">← Terug</button></div>
 <nav>
   <button id="tab-live" aria-pressed="true">Live</button>
-  <button id="tab-wachtrij" aria-pressed="false">Wachtrij</button>
-  <button id="tab-koppel" aria-pressed="false">Koppelen</button>
   <button id="tab-prive" aria-pressed="false">🔒 Mijn privé-hoek</button>
-  <!-- 521: een rektelefoon aan de USB-kabel van deze computer: scherm zien en tikken (eigen pagina) -->
-  <a id="tab-besturen" href="besturen.html" style="color: var(--tekst); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; text-decoration: none; background: var(--paneel);">📱 Telefoon besturen</a>
+  <button type="button" id="meerKnop" aria-pressed="false">Meer</button>
 </nav>
 <main>
   <!-- 549: de grote knop staat BUITEN de vaste kop (die moet laag blijven: hij ligt over de pagina). -->
-  <div id="hoofdKnoppen"><button id="avengersKnop" class="avengersGroot" title="Alle telefoons bij elkaar roepen; eerst zie je wie meedoet">🛡 Avengers assemble</button> <button id="alleenLokaalKnop" aria-pressed="false" title="Niets naar Claude of een ander model buiten huis; alleen de Gemma's op de telefoons">Alleen lokaal: uit</button></div>
+  <div id="hoofdKnoppen">
+    <div id="vraagRij"><label for="hoofdVraag" class="verborgen">Vraag of opdracht</label><input id="hoofdVraag" type="text" autocomplete="off" maxlength="12000" placeholder="Vraag iets, of geef een opdracht"> <button id="micKnop" aria-pressed="false" aria-label="Spreek een opdracht in">🎤</button> <button type="button" id="vraagKnop">Vraag</button></div>
+    <span id="spraakZin" aria-live="polite"></span>
+    <button type="button" id="startStopKnop" class="startGroot" aria-pressed="false">Start</button>
+    <span hidden><button id="avengersKnop" class="avengersGroot" title="Alle telefoons bij elkaar roepen; eerst zie je wie meedoet">🛡 Avengers assemble</button> <button id="alleenLokaalKnop" aria-pressed="false" title="Niets naar Claude of een ander model buiten huis; alleen de Gemma's op de telefoons">Alleen lokaal: uit</button></span>
+  </div>
   <div id="lnaRegel" role="status" hidden><span id="lnaZin"></span> <button type="button" id="lnaKnop" hidden>Sta lokaal netwerk toe</button></div>
   <!-- 549: AVENGERS ASSEMBLE. Een paneel in de pagina (geen laag erover): de NOODSTOP in de vaste kop blijft altijd te raken. -->
   <section id="avengersPaneel" class="blok" hidden aria-labelledby="avKop">
@@ -275,88 +276,14 @@
       Een nieuwe telefoon doet pas mee na "Laat toe" (een mens), en een telefoon die met de Uit-knop is stilgezet blijft uit.</p>
     <button type="button" id="avSluit" class="tweede">Sluit dit paneel</button>
   </section>
-  <p class="eerlijk" id="wakkerZin">Veronica werkt alleen zolang deze computer aan is en niet slaapt. Tik op "Houd het scherm aan", of zet slapen uit.
-    Elk getal komt van een meting: eronder staat de bron en hoe oud hij is. Ouder dan 10 seconden is grijs. Niet gemeten = onbekend.</p>
   <section id="scherm-live">
-    <p id="leeg">Nog geen telefoons. Tik op Koppelen en neem de vertrouwde telefoons over van de hoofdtelefoon.</p>
-    <!-- 522: wie rekent nu (uit de hartslagen) -->
-    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="geheugenZin" hidden></p><div id="fennaMetingBlok" hidden><h3>Meting per telefoon</h3><ul id="fennaMeting"></ul></div><div id="slimBlok"><h3>Slimheid van Fenna</h3><button type="button" id="meetFennaKnop">Meet Fenna nu</button> <button type="button" id="meetFennaStop" class="tweede" hidden>Stop de meting</button><p id="slimStand" aria-live="polite"></p><div id="slimGrafiek"></div><div class="tabelVak"><table id="slimTabel"></table></div></div><div id="trapBlok"><h3>Samen van klein naar groot</h3>
-      <p class="eerlijk">Fenna knipt je doel in stukjes. Alle telefoons doen tegelijk een stukje, elk met het kleinste model dat voor die soort klus goed genoeg scoort.
-        Haalt een antwoord de controle niet, dan gaat dat stukje naar een groter model op een andere telefoon. De F8 alleen als het niet anders kan, en voor het samenvoegen en de eindcontrole. Alles blijft in huis.</p>
-      <label for="trapDoel">Doel</label> <textarea id="trapDoel" rows="4" maxlength="12000"></textarea>
-      <label for="trapSoort">Soort klus</label> <select id="trapSoort"><option value="algemeen">Algemene vraag</option><option value="samenvatten">Samenvatten</option><option value="labelen">Labelen</option><option value="json">Gegevens als JSON</option><option value="feit">Feit terugvinden</option></select>
-      <label class="trapVink"><input type="checkbox" id="trapBelangrijk"> Belangrijk: elk stukje naar twee telefoons, het eerste goede antwoord wint</label>
-      <button type="button" id="trapKnop">Start samen</button> <button type="button" id="trapStop" class="tweede" hidden>Stop</button>
-      <p id="trapStand" aria-live="polite"></p>
-      <div class="tabelVak"><table id="trapLive"></table></div>
-      <ul id="trapF8"></ul>
-      <details id="trapKaartjesVak"><summary>Modelkaartjes</summary><ul id="trapKaartjes"></ul></details>
-      <div id="trapUit"></div></div><p id="gidsSamen" hidden></p><p id="meetSamen" hidden></p><p id="gezondSamen" hidden></p><ul id="wieRekentLijst"></ul><div id="wieDoetWat" hidden><h3>Wie doet wat</h3><ul id="wieDoetWatLijst"></ul></div></div>
-    <div id="vSamen"></div>
-    <div id="rekBlok" hidden><p id="rekZin" class="groteMelding"></p><ul id="rekRegels"></ul>
-      <!-- 1.9.14: EEN grote schuif, twee standen: de reserve waarop een rektelefoon stopt met rekenen. -->
-      <div id="reserveSchuif" role="group" aria-label="Reserve van de accu">
-        <span class="reserveKop">Reserve</span>
-        <button data-reserve="30" aria-pressed="false">30%</button><button data-reserve="50" aria-pressed="true">50%</button>
-      </div>
-      <p id="reserveZin"></p>
-    </div>
+    <p id="leeg">Nog geen telefoons. Tik op Meer en dan op Koppelen.</p>
     <p id="priveBezig" class="groteMelding" hidden>Privé-klus bezig</p>
     <div id="tegels"></div>
     <div id="stekkerNieuw"></div>
-    <div id="stekkerBeheer" hidden>
-      <p id="stekkerScanZin" class="eerlijk"></p>
-      <button id="stekkerZoekNu">Zoek stekkers nu</button>
-      <label for="stekkerAdres">Stekker toevoegen op adres (geen wachtwoord nodig)</label>
-      <input id="stekkerAdres" inputmode="decimal" autocomplete="off" maxlength="15" placeholder="adres van de stekker">
-      <div class="tKnoppen">
-        <button data-adresrol="laden">Dit is de lader</button>
-        <button data-adresrol="meter">Dit is de meter</button>
-        <button data-adresrol="ventilator">Dit is de ventilator</button>
-      </div>
-    </div>
-    <h2 id="stekkerKop" hidden>Stekkers</h2>
-    <div id="tegels-stekkers"><div id="stekkerTegels" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px"></div></div>
-    <div id="verbruikBlok" class="zsPaneel" hidden>
-      <h2>Verbruik en kosten</h2>
-      <p id="verbruikRegel" class="eerlijk"></p>
-      <label>Tarief per kWh (€) <input id="tariefVeld" type="text" inputmode="decimal" size="6" autocomplete="off"></label>
-      <p class="tBron">Kosten = gemeten kWh x dit tarief. Het tarief is jouw instelling; de kWh komen van de meter-stekker.</p>
-    </div>
-    <div id="verslagBlok" class="zsPaneel" hidden>
-      <h2>Verbruiksverslag</h2>
-      <p class="tBron">Voor wie de stroom betaalt: wat de telefoons verbruiken, in gewone woorden. Alles komt van de meter-stekker; er wordt niets geschat.</p>
-      <label for="verslagDagen">Periode</label>
-      <select id="verslagDagen"><option value="7">Laatste 7 dagen</option><option value="14">Laatste 14 dagen</option><option value="30">Laatste 30 dagen</option></select>
-      <pre id="verslagTekst" style="white-space:pre-wrap;font:inherit;margin:8px 0"></pre>
-      <button type="button" id="verslagKopieer">Kopieer verslag</button>
-      <button type="button" id="verslagWis">Verslag wissen</button>
-      <p id="verslagMelding" class="klein" aria-live="polite"></p>
-    </div>
     <div id="nieuwKoppelBlok" class="zsPaneel" hidden>
       <h2>Nieuwe telefoon</h2>
       <div id="nieuwKoppelLijst"></div>
-    </div>
-    <style>#kaartjeBlok [hidden] { display: none; }</style>
-    <div id="kaartjeBlok" class="zsPaneel">
-      <h2>Opslag op kaartje</h2>
-      <p class="tBron">Alleen Veronica gebruikt het kaartje; de downloadmap van Chrome blijft zoals hij is. Elke dag vanzelf een kopie van het logboek en de nachtproef, logboeken van de telefoons, en modelbestanden voor de werkers (de uitdeelkast). Van de privé-hoek alleen de versleutelde back-up. Nooit wachtwoorden of codes. Zonder kaartje bewaar ik het kleine intern.</p>
-      <p id="kaartjeStatus" class="eerlijk"></p>
-      <p id="kaartjeRuimte" class="tBron"></p>
-      <p id="kaartjeKast" class="tBron"></p>
-      <div class="tKnoppen">
-        <button id="kaartjeKies">Kies map op het kaartje</button>
-        <button id="kaartjeToestemming" hidden>Toestemming geven</button>
-        <button id="kaartjeKijk">Kijk opnieuw</button>
-      </div>
-      <div class="tKnoppen" id="kaartjeBewaar" hidden>
-        <button data-kaartje="logboek">Bewaar logboek</button>
-        <button data-kaartje="nachtproef">Bewaar nachtproef</button>
-        <button data-kaartje="overzicht">Bewaar overzicht</button>
-        <button data-kaartje="vertalingen">Bewaar vertalingen</button>
-      </div>
-      <p id="kaartjeMelding" class="tBron" aria-live="polite"></p>
-      <ul id="kaartjeLijst"></ul>
     </div>
     <div id="samenBlok" class="zsPaneel" hidden>
       <h2>Samenwerken</h2>
@@ -373,15 +300,6 @@
       <p id="naleesZin" class="eerlijk"></p>
       <div id="naleesLijst"></div>
     </div>
-    <div id="nachtBlok" class="zsPaneel" hidden>
-      <h2>Nachtproef</h2>
-      <p class="tBron">Elk kwartier schrijft de beheerder-telefoon per telefoon op: accu, temperatuur en of de motor aan staat. Een vraagteken = niet gemeten.</p>
-      <p id="nachtZin" class="eerlijk"></p>
-      <div style="overflow-x:auto"><table id="nachtTabel" class="klein"></table></div>
-      <button type="button" id="nachtWis">Nachtproef wissen</button>
-    </div>
-    <h2 id="zonKop">Zon en stroom</h2>
-    <div id="zonStroom" class="zsPaneel"></div>
   </section>
   <section id="scherm-wachtrij" hidden>
     <label for="taakTekst">Vragen voor het pantser (een per regel)</label>
@@ -456,7 +374,10 @@
     </section>
   </section>
   <section id="scherm-prive" hidden>
-    <div class="zsPaneel" id="alleenLokaalVak">
+    <div id="priveHoek"></div>
+    <!-- 556: back-up en onderzoek staan achter Meer; de twee losse lokaal-schakelaars zijn vervangen door de driestandenkeuze op Meer -->
+    <details id="priveMeerVast"><summary>Meer: back-up op het kaartje en onderzoek met de telefoons</summary>
+    <div class="zsPaneel" id="alleenLokaalVak" hidden>
       <h2>Alleen lokaal</h2>
       <button type="button" id="alleenLokaalHoekKnop" aria-pressed="false">Alleen lokaal: uit</button>
       <p class="eerlijk">Aan = niets naar Claude of een ander model buiten huis; alleen de Gemma's op je telefoons. Zoeken via de telefoons mag wel (dat is geen model). Wil je dat er helemaal niets naar buiten gaat: Vol lokaal.</p>
@@ -469,7 +390,7 @@
       <p id="kluisStand" aria-live="polite"></p>
       <ul id="kluisLijst"></ul>
     </div>
-    <div class="zsPaneel" id="volLokaalVak">
+    <div class="zsPaneel" id="volLokaalVak" hidden>
       <h2>Vol lokaal</h2>
       <button type="button" id="volLokaalKnop" aria-pressed="false">Vol lokaal: UIT</button>
       <p id="volLokaalZin" class="eerlijk"></p>
@@ -500,7 +421,7 @@
         <div id="zwPriveTegels" class="zwTegels"></div>
       </section>
     </div>
-    <div id="priveHoek"></div>
+    </details>
   </section>
   <section id="scherm-koppel" hidden>
     <!-- 1.9.14 (12 oktober): ALLE QR'S NAAST ELKAAR, elk met een kop in gewone taal.
@@ -615,7 +536,127 @@
     <p class="eerlijk">De relay is een kleine eigen brievenbus. Wat erdoor gaat is versleuteld; hij ziet niet wat erin staat. De brievenbus blijft de terugval.</p>
     <p class="eerlijk">Karakter aan: Veronica zegt kort wat ze doet en waarom. Zakelijk: alleen de feiten.</p>
   </section>
-  <div id="log" aria-live="polite"></div>
+  <!-- 556: MEER. Alles wat geen beslissing van een mens is, of wat je zelden nodig hebt, staat hier. Niets is weggegooid. -->
+  <section id="scherm-meer" hidden aria-labelledby="meerKop">
+    <h2 id="meerKop">Meer</h2>
+    <div id="meerKnoppen" class="tKnoppen">
+    <button id="tab-wachtrij" aria-pressed="false">Wachtrij</button>
+    <button id="tab-koppel" aria-pressed="false">Koppelen</button>
+    <!-- 521: een rektelefoon aan de USB-kabel van deze computer: scherm zien en tikken (eigen pagina) -->
+    <a id="tab-besturen" href="besturen.html" style="color: var(--tekst); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; text-decoration: none; background: var(--paneel);">📱 Telefoon besturen</a>
+    </div>
+    <div id="lokaalKeus" role="radiogroup" aria-label="Wat mag er naar buiten?">
+      <span class="reserveKop">Naar buiten</span>
+      <button type="button" data-lokaal="normaal" role="radio" aria-checked="true">Normaal</button>
+      <button type="button" data-lokaal="alleen" role="radio" aria-checked="false">Alleen lokaal</button>
+      <button type="button" data-lokaal="vol" role="radio" aria-checked="false">Vol lokaal</button>
+    </div>
+    <p id="lokaalZin" class="tBron"></p>
+    <h3>Logboek</h3>
+    <div id="log" aria-live="polite"></div>
+    <div id="meerKopVerplaatst" class="tKnoppen">
+    <span id="pantserZin" aria-live="polite"></span>
+    <button id="bureauKnop" aria-pressed="true" title="Mag Claude kleine klussen naar de telefoons sturen?">Claude-bureau: aan</button>
+    <span id="bureauZin" aria-live="polite"></span>
+    <span id="veronicaZegt" aria-live="polite"></span>
+    <div id="pantserHelp" role="status"></div>
+    <button id="motorAlleKnop" hidden>Zet de eigen motor aan</button>
+    <button id="rekVanzelfKnop" title="Telefoons die achterlopen laten kijken naar een nieuwe versie, en werkers hun eigen motor aan laten zetten">Rek vanzelf: aan</button>
+    <button id="heyKnop">Hé Veronica</button>
+    <button id="roepKnop">📣 Roep de rij op</button>
+    <button id="pantserKnop" aria-pressed="false">Pantser uit</button>
+    <select id="vervangKeus" aria-label="Welk onderdeel vervangen"></select>
+    <button id="vervangKnop">Vervang onderdeel</button>
+    <button id="wakkerKnop" aria-pressed="false">Houd het scherm aan</button>
+    <button id="volKnop">Volledig scherm</button>
+    <button id="wandKnop" aria-pressed="false">🖥 Wandstand</button>
+    <button id="nieuwQrKnop">📱 QR voor een nieuwe telefoon</button>
+    </div>
+  <p class="eerlijk" id="wakkerZin">Veronica werkt alleen zolang deze computer aan is en niet slaapt. Tik op "Houd het scherm aan", of zet slapen uit.
+    Elk getal komt van een meting: eronder staat de bron en hoe oud hij is. Ouder dan 10 seconden is grijs. Niet gemeten = onbekend.</p>
+    <!-- 522: wie rekent nu (uit de hartslagen) -->
+    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="geheugenZin" hidden></p><div id="fennaMetingBlok" hidden><h3>Meting per telefoon</h3><ul id="fennaMeting"></ul></div><div id="slimBlok"><h3>Slimheid van Fenna</h3><button type="button" id="meetFennaKnop">Meet Fenna nu</button> <button type="button" id="meetFennaStop" class="tweede" hidden>Stop de meting</button><p id="slimStand" aria-live="polite"></p><div id="slimGrafiek"></div><div class="tabelVak"><table id="slimTabel"></table></div></div><div id="trapBlok"><h3>Samen van klein naar groot</h3>
+      <p class="eerlijk">Fenna knipt je doel in stukjes. Alle telefoons doen tegelijk een stukje, elk met het kleinste model dat voor die soort klus goed genoeg scoort.
+        Haalt een antwoord de controle niet, dan gaat dat stukje naar een groter model op een andere telefoon. De F8 alleen als het niet anders kan, en voor het samenvoegen en de eindcontrole. Alles blijft in huis.</p>
+      <label for="trapDoel">Doel</label> <textarea id="trapDoel" rows="4" maxlength="12000"></textarea>
+      <!-- 556: de soort klus bepaalt Fenna zelf, en dubbel sturen gaat vanzelf als de controle faalt: geen keuzevak en geen vinkje meer -->
+      <span hidden><label for="trapSoort">Soort klus</label> <select id="trapSoort"><option value="algemeen">Algemene vraag</option><option value="samenvatten">Samenvatten</option><option value="labelen">Labelen</option><option value="json">Gegevens als JSON</option><option value="feit">Feit terugvinden</option></select>
+      <label class="trapVink"><input type="checkbox" id="trapBelangrijk"> Belangrijk: elk stukje naar twee telefoons, het eerste goede antwoord wint</label></span>
+      <button type="button" id="trapKnop">Start samen</button> <button type="button" id="trapStop" class="tweede" hidden>Stop</button>
+      <p id="trapStand" aria-live="polite"></p>
+      <div class="tabelVak"><table id="trapLive"></table></div>
+      <ul id="trapF8"></ul>
+      <details id="trapKaartjesVak"><summary>Modelkaartjes</summary><ul id="trapKaartjes"></ul></details>
+      <div id="trapUit"></div></div><p id="gidsSamen" hidden></p><p id="meetSamen" hidden></p><p id="gezondSamen" hidden></p><ul id="wieRekentLijst"></ul><div id="wieDoetWat" hidden><h3>Wie doet wat</h3><ul id="wieDoetWatLijst"></ul></div></div>
+    <div id="vSamen"></div>
+    <div id="rekBlok" hidden><p id="rekZin" class="groteMelding"></p><ul id="rekRegels"></ul>
+      <!-- 1.9.14: EEN grote schuif, twee standen: de reserve waarop een rektelefoon stopt met rekenen. -->
+      <div id="reserveSchuif" role="group" aria-label="Reserve van de accu">
+        <span class="reserveKop">Reserve</span>
+        <button data-reserve="30" aria-pressed="false">30%</button><button data-reserve="50" aria-pressed="true">50%</button>
+      </div>
+      <p id="reserveZin"></p>
+    </div>
+    <div id="stekkerBeheer" hidden>
+      <p id="stekkerScanZin" class="eerlijk"></p>
+      <button id="stekkerZoekNu">Zoek stekkers nu</button>
+      <label for="stekkerAdres">Stekker toevoegen op adres (geen wachtwoord nodig)</label>
+      <input id="stekkerAdres" inputmode="decimal" autocomplete="off" maxlength="15" placeholder="adres van de stekker">
+      <div class="tKnoppen">
+        <button data-adresrol="laden">Dit is de lader</button>
+        <button data-adresrol="meter">Dit is de meter</button>
+        <button data-adresrol="ventilator">Dit is de ventilator</button>
+      </div>
+    </div>
+    <h2 id="stekkerKop" hidden>Stekkers</h2>
+    <div id="tegels-stekkers"><div id="stekkerTegels" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px"></div></div>
+    <div id="verbruikBlok" class="zsPaneel" hidden>
+      <h2>Verbruik en kosten</h2>
+      <p id="verbruikRegel" class="eerlijk"></p>
+      <label>Tarief per kWh (€) <input id="tariefVeld" type="text" inputmode="decimal" size="6" autocomplete="off"></label>
+      <p class="tBron">Kosten = gemeten kWh x dit tarief. Het tarief is jouw instelling; de kWh komen van de meter-stekker.</p>
+    </div>
+    <div id="verslagBlok" class="zsPaneel" hidden>
+      <h2>Verbruiksverslag</h2>
+      <p class="tBron">Voor wie de stroom betaalt: wat de telefoons verbruiken, in gewone woorden. Alles komt van de meter-stekker; er wordt niets geschat.</p>
+      <label for="verslagDagen">Periode</label>
+      <select id="verslagDagen"><option value="7">Laatste 7 dagen</option><option value="14">Laatste 14 dagen</option><option value="30">Laatste 30 dagen</option></select>
+      <pre id="verslagTekst" style="white-space:pre-wrap;font:inherit;margin:8px 0"></pre>
+      <button type="button" id="verslagKopieer">Kopieer verslag</button>
+      <button type="button" id="verslagWis">Verslag wissen</button>
+      <p id="verslagMelding" class="klein" aria-live="polite"></p>
+    </div>
+    <style>#kaartjeBlok [hidden] { display: none; }</style>
+    <div id="kaartjeBlok" class="zsPaneel">
+      <h2>Opslag op kaartje</h2>
+      <p class="tBron">Alleen Veronica gebruikt het kaartje; de downloadmap van Chrome blijft zoals hij is. Elke dag vanzelf een kopie van het logboek en de nachtproef, logboeken van de telefoons, en modelbestanden voor de werkers (de uitdeelkast). Van de privé-hoek alleen de versleutelde back-up. Nooit wachtwoorden of codes. Zonder kaartje bewaar ik het kleine intern.</p>
+      <p id="kaartjeStatus" class="eerlijk"></p>
+      <p id="kaartjeRuimte" class="tBron"></p>
+      <p id="kaartjeKast" class="tBron"></p>
+      <div class="tKnoppen">
+        <button id="kaartjeKies">Kies map op het kaartje</button>
+        <button id="kaartjeToestemming" hidden>Toestemming geven</button>
+        <button id="kaartjeKijk">Kijk opnieuw</button>
+      </div>
+      <div class="tKnoppen" id="kaartjeBewaar" hidden>
+        <button data-kaartje="logboek">Bewaar logboek</button>
+        <button data-kaartje="nachtproef">Bewaar nachtproef</button>
+        <button data-kaartje="overzicht">Bewaar overzicht</button>
+        <button data-kaartje="vertalingen">Bewaar vertalingen</button>
+      </div>
+      <p id="kaartjeMelding" class="tBron" aria-live="polite"></p>
+      <ul id="kaartjeLijst"></ul>
+    </div>
+    <div id="nachtBlok" class="zsPaneel" hidden>
+      <h2>Nachtproef</h2>
+      <p class="tBron">Elk kwartier schrijft de beheerder-telefoon per telefoon op: accu, temperatuur en of de motor aan staat. Een vraagteken = niet gemeten.</p>
+      <p id="nachtZin" class="eerlijk"></p>
+      <div style="overflow-x:auto"><table id="nachtTabel" class="klein"></table></div>
+      <button type="button" id="nachtWis">Nachtproef wissen</button>
+    </div>
+    <h2 id="zonKop">Zon en stroom</h2>
+    <div id="zonStroom" class="zsPaneel"></div>
+  </section>
 </main>
 <div id="versQrPaneel" hidden role="dialog" aria-label="QR om bij te werken">
   <h2>Scan dit met JARVIS op <span id="versQrNaam"></span></h2>

@@ -157,7 +157,7 @@
   }
   // 456b: dubbele Gemma-apps of modelkopieen op een telefoon. Alleen bekende namen, getallen en ja/nee, en een zin die als TEKST wordt getoond.
   const GEMMA_APPS = ['OlliteRT', 'OlliteRT (dev)', 'OlliteRT (beta)', 'Google AI Edge Gallery'];
-  const OLLITE_TOESTANDEN = ['klaar', 'geen-model', 'staat-niet-aan', 'niet-geinstalleerd', 'onbekend'];
+  const OLLITE_TOESTANDEN = ['klaar', 'geen-model', 'staat-niet-aan', 'niet-geinstalleerd', 'onbekend', 'niet-nodig'];   // 557: niet-nodig = eigen motor
   function leesGemma(g) {
     if (!g || typeof g !== 'object') return null;
     const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : 0);
@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.69';
+  const JARVIS_NIEUWSTE = '1.9.70';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
@@ -607,7 +607,9 @@
       if (tijd - h.t > HARTSLAG_VERS_MS) {
         if (h.id && tijd - h.t <= OUD_LIJST_MS && !gezien.has(h.id)) {
           gezien.add(h.id);
-          oud.push({ id: h.id, naam: h.naam || 'Een telefoon', zin: `geen verse hartslag (laatste ${klokZin(h.t)}${tijd - h.t > 20 * 3600 * 1000 ? `, ${Math.round((tijd - h.t) / 3600000)} uur geleden` : ''}${h.rol ? `, toen ${rolNaam(h)}` : ''}${typeof h.accu === 'number' ? `, accu ${h.accu}%${h.laadt ? ', aan de lader' : ', niet aan de lader'}` : ''})${stilUitleg(h)}`, magWerker: true,
+          // 557: antwoordde hij net RECHTSTREEKS over het wifi, dan leeft hij: dat zeggen we eerst, de oude hartslag daarna.
+          const wifiVers = lijn(h.id) && typeof lijn(h.id).wifi === 'number' && tijd - lijn(h.id).wifi < 10 * 60 * 1000;
+          oud.push({ id: h.id, naam: h.naam || 'Een telefoon', levend: wifiVers, zin: `${wifiVers ? `antwoordt rechtstreeks over het wifi (${klokZin(lijn(h.id).wifi).slice(0, 5)}); alleen zijn hartslag is oud: ` : ''}geen verse hartslag (laatste ${klokZin(h.t)}${tijd - h.t > 20 * 3600 * 1000 ? `, ${Math.round((tijd - h.t) / 3600000)} uur geleden` : ''}${h.rol ? `, toen ${rolNaam(h)}` : ''}${typeof h.accu === 'number' ? `, accu ${h.accu}%${h.laadt ? ', aan de lader' : ', niet aan de lader'}` : ''})${stilUitleg(h)}`, magWerker: true,
             gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd), werk: typeof h.werk === 'string' ? h.werk.trim() : '' });
         }
         continue;
@@ -1161,7 +1163,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.94';
+  const VERONICA_VERSIE = '1.9.95';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1400,7 +1402,7 @@
     const adres = motor ? `http://${host}:${MOTOR_POORT}` : `http://${host}:${poortVan(t.adres) || OLLITERT_POORT}`;
     return { id: h.id, adres, jarvis, motor };
   }
-  // 543: EEN NIEUWE TELEFOON DIE ALLEEN EEN HARTSLAG STUURT (de Cat S75 op 24 oktober): er is nog geen kaart, dus volgHart heeft niets
+  // 543: EEN NIEUWE TELEFOON DIE ALLEEN EEN HARTSLAG STUURT (24 oktober): er is nog geen kaart, dus volgHart heeft niets
   // om bij te werken. Terug: de kaarten die Veronica zou MAKEN (na een controle op het adres, zie veronica.js), of een lege lijst.
   // Alleen een verse hartslag met een thuisadres, en nooit een toestel dat al een kaart heeft (op id of op adres).
   function kaartenUitHarten(harten, telefoons, o) {
@@ -1409,7 +1411,9 @@
     const netten = Array.isArray(op.netten) ? op.netten : [];
     const net = (ip) => ip.split('.').slice(0, 3).join('.');
     const lijst = Array.isArray(telefoons) ? telefoons : [];
-    const hosts = new Set(lijst.flatMap((t) => [hostVan(t.adres), hostVan(t.jarvis)]).filter(Boolean));
+    // 557: alleen een regel ZONDER id blokkeert (die krijgt in ruimSpokenOp dit id). Een spook met een ANDER id op hetzelfde adres
+    // niet meer: zo kreeg een nieuwe telefoon geen tegel. Dat spook ruimt ruimSpokenOp daarna op (de verse hartslag bewijst het adres).
+    const hosts = new Set(lijst.filter((t) => !t.id).flatMap((t) => [hostVan(t.adres), hostVan(t.jarvis)]).filter(Boolean));
     const uit = [];
     for (const h of Array.isArray(harten) ? harten : []) {
       if (!h || !h.id || !h.t || tijd - h.t > HARTSLAG_VERS_MS) continue;
@@ -1423,6 +1427,90 @@
         kern: h.voorkeur === 'kern', alternatieven: [], plek: null, sleutel: motor ? op.code : '', motor });
     }
     return uit;
+  }
+  // 557: SPOKEN OPRUIMEN. Een telefoon = een vast toestel-id, nooit een naam of een adres. Na een ander wifi of een nieuwe naam
+  // stond dezelfde telefoon er drie keer in ("Rektelefoon 2" op het oude net, "Telefoon .76", een naam met een eigenaar erin), en een nieuwe
+  // telefoon kreeg geen tegel als een spook zijn adres nog had (een nieuwe telefoon op 24 oktober). Vijf stappen, allemaal uit metingen:
+  //  1. een regel zonder id krijgt het id dat JARVIS op dat adres ZELF noemde (statusIds), anders dat van een verse hartslag die
+  //     dat adres meldt (alleen als het er precies een is);
+  //  2. laatst gezien = het jongste van: direct antwoord (laatst per adres), verse hartslag, of wat er al bewaard stond; een regel
+  //     zonder enige datum krijgt NU (een spook wordt pas na drie dagen stilte opgeruimd, nooit bij het eerste laden);
+  //  3. dezelfde id = EEN regel: wie direct antwoordde, dan wiens adres in de verse hartslag staat, dan de jongste; de naam uit de
+  //     hartslag; de andere adressen gaan mee als alternatieven;
+  //  4. twee ids op hetzelfde adres: wie dat adres NU bewijst (JARVIS noemde daar zijn id, of zijn verse hartslag meldt het) blijft;
+  //  5. drie dagen niets gehoord = weg (de beheerder nooit vanzelf).
+  // Terug: { lijst, samen: [{ naam, met: [...] }], weg: [{ naam, adres, reden }], veranderd }.
+  const SPOOK_MS = 3 * 24 * 3600 * 1000;
+  function ruimSpokenOp(telefoons, o) {
+    const op = o || {};
+    const tijd = op.nu || Date.now();
+    const statusIds = op.statusIds || {};
+    const laatst = op.laatst || {};
+    const vers = (Array.isArray(op.harten) ? op.harten : []).filter((h) => h && h.id && h.t && tijd - h.t <= HARTSLAG_VERS_MS);
+    const hartVan = (id) => vers.find((h) => h.id === id) || null;
+    const hosts = (t) => [hostVan(t.jarvis), hostVan(t.adres)].filter(Boolean);
+    const samen = []; const weg = [];
+    let veranderd = false;
+    let lijst = (Array.isArray(telefoons) ? telefoons : []).filter(Boolean).map((t) => Object.assign({}, t));
+    // 1. id leren
+    for (const t of lijst) {
+      if (t.id) continue;
+      const h = hosts(t);
+      let id = h.map((x) => statusIds[x]).find(Boolean) || null;
+      if (!id) { const k = vers.filter((x) => (x.adressen || []).some((a) => h.includes(a))); if (k.length === 1) id = k[0].id; }
+      if (id) { t.id = id; veranderd = true; }
+    }
+    // 2. laatst gezien
+    for (const t of lijst) {
+      const hv = t.id ? hartVan(t.id) : null;
+      const l = Math.max(Number(t.laatstGezien) || 0, Number(laatst[t.adres]) || 0, Number(laatst[t.jarvis]) || 0, hv ? Number(hv.ontvangen || hv.t) || 0 : 0);
+      const nieuw = l || tijd;
+      if (nieuw !== t.laatstGezien) { t.laatstGezien = nieuw; veranderd = veranderd || !l; }
+    }
+    // 3. dezelfde id = een regel
+    const direct = (t) => Math.max(Number(laatst[t.adres]) || 0, Number(laatst[t.jarvis]) || 0);
+    const score = (t) => ((tijd - direct(t) < 10 * 60 * 1000) ? 4 : 0) + (t.id && hartVan(t.id) && hosts(t).some((x) => (hartVan(t.id).adressen || []).includes(x)) ? 2 : 0) + (t.kern ? 1 : 0);
+    const perId = new Map();
+    const uit = [];
+    for (const t of lijst) {
+      if (!t.id) { uit.push(t); continue; }
+      const groep = perId.get(t.id);
+      if (!groep) { perId.set(t.id, [t]); uit.push(t); } else groep.push(t);
+    }
+    for (const [id, groep] of perId) {
+      if (groep.length < 2) continue;
+      const winnaar = groep.slice().sort((a, b) => score(b) - score(a) || (b.laatstGezien || 0) - (a.laatstGezien || 0))[0];
+      const anderen = groep.filter((t) => t !== winnaar);
+      const hv = hartVan(id);
+      const w = Object.assign({}, winnaar, {
+        naam: (hv && String(hv.naam || '').trim()) || winnaar.naam,
+        kern: groep.some((t) => t.kern),
+        laatstGezien: Math.max(...groep.map((t) => t.laatstGezien || 0)),
+        alternatieven: [...new Set([].concat(winnaar.alternatieven || [], ...anderen.map((t) => [t.adres].concat(t.alternatieven || []))).filter((a) => a && a !== winnaar.adres))],
+      });
+      const i = uit.indexOf(groep[0]);
+      uit[i] = w;
+      samen.push({ naam: w.naam, met: anderen.map((t) => `${t.naam} (${hostVan(t.jarvis) || hostVan(t.adres)})`) });
+      veranderd = true;
+    }
+    lijst = uit;
+    // 4. twee ids op een adres: wie het adres nu bewijst blijft
+    const bewijst = (t, host) => statusIds[host] === t.id || !!(t.id && hartVan(t.id) && (hartVan(t.id).adressen || []).includes(host));
+    lijst = lijst.filter((t) => {
+      const host = hostVan(t.jarvis) || hostVan(t.adres);
+      if (!host || t.kern) return true;
+      const ander = lijst.find((x) => x !== t && x.id && x.id !== t.id && (hostVan(x.jarvis) || hostVan(x.adres)) === host && bewijst(x, host));
+      if (ander && !bewijst(t, host)) { weg.push({ naam: t.naam, adres: host, reden: `${ander.naam} gebruikt nu dit adres` }); veranderd = true; return false; }
+      return true;
+    });
+    // 5. drie dagen stilte
+    lijst = lijst.filter((t) => {
+      if (t.kern || tijd - (t.laatstGezien || tijd) <= SPOOK_MS) return true;
+      weg.push({ naam: t.naam, adres: hostVan(t.jarvis) || hostVan(t.adres), reden: `al ${Math.round((tijd - t.laatstGezien) / 86400000)} dagen niets gehoord` });
+      veranderd = true;
+      return false;
+    });
+    return { lijst, samen, weg, veranderd };
   }
   // 539: accu en temperatuur ook als het wifi niet lukt: uit een verse hartslag (via de brievenbus). Terug { temp, accu, laadt, t } of null.
   function hartMeting(h, tijd) {
@@ -1738,6 +1826,44 @@
   // knop "Werk nu bij" kan: vanaf JARVIS 1.9.69 haalt de telefoon dan de nieuwe versie op en zet een melding (een tik daarop, dan
   // Bijwerken). Een oudere JARVIS kent die roep niet: die moet EEN keer met de hand, en dat staat er in gewone taal.
   const BIJWERK_NU_VANAF = '1.9.69';
+  // 556: DE KORTE REGEL OP DE TEGEL: accu, warmte, model, wat hij doet, snelheid, slimheid en (op de geheugen-telefoon) de laatste
+  // kopie. Alles gemeten; wat er niet is heet "onbekend" of "nog niet gemeten", nooit een gok.
+  // 556: ONDERDEEL VANZELF VERVANGEN. Te warm (vanaf 42 graden) of bijna leeg zonder lader (onder 15%) = even geen werk; terug zodra
+  // hij is afgekoeld (onder 38) en weer genoeg accu heeft (20% of aan de lader). Alleen uit een VERSE hartslag; onbekend = niets doen.
+  // Een onderdeel dat een mens zelf vervangt (de knop op Meer) blijft vervangen tot een mens het terugzet.
+  function vervangBesluit(h, nu, o) {
+    const x = o || {};
+    if (!h || !h.t || (nu || Date.now()) - h.t > (x.versMs || 10 * 60 * 1000)) return null;
+    const warm = typeof h.temp === 'number' && h.temp >= 42;
+    const leeg = typeof h.accu === 'number' && h.accu < 15 && h.laadt !== true;
+    if (!x.vervangen && (warm || leeg)) return { doe: 'vervang', zin: warm ? `te warm (${String(Math.round(h.temp * 10) / 10).replace('.', ',')} °C); hij krijgt geen werk tot hij is afgekoeld` : `bijna leeg (${Math.round(h.accu)}%, niet aan de lader); hij krijgt geen werk tot hij weer laadt` };
+    const koel = typeof h.temp !== 'number' || h.temp < 38;
+    const genoeg = h.laadt === true || typeof h.accu !== 'number' || h.accu >= 20;
+    if (x.vervangen && x.vanzelf && koel && genoeg) return { doe: 'terug', zin: 'weer afgekoeld en genoeg accu; hij doet weer mee' };
+    return null;
+  }
+  // 556: FENNA VANZELF METEN: elke nacht (tussen 2 en 5 uur) een keer, en een keer na elke nieuwe JARVIS-versie of een ander model.
+  function slimMeetBesluit(o) {
+    const x = o || {};
+    const d = new Date(x.nu || Date.now());
+    const dag = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (x.handtekening && x.handtekening !== x.vorigeHandtekening) return { meet: true, reden: 'nieuwe versie of ander model', dag };
+    if (d.getHours() >= 2 && d.getHours() < 5 && x.nachtDag !== dag) return { meet: true, reden: 'de nachtmeting', dag };
+    return { meet: false, dag };
+  }
+  function tegelKort(o, tijd) {
+    const x = o || {};
+    const komma = (v) => String(v).replace('.', ',');
+    const delen = [];
+    delen.push(typeof x.accu === 'number' ? `accu ${Math.round(x.accu)}%${x.laadt ? ' (laadt)' : ''}` : 'accu onbekend');
+    delen.push(typeof x.temp === 'number' ? `${komma(Math.round(x.temp * 10) / 10)} °C` : 'warmte onbekend');
+    delen.push(x.model ? String(x.model).slice(0, 40) : 'geen model');
+    delen.push(x.doet ? String(x.doet).slice(0, 80) : 'rustig');
+    delen.push(typeof x.tps === 'number' && x.tps > 0 ? `±${komma(Math.round(x.tps * 10) / 10)} tokens per seconde` : 'snelheid nog niet gemeten');
+    delen.push(typeof x.slim === 'number' ? `slimheid ${Math.round(x.slim * 100)}%` : 'slimheid nog niet gemeten');
+    if (x.geheugen) delen.push(x.kopieT ? `laatste kopie ${klokZin(x.kopieT).slice(0, 5)}${(tijd || Date.now()) - x.kopieT > 36 * 3600 * 1000 ? ' (ouder dan een dag)' : ''}` : 'nog geen kopie');
+    return delen.join(' · ');
+  }
   function bijwerkRegel(h, nieuwste) {
     if (!h || !h.t || !h.versie) return null;
     const b = h.bijwerk && typeof h.bijwerk === 'object' ? h.bijwerk : null;
@@ -1991,11 +2117,11 @@
     return uit.slice(0, 6);
   }
   return { verwachtElke, wegRedenen, OUDE_RELAY_ELKE_MS, verbinding, VERBINDING_GROEN_MS, VERBINDING_ORANJE_MS, kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
-    alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
+    alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, ruimSpokenOp, SPOOK_MS, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesKast, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
-    bijwerkRegel, BIJWERK_NU_VANAF, isEigenNet, normaalAdres, leesBrievenbus, brievenbusUitleg, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    vervangBesluit, slimMeetBesluit, tegelKort, bijwerkRegel, BIJWERK_NU_VANAF, isEigenNet, normaalAdres, leesBrievenbus, brievenbusUitleg, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));
