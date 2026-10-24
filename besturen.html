@@ -24,11 +24,16 @@
   ol li, ul li { margin: 6px 0; }
   .melding { font-size: 20px; font-weight: 700; min-height: 1.4em; margin: 10px 0; }
   .melding.slecht { color: #ffb4b6; }
-  #bWerk { display: grid; grid-template-columns: minmax(0, 420px) 1fr; gap: 16px; align-items: start; }
-  @media (max-width: 760px) { #bWerk { grid-template-columns: 1fr; } }
-  #bScherm { width: 100%; max-height: 80vh; object-fit: contain; background: #000; border-radius: 12px; touch-action: none; cursor: pointer; display: block; }
-  #bToetsen { display: flex; gap: 8px; margin-top: 8px; }
-  #bToetsen button { flex: 1; }
+  main { max-width: none; }
+  /* 540: meerdere telefoons naast elkaar, elk een eigen paneel. */
+  #bSchermen { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; align-items: start; margin-top: 10px; }
+  .bPaneel { background: #060b12; border: 1px solid var(--lijn); border-radius: 14px; padding: 10px; }
+  .bKop { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .bKop b { font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bScherm { width: 100%; max-height: 78vh; object-fit: contain; background: #000; border-radius: 12px; touch-action: none; cursor: pointer; display: block; }
+  .bToetsen { display: flex; gap: 8px; margin-top: 8px; }
+  .bToetsen button { flex: 1; padding: 8px 6px; }
+  .bPaneel .melding { font-size: 17px; }
   .soorten { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 10px; }
   .vink label { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
   .vink input { width: 22px; height: 22px; margin-top: 3px; flex: none; }
@@ -72,23 +77,26 @@
   <section class="blok">
     <h2>2. Besturen</h2>
     <p id="bKanNiet" class="melding slecht" hidden></p>
-    <button class="groot" id="bKies">Kies de telefoon</button>
-    <button id="bStop" hidden>Stop met besturen</button>
-    <p class="eerlijk">Chrome toont een lijstje: kies de telefoon en tik Verbinden. Vraagt deze computer om de telefoon "met Linux te verbinden": niet doen.</p>
+    <button class="groot" id="bKies">Kies een telefoon</button>
+    <button id="bStop" hidden>Stop met alle telefoons</button>
+    <p class="eerlijk">Meer telefoons tegelijk: steek ze allemaal aan (een USB-hub mag) en tik voor elke telefoon nog eens op "Kies een telefoon". Ze komen naast elkaar te staan.</p>
     <p id="bMelding" class="melding" role="status" aria-live="polite"></p>
-    <div id="bVraag" hidden>
-      <p class="melding" id="bVraagZin"></p>
-      <button class="groot" id="bJa">Ja, dit is een rektelefoon</button>
-      <button id="bNee">Nee, dit is de dagelijkse telefoon</button>
-    </div>
-    <div id="bWerk" hidden>
-      <div>
-        <canvas id="bScherm" aria-label="Scherm van de telefoon"></canvas>
-        <div id="bToetsen"><button id="bTerug">◀ Terug</button><button id="bThuis">● Thuis</button><button id="bApps">■ Apps</button></div>
+    <div id="bSchermen" aria-label="De schermen van de telefoons"></div>
+    <template id="bPaneel">
+      <div class="bPaneel">
+        <div class="bKop"><b class="bNaam">Telefoon</b><button class="bLos">Stop</button></div>
+        <div class="bVraag" hidden>
+          <p class="melding bVraagZin"></p>
+          <button class="groot bJa">Ja, dit is een rektelefoon</button>
+          <button class="bNee">Nee, dit is de dagelijkse telefoon</button>
+        </div>
+        <canvas class="bScherm" aria-label="Scherm van de telefoon" hidden></canvas>
+        <div class="bToetsen" hidden><button class="bTerug">◀ Terug</button><button class="bThuis">● Thuis</button><button class="bApps">■ Apps</button></div>
+        <p class="melding bZin" role="status"></p>
       </div>
-      <div class="eerlijk">Klik op het beeld = tikken; slepen = vegen. De telefoon blijft aan zolang hij hier bestuurd wordt.
-        Tekst typen kan hier niet, met opzet.</div>
-    </div>
+    </template>
+    <p class="eerlijk">Klik op een beeld = tikken op die telefoon; slepen = vegen. Een telefoon blijft aan zolang hij hier bestuurd wordt.
+      Tekst typen kan hier niet, met opzet.</p>
   </section>
 
   <section class="blok vink" id="bLijst">

@@ -631,7 +631,8 @@
       // 522: de laatste zin van de werker van de gids op die telefoon (waarom hij wel of niet werkt), als hij er een meldt.
       if (typeof h.werk === 'string' && h.werk.trim()) zin += `. Werker: ${h.werk.trim().replace(/\.$/, '')}`;
       // 522c: een beheerder die als dagelijkse telefoon RUST kan per ongeluk een rektelefoon zijn (de QR van Veronica gescand).
-      regels.push({ id: h.id || naam, naam, zin, rekent, tps, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: rolNaam(h),
+      // 539: ook een gekozen beheerder (voorkeur kern) kan met een klik en een bevestiging rektelefoon worden.
+      regels.push({ id: h.id || naam, naam, zin, rekent, tps, pauze: !!p, magWerker: (h.voorkeur === 'kern' || (h.rol === 'baas' && h.dagelijks === true)) && !p, rol: rolNaam(h),
         gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd), meet: meetuurZin(h), meetbaar: h.rol === 'werker' && !h.dagelijks && !p && !!(m && m.klaar) });   // 529
     }
     for (const b of (Array.isArray(bekend) ? bekend : [])) {
@@ -765,6 +766,9 @@
         // De plek (1.9.0): mobiel (in je broekzak) of rek (koeler en stekker). Onbekend = null.
         plek: ruw.plek === 'mobiel' || ruw.plek === 'rek' ? ruw.plek : null,
         sleutel: typeof ruw.sleutel === 'string' ? ruw.sleutel.slice(0, 200) : '',
+        // 539: het vaste toestel-id (JARVIS zet het sinds 482 als `toestel` in de lijst). Daarmee vindt Veronica de hartslag
+        // van deze telefoon ook als het adres in de lijst oud is (een andere router, een ander wifi).
+        id: /^[a-z0-9]{12,32}$/.test(String(ruw.toestel || ruw.id || '')) ? String(ruw.toestel || ruw.id) : '',
       });
     }
     // De stekkers (Tasmota): Veronica LEEST de watts; schakelen doet JARVIS (ook de handknop van Veronica gaat via JARVIS).
@@ -791,7 +795,7 @@
       ? { leeftijdMs: tel(sc.leeftijdMs), netten: (Array.isArray(sc.netten) ? sc.netten : []).map((n) => String(n)).filter((n) => /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(n)).slice(0, 4), gescand: tel(sc.gescand), antwoord: tel(sc.antwoord) || 0, tasmota: tel(sc.tasmota) || 0, door: sc.door === 'op verzoek' ? 'op verzoek' : 'vanzelf' }
       : null;
     const priveBezig = x.prive && typeof x.prive === 'object' && Number(x.prive.bezig) > 0 ? 1 : 0;
-    return { telefoons: uit, stekkers, stekkersGevonden, stekkerScan, priveBezig, rol: x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon), postbusAdres: leesPostbusAdres(x.postbusAdres) };
+    return { telefoons: uit, stekkers, stekkersGevonden, stekkerScan, priveBezig, rol: x.rol === 'baas' || x.rol === 'werker' ? x.rol : null, kern: normaalAdres(x.kern, JARVIS_POORT), code: /^\d{6}$/.test(String(x.code || '')) ? String(x.code) : null, bekend: leesLeden(x.leden), ledenIds: leesLedenIds(x.leden), ntfy: leesNtfy(x.ntfy), eigenaar: leesEigenaar(x.eigenaar), updateSleutel: leesUpdateSleutel(x.updateSleutel), updateRepo: typeof x.updateRepo === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.updateRepo) && !x.updateRepo.includes('..') ? x.updateRepo : null, nieuweTelefoon: leesNieuweTelefoon(x.nieuweTelefoon), postbusAdres: leesPostbusAdres(x.postbusAdres) };
   }
   // 1.9.14: de downloadlink voor een nieuwe telefoon (QR "JARVIS op een nieuwe telefoon zetten"). Alleen een
   // ondertekend adres in de postbus (zelfde regel als de werker in JARVIS); al het andere: null.
@@ -942,6 +946,17 @@
       }
     }
     return uit.slice(0, MAX_BEKEND);
+  }
+  // 539: de leden van de baas met hun id en ALLE adressen die ze ooit hadden (de vindladder). Zo hoort een oud adres in de lijst
+  // toch bij een toestel-id, en dus bij een hartslag.
+  function leesLedenIds(leden) {
+    const uit = [];
+    for (const l of (Array.isArray(leden) ? leden : []).slice(0, 24)) {
+      if (!l || !/^[a-z0-9]{12,32}$/.test(String(l.id || ''))) continue;
+      const hosts = (Array.isArray(l.adressen) ? l.adressen : []).map((a) => String((a && a.host) || '')).filter((h) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h)).slice(0, 8);
+      uit.push({ id: String(l.id), hosts });
+    }
+    return uit;
   }
   // Na een netwerkwissel vraagt Veronica rond: wie ze nu volgt, de hoofdtelefoon, elke
   // telefoon, en alles wat ze ooit hoorde. Uniek, in die volgorde.
@@ -1135,7 +1150,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.86';
+  const VERONICA_VERSIE = '1.9.87';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1334,6 +1349,54 @@
   }
   // 500: de adressen uit VERSE hartslagen (hoogstens twee uur oud) gaan nog voor de ledenbrief: elke telefoon meldt zijn eigen adres.
   const HARTSLAG_VERS_MS = 2 * 60 * 60 * 1000;
+  // ---- 539: HET ADRES DAT DE TELEFOON ZELF DOORGEEFT WINT ----
+  //
+  // Na een wissel van wifi (24 oktober: een andere router, 192.168.178.x) bleef Veronica het oude adres en de oude poort proberen
+  // (8000, van OlliteRT) die de baas in zijn lijst doorgaf, terwijl de telefoon in zijn hartslag zijn NIEUWE adressen, de poort van
+  // JARVIS en "motor klaar" meldde. Regel: een verse hartslag wint van de lijst. Het adres van JARVIS wordt host + de poort uit de
+  // hartslag; het rekenadres wordt de eigen motor (8081, met de rij-code als sleutel) zodra de hartslag "klaar" zegt, anders dezelfde
+  // poort als voorheen op het nieuwe adres. Zonder thuisadres in de hartslag (alleen de brievenbus) verandert er niets aan het adres.
+  const MOTOR_POORT = 8081;
+  const hostVan = (a) => ((/^http:\/\/([^:/]+)/.exec(String(a || '')) || [])[1] || '');
+  const poortVan = (a) => Number((/^http:\/\/[^:/]+:(\d+)/.exec(String(a || '')) || [])[1]) || 0;
+  // Welke hartslag hoort bij deze telefoon: op id, dan op een adres dat hij nu meldt, dan via de ledenlijst van de baas (een oud adres).
+  function hartVoorTelefoon(t, harten, ledenIds) {
+    const lijst = Object.values(harten || {}).filter((h) => h && h.id && h.t);
+    if (!t) return null;
+    if (t.id) { const h = lijst.find((x) => x.id === t.id); if (h) return h; }
+    const hosts = [hostVan(t.jarvis), hostVan(t.adres)].filter(Boolean);
+    const opAdres = lijst.filter((h) => Array.isArray(h.adressen) && h.adressen.some((a) => hosts.includes(a))).sort((a, b) => b.t - a.t)[0];
+    if (opAdres) return opAdres;
+    for (const l of ledenIds || []) {
+      if (l && l.id && Array.isArray(l.hosts) && l.hosts.some((x) => hosts.includes(x))) { const h = lijst.find((x) => x.id === l.id); if (h) return h; }
+    }
+    return null;
+  }
+  // Terug: { id, adres, jarvis, motor } (het nieuwe), { id } (alleen het id: de hartslag noemt geen thuisadres), of null.
+  // o: { nu, code, netten: ['a.b.c', ...] (de eigen thuisnetten van deze computer, als bekend: die gaan voor) }
+  function volgHart(t, h, o) {
+    const op = o || {};
+    const tijd = op.nu || Date.now();
+    if (!t || !h || !h.id || !h.t || tijd - h.t > HARTSLAG_VERS_MS) return null;
+    const thuis = (Array.isArray(h.adressen) ? h.adressen : []).filter(isThuisNet);
+    if (!thuis.length) return { id: h.id };
+    const netten = Array.isArray(op.netten) ? op.netten : [];
+    const net = (ip) => ip.split('.').slice(0, 3).join('.');
+    const huidig = hostVan(t.jarvis) || hostVan(t.adres);
+    const host = thuis.includes(huidig) ? huidig : (thuis.find((ip) => netten.includes(net(ip))) || thuis[0]);
+    const jarvis = `http://${host}:${Number(h.poort) || JARVIS_POORT}`;
+    const motor = !!(h.motor && h.motor.klaar) && !!op.code;
+    const adres = motor ? `http://${host}:${MOTOR_POORT}` : `http://${host}:${poortVan(t.adres) || OLLITERT_POORT}`;
+    return { id: h.id, adres, jarvis, motor };
+  }
+  // 539: accu en temperatuur ook als het wifi niet lukt: uit een verse hartslag (via de brievenbus). Terug { temp, accu, laadt, t } of null.
+  function hartMeting(h, tijd) {
+    if (!h || !h.t || (tijd || Date.now()) - h.t > HARTSLAG_VERS_MS) return null;
+    const temp = typeof h.temp === 'number' ? h.temp : null;
+    const accu = typeof h.accu === 'number' ? h.accu : null;
+    if (temp === null && accu === null) return null;
+    return { temp, accu, laadt: h.laadt === true, t: h.t };
+  }
   function metHartslagen(lijst, per, nuMs) {
     const vers = Object.values(per || {}).filter((h) => h && Array.isArray(h.adressen) && h.adressen.length && nuMs - h.t <= HARTSLAG_VERS_MS)
       .sort((a, b) => (b.rol === 'baas') - (a.rol === 'baas') || b.t - a.t);
@@ -1804,7 +1867,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,

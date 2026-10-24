@@ -396,6 +396,34 @@
     if (gem && gem.zin) return gem.zin;
     return oud ? `Deze JARVIS (versie ${v}) kan nog niet zeggen welke van de drie het is: OlliteRT niet geïnstalleerd, de server niet gestart, of geen model geladen. Na de update naar 1.9.25 (aan de lader, scherm uit) staat hier precies wat het is.` : 'Is OlliteRT geïnstalleerd, staat de server aan en is er een model geladen?';
   }
+  // ---- 539: HET ADRES EN DE POORT DIE DE TELEFOON ZELF DOORGEEFT ----
+  // Een verse hartslag (via de brievenbus, ook als het wifi niet lukt) wint van wat de baas in zijn lijst zet: nieuwe adressen na een
+  // ander wifi, de poort van JARVIS, en de eigen motor (8081) zodra die klaar is. Geen QR nodig. De metingen verhuizen mee.
+  const HartAdresV = { gelogd: new Set(), ledenIds: [] };
+  function pasHartenToe(lijst) {
+    let veranderd = false;
+    const netten = (VQ.eigen || []).map(K.netVan).filter(Boolean);
+    for (const t of lijst || []) {
+      const h = K.hartVoorTelefoon(t, HB.per, HartAdresV.ledenIds);
+      const r = K.volgHart(t, h, { nu: nu(), code: S.code, netten });
+      if (!r) continue;
+      if (r.id && t.id !== r.id) { t.id = r.id; veranderd = true; }
+      if (!r.adres || (r.adres === t.adres && r.jarvis === t.jarvis && (!r.motor || t.motor))) continue;
+      const oudA = t.adres; const oudJ = t.jarvis;
+      if (S.metingen[oudA] && !S.metingen[r.adres]) S.metingen[r.adres] = Object.assign({}, S.metingen[oudA], { jarvisNietTot: 0 });
+      if (S.staten[oudA] && !S.staten[r.adres]) S.staten[r.adres] = Object.assign({}, S.staten[oudA]);
+      if (S.metingen[r.adres]) S.metingen[r.adres].jarvisNietTot = 0;   // het nieuwe JARVIS-adres meteen proberen
+      t.adres = r.adres; t.jarvis = r.jarvis;
+      if (r.motor) { t.motor = true; t.sleutel = S.code; }
+      veranderd = true;
+      const sl = `${t.id}|${r.adres}|${r.jarvis}`;
+      if (!HartAdresV.gelogd.has(sl)) {
+        HartAdresV.gelogd.add(sl);
+        logRegel(`${t.naam}: meldt zich in zijn hartslag op ${r.jarvis.slice(7)}${r.motor ? ', eigen motor op poort 8081' : ''}. Ik gebruik dat nu${oudJ && oudJ !== r.jarvis ? ` (was ${oudJ.slice(7)})` : oudA !== r.adres ? ` (was ${oudA.slice(7)})` : ''}.`);
+      }
+    }
+    return veranderd;
+  }
   async function meetTelefoon(t) {
     let m = meet(t.adres);
     let s = staat(t.adres);
@@ -874,6 +902,7 @@
     if (meetBezig) return;
     meetBezig = true;
     try {
+      if (pasHartenToe(S.telefoons)) { try { await Opslag.schrijf('telefoons', S.telefoons); } catch (e) { /* volgende ronde */ } }   // 539
       await Promise.all(S.telefoons.map(meetTelefoon).concat([meetKern()], S.stekkers.map(meetStekker)));
       await lnaTik();
       karakterTik();
@@ -904,6 +933,8 @@
     if (l.rol === 'baas' && await neemStekkersOver(l)) tekenLive();
     if (!l.telefoons.length) return;
     l.telefoons = K.herstelKernAdres(l.telefoons, adres);
+    if (Array.isArray(l.ledenIds) && l.ledenIds.length) HartAdresV.ledenIds = l.ledenIds;   // 539
+    pasHartenToe(l.telefoons);   // 539: een verse hartslag wint van het (mogelijk oude) adres in de lijst van de baas
     const namen = K.nieuweNamen(S.telefoons, l.telefoons);
     const oud = JSON.stringify(S.telefoons.map((t) => [t.naam, t.adres]));
     if (oud === JSON.stringify(l.telefoons.map((t) => [t.naam, t.adres]))) return;
@@ -1077,7 +1108,7 @@
     const tijd = nu();
     const bereik = S.telefoons.filter((t) => staat(t.adres).bereikbaar).length;
     const heet = S.telefoons.filter((t) => ['oranje', 'rood'].includes(staat(t.adres).hitteStand)).length;
-    const warm = S.telefoons.map((t) => ({ naam: t.naam, d: meterStand(meet(t.adres), staat(t.adres), tijd) }))
+    const warm = S.telefoons.map((t) => ({ naam: t.naam, d: meterStand(meet(t.adres), staat(t.adres), tijd, t) }))
       .filter((x) => x.d.temperatuur.waarde !== null && x.d.temperatuur.ms <= 60000).sort((a, b) => b.d.temperatuur.waarde - a.d.temperatuur.waarde)[0];
     const feiten = K.statusFeiten({ bereikbaar: bereik, totaal: S.telefoons.length, warmste: warm ? { naam: warm.naam, temp: warm.d.temperatuur.waarde } : null,
       wacht: S.taken.filter((x) => x.status === 'wacht').length, heet });
@@ -1310,19 +1341,23 @@
   // Snelheid en benutting uit OlliteRT, temperatuur en batterij uit JARVIS op die telefoon.
   // Rekent hij niet, dan is de snelheid echt 0. Geen meting = grijze meter met "geen meting".
   const Mt = window.Meters;
-  function meterStand(m, s, tijd) {
+  function meterStand(m, s, tijd, t) {
     const h = m.health || {}; const st = m.status || {};
     const vers = (x) => (x ? tijd - x.t : null);
     const tps = h.tps ? { waarde: h.bezig && h.bezig.waarde === false ? 0 : h.tps.waarde, ms: vers(h.tps) } : { waarde: null, ms: null };
-    return {
-      snelheid: tps,
-      benutting: h.benutting ? { waarde: h.benutting.waarde, ms: vers(h.benutting) } : { waarde: null, ms: null },
-      temperatuur: st.temperatuur ? { waarde: st.temperatuur.waarde, ms: vers(st.temperatuur), stand: s.hitteStand || 'groen' } : { waarde: null, ms: null, stand: 'groen' },
-      batterij: st.batterij ? { waarde: st.batterij.waarde, ms: vers(st.batterij), laadt: st.laadt ? st.laadt.waarde === true : false } : { waarde: null, ms: null, laadt: false },
-    };
+    let temperatuur = st.temperatuur ? { waarde: st.temperatuur.waarde, ms: vers(st.temperatuur), stand: s.hitteStand || 'groen' } : { waarde: null, ms: null, stand: 'groen' };
+    let batterij = st.batterij ? { waarde: st.batterij.waarde, ms: vers(st.batterij), laadt: st.laadt ? st.laadt.waarde === true : false } : { waarde: null, ms: null, laadt: false };
+    // 539: geen (verse) meting over het wifi? Dan wat de telefoon zelf in zijn hartslag zette (via de brievenbus), met de leeftijd daarvan.
+    const hm = t ? K.hartMeting(K.hartVoorTelefoon(t, HB.per, HartAdresV.ledenIds), tijd) : null;
+    if (hm) {
+      const oud = (x) => x.waarde === null || x.ms === null || x.ms > K.MAX_LEEFTIJD_MS;
+      if (hm.temp !== null && oud(temperatuur)) temperatuur = { waarde: hm.temp, ms: tijd - hm.t, stand: s.hitteStand || K.ruweStand({ temperatuur: hm.temp }) || 'groen', bron: 'brievenbus' };
+      if (hm.accu !== null && oud(batterij)) batterij = { waarde: hm.accu, ms: tijd - hm.t, laadt: hm.laadt, bron: 'brievenbus' };
+    }
+    return { snelheid: tps, benutting: h.benutting ? { waarde: h.benutting.waarde, ms: vers(h.benutting) } : { waarde: null, ms: null }, temperatuur, batterij };
   }
   function meterRij(t, m, s, tijd) {
-    const d = meterStand(m, s, tijd);
+    const d = meterStand(m, s, tijd, t);
     const OUD = K.MAX_LEEFTIJD_MS;
     const vak = (soort, svg, wat, ms) => {
       const v = el('div', `vMeter v-${soort}`);
@@ -1467,7 +1502,7 @@
   }
   function tekenSamen(tijd) {
     const OUD = 60000;
-    const st = S.telefoons.map((t) => ({ t, d: meterStand(meet(t.adres), staat(t.adres), tijd) }));
+    const st = S.telefoons.map((t) => ({ t, d: meterStand(meet(t.adres), staat(t.adres), tijd, t) }));
     const snel = st.filter((x) => x.d.snelheid.waarde !== null && x.d.snelheid.ms <= OUD);
     const warm = st.filter((x) => x.d.temperatuur.waarde !== null && x.d.temperatuur.ms <= OUD).sort((a, b) => b.d.temperatuur.waarde - a.d.temperatuur.waarde)[0];
     const bereik = S.telefoons.filter((t) => staat(t.adres).bereikbaar).length;
@@ -3627,6 +3662,8 @@
   // ---- Koppelen: de vertrouwde lijst EEN keer overnemen van de hoofdtelefoon ----
   async function bewaarLijst(l) {
     if (l.kern) l.telefoons = K.herstelKernAdres(l.telefoons, l.kern);   // 450: het adres dat antwoordde
+    if (Array.isArray(l.ledenIds) && l.ledenIds.length) HartAdresV.ledenIds = l.ledenIds;   // 539
+    pasHartenToe(l.telefoons);
     S.telefoons = l.telefoons;
     await neemStekkersOver(l);
     if (l.kern) S.kern = l.kern;
@@ -4617,7 +4654,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
