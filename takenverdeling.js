@@ -104,7 +104,10 @@
     else if (teOud || !model) regels.push({ soort: 'postbus', naam: 'Gids-werk (postbus)', mag: false, vast: true, reden: teOud ? 'geen model' : 'nog geen model geladen' });
     else regels.push({ soort: 'postbus', naam: 'Gids-werk (postbus)', mag: true, vast: true, reden: (t.klasse === 'zwaar' ? 'lastig en simpel werk (de telefoon kiest zelf uit de postbus)' : 'simpel werk; lastig werk alleen met een groot model (de telefoon kiest zelf)') + (brief ? '; de postbus werkt ook zonder wifi naar Veronica' : '') });
     // Zoeken: de baas verdeelt. Een werker met JARVIS en wifi kan een deelvraag ophalen; de baas zelf ook.
-    regels.push(weg || brief ? { soort: 'zoeken', naam: 'Zoeken (deelvragen)', mag: false, vast: true, reden: weg || geenWifi }
+    // 537: zonder wifi kan het via de brievenbus (een geadresseerd zoekkaartje), maar alleen als de telefoon dat kent (JARVIS 1.9.64).
+    regels.push(weg ? { soort: 'zoeken', naam: 'Zoeken (deelvragen)', mag: false, vast: true, reden: weg }
+      : brief ? (t.vraagViaBrief === true ? { soort: 'zoeken', naam: 'Zoeken (deelvragen)', mag: true, vast: true, reden: 'via de brievenbus: een zoekkaartje met hoogstens drie deelvragen, alleen voor deze telefoon (langzamer dan het wifi)' }
+        : { soort: 'zoeken', naam: 'Zoeken (deelvragen)', mag: false, vast: true, reden: 'geen directe wifi-verbinding; zoeken via de brievenbus kan pas vanaf JARVIS 1.9.64' })
       : { soort: 'zoeken', naam: 'Zoeken (deelvragen)', mag: true, vast: true, reden: t.kern ? 'de baas verdeelt de deelvragen en bewaakt de rem' : 'haalt een deelvraag op via zijn eigen wifi; de baas verdeelt' });
     regels.push({ soort: 'bewaker', naam: 'Bewaker', mag: !weg, vast: true, reden: weg || (brief ? 'let op temperatuur en accu (uit de hartslag); geen model nodig' : 'let op temperatuur, accu en bereikbaarheid; geen model nodig') });
     return regels;

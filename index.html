@@ -191,7 +191,7 @@
   <section id="scherm-live">
     <p id="leeg">Nog geen telefoons. Tik op Koppelen en neem de vertrouwde telefoons over van de hoofdtelefoon.</p>
     <!-- 522: wie rekent nu (uit de hartslagen) -->
-    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="gidsSamen" hidden></p><p id="meetSamen" hidden></p><p id="gezondSamen" hidden></p><ul id="wieRekentLijst"></ul></div>
+    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="gidsSamen" hidden></p><p id="meetSamen" hidden></p><p id="gezondSamen" hidden></p><ul id="wieRekentLijst"></ul><div id="wieDoetWat" hidden><h3>Wie doet wat</h3><ul id="wieDoetWatLijst"></ul></div></div>
     <div id="vSamen"></div>
     <div id="rekBlok" hidden><p id="rekZin" class="groteMelding"></p><ul id="rekRegels"></ul>
       <!-- 1.9.14: EEN grote schuif, twee standen: de reserve waarop een rektelefoon stopt met rekenen. -->
@@ -311,6 +311,23 @@
       <p id="zoekGeheugenTel" class="klein">Nog niets onthouden.</p>
       <p id="zoekStand" aria-live="polite"></p>
       <div id="zoekUitslag"></div>
+      <!-- 537: de zoekstapel: een lijst vragen, verdeeld over de telefoons, elke telefoon zijn eigen stapel. Alleen lezen, platte tekst. -->
+      <h3>Zoekstapel</h3>
+      <p class="klein">Een vraag per regel (hoogstens 30). Ik verdeel ze om de beurt over de telefoons; elke telefoon werkt zijn eigen stapel af. De rem per bron geldt voor het hele huis, dus meer telefoons is meer tegelijk, niet meer per bron.</p>
+      <label for="stapelVragen">Vragen</label>
+      <textarea id="stapelVragen" rows="5" spellcheck="false" placeholder="een vraag per regel"></textarea>
+      <label for="stapelSoort">Soort vraag</label>
+      <select id="stapelSoort">
+        <option value="algemeen">Algemeen</option>
+        <option value="plaats">Een plaats of adres</option>
+        <option value="wetenschap">Wetenschap</option>
+        <option value="fotos">Foto's (vrije licentie)</option>
+      </select>
+      <button type="button" id="stapelKnop">Verdeel en zoek</button>
+      <button type="button" id="stapelStop" hidden>Stop</button>
+      <p id="stapelStand" aria-live="polite"></p>
+      <ul id="stapelVoortgang"></ul>
+      <div id="stapelUitslag"></div>
     </section>
   </section>
   <section id="scherm-prive" hidden>

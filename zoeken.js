@@ -10,6 +10,10 @@
 //   - de ophaler: Veronica haalt zelf NIETS van internet; ze vraagt een telefoon (POST /jarvis/zoek-deel, met de koppelcode);
 //   - het samenvoegen per adres: dezelfde pagina uit twee bronnen is een resultaat met twee bronnen;
 //   - eerlijke zinnen als het niet kan (geen telefoon, een oude JARVIS die Veronica nog niet toestaat, een bron die even dicht is).
+//   - 537: een telefoon ZONDER wifi (gastnetwerk) krijgt zijn deelvragen als geadresseerd zoekkaartje via de brievenbus (`o.brief`);
+//     de deelvragen voor dezelfde telefoon gaan samen in een kaartje (hoogstens drie), dat spaart berichten.
+//   - 537: DE ZOEKSTAPEL. Een lijst zoekvragen wordt om de beurt over de telefoons verdeeld; elke telefoon werkt zijn EIGEN stapel af,
+//     een vraag tegelijk. De rem per bron blijft voor het hele huis (een kassa): meer telefoons = meer tegelijk, nooit meer per bron.
 //
 // ALLEEN VOORSTELLEN: de uitslag is gegevens. Er zit niets in dat iets opent, plaatst of koopt, en de weergave maakt van een adres platte tekst.
 // PRIVE-ZOEKEN HOORT HIER NIET: wat privé is blijft op de telefoon met de kamer-sleutel. De poort weigert wat persoonlijk lijkt.
@@ -80,11 +84,51 @@
     return volgorde.map((k) => per.get(k)).sort((a, b) => b.bronnen.length - a.bronnen.length);
   }
 
-  // o: { haal(url, init, ms) -> Response (Veronica's eigen), telefoons() -> [{ id, naam, host }], code() -> koppelcode, wacht?, nu? }
+  const STAPEL_MAX = 30;
+  // Om de beurt verdelen: vraag 1 naar telefoon 1, vraag 2 naar telefoon 2, ... Elke telefoon zijn eigen stapel, in de volgorde van de lijst.
+  function verdeelStapel(termen, telefoons) {
+    const tels = (Array.isArray(telefoons) ? telefoons : []).filter((t) => t && t.id);
+    const stapels = tels.map((t) => ({ telefoon: t, termen: [] }));
+    if (!stapels.length) return stapels;
+    (Array.isArray(termen) ? termen : []).forEach((term, i) => stapels[i % stapels.length].termen.push(term));
+    return stapels.filter((x) => x.termen.length);
+  }
+  function leesStapel(tekst) {
+    const gezien = new Set(); const uit = [];
+    for (const regel of String(tekst == null ? '' : tekst).split(/\r?\n/)) {
+      const t = regel.replace(/\s+/g, ' ').trim();
+      if (!t || gezien.has(t.toLowerCase())) continue;
+      gezien.add(t.toLowerCase()); uit.push(t);
+      if (uit.length >= STAPEL_MAX) break;
+    }
+    return uit;
+  }
+
+  // o: { haal(url, init, ms) -> Response (Veronica's eigen), telefoons() -> [{ id, naam, host } | { id, naam, brief: true, toestel }], code() -> koppelcode, wacht?, nu?,
+  //      brief?: { stuur: async (toestelId, delen) -> { delen } | { fout } } (537) }
   function maak(o) {
     if (!o || typeof o.haal !== 'function' || typeof o.telefoons !== 'function' || typeof o.code !== 'function') throw new Error('VeronicaZoek.maak: haal, telefoons en code zijn nodig');
     const kassa = ZoekKassa.maakKassa({ nu: o.nu });
-    const tellers = { vragen: 0, geweigerd: 0, zonderTelefoon: 0 };
+    const tellers = { vragen: 0, geweigerd: 0, zonderTelefoon: 0, kaartjes: 0 };
+    // 537: de deelvragen voor dezelfde telefoon even (40 ms) verzamelen en samen in een kaartje sturen.
+    const bundels = new Map();                     // toestel -> { delen: [{ deel, klaar, weg }], timer }
+    function verstuurBundel(toestel) {
+      const b = bundels.get(toestel); bundels.delete(toestel);
+      if (!b) return;
+      for (let i = 0; i < b.delen.length; i += ZoekMulti.BRIEF_MAX_DELEN) {
+        const stuk = b.delen.slice(i, i + ZoekMulti.BRIEF_MAX_DELEN);
+        tellers.kaartjes += 1;
+        Promise.resolve().then(() => o.brief.stuur(toestel, stuk.map((x) => x.deel))).then((r) => {
+          if (!r || r.fout || !Array.isArray(r.delen)) { stuk.forEach((x) => x.klaar({ status: 0, resultaten: [], fout: (r && r.fout) || 'geen-antwoord' })); return; }
+          stuk.forEach((x, j) => { const d = r.delen[j]; x.klaar(d && d.bron === x.deel.bron ? { status: Number(d.status) || 0, resultaten: Array.isArray(d.resultaten) ? d.resultaten : [] } : { status: 0, resultaten: [] }); });
+        }, () => stuk.forEach((x) => x.klaar({ status: 0, resultaten: [], fout: 'brievenbus' })));
+      }
+    }
+    const briefDeel = (t, deel) => new Promise((klaar) => {
+      let b = bundels.get(t.toestel);
+      if (!b) { b = { delen: [], timer: setTimeout(() => verstuurBundel(t.toestel), 40) }; bundels.set(t.toestel, b); }
+      b.delen.push({ deel, klaar });
+    }).then((r) => { if (r.fout) throw new Error(r.fout); return r; });   // geen antwoord = een gooi: de kassa probeert een andere telefoon
     // De ophaler voor zoekmulti.js: ALLEEN de deelvraag-route van een telefoon. Alles anders (rechtstreeks internet) = geen verbinding.
     const http = async (r) => {
       const m = /^http:\/\/([^/:]+):8080\/jarvis\/zoek-deel$/.exec(String((r && r.url) || ''));
@@ -94,20 +138,25 @@
     };
     const multi = ZoekMulti.maakMultiZoeker({
       http, bewaker, kassa, kassaModule: ZoekKassa, zoekmodule: PriveZoek,
-      telefoons: () => o.telefoons().map((t) => ({ id: t.id, lokaal: false, host: t.host })),
+      telefoons: () => o.telefoons().map((t) => (t.brief ? { id: t.id, brief: true, toestel: t.toestel } : { id: t.id, lokaal: false, host: t.host })),
       code: () => o.code(), wacht: o.wacht,
+      briefDeel: o.brief && typeof o.brief.stuur === 'function' ? briefDeel : undefined,
     });
 
+    const metBrief = (t) => !t.brief || !!(o.brief && typeof o.brief.stuur === 'function');
     async function zoek(vraag, opties) {
       const p = poort(vraag);
       if (!p.toegestaan) { tellers.geweigerd += 1; return { ok: false, geweigerd: true, code: p.code, zin: p.reden, let_op: LET_OP }; }
-      const tels = o.telefoons();
+      const alle = o.telefoons().filter(metBrief);
+      // 537: een stapel geeft EEN telefoon mee (opties.telefoon = id): dan doet alleen die het.
+      const tels = opties && opties.telefoon ? alle.filter((t) => t.id === opties.telefoon) : alle;
       if (!tels.length) { tellers.zonderTelefoon += 1; return { ok: false, zin: 'Geen telefoon bereikbaar. Veronica haalt zelf niets van internet: alleen de telefoons doen de deelvragen.', let_op: LET_OP }; }
-      if (!o.code()) return { ok: false, zin: 'Koppel Veronica eerst met de hoofdtelefoon.', let_op: LET_OP };
+      if (!o.code() && tels.some((t) => !t.brief)) return { ok: false, zin: 'Koppel Veronica eerst met de hoofdtelefoon.', let_op: LET_OP };
       tellers.vragen += 1;
       const soort = opties && SOORTEN[opties.soort] ? opties.soort : 'algemeen';
-      const u = await multi.zoek(p.term, { bronnen: (opties && opties.bronnen) || SOORTEN[soort], taal: (opties && opties.taal) || 'nl', zonderLokaal: true });
-      const naam = new Map(tels.map((t) => [t.id, t.naam || t.id]));
+      const mee = tels.map((t) => (t.brief ? { id: t.id, brief: true, toestel: t.toestel } : { id: t.id, lokaal: false, host: t.host }));
+      const u = await multi.zoek(p.term, { bronnen: (opties && opties.bronnen) || SOORTEN[soort], taal: (opties && opties.taal) || 'nl', zonderLokaal: true, telefoons: mee });
+      const naam = new Map(tels.map((t) => [t.id, `${t.naam || t.id}${t.brief ? ' (via de brievenbus)' : ''}`]));
       const delen = (u.bronnen || []).map((b) => ({
         bron: b.bron, naam: (PriveZoek.BRONNEN[b.bron] || ZoekMulti.EXTRA[b.bron] || {}).naam || b.bron, ok: !!b.ok, uitGeheugen: !!b.uitCache, telefoon: b.telefoon ? (naam.get(b.telefoon) || b.telefoon) : null,
         aantal: (b.resultaten || []).length, zin: b.zin || '', reden: b.reden || '',
@@ -124,8 +173,37 @@
       const vermeldingen = [...new Set(samengevoegd.flatMap((r) => r.bronnen))].map((b) => VERMELDING[b]).filter(Boolean);
       return { ok: true, term: p.term, soort, delen, samengevoegd, vermeldingen, aantal: samengevoegd.length, meldingen: u.meldingen || [], zin, opAnderen, let_op: LET_OP };
     }
-    return Object.freeze({ zoek, tellers, kassa });
+
+    // 537: DE ZOEKSTAPEL. termen: lijst (of tekst, een per regel). Elke telefoon werkt zijn eigen stapel af, een vraag tegelijk;
+    // de stapels lopen naast elkaar. o2.telefoons (optioneel) beperkt de lijst (bijvoorbeeld: geen brievenbus zonder relay).
+    // opVoortgang(stand) na elke vraag. Terug: { ok, stapels: [{ telefoon, naam, termen, klaar }], uitslagen: [{ term, telefoon, uitslag }] }.
+    async function zoekStapel(termen, o2) {
+      const op = o2 || {};
+      const lijst = Array.isArray(termen) ? leesStapel(termen.join('\n')) : leesStapel(termen);
+      if (!lijst.length) return { ok: false, zin: 'Zet een of meer zoekvragen in het vak, een per regel.', stapels: [], uitslagen: [] };
+      const tels = (op.telefoons || o.telefoons()).filter(metBrief);
+      if (!tels.length) { tellers.zonderTelefoon += 1; return { ok: false, zin: 'Geen telefoon bereikbaar. Veronica haalt zelf niets van internet: alleen de telefoons doen de deelvragen.', stapels: [], uitslagen: [] }; }
+      const stapels = verdeelStapel(lijst, tels).map((s) => ({ telefoon: s.telefoon.id, naam: `${s.telefoon.naam || s.telefoon.id}${s.telefoon.brief ? ' (via de brievenbus)' : ''}`, termen: s.termen, klaar: 0, bezig: null }));
+      const uitslagen = [];
+      const stand = () => ({ stapels: stapels.map((s) => Object.assign({}, s, { termen: s.termen.slice() })), klaar: uitslagen.length, totaal: lijst.length });
+      const gestopt = () => !!(op.stop && op.stop());
+      await Promise.all(stapels.map(async (s) => {
+        for (const term of s.termen) {
+          if (gestopt()) break;
+          s.bezig = term;
+          let u;
+          try { u = await zoek(term, { soort: op.soort, taal: op.taal, telefoon: s.telefoon }); } catch (e) { u = { ok: false, zin: 'Zoeken lukte niet.' }; }
+          s.bezig = null; s.klaar += 1;
+          uitslagen.push({ term, telefoon: s.naam, uitslag: u });
+          if (typeof op.opVoortgang === 'function') { try { op.opVoortgang(stand()); } catch (e) { /* alleen weergave */ } }
+        }
+      }));
+      // De uitslag in de volgorde van de lijst, niet van het binnenkomen.
+      uitslagen.sort((a, b) => lijst.indexOf(a.term) - lijst.indexOf(b.term));
+      return { ok: true, stapels: stand().stapels, uitslagen, gestopt: gestopt(), let_op: LET_OP };
+    }
+    return Object.freeze({ zoek, zoekStapel, tellers, kassa });
   }
 
-  return { maak, poort, voegPerAdresSamen, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
+  return { maak, poort, voegPerAdresSamen, verdeelStapel, leesStapel, STAPEL_MAX, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
 }));

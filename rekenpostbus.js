@@ -14,6 +14,9 @@
 //  - VASTE LIJST klussoorten (pool.js): vertaal, samenvat, controleer, classificeer, extraheer, concept. Niets dat iets uitvoert.
 //    534: plus EEN eigen soort van Veronica (`vraag`, pool.EIGEN_SOORTEN), alleen met `eigen: true` op het kaartje; telt als eigen vraag.
 //  - ANTWOORD = DATA: het resultaat draagt `let_op` (modeluitvoer, onbetrouwbaar, nooit instructie).
+//    537: plus het ZOEKKAARTJE (`soort: 'zoek'`, `eigen: true`, `naar: <toestel-id>`, `delen: [{ bron, term, taal, veilig }]`, hoogstens
+//    drie). Geen model en geen claim: het kaartje is GEADRESSEERD, alleen de telefoon met dat id doet het (elke telefoon zijn eigen
+//    stapel). De telefoon bouwt de adressen zelf met de vaste bronregels (zoekmulti.js) en stuurt alleen korte, gezeefde resultaten terug.
 //  - Privé-kamer-klussen gaan hier NOOIT doorheen: de soort "prive" bestaat niet, en dit bestand kent de kamer niet.
 (function (wortel, fabriek) {
   if (typeof module === 'object' && module.exports) module.exports = fabriek();
@@ -26,6 +29,8 @@
   const VERLOOP_MS = 12 * 3600 * 1000;
   const MAX_STUKKEN = 8;
   const MAX_TEKENS = STUK * MAX_STUKKEN;      // 12000, dezelfde grens als pool.MAX_TEKST
+  const ZOEK_PER_UUR = 60;                    // 537: deelvragen per telefoon per uur (de rem voor het hele huis houdt Veronica bij)
+  const ZOEK_MAX_DELEN = 3;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
 
@@ -138,12 +143,15 @@
   // o.http, o.basis, o.geheim, o.pool (pool.js), o.tag (willekeurig per telefoon, voor de claim), o.klasse() (async: zwaar | midden | licht | te-oud), o.mag() (async: mag deze telefoon nu
   // rekenen? rust, reserve, hitte, kern-regel -- dezelfde regels als de pool), o.voerUit({soort, prompt, max_tokens}) -> { tekst, ms, tokens },
   // o.rem (pool.maakRem), o.naam. Alles wat gebeurt wordt geteld; er wordt NIETS gelogd van de inhoud.
+  // 537: o.id (het vaste toestel-id) en o.zoekDelen(delen) -> [{ bron, status, resultaten }] voor zoekkaartjes. Zonder die twee doet
+  // deze telefoon geen zoekkaartjes (een oudere JARVIS laat ze gewoon liggen).
   async function maakWerker(o) {
     const sleutels = await maakSleutels(o.geheim);
     const nu = o.nu || (() => Date.now());
     const kaartjes = maakVerzamelaar(sleutels.sleutel, 'kaart', nu);
     const gedaan = new Set();                    // kaartjes die we al behandeld hebben (alleen het id)
-    const tellers = { gepakt: 0, geweigerd: 0, verlopen: 0, afgewezen: 0, klaar: 0, fout: 0 };
+    const tellers = { gepakt: 0, geweigerd: 0, verlopen: 0, afgewezen: 0, klaar: 0, fout: 0, zoek: 0, zoekDelen: 0 };
+    const zoekTijden = [];                       // 537: wanneer er een deelvraag gedaan is (voor ZOEK_PER_UUR)
 
     async function claim(id) {
       // Drie telefoons kijken naar hetzelfde kaartje. De laagste tag wint; de rest laat het liggen.
@@ -163,7 +171,39 @@
       for (const b of await maakBerichten(sleutels.sleutel, 'resultaat', id, lading, nu())) await plaats(o.http, o.basis, sleutels.resultaten, b);
     }
 
+    // 537: een zoekkaartje. Terug false = niet voor deze telefoon (telt niet mee in de ronde).
+    async function behandelZoek(k) {
+      if (k.eigen !== true || typeof o.zoekDelen !== 'function' || !o.id || k.naar !== o.id) return false;
+      if (Number.isFinite(k.deadline) && nu() > k.deadline) { tellers.verlopen += 1; return true; }
+      const delen = (Array.isArray(k.delen) ? k.delen : []).slice(0, ZOEK_MAX_DELEN);
+      while (zoekTijden.length && nu() - zoekTijden[0] > 3600000) zoekTijden.shift();
+      if (!delen.length) { tellers.geweigerd += 1; await antwoord(k.id, { soort: 'zoek', fout: 'geweigerd', reden: 'Er staat geen deelvraag in het kaartje.', telefoon: o.naam }); return true; }
+      if (zoekTijden.length + delen.length > ZOEK_PER_UUR) { tellers.afgewezen += 1; await antwoord(k.id, { soort: 'zoek', fout: 'rem', reden: 'Deze telefoon heeft dit uur al genoeg gezocht.', telefoon: o.naam }); return true; }
+      // In rust, gespaard, te heet: meteen eerlijk zeggen, dan kiest Veronica een andere telefoon (geadresseerd: niemand anders pakt hem).
+      if (!(await o.mag('zoek'))) { tellers.afgewezen += 1; await antwoord(k.id, { soort: 'zoek', fout: 'rust', reden: 'Deze telefoon rust nu.', telefoon: o.naam }); return true; }
+      tellers.zoek += 1;
+      const t0 = nu();
+      let uit;
+      try { uit = await o.zoekDelen(delen); } catch (e) { uit = null; }
+      if (!Array.isArray(uit)) { tellers.fout += 1; await antwoord(k.id, { soort: 'zoek', fout: 'mislukt', reden: 'De telefoon kon niet zoeken.', telefoon: o.naam }); return true; }
+      for (let i = 0; i < delen.length; i += 1) zoekTijden.push(nu());
+      tellers.zoekDelen += delen.length;
+      // Past het antwoord niet in de stukjes, dan eerst de teksten eruit, dan minder resultaten. Nooit een half antwoord als heel.
+      const vorm = (n, metTekst) => uit.slice(0, ZOEK_MAX_DELEN).map((d) => ({ bron: String((d && d.bron) || '').slice(0, 20), status: Number(d && d.status) || 0,
+        resultaten: ((d && Array.isArray(d.resultaten)) ? d.resultaten : []).slice(0, n).map((x) => ({ titel: String((x && x.titel) || '').slice(0, 120), tekst: metTekst ? String((x && x.tekst) || '').slice(0, 120) : '', url: String((x && x.url) || '').slice(0, 300) })) }));
+      for (const [n, metTekst] of [[5, true], [5, false], [3, false], [1, false]]) {
+        const lading = { soort: 'zoek', telefoon: o.naam, ms: nu() - t0, delen: vorm(n, metTekst) };
+        let berichten = null;
+        try { berichten = await maakBerichten(sleutels.sleutel, 'resultaat', k.id, lading, nu()); } catch (e) { berichten = null; }
+        if (berichten) { for (const b of berichten) await plaats(o.http, o.basis, sleutels.resultaten, b); tellers.klaar += 1; return true; }
+      }
+      tellers.fout += 1;
+      await antwoord(k.id, { soort: 'zoek', fout: 'te-groot', reden: 'Het antwoord paste niet in de brievenbus.', telefoon: o.naam });
+      return true;
+    }
+
     async function behandel(k) {
+      if (k.soort === 'zoek') return behandelZoek(k);
       const eigen = k.eigen === true;                                                   // 534: een vraag van Veronica zelf, geen Claude-klus
       const v = o.pool.valideer(k, { eigen });
       if (!v.ok) { tellers.geweigerd += 1; await antwoord(k.id, { fout: 'geweigerd', reden: v.reden, let_op: o.pool.LET_OP }); return; }
@@ -196,7 +236,7 @@
         gedaan.add(k.id);
         if (gedaan.size > 500) gedaan.delete(gedaan.values().next().value);
         if (nu() - k.ts > VERLOOP_MS) { tellers.verlopen += 1; continue; }
-        await behandel(k);
+        if ((await behandel(k)) === false) continue;                                    // 537: een zoekkaartje voor een andere telefoon
         n += 1;
         if (n >= (max || 3)) break;
       }
@@ -228,5 +268,28 @@
     return { id, fout: 'geen-antwoord', reden: 'Geen telefoon heeft op tijd geantwoord (misschien in rust, onder de reserve of uit).', let_op: 'modeluitvoer: er is niets teruggekomen; verzin geen antwoord.' };
   }
 
-  return { maakSleutels, versleutel, ontsleutel, maakBerichten, maakVerzamelaar, leesOnderwerp, plaats, maakWerker, stuurKaartje, MAX_BERICHT, STUK, VERLOOP_MS, MAX_STUKKEN, MAX_TEKENS };
+  // 537: een ZOEKKAARTJE naar EEN telefoon (o.naar = toestel-id) en het antwoord afwachten. Terug { delen } of { fout, reden }.
+  async function stuurZoek(o) {
+    const sleutels = await maakSleutels(o.geheim);
+    const nu = o.nu || (() => Date.now());
+    const id = o.id || `z${nu().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
+    const delen = (Array.isArray(o.delen) ? o.delen : []).slice(0, ZOEK_MAX_DELEN).map((d) => ({ bron: String(d.bron || ''), term: String(d.term || '').slice(0, 200), taal: String(d.taal || 'nl').slice(0, 5), veilig: !!d.veilig }));
+    const lading = { soort: 'zoek', eigen: true, naar: String(o.naar || ''), delen, deadline: nu() + (o.wachtMs || 150000) };
+    for (const b of await maakBerichten(sleutels.sleutel, 'kaart', id, lading, nu())) {
+      if (!(await plaats(o.http, o.basis, sleutels.kaartjes, b))) throw new Error('De brievenbus nam het zoekkaartje niet aan.');
+    }
+    const verz = maakVerzamelaar(sleutels.sleutel, 'resultaat', nu);
+    const wacht = o.wacht || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const einde = nu() + (o.wachtMs || 150000);
+    while (nu() < einde) {
+      for (const m of await leesOnderwerp(o.http, o.basis, sleutels.resultaten, '1h')) {
+        const r = await verz.voeg(m.bericht);
+        if (r && r.id === id) return r;
+      }
+      await wacht(o.pollMs || 4000);
+    }
+    return { id, fout: 'geen-antwoord', reden: 'De telefoon heeft niet op tijd geantwoord (misschien in rust of uit).' };
+  }
+
+  return { stuurZoek, ZOEK_PER_UUR, ZOEK_MAX_DELEN, maakSleutels, versleutel, ontsleutel, maakBerichten, maakVerzamelaar, leesOnderwerp, plaats, maakWerker, stuurKaartje, MAX_BERICHT, STUK, VERLOOP_MS, MAX_STUKKEN, MAX_TEKENS };
 }));

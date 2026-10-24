@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.63';
+  const JARVIS_NIEUWSTE = '1.9.64';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   function rolNaam(h) {
@@ -570,6 +570,27 @@
       ? `. Hij hing niet aan de lader en Android mag JARVIS dan laten slapen; dan haalt hij ook geen roep op. Wat helpt: ${hoe}.`
       : `. Hij hing niet aan de lader; dan kan Android JARVIS laten slapen en haalt hij geen roep op. Wat helpt: ${hoe}.`;
   }
+  // 537: het tempo van een telefoon uit zijn hartslag. ECHT werk (de laatste gelukte vertaling) gaat voor (525), dan de proefzin, dan het
+  // laatste antwoord van de motor. 0 = niet gemeten.
+  function tpsVan(h) {
+    const m = h && h.motor;
+    const gl = h && h.gids && h.gids.laatst && h.gids.laatst.ok && Number(h.gids.laatst.tps) > 0 ? Number(h.gids.laatst.tps) : 0;
+    return gl || (m && ((m.proef && m.proef.ok && Number(m.proef.tps)) || Number(m.tps))) || 0;
+  }
+  // 537: WIE DOET WAT, kort, bovenaan Live. Per telefoon: naam, rol, het tempo (tokens per seconde, alleen gemeten) en wat hij mag doen
+  // volgens de takenverdeling. Mag hij niets, dan de eerste reden. tempo: { <naam>: tps }.
+  function wieDoetWat(verdeling, tempo) {
+    const getal = (x) => String(Math.round(x * 10) / 10).replace('.', ',');
+    return (Array.isArray(verdeling) ? verdeling : []).map((t) => {
+      const regels = Array.isArray(t.regels) ? t.regels : [];
+      const doet = regels.filter((r) => r.mag && r.soort !== 'bewaker').map((r) => r.naam);
+      const tps = tempo && Number(tempo[t.naam]) > 0 ? Number(tempo[t.naam]) : 0;
+      const rol = t.taak && t.taak.naam ? t.taak.naam : (t.rol === 'baas' ? 'beheerder' : t.rol === 'werker' ? 'werker' : 'onbekend');
+      const eerste = regels.find((r) => !r.mag && r.soort !== 'bewaker');
+      const wat = doet.length ? `doet: ${doet.join(', ')}` : `doet nu niets${eerste ? ` (${eerste.reden})` : ''}`;
+      return { naam: t.naam, tps, doet, zin: `${t.naam} (${rol}) · ${tps ? `ongeveer ${getal(tps)} tokens per seconde` : 'tempo nog niet gemeten'} · ${wat}` };
+    });
+  }
   function wieRekent(harten, tijd, bekend, lijnen) {
     const lijn = (id) => (lijnen && id && lijnen[id]) || null;   // 529: { wifi, postbus } per toestel-id
     const regels = [];
@@ -591,7 +612,7 @@
       // 525: het tempo van ECHT werk (de laatste gelukte vertaling) gaat voor; m.tps is het laatste antwoord van de motor, en na een
       // kort antwoord (een ja/nee-controle, de proefzin) is dat laag omdat het inlezen van de vraag dan zwaar weegt (0,9 tegen 3,5).
       const gl = h.gids && h.gids.laatst && h.gids.laatst.ok && Number(h.gids.laatst.tps) > 0 ? Number(h.gids.laatst.tps) : 0;
-      const tps = gl || (m && ((m.proef && m.proef.ok && Number(m.proef.tps)) || Number(m.tps))) || 0;
+      const tps = tpsVan(h);
       let zin; let rekent = false;
       // 522: JARVIS staat uit (de Uit-knop = ook de noodstop van de AI-kern). Dan start er niets, ook geen motor.
       const p = h.pauze && typeof h.pauze === 'object' ? h.pauze : null;
@@ -610,7 +631,7 @@
       // 522: de laatste zin van de werker van de gids op die telefoon (waarom hij wel of niet werkt), als hij er een meldt.
       if (typeof h.werk === 'string' && h.werk.trim()) zin += `. Werker: ${h.werk.trim().replace(/\.$/, '')}`;
       // 522c: een beheerder die als dagelijkse telefoon RUST kan per ongeluk een rektelefoon zijn (de QR van Veronica gescand).
-      regels.push({ id: h.id || naam, naam, zin, rekent, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: rolNaam(h),
+      regels.push({ id: h.id || naam, naam, zin, rekent, tps, pauze: !!p, magWerker: h.rol === 'baas' && h.dagelijks === true && !p, rol: rolNaam(h),
         gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd), meet: meetuurZin(h), meetbaar: h.rol === 'werker' && !h.dagelijks && !p && !!(m && m.klaar) });   // 529
     }
     for (const b of (Array.isArray(bekend) ? bekend : [])) {
@@ -1114,7 +1135,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.85';
+  const VERONICA_VERSIE = '1.9.86';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1783,7 +1804,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
