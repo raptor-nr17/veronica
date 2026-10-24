@@ -2962,6 +2962,86 @@
     }
   });
 
+  // 538: DE STEMPROEF (stemproef.js). De bestanden komen uit een map op deze computer en spelen af via een object-adres in de
+  // browser; er gaat niets over het netwerk. De letters staan na elke keer laden opnieuw door elkaar; de keuzes (op naam van de
+  // stem) staan in de opslag van deze browser, per proef.
+  const SP = { proef: null, blind: null, stand: null, bestanden: new Map(), adressen: [] };
+  function spWillekeur() { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] / 4294967296; }
+  function spOpruimen() { for (const u of SP.adressen) { try { URL.revokeObjectURL(u); } catch (x) { /* al weg */ } } SP.adressen = []; }
+  async function stemproefLaad(lijst) {
+    const st = $('stemproefStand');
+    spOpruimen(); SP.proef = null; SP.blind = null; SP.bestanden = new Map();
+    // Alleen de bestanden direct in de gekozen map (geen submappen).
+    for (const f of Array.from(lijst || [])) {
+      const rel = String(f.webkitRelativePath || f.name);
+      if (rel.split('/').length <= 2) SP.bestanden.set(f.name, f);
+    }
+    const lijstBestand = SP.bestanden.get('stemproef.json');
+    if (!lijstBestand) { st.textContent = 'In deze map staat geen stemproef.json.'; tekenStemproef(); return false; }
+    const r = window.Stemproef.leesProef(await lijstBestand.text(), [...SP.bestanden.keys()]);
+    if (r.fout) { st.textContent = r.fout; tekenStemproef(); return false; }
+    SP.proef = r.proef;
+    SP.blind = window.Stemproef.maakBlind(SP.proef, spWillekeur);
+    let bewaard = null;
+    try { bewaard = await Opslag.lees('stemproef'); } catch (x) { bewaard = null; }
+    SP.stand = window.Stemproef.geldigeStand(bewaard, SP.proef);
+    st.textContent = `${SP.proef.verhalen.length} verhalen, de stemmen staan door elkaar. Luister en tik bij elk verhaal de beste aan.`;
+    tekenStemproef();
+    return true;
+  }
+  function tekenStemproef() {
+    const doos = $('stemproefLijst');
+    if (!doos) return;
+    doos.replaceChildren();
+    const uit = $('stemproefUitslag');
+    if (!SP.proef) { uit.hidden = true; $('stemproefKopieer').hidden = true; $('stemproefOpnieuw').hidden = true; return; }
+    const klaar = window.Stemproef.klaar(SP.stand, SP.proef);
+    for (const v of SP.blind) {
+      const vak = document.createElement('div'); vak.className = 'zsPaneel'; vak.dataset.spVerhaal = v.id;
+      const kop = document.createElement('h3'); kop.textContent = v.titel; vak.append(kop);
+      if (v.tekst) { const p = document.createElement('p'); p.className = 'klein'; p.textContent = v.tekst; vak.append(p); }
+      for (const k of v.keuzes) {
+        const rij = document.createElement('div'); rij.className = 'spRij';
+        const naam = document.createElement('b'); naam.textContent = klaar ? `Stem ${k.letter} (${k.stem})` : `Stem ${k.letter}`;
+        const geluid = document.createElement('audio'); geluid.controls = true; geluid.preload = 'none';
+        const u = URL.createObjectURL(SP.bestanden.get(k.bestand)); SP.adressen.push(u); geluid.src = u;
+        const knop = document.createElement('button'); knop.type = 'button'; knop.textContent = 'Deze is het best';
+        knop.dataset.spVerhaal = v.id; knop.dataset.spLetter = k.letter;
+        knop.setAttribute('aria-pressed', SP.stand.keuzes[v.id] === k.stem ? 'true' : 'false');
+        rij.append(naam, geluid, knop); vak.append(rij);
+      }
+      doos.append(vak);
+    }
+    uit.textContent = window.Stemproef.uitslagTekst(SP.stand, SP.proef);
+    uit.hidden = !klaar; $('stemproefKopieer').hidden = !klaar; $('stemproefOpnieuw').hidden = false;
+  }
+  async function stemproefKies(verhaalId, letter) {
+    if (!SP.proef) return;
+    const voor = window.Stemproef.klaar(SP.stand, SP.proef);
+    SP.stand = window.Stemproef.kies(SP.stand, SP.blind, verhaalId, letter);
+    try { await Opslag.schrijf('stemproef', SP.stand); } catch (x) { /* alleen voor nu */ }
+    if (!voor && window.Stemproef.klaar(SP.stand, SP.proef)) $('stemproefStand').textContent = 'Klaar. Hieronder zie je welke stem welke was.';
+    tekenStemproef();
+  }
+  document.addEventListener('change', (e) => { if (e.target && e.target.id === 'stemproefMap') stemproefLaad(e.target.files); });
+  document.addEventListener('click', async (e) => {
+    const t = e.target;
+    if (!t) return;
+    if (t.dataset && t.dataset.spLetter) { stemproefKies(t.dataset.spVerhaal, t.dataset.spLetter); return; }
+    if (t.id === 'stemproefOpnieuw') {
+      if (!SP.proef || !(await vraagJa('De keuzes van deze stemproef wissen en opnieuw kiezen?', 'Ja, opnieuw'))) return;
+      SP.stand = window.Stemproef.nieuweStand(SP.proef);
+      SP.blind = window.Stemproef.maakBlind(SP.proef, spWillekeur);
+      try { await Opslag.schrijf('stemproef', SP.stand); } catch (x) { /* alleen voor nu */ }
+      $('stemproefStand').textContent = 'De stemmen staan opnieuw door elkaar.';
+      tekenStemproef();
+    } else if (t.id === 'stemproefKopieer') {
+      let gelukt = false;
+      try { await Promise.race([navigator.clipboard.writeText($('stemproefUitslag').textContent), new Promise((_, mis) => setTimeout(() => mis(new Error('te lang')), 2500))]); gelukt = true; } catch (x) { gelukt = false; }
+      $('stemproefStand').textContent = gelukt ? 'Uitslag gekopieerd.' : 'Kopieren lukte niet. Selecteer de uitslag en kopieer met Ctrl+C.';
+    }
+  });
+
   // 469: WIE DOET WAT. De keuzes van de eigenaar (alleen uitsluiten) staan in deze browser; de regels staan in takenverdeling.js.
   const TAKEN_SLEUTEL = 'veronica-taken';
   function leesTakenKeuzes() { try { return Takenverdeling.schoonKeuzes(JSON.parse(localStorage.getItem(TAKEN_SLEUTEL) || '{}'), S.telefoons.map((t) => t.adres)); } catch (e) { return {}; } }
@@ -4654,7 +4734,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { stemproefLaad, SP, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

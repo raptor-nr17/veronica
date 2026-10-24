@@ -329,6 +329,19 @@
       <ul id="stapelVoortgang"></ul>
       <div id="stapelUitslag"></div>
     </section>
+    <!-- 538: de stemproef. Blind kiezen tussen stemmen; alles uit een map op deze computer, niets van internet. -->
+    <section id="stemproefBlok" class="blok">
+      <h2>Stemproef</h2>
+      <p class="klein">Kies de map met de proef (stemproef.json en de geluidsbestanden). Per verhaal staan de stemmen door elkaar onder A tot en met E. Luister en tik bij elk verhaal de beste aan; pas daarna zie je welke stem welke was.</p>
+      <p class="klein">Deze stemmen zijn door AI gemaakt.</p>
+      <label for="stemproefMap">Map met de proef</label>
+      <input type="file" id="stemproefMap" webkitdirectory multiple>
+      <p id="stemproefStand" aria-live="polite"></p>
+      <div id="stemproefLijst"></div>
+      <pre id="stemproefUitslag" style="white-space:pre-wrap;font:inherit;margin:8px 0" hidden></pre>
+      <button type="button" id="stemproefKopieer" hidden>Kopieer uitslag</button>
+      <button type="button" id="stemproefOpnieuw" hidden>Opnieuw kiezen</button>
+    </section>
   </section>
   <section id="scherm-prive" hidden>
     <div class="zsPaneel" id="volLokaalVak">
@@ -493,6 +506,7 @@
 <script src="zoeken.js"></script>
 <script src="zoekgeheugen.js"></script>
 <script src="verslag.js"></script>
+<script src="stemproef.js"></script>
 <script src="takenverdeling.js"></script>
 <script src="nulmeting.js"></script>
 <script src="nachtlog.js"></script>
