@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.67';
+  const JARVIS_NIEUWSTE = '1.9.68';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
@@ -1161,7 +1161,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.92';
+  const VERONICA_VERSIE = '1.9.93';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1698,12 +1698,53 @@
   // hart (ms), relay (true = Veronica kent een relay), adres (het bewaarde adres), hartAdressen (wat de telefoon zelf meldt) }.
   const VERBINDING_GROEN_MS = 90 * 1000;
   const VERBINDING_ORANJE_MS = 300 * 1000;
+  // 552: HOE VAAK STUURT DEZE TELEFOON ZIJN HARTSLAG? Een JARVIS van 1.9.68 zegt het zelf (elke); 1.9.67 klopte al elke 30 s. Een oudere zegt niets: via de relay
+  // stuurde hij eens per tien minuten (en eens per minuut als er iets veranderde), via de brievenbus hoogstens eens per 100 minuten.
+  // Veronica kleurde vroeger elke telefoon na 90 s oranje en na vijf minuten rood -- een oude JARVIS sprong zo steeds van groen naar
+  // rood en terug, terwijl hij gewoon op tijd was.
+  const OUDE_RELAY_ELKE_MS = 10 * 60 * 1000;
+  const OUDE_BUS_ELKE_MS = 100 * 60 * 1000;
+  function verwachtElke(h) {
+    if (!h) return 0;
+    if (typeof h.elke === 'number' && h.elke > 0) return h.elke;
+    if (h.relay && h.versie && vergelijkVersie(h.versie, '1.9.67') >= 0) return 30 * 1000;   // 1.9.67 klopte al elke 30 s, maar zei het nog niet
+    return h.relay ? OUDE_RELAY_ELKE_MS : OUDE_BUS_ELKE_MS;
+  }
+  // 552: WAAROM VALT DEZE TELEFOON WEG? De echte redenen uit zijn laatste hartslag, in gewone taal, de belangrijkste eerst. Terug een
+  // lijst { code, zin }; leeg = niets bijzonders gemeld. Alleen wat de telefoon zelf meldde; niets wordt geraden.
+  function wegRedenen(h, tijd, o) {
+    const op = o || {};
+    const uit = [];
+    if (!h || !h.t) return uit;
+    const nu = tijd || Date.now();
+    if (h.pauze) uit.push({ code: 'uit', zin: 'JARVIS staat uit (de Uit-knop of de noodstop). Zet hem weer aan met "JARVIS aan".' });
+    if (h.versie && vergelijkVersie(h.versie, '1.9.67') < 0) {
+      uit.push({ code: 'oud', zin: `Deze telefoon draait JARVIS ${h.versie}. Die stuurt zijn hartslag ${h.relay ? 'eens per tien minuten' : 'hoogstens eens per anderhalf uur'}, dus hij lijkt tussendoor weg. Werk hem bij naar ${op.nieuwste || JARVIS_NIEUWSTE}; vraagt de telefoon erom, tik dan op Installeren.` });
+    }
+    const st = stopZin(h, nu);
+    if (st) uit.push({ code: 'gestopt', zin: `Android ${st}.` });
+    const sl = slaapZin(h, nu);
+    if (sl) uit.push({ code: 'slaap', zin: `JARVIS ${sl}.` });
+    if (h.motor && h.motor.dicht > 0 && nu - (h.motor.dichtT || 0) < 10 * 60 * 1000) {
+      uit.push({ code: 'code', zin: 'De motor van deze telefoon kreeg steeds een verkeerde code van een andere telefoon of van Veronica en zet die beller telkens een minuut buiten. Waarschijnlijk heeft een telefoon een oude rij-code: scan op die telefoon de QR van Veronica opnieuw.' });
+    }
+    if (h.batterijVrij === false && !h.laadt) uit.push({ code: 'batterij', zin: 'De batterij van JARVIS staat niet op Onbeperkt en hij hangt niet aan de lader: dan mag Android hem laten slapen.' });
+    if (h.sparen) uit.push({ code: 'spaart', zin: 'Deze telefoon spaart (de schuif op de telefoon): hij neemt geen werk aan.' });
+    if (h.dagelijks) uit.push({ code: 'dagelijks', zin: 'Dit is de dagelijkse telefoon: hij rust terwijl je hem gebruikt.' });
+    if (h.motor && h.motor.aan && h.motor.fase === 'fout') uit.push({ code: 'motor', zin: 'De eigen motor staat aan maar liep vast; Veronica vraagt hem vanzelf opnieuw te starten.' });
+    return uit;
+  }
   function verbinding(o, tijd) {
     const x = o || {};
     const getal = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
     const d = getal(x.direct);
     const h = getal(x.hart);
     const laatst = Math.max(d, h);
+    // 552: de grenzen schuiven mee met hoe vaak deze telefoon hoort te kloppen (elke): groen tot een hartslag plus een minuut,
+    // oranje tot twee gemiste. Nooit strenger dan 90 s / 300 s.
+    const elke = getal(x.elke);
+    const groenMs = Math.max(VERBINDING_GROEN_MS, elke + 60 * 1000);
+    const oranjeMs = Math.max(VERBINDING_ORANJE_MS, 2 * elke + 60 * 1000);
     const adres = String(x.adres || '').replace(/^https?:\/\//, '');
     const gemeld = (Array.isArray(x.hartAdressen) ? x.hartAdressen : []).map((a) => String(a).replace(/^https?:\/\//, ''));
     const host = adres.split(':')[0];
@@ -1714,9 +1755,9 @@
     const weg = d && d >= h ? 'rechtstreeks over het wifi' : (x.relay ? 'via de relay' : 'via de brievenbus');
     const sec = Math.round(oud / 1000);
     const wanneer = sec < 120 ? `${sec} s geleden` : `${Math.round(sec / 60)} min geleden`;
-    if (oud < VERBINDING_GROEN_MS) return { kleur: 'groen', zin: `Verbonden, ${weg} (${wanneer}).${d && d >= h ? '' : ' Rechtstreeks lukt nu niet; dat is geen probleem.'}${oudAdres}` };
+    if (oud < groenMs) return { kleur: 'groen', zin: `Verbonden, ${weg} (${wanneer}).${d && d >= h ? '' : ' Rechtstreeks lukt nu niet; dat is geen probleem.'}${oudAdres}` };
     const zonderRelay = x.relay ? '' : ' Zonder relay komt de hartslag hoogstens eens per half uur: zet de relay aan in Instellingen.';
-    if (oud < VERBINDING_ORANJE_MS) return { kleur: 'oranje', zin: `Laatste teken ${wanneer}, ${weg}. Een hartslag of twee gemist: wifi even weg, of de telefoon slaapt net.${zonderRelay}${oudAdres}` };
+    if (oud < oranjeMs) return { kleur: 'oranje', zin: `Laatste teken ${wanneer}, ${weg}. Een hartslag of twee gemist: wifi even weg, of de telefoon slaapt net.${zonderRelay}${oudAdres}` };
     return { kleur: 'rood', zin: `Al ${wanneer} niets gehoord (laatst ${weg}). Staat de telefoon uit, is JARVIS dicht, of zet het systeem hem stil? Kijk in de zelftest van de telefoon.${zonderRelay}${oudAdres}` };
   }
   function oudZin(jongste, tijd) {
@@ -1929,7 +1970,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { verbinding, VERBINDING_GROEN_MS, VERBINDING_ORANJE_MS, kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { verwachtElke, wegRedenen, OUDE_RELAY_ELKE_MS, verbinding, VERBINDING_GROEN_MS, VERBINDING_ORANJE_MS, kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,

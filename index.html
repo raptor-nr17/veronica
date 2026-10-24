@@ -83,6 +83,12 @@
   .tVerbinding { margin-top: 4px; padding: 4px 8px; border-radius: 8px; border-left: 6px solid; }
   .tVerbinding.v-groen { border-color: #15803D; }
   .tVerbinding.v-oranje { border-color: #C2410C; }
+  .tWeg { margin-top: 4px; font-size: 0.95em; }
+  #trapBlok textarea { width: 100%; min-height: 96px; }
+  .trapVink { display: flex; align-items: center; gap: 8px; min-height: 48px; }
+  .trapVink input { width: 28px; height: 28px; }
+  #trapUit { white-space: pre-wrap; margin-top: 8px; }
+  .tWeg > div { padding: 2px 8px; border-left: 4px solid #C2410C; margin-top: 2px; }
   .tVerbinding.v-rood { border-color: #B91C1C; font-weight: 600; }
   .tZelftest { font-size: 15px; margin-top: 6px; } .tZelftestKop { font-weight: 600; } .zt-nee { color: var(--rood); } .zt-info { color: var(--zacht); }
   /* 526: bevestigen in de pagina (geen venster van de browser): onderaan, boven alles, groot genoeg om op te tikken */
@@ -262,7 +268,18 @@
   <section id="scherm-live">
     <p id="leeg">Nog geen telefoons. Tik op Koppelen en neem de vertrouwde telefoons over van de hoofdtelefoon.</p>
     <!-- 522: wie rekent nu (uit de hartslagen) -->
-    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="geheugenZin" hidden></p><div id="fennaMetingBlok" hidden><h3>Meting per telefoon</h3><ul id="fennaMeting"></ul></div><div id="slimBlok"><h3>Slimheid van Fenna</h3><button type="button" id="meetFennaKnop">Meet Fenna nu</button> <button type="button" id="meetFennaStop" class="tweede" hidden>Stop de meting</button><p id="slimStand" aria-live="polite"></p><div id="slimGrafiek"></div><div class="tabelVak"><table id="slimTabel"></table></div></div><p id="gidsSamen" hidden></p><p id="meetSamen" hidden></p><p id="gezondSamen" hidden></p><ul id="wieRekentLijst"></ul><div id="wieDoetWat" hidden><h3>Wie doet wat</h3><ul id="wieDoetWatLijst"></ul></div></div>
+    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="geheugenZin" hidden></p><div id="fennaMetingBlok" hidden><h3>Meting per telefoon</h3><ul id="fennaMeting"></ul></div><div id="slimBlok"><h3>Slimheid van Fenna</h3><button type="button" id="meetFennaKnop">Meet Fenna nu</button> <button type="button" id="meetFennaStop" class="tweede" hidden>Stop de meting</button><p id="slimStand" aria-live="polite"></p><div id="slimGrafiek"></div><div class="tabelVak"><table id="slimTabel"></table></div></div><div id="trapBlok"><h3>Samen van klein naar groot</h3>
+      <p class="eerlijk">Fenna knipt je doel in stukjes. Alle telefoons doen tegelijk een stukje, elk met het kleinste model dat voor die soort klus goed genoeg scoort.
+        Haalt een antwoord de controle niet, dan gaat dat stukje naar een groter model op een andere telefoon. De F8 alleen als het niet anders kan, en voor het samenvoegen en de eindcontrole. Alles blijft in huis.</p>
+      <label for="trapDoel">Doel</label> <textarea id="trapDoel" rows="4" maxlength="12000"></textarea>
+      <label for="trapSoort">Soort klus</label> <select id="trapSoort"><option value="algemeen">Algemene vraag</option><option value="samenvatten">Samenvatten</option><option value="labelen">Labelen</option><option value="json">Gegevens als JSON</option><option value="feit">Feit terugvinden</option></select>
+      <label class="trapVink"><input type="checkbox" id="trapBelangrijk"> Belangrijk: elk stukje naar twee telefoons, het eerste goede antwoord wint</label>
+      <button type="button" id="trapKnop">Start samen</button> <button type="button" id="trapStop" class="tweede" hidden>Stop</button>
+      <p id="trapStand" aria-live="polite"></p>
+      <div class="tabelVak"><table id="trapLive"></table></div>
+      <ul id="trapF8"></ul>
+      <details id="trapKaartjesVak"><summary>Modelkaartjes</summary><ul id="trapKaartjes"></ul></details>
+      <div id="trapUit"></div></div><p id="gidsSamen" hidden></p><p id="meetSamen" hidden></p><p id="gezondSamen" hidden></p><ul id="wieRekentLijst"></ul><div id="wieDoetWat" hidden><h3>Wie doet wat</h3><ul id="wieDoetWatLijst"></ul></div></div>
     <div id="vSamen"></div>
     <div id="rekBlok" hidden><p id="rekZin" class="groteMelding"></p><ul id="rekRegels"></ul>
       <!-- 1.9.14: EEN grote schuif, twee standen: de reserve waarop een rektelefoon stopt met rekenen. -->
@@ -672,6 +689,7 @@
 <script src="gastbrein.js"></script>
 <script src="avengers.js"></script>
 <script src="slimheid.js"></script>
+<script src="trap.js"></script>
 <script src="fenna-kluis.js"></script>
 <script src="fenna.js"></script>
 <script src="fenna-geheugen.js"></script>

@@ -162,6 +162,7 @@
       batterijVrij: typeof x.batterijVrij === 'boolean' ? x.batterijVrij : null,
       // 529: gaat deze hartslag via de relay (true) of via ntfy.sh (false)?
       relay: x.relay === true,
+      elke: getal(x.elke, 0, 6 * 3600 * 1000),   // 552: hoe vaak deze JARVIS zijn hartslag stuurt (ms); leeg = een oude JARVIS
       privePost: x.privePost === true,   // 536: deze telefoon is aan de privé-hoek gekoppeld en leest "Praat met de rij" (alleen ja/nee)
       // 529: DE WAAKHOND. Lag JARVIS stil (geen tik van zijn eigen klok, meestal: Android liet hem slapen), dan meldt hij dat zelf:
       // de laatste vijf keer, begin en duur in minuten, en of hij toen aan de lader hing. Zo is te METEN of de dienst het volhoudt.
@@ -188,6 +189,7 @@
         soort: ['zwaar', 'groot', 'klein', 'te-oud'].includes(m.soort) ? m.soort : '',
         procesMb: getal(m.procesMb, 0, 20000),
         vrijMb: getal(m.vrijMb, 0, 64000),
+        dicht: getal(m.dicht, 0, 64) || 0, dichtT: Math.floor(Number(m.dichtT) || 0),   // 552: bellers met een verkeerde code die een minuut buiten zitten
         proef: p ? { ok: p.ok === true, tps: getal(p.tps, 0, 1000), ms: getal(p.ms, 0, 600000), t: Math.floor(Number(p.t) || 0), temp: getal(p.temp, -20, 90), zin: schoon(p.zin, 120) } : null,
       } : null,
       // 501: de motor-instellingen die nu gelden (motorinstel.js), en of de motor draden en temperatuur aannam
