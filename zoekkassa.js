@@ -64,6 +64,12 @@
       regel: 'NIET opgenomen: het JSON-formaat staat op openbare instanties meestal uit en de bot-limiter geeft 429 aan een script; elke instantie heeft eigen voorwaarden die we niet kunnen nalezen. Een eigen instantie (zelf draaien) mag later wel.' },
     google: { naam: 'Google', toegestaan: false, remMs: 0, perUur: 0, seriele: true, regel: 'Nooit: niet uitlezen of nabootsen.' },
     bing: { naam: 'Bing', toegestaan: false, remMs: 0, perUur: 0, seriele: true, regel: 'Nooit: niet uitlezen of nabootsen.' },
+    // 542: de rest van de grote zoekmachines staat er bij naam in, zodat niemand ze "per ongeluk" toevoegt.
+    yahoo: { naam: 'Yahoo', toegestaan: false, remMs: 0, perUur: 0, seriele: true, regel: 'Nooit: niet uitlezen of nabootsen.' },
+    yandex: { naam: 'Yandex', toegestaan: false, remMs: 0, perUur: 0, seriele: true, regel: 'Nooit: niet uitlezen of nabootsen.' },
+    baidu: { naam: 'Baidu', toegestaan: false, remMs: 0, perUur: 0, seriele: true, regel: 'Nooit: niet uitlezen of nabootsen.' },
+    ecosia: { naam: 'Ecosia', toegestaan: false, remMs: 0, perUur: 0, seriele: true, regel: 'Nooit: niet uitlezen of nabootsen.' },
+    startpage: { naam: 'Startpage', toegestaan: false, remMs: 0, perUur: 0, seriele: true, regel: 'Nooit: niet uitlezen of nabootsen.' },
   });
 
   function maakKassa(o) {
@@ -104,6 +110,15 @@
       blokTot.set(bron, nu() + Math.min(BLOK_MIN_MS * Math.pow(2, n - 1), BLOK_MAX_MS));
     }
     function gelukt(bron) { blokTeller.delete(bron); }
+    // 542: de stand van een bron LEZEN zonder een slot te nemen (voor het statuswoord op het scherm). ok | rust | uit.
+    function stand(bron) {
+      const r = register[bron];
+      if (!r || !r.toegestaan) return { stand: 'uit' };
+      const t = nu();
+      if ((blokTot.get(bron) || 0) > t) return { stand: 'rust', totMs: blokTot.get(bron) };
+      if ((aanvragen.get(bron) || []).filter((x) => t - x < UUR_MS).length >= r.perUur) return { stand: 'rust' };
+      return { stand: 'ok' };
+    }
 
     // Het zoekgeheugen. De sleutel bevat bron, taal en term; het hele huis deelt het.
     const sleutelVan = (bron, taal, term) => `${bron}|${taal || 'nl'}|${String(term || '').trim().toLowerCase().replace(/\s+/g, ' ')}`;
@@ -118,7 +133,7 @@
     }
     function wis() { cache.clear(); }
 
-    return { slot, blokkade, gelukt, uitGeheugen, inGeheugen, wis, telling, _cache: cache };
+    return { slot, blokkade, gelukt, stand, uitGeheugen, inGeheugen, wis, telling, _cache: cache };
   }
 
   // Een vraag in deelvragen: een per toegestane bron. Telefoons die meedoen krijgen de bronnen om de beurt, met

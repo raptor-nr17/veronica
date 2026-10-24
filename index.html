@@ -17,6 +17,48 @@
   #pantserZin { color: var(--zacht); margin-right: auto; }
   button { font: inherit; color: var(--tekst); background: var(--paneel); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; cursor: pointer; }
   button[aria-pressed="true"] { border-color: #45d8ff; }
+  /* 542: elke knop minstens 48 x 48 beeldpunten (toegankelijkheid, ook de kleine tegelknoppen). */
+  button, select, a[role="button"] { min-height: 48px; min-width: 48px; }
+  header select { width: auto; max-width: 18em; }
+  /* 542: DE PRIVÉ-HOEK ALS EIGEN PAGINA (index.html#hoek). Veiligheid vast bovenaan; breed scherm: rail links, kaarten in een raster;
+     staand/smal: een onderbalk met vier knoppen en een kaart per rij. Elke knop staat op elk scherm op dezelfde plek. */
+  body.hoekModus > header, body.hoekModus > nav, body.hoekModus > main, body.hoekModus > #wandBalk, body.hoekModus > #volLokaalBalk { display: none !important; }
+  #hoekPagina { min-height: 100vh; }
+  #hoekVeilig { position: sticky; top: 0; z-index: 50; background: var(--nacht); border-bottom: 2px solid var(--lijn); padding: 10px 16px;
+    display: grid; grid-template-columns: auto auto auto auto 1fr auto; gap: 10px; align-items: center; }
+  #hoekNoodstop { background: var(--rood); border-color: var(--rood); color: #fff; font-weight: 800; font-size: 24px; min-height: 64px; padding: 0 26px; margin-right: 14px; }
+  #hoekVeilig button { font-size: 19px; font-weight: 700; }
+  #hoekStatus { font-size: 19px; font-weight: 700; margin: 0; }
+  #hoekRail { display: flex; flex-direction: column; gap: 8px; position: fixed; left: 0; top: 96px; width: 170px; padding: 10px; }
+  #hoekRail button { text-align: left; font-size: 19px; font-weight: 700; }
+  #hoekRail button[aria-current="true"] { border-color: #45d8ff; background: #10233a; }
+  #hoekInhoud { margin-left: 180px; padding: 10px 16px 120px; }
+  #hoekInhoud section { margin: 0 0 28px; }
+  #hoekInhoud h2 { font-size: 26px; margin: 8px 0 12px; }
+  #hoekWand { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .hoekKaart { border: 2px solid var(--lijn); border-radius: 14px; padding: 12px; background: var(--paneel); }
+  .hoekKaart h3 { margin: 0 0 4px; font-size: 22px; }
+  .hoekStand { font-size: 20px; font-weight: 700; margin: 6px 0; }
+  .hoekBeeld { border: 1px dashed var(--lijn); border-radius: 10px; min-height: 90px; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--zacht); padding: 8px; margin: 8px 0; font-size: 16px; }
+  .hoekKnoppen { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .hoekMeer { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .hoekVak { border-radius: 14px; padding: 12px; margin: 0 0 14px; border: 3px solid; }
+  .hoekVak.prive { border-color: #b388ff; background: #160f24; }
+  .hoekVak.algemeen { border-color: #45d8ff; background: #0b1a26; }
+  .hoekVakWoord { font-size: 24px; font-weight: 800; margin: 0 0 8px; }
+  .hoekBron { display: flex; align-items: center; gap: 10px; min-height: 48px; font-size: 19px; }
+  .hoekBron input { width: 28px; height: 28px; }
+  .hoekModel { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; border-bottom: 1px solid var(--lijn); padding: 8px 0; font-size: 19px; }
+  @media (max-width: 899px) {
+    #hoekVeilig { grid-template-columns: 1fr 1fr 1fr 1fr; }
+    #hoekStatus { grid-column: 1 / -1; order: 9; }
+    #hoekTerug { grid-column: auto; }
+    #hoekNoodstop { grid-column: 1 / -1; margin-right: 0; }
+    #hoekRail { flex-direction: row; top: auto; bottom: 0; width: 100%; background: var(--nacht); border-top: 2px solid var(--lijn); z-index: 50; }
+    #hoekRail button { flex: 1; text-align: center; }
+    #hoekInhoud { margin-left: 0; }
+    #hoekWand { grid-template-columns: 1fr; }
+  }
   /* 1.9.13: de scanknop groot en meteen in beeld; de melding direct eronder en groot. */
   button.groot { display: block; width: 100%; max-width: 520px; font-size: 24px; font-weight: 700; padding: 18px 20px; margin: 10px 0; border-color: #45d8ff; }
   .groteMelding { font-size: 22px; font-weight: 700; min-height: 1.4em; margin: 8px 0 14px; }
@@ -286,6 +328,11 @@
   <section id="scherm-wachtrij" hidden>
     <label for="taakTekst">Vragen voor het pantser (een per regel)</label>
     <textarea id="taakTekst"></textarea>
+    <label for="taakSoort">Soort klus</label>
+    <select id="taakSoort">
+      <option value="vraag">Vraag (een per regel)</option>
+      <option value="stem">Stemklus (een verhaal per regel; wacht tot een telefoon het kan)</option>
+    </select>
     <button id="taakKnop">In de wachtrij</button>
     <p class="eerlijk">De wachtrij staat op deze computer. Tik op Pantser aan om hem te laten lopen. Valt een telefoon weg, dan gaat zijn vraag naar een andere.</p>
     <div id="takenLijst"></div>
@@ -349,6 +396,24 @@
       <button type="button" id="volLokaalKnop" aria-pressed="false">Vol lokaal: UIT</button>
       <p id="volLokaalZin" class="eerlijk"></p>
       <p class="tBron">Dit geldt voor Veronica op deze computer. De telefoons zelf doen hun eigen werk (bijwerken, de postbus); dat stop je met Sparen of Pauze op de telefoon.</p>
+    </div>
+    <!-- 541: onderzoek met de telefoons. Elke telefoon zoekt zijn eigen stapel en haalt met zijn eigen model de kern eruit. Niets wordt bewaard. -->
+    <div class="zsPaneel" id="onderzoekVak">
+      <h2>Onderzoek met de telefoons</h2>
+      <p class="klein">Stel een vraag. Ik knip hem in zoekklussen. Elke telefoon zoekt zijn eigen klussen en haalt met zijn eigen model de kern eruit. Niets wordt bewaard.</p>
+      <label for="onderzoekVraag">Wat wil je uitzoeken?</label>
+      <textarea id="onderzoekVraag" rows="3" maxlength="600" spellcheck="false"></textarea>
+      <label for="onderzoekSoort">Soort vraag</label>
+      <select id="onderzoekSoort">
+        <option value="algemeen">Algemeen</option>
+        <option value="plaats">Een plaats of adres</option>
+        <option value="wetenschap">Wetenschap</option>
+      </select>
+      <button type="button" id="onderzoekKnop">Onderzoek</button>
+      <button type="button" id="onderzoekStop" hidden>Stop</button>
+      <p id="onderzoekStand" aria-live="polite"></p>
+      <ul id="onderzoekVoortgang"></ul>
+      <div id="onderzoekUitslag"></div>
     </div>
     <div id="priveHoek"></div>
   </section>
@@ -490,6 +555,54 @@
   <button id="instelStandaard">Terug naar standaard</button>
   <button id="instelSluit">Sluiten</button>
 </div>
+<!-- 542: DE PRIVÉ-HOEK ALS EIGEN PAGINA (index.html#hoek). Alleen op deze computer; niets gaat via de brievenbus; niets in het logboek. -->
+<div id="hoekPagina" hidden>
+  <div id="hoekVeilig" role="region" aria-label="Veiligheid">
+    <button type="button" id="hoekNoodstop">⛔ NOODSTOP</button>
+    <button type="button" id="hoekStop">Stop</button>
+    <button type="button" id="hoekAllesUit">Alles uit</button>
+    <button type="button" id="hoekVolLokaal" aria-pressed="false">Vol lokaal: UIT</button>
+    <p id="hoekStatus" role="status" aria-live="polite"></p>
+    <button type="button" id="hoekTerug">Terug</button>
+  </div>
+  <nav id="hoekRail" aria-label="Zones">
+    <button type="button" data-hoek-zone="veilig">⛔ Veiligheid</button>
+    <button type="button" data-hoek-zone="rek">📱 Rek</button>
+    <button type="button" data-hoek-zone="zoek">🔎 Zoeken</button>
+    <button type="button" data-hoek-zone="model">🧠 Modellen</button>
+  </nav>
+  <div id="hoekInhoud">
+    <section id="hoekZone-rek" aria-labelledby="hoekKopRek">
+      <h2 id="hoekKopRek">📱 Rek</h2>
+      <p class="eerlijk">Alle rektelefoons naast elkaar. Meekijken gaat via de USB-kabel. Tikken op een telefoon kan pas na een aparte aan-knop.</p>
+      <div id="hoekWand"></div>
+    </section>
+    <section id="hoekZone-zoek" aria-labelledby="hoekKopZoek">
+      <h2 id="hoekKopZoek">🔎 Zoeken</h2>
+      <div class="hoekVak prive" id="hoekVakPrive"><p class="hoekVakWoord">🔒 Privé</p><div id="hoekPriveZoek"></div></div>
+      <div class="hoekVak algemeen" id="hoekVakAlgemeen">
+        <p class="hoekVakWoord">🌐 Algemeen</p>
+        <label for="hoekZoekVraag">Zoek</label>
+        <input id="hoekZoekVraag" autocomplete="off" spellcheck="false" maxlength="200">
+        <label for="hoekZoekSoort">Soort vraag</label>
+        <select id="hoekZoekSoort"><option value="algemeen">Algemeen</option><option value="plaats">Plaats of adres</option><option value="wetenschap">Wetenschap</option><option value="fotos">Foto's</option></select>
+        <div id="hoekBronnen" role="group" aria-label="Bronnen"></div>
+        <button type="button" id="hoekZoekKnop">Zoek</button>
+        <p id="hoekZoekStand" aria-live="polite"></p>
+        <div id="hoekZoekUitslag"></div>
+      </div>
+    </section>
+    <section id="hoekZone-model" aria-labelledby="hoekKopModel">
+      <h2 id="hoekKopModel">🧠 Modellen</h2>
+      <div id="hoekModellen"></div>
+    </section>
+    <section id="hoekZone-veilig" aria-labelledby="hoekKopVeilig">
+      <h2 id="hoekKopVeilig">⛔ Mijn hoek</h2>
+      <p class="eerlijk">Back-up, wissen en "Ik heb meegekeken".</p>
+      <div id="hoekMijn"></div>
+    </section>
+  </div>
+</div>
 <div id="nieuwQrPaneel" hidden role="dialog" aria-label="QR voor een nieuwe telefoon">
   <h2>Scan dit met de nieuwe telefoon</h2>
   <p>Open JARVIS op die telefoon en tik op <b>Scan om te koppelen</b>. Hij doet daarna vanzelf mee.</p>
@@ -507,6 +620,7 @@
 <script src="zoekgeheugen.js"></script>
 <script src="verslag.js"></script>
 <script src="stemproef.js"></script>
+<script src="hoek.js"></script>
 <script src="takenverdeling.js"></script>
 <script src="nulmeting.js"></script>
 <script src="nachtlog.js"></script>

@@ -143,6 +143,7 @@
   // o.http, o.basis, o.geheim, o.pool (pool.js), o.tag (willekeurig per telefoon, voor de claim), o.klasse() (async: zwaar | midden | licht | te-oud), o.mag() (async: mag deze telefoon nu
   // rekenen? rust, reserve, hitte, kern-regel -- dezelfde regels als de pool), o.voerUit({soort, prompt, max_tokens}) -> { tekst, ms, tokens },
   // o.rem (pool.maakRem), o.naam. Alles wat gebeurt wordt geteld; er wordt NIETS gelogd van de inhoud.
+  // 541: o.voerStem({ tekst, stem }) -> { ms, duurMs, opslag } voor de stemklus; zonder die functie zegt deze telefoon `kan-niet`.
   // 537: o.id (het vaste toestel-id) en o.zoekDelen(delen) -> [{ bron, status, resultaten }] voor zoekkaartjes. Zonder die twee doet
   // deze telefoon geen zoekkaartjes (een oudere JARVIS laat ze gewoon liggen).
   async function maakWerker(o) {
@@ -203,23 +204,40 @@
     }
 
     async function behandel(k) {
+      // 541: een GERICHT kaartje (`naar` = toestel-id) is van precies EEN telefoon: elke telefoon zijn eigen stapel. Een andere telefoon
+      // laat hem liggen (telt niet mee in de ronde); de goede telefoon hoeft niet te claimen en zegt het hardop als hij NIET kan, zodat
+      // Veronica de klus meteen naar een ander kan sturen in plaats van drie minuten te wachten. Een kaartje zonder `naar` is als vroeger.
+      if (k.naar && k.naar !== o.id) return false;
       if (k.soort === 'zoek') return behandelZoek(k);
+      const gericht = !!(k.naar && o.id && k.naar === o.id);
+      const nee = async (fout, reden) => { if (gericht) await antwoord(k.id, { soort: k.soort, fout, reden, telefoon: o.naam, let_op: o.pool.LET_OP }); };
       const eigen = k.eigen === true;                                                   // 534: een vraag van Veronica zelf, geen Claude-klus
       const v = o.pool.valideer(k, { eigen });
       if (!v.ok) { tellers.geweigerd += 1; await antwoord(k.id, { fout: 'geweigerd', reden: v.reden, let_op: o.pool.LET_OP }); return; }
       if (Number.isFinite(k.deadline) && nu() > k.deadline) { tellers.verlopen += 1; return; }
+      // 541: de stemklus. Zonder stemmaker op deze telefoon: meteen `kan-niet` (ook ongericht, want niemand anders weet het beter).
+      if (k.soort === 'stem' && typeof o.voerStem !== 'function') {
+        tellers.afgewezen += 1;
+        await antwoord(k.id, { soort: 'stem', fout: 'kan-niet', reden: 'Deze telefoon kan nog geen stem maken.', telefoon: o.naam, let_op: o.pool.LET_OP });
+        return;
+      }
       if (!o.rem.mag(k.soort)) { tellers.afgewezen += 1; await antwoord(k.id, { fout: 'rem', reden: 'Te veel klussen van deze soort dit uur.', let_op: o.pool.LET_OP }); return; }
       if (o.klasse) {                                                                   // past deze oude telefoon bij het gewicht van de klus?
         const kl = await o.klasse();
-        if (!kl || !(o.pool.GEWICHT_NAAR_KLASSEN[v.gewicht] || []).includes(kl)) { tellers.afgewezen += 1; return; }
+        if (!kl || !(o.pool.GEWICHT_NAAR_KLASSEN[v.gewicht] || []).includes(kl)) { tellers.afgewezen += 1; await nee('past-niet', 'Deze klus is te zwaar voor deze telefoon.'); return; }
       }
-      if (!(await o.mag(k.soort))) { tellers.afgewezen += 1; return; }                  // in rust, te heet, onder de reserve: een andere telefoon of later
-      if (!(await claim(k.id))) return;
+      if (!(await o.mag(k.soort))) { tellers.afgewezen += 1; await nee('rust', 'Deze telefoon rust nu.'); return; }   // in rust, te heet, onder de reserve: een andere telefoon of later
+      if (!gericht && !(await claim(k.id))) return;
       o.rem.tel(k.soort);
       tellers.gepakt += 1;
       try {
-        const r = await o.voerUit({ soort: k.soort, eigen, gewicht: v.gewicht, prompt: o.pool.maakPrompt(k.soort, v.tekst, v.opties), max_tokens: v.max_tokens });
-        await antwoord(k.id, o.pool.maakResultaat({ id: k.id, soort: k.soort }, o.naam, r.tekst, r.ms, r.tokens, nu()));
+        if (k.soort === 'stem') {
+          const r = await o.voerStem({ tekst: v.tekst, stem: v.opties.stem || '' });
+          await antwoord(k.id, { id: k.id, soort: 'stem', telefoon: o.naam, ms: Math.round(Number(r && r.ms) || 0), duurMs: Math.round(Number(r && r.duurMs) || 0), opslag: r && typeof r.opslag === 'string' ? r.opslag.slice(0, 200) : null, let_op: o.pool.LET_OP });
+        } else {
+          const r = await o.voerUit({ soort: k.soort, eigen, gewicht: v.gewicht, prompt: o.pool.maakPrompt(k.soort, v.tekst, v.opties), max_tokens: v.max_tokens });
+          await antwoord(k.id, o.pool.maakResultaat({ id: k.id, soort: k.soort }, o.naam, r.tekst, r.ms, r.tokens, nu()));
+        }
         tellers.klaar += 1;
       } catch (e) {
         tellers.fout += 1;
@@ -252,6 +270,7 @@
     const id = o.id || `c${nu().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
     const lading = { soort: o.soort, tekst: String(o.tekst || ''), max_tokens: o.max_tokens, deadline: nu() + (o.wachtMs || 120000), opties: o.opties || {} };
     if (o.eigen === true) lading.eigen = true;                                          // 534: alleen Veronica's eigen vraag
+    if (o.naar) lading.naar = String(o.naar).slice(0, 80);                             // 541: gericht aan EEN telefoon (zijn eigen stapel)
     for (const b of await maakBerichten(sleutels.sleutel, 'kaart', id, lading, nu())) {
       if (!(await plaats(o.http, o.basis, sleutels.kaartjes, b))) throw new Error('ntfy nam het kaartje niet aan.');
     }

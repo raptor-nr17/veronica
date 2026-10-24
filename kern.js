@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.64';
+  const JARVIS_NIEUWSTE = '1.9.65';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   function rolNaam(h) {
@@ -626,7 +626,8 @@
       else if (m.fase === 'downloaden') zin = `haalt het model binnen (${Number(m.procent) || 0}%)`;
       else if (m.fase === 'laden') zin = 'laadt het model';
       else if (m.fase === 'fout') zin = 'motor liep vast; ik zet hem opnieuw aan';
-      else if (m.fase === 'wacht') zin = 'motor aan, wacht op wifi of de lader';
+      // 543: het model komt alleen binnen op wifi EN aan de lader. Zeg wat er ontbreekt (de hartslag weet of hij laadt).
+      else if (m.fase === 'wacht') zin = h.laadt === true ? 'motor aan, wacht op wifi zonder datalimiet om het model te halen' : h.laadt === false ? 'motor aan, wacht op de lader om het model te halen (alleen op wifi en aan de lader)' : 'motor aan, wacht op wifi en de lader om het model te halen';
       else zin = `motor aan (${m.fase || 'onbekend'})`;
       // 522: de laatste zin van de werker van de gids op die telefoon (waarom hij wel of niet werkt), als hij er een meldt.
       if (typeof h.werk === 'string' && h.werk.trim()) zin += `. Werker: ${h.werk.trim().replace(/\.$/, '')}`;
@@ -1150,7 +1151,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.88';
+  const VERONICA_VERSIE = '1.9.90';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1388,6 +1389,30 @@
     const motor = !!(h.motor && h.motor.klaar) && !!op.code;
     const adres = motor ? `http://${host}:${MOTOR_POORT}` : `http://${host}:${poortVan(t.adres) || OLLITERT_POORT}`;
     return { id: h.id, adres, jarvis, motor };
+  }
+  // 543: EEN NIEUWE TELEFOON DIE ALLEEN EEN HARTSLAG STUURT (de Cat S75 op 24 oktober): er is nog geen kaart, dus volgHart heeft niets
+  // om bij te werken. Terug: de kaarten die Veronica zou MAKEN (na een controle op het adres, zie veronica.js), of een lege lijst.
+  // Alleen een verse hartslag met een thuisadres, en nooit een toestel dat al een kaart heeft (op id of op adres).
+  function kaartenUitHarten(harten, telefoons, o) {
+    const op = o || {};
+    const tijd = op.nu || Date.now();
+    const netten = Array.isArray(op.netten) ? op.netten : [];
+    const net = (ip) => ip.split('.').slice(0, 3).join('.');
+    const lijst = Array.isArray(telefoons) ? telefoons : [];
+    const hosts = new Set(lijst.flatMap((t) => [hostVan(t.adres), hostVan(t.jarvis)]).filter(Boolean));
+    const uit = [];
+    for (const h of Array.isArray(harten) ? harten : []) {
+      if (!h || !h.id || !h.t || tijd - h.t > HARTSLAG_VERS_MS) continue;
+      if (lijst.some((t) => t.id === h.id) || uit.some((k) => k.id === h.id)) continue;
+      const thuis = (Array.isArray(h.adressen) ? h.adressen : []).filter(isThuisNet);
+      if (!thuis.length || thuis.some((ip) => hosts.has(ip))) continue;
+      const host = thuis.find((ip) => netten.includes(net(ip))) || thuis[0];
+      const motor = !!(h.motor && h.motor.klaar) && !!op.code;
+      uit.push({ id: h.id, naam: String(h.naam || '').trim().slice(0, 40) || `Telefoon ${host.split('.')[3]}`,
+        adres: motor ? `http://${host}:${MOTOR_POORT}` : `http://${host}:${OLLITERT_POORT}`, jarvis: `http://${host}:${Number(h.poort) || JARVIS_POORT}`,
+        kern: h.voorkeur === 'kern', alternatieven: [], plek: null, sleutel: motor ? op.code : '', motor });
+    }
+    return uit;
   }
   // 539: accu en temperatuur ook als het wifi niet lukt: uit een verse hartslag (via de brievenbus). Terug { temp, accu, laadt, t } of null.
   function hartMeting(h, tijd) {
@@ -1867,7 +1892,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,

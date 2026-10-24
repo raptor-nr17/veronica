@@ -104,6 +104,36 @@
     return uit;
   }
 
+  // 541: HET ONDERZOEK. Een vraag wordt zoekklussen: gewone code, geen model. Eerst de hele vraag zonder vraagwoorden, dan de losse delen
+  // (per regel, per zin, en rond ' en ' / ';' / ','); de hele vraag alleen als hij niet te knippen is. Alleen delen van minstens twee woorden; dubbele eruit; hoogstens ONDERZOEK_MAX.
+  const ONDERZOEK_MAX = 8;
+  const VRAAGWOORDEN = /^(?:wat|wie|waar|wanneer|waarom|hoe|welke?|hoeveel|is|zijn|was|waren|heeft|hebben|kan|kun|kunnen|wordt|worden|zoek|vind|geef|vertel|leg)\b\s*/i;
+  function knipOnderzoek(vraag) {
+    const schoon = (t) => String(t || '').replace(/[?!.]+$/g, '').replace(/\s+/g, ' ').trim();
+    const zonder = (t) => { let x = schoon(t); for (let i = 0; i < 3; i += 1) x = x.replace(VRAAGWOORDEN, ''); return x.replace(/^(?:er|me|mij|over|uit|van|de|het|een)\s+/i, '').trim(); };
+    const ruw = String(vraag == null ? '' : vraag);
+    const stukken = [];
+    for (const zin of ruw.split(/\r?\n|[?!.;]+\s*/)) for (const stuk of zin.split(/\s+en\s+|,\s+/i)) stukken.push(zonder(stuk));
+    const bruikbaar = stukken.filter((t) => t.split(' ').filter(Boolean).length >= 2);
+    // Eén deel: de hele vraag is de zoekklus. Meer delen: elk deel een eigen klus (de hele zin is dan een slechte zoekterm).
+    const delen = bruikbaar.length >= 2 ? bruikbaar : [zonder(ruw.replace(/\s+/g, ' '))];
+    const gezien = new Set(); const uit = [];
+    for (const d of delen) {
+      const t = d.slice(0, MAX_TERM);
+      if (t.split(' ').filter(Boolean).length < 2 || gezien.has(t.toLowerCase())) continue;
+      gezien.add(t.toLowerCase()); uit.push(t);
+      if (uit.length >= ONDERZOEK_MAX) break;
+    }
+    return uit;
+  }
+  // De tekst voor het model op de telefoon: de vraag, de zoekterm en de gevonden stukjes (gegevens, geen opdrachten). pool.js zet er de
+  // vaste markeringen omheen; het model mag alleen gebruiken wat er staat.
+  function kernTekst(vraag, term, uitslag) {
+    const res = ((uitslag && uitslag.samengevoegd) || []).slice(0, 6)
+      .map((r, i) => `[${i + 1}] ${String(r.titel || '').slice(0, 150)}${r.tekst ? `: ${String(r.tekst).slice(0, 300)}` : ''} (${(r.bronnen || []).join(', ')})`);
+    return `Onderzoeksvraag: ${String(vraag || '').slice(0, 600)}\nZoekterm: ${String(term || '').slice(0, MAX_TERM)}\nGevonden:\n${res.join('\n')}\n\nSchrijf in hoogstens vier zinnen de kern die bij de onderzoeksvraag helpt, met de nummers van de stukjes erbij, bijvoorbeeld [2]. Staat het antwoord er niet in, zeg dat dan.`;
+  }
+
   // o: { haal(url, init, ms) -> Response (Veronica's eigen), telefoons() -> [{ id, naam, host } | { id, naam, brief: true, toestel }], code() -> koppelcode, wacht?, nu?,
   //      brief?: { stuur: async (toestelId, delen) -> { delen } | { fout } } (537) }
   function maak(o) {
@@ -192,9 +222,17 @@
           if (gestopt()) break;
           s.bezig = term;
           let u;
-          try { u = await zoek(term, { soort: op.soort, taal: op.taal, telefoon: s.telefoon }); } catch (e) { u = { ok: false, zin: 'Zoeken lukte niet.' }; }
+          try { u = await zoek(term, { soort: op.soort, taal: op.taal, bronnen: op.bronnen, telefoon: s.telefoon }); } catch (e) { u = { ok: false, zin: 'Zoeken lukte niet.' }; }
+          // 541: HET ONDERZOEK. Dezelfde telefoon die zocht, haalt daarna met zijn EIGEN model de kern eruit (op.naUitslag). Een fout daar
+          // maakt de zoekuitslag niet ongedaan: dan staat er alleen dat de kern niet lukte.
+          let kern = null;
+          if (typeof op.naUitslag === 'function' && u && u.ok && u.samengevoegd && u.samengevoegd.length && !gestopt()) {
+            s.bezig = `${term} (kern)`;
+            if (typeof op.opVoortgang === 'function') { try { op.opVoortgang(stand()); } catch (e) { /* alleen weergave */ } }
+            try { kern = await op.naUitslag(term, tels.find((t) => t.id === s.telefoon), u); } catch (e) { kern = { ok: false, zin: 'De kern lukte niet.' }; }
+          }
           s.bezig = null; s.klaar += 1;
-          uitslagen.push({ term, telefoon: s.naam, uitslag: u });
+          uitslagen.push({ term, telefoon: s.naam, uitslag: u, kern });
           if (typeof op.opVoortgang === 'function') { try { op.opVoortgang(stand()); } catch (e) { /* alleen weergave */ } }
         }
       }));
@@ -205,5 +243,5 @@
     return Object.freeze({ zoek, zoekStapel, tellers, kassa });
   }
 
-  return { maak, poort, voegPerAdresSamen, verdeelStapel, leesStapel, STAPEL_MAX, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
+  return { maak, poort, voegPerAdresSamen, verdeelStapel, leesStapel, STAPEL_MAX, knipOnderzoek, kernTekst, ONDERZOEK_MAX, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
 }));

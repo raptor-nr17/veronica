@@ -37,7 +37,13 @@
   });
   // 534: VERONICA'S EIGEN VRAAG, voor de brievenbus (het gastnetwerk). GEEN klus van Claude: valideer() kent hem alleen met
   // { eigen: true }, en de lijst SOORTEN (wat Claude mag) blijft precies zoals hij was. Het antwoord is net zo goed DATA.
-  const EIGEN_SOORTEN = Object.freeze({ vraag: { maat: 'klein', limiet: 60 } });
+  const EIGEN_SOORTEN = Object.freeze({ vraag: { maat: 'klein', limiet: 60 }, stem: { maat: 'klein', limiet: 120, kan: 'stem' } });
+  // 541: DE STEMKLUS. Een verhaal (tekst) wordt een geluidsbestand op de telefoon zelf (Piper, later). Geen model-klus: maakPrompt geeft
+  // er niets voor, en een telefoon die het niet kan zegt dat meteen (`kan-niet`). Alleen naar een telefoon die in zijn hartslag
+  // `kan: ['stem']` meldt; tot die er is wacht de klus. KAN_NODIG zegt per soort welk vermogen een telefoon daarvoor moet melden.
+  const KAN_NODIG = Object.freeze({ stem: 'stem' });
+  const STEM_MAX_TEKST = 4000;
+  const STEM_NAAM_RE = /^[a-z][a-z0-9_-]{1,30}$/;
   const MAX_TEKST = 12000;
   const MAX_TOKENS = 800;
   const STANDAARD_TOKENS = 300;
@@ -51,12 +57,19 @@
     const tekst = String(i.tekst == null ? '' : i.tekst);
     if (!tekst.trim()) return { ok: false, reden: 'Er staat geen tekst in de klus.' };
     if (tekst.length > MAX_TEKST) return { ok: false, reden: `De tekst is te lang (hoogstens ${MAX_TEKST} tekens). Knip hem in stukken.` };
+    if (i.soort === 'stem') {
+      if (tekst.length > STEM_MAX_TEKST) return { ok: false, reden: `Een stemklus is EEN verhaal (hoogstens ${STEM_MAX_TEKST} tekens).` };
+      const st = i.opties && i.opties.stem != null ? String(i.opties.stem) : '';
+      if (st && !STEM_NAAM_RE.test(st)) return { ok: false, reden: 'De naam van de stem klopt niet.' };
+      return { ok: true, soort: 'stem', tekst, gewicht: 'licht', max_tokens: 0, opties: st ? { stem: st } : {} };
+    }
     const mt = Number(i.max_tokens);
     return { ok: true, soort: i.soort, tekst, gewicht: gewichtVan(i.soort, tekst.length), max_tokens: Number.isFinite(mt) && mt > 0 ? Math.min(Math.floor(mt), MAX_TOKENS) : STANDAARD_TOKENS, opties: i.opties && typeof i.opties === 'object' ? i.opties : {} };
   }
 
   // De opdracht aan het model. De GEGEVEN tekst staat tussen vaste markeringen; er staat steeds bij dat het model alleen daarmee werkt.
   function maakPrompt(soort, tekst, opties) {
+    if (soort === 'stem') return '';                                     // 541: geen opdracht aan een taalmodel
     const o = opties || {};
     const kop = {
       vertaal: `Vertaal de tekst tussen de markeringen naar ${String(o.taal || 'het Nederlands').slice(0, 30)}. Geef alleen de vertaling.`,
@@ -244,5 +257,5 @@
     };
   }
 
-  return { wachtrijVolgorde, KLASSEN, GEWICHT_NAAR_KLASSEN, capaciteit, nominaalGb, gewichtVan, tijdslimiet, VOORRANG, SOORTEN, EIGEN_SOORTEN, LET_OP, MAX_TEKST, MAX_TOKENS, valideer, maakPrompt, rangVan, geschikt, kiesTelefoon, verdring, volgende, maakRem, bijwerkSnelheid, maakResultaat, pantserRegel };
+  return { wachtrijVolgorde, KLASSEN, GEWICHT_NAAR_KLASSEN, capaciteit, nominaalGb, gewichtVan, tijdslimiet, VOORRANG, SOORTEN, EIGEN_SOORTEN, LET_OP, MAX_TEKST, MAX_TOKENS, KAN_NODIG, STEM_MAX_TEKST, valideer, maakPrompt, rangVan, geschikt, kiesTelefoon, verdring, volgende, maakRem, bijwerkSnelheid, maakResultaat, pantserRegel };
 }));
