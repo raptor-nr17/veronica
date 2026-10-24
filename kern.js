@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.68';
+  const JARVIS_NIEUWSTE = '1.9.69';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
@@ -1161,7 +1161,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.93';
+  const VERONICA_VERSIE = '1.9.94';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1734,6 +1734,26 @@
     if (h.motor && h.motor.aan && h.motor.fase === 'fout') uit.push({ code: 'motor', zin: 'De eigen motor staat aan maar liep vast; Veronica vraagt hem vanzelf opnieuw te starten.' });
     return uit;
   }
+  // 554: BIJWERKEN PER TELEFOON, uit zijn eigen hartslag (ook op een gastnetwerk). Wat de telefoon zegt (bijwerk.stap), en of de
+  // knop "Werk nu bij" kan: vanaf JARVIS 1.9.69 haalt de telefoon dan de nieuwe versie op en zet een melding (een tik daarop, dan
+  // Bijwerken). Een oudere JARVIS kent die roep niet: die moet EEN keer met de hand, en dat staat er in gewone taal.
+  const BIJWERK_NU_VANAF = '1.9.69';
+  function bijwerkRegel(h, nieuwste) {
+    if (!h || !h.t || !h.versie) return null;
+    const b = h.bijwerk && typeof h.bijwerk === 'object' ? h.bijwerk : null;
+    // de telefoon zelf kan een nieuwere versie kennen dan Veronica (die staat in de postbus): dan geldt die
+    let doel = nieuwste || JARVIS_NIEUWSTE;
+    if (b && b.nieuw && vergelijkVersie(b.nieuw, doel) > 0) doel = b.nieuw;
+    const achter = vergelijkVersie(h.versie, doel) < 0;
+    if (!achter && !b) return null;
+    const kan = vergelijkVersie(h.versie, BIJWERK_NU_VANAF) >= 0;
+    const code = b && b.code ? String(b.code) : (achter ? (kan ? 'achter' : 'met-de-hand') : '');
+    let zin = '';
+    if (b && b.stap) zin = `De telefoon zegt: ${b.stap}`;
+    else if (achter && kan) zin = `Er is een nieuwere JARVIS (${doel}). Tik op Werk nu bij: de telefoon haalt hem op en zet een melding; tik daar op de telefoon op, en daarna op Bijwerken.`;
+    else if (achter) zin = `Deze telefoon draait JARVIS ${h.versie}; die kan nog niet op afstand worden bijgewerkt. Een keer met de hand: open JARVIS op de telefoon, Instellingen, Versie, tik op Download en installeer en daarna op Bijwerken. Gebeurt er niets, open dan de downloadlink uit de mail in Chrome op die telefoon en tik op Installeren. Daarna gaat het voortaan met een tik.`;
+    return zin ? { code, zin, knop: achter && kan } : null;
+  }
   function verbinding(o, tijd) {
     const x = o || {};
     const getal = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
@@ -1976,6 +1996,6 @@
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesKast, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
-    isEigenNet, normaalAdres, leesBrievenbus, brievenbusUitleg, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    bijwerkRegel, BIJWERK_NU_VANAF, isEigenNet, normaalAdres, leesBrievenbus, brievenbusUitleg, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

@@ -89,6 +89,18 @@
   .trapVink input { width: 28px; height: 28px; }
   #trapUit { white-space: pre-wrap; margin-top: 8px; }
   .tWeg > div { padding: 2px 8px; border-left: 4px solid #C2410C; margin-top: 2px; }
+  /* 555: de zoekwand: tegels naast elkaar, zo veel als er passen */
+  .zwTegels { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
+  .zwTegel { border: 1px solid var(--lijn); border-radius: 12px; padding: 10px; background: var(--paneel); min-width: 0; overflow-wrap: anywhere; }
+  .zwTegel h4 { margin: 0 0 4px; }
+  .zwFeiten, .zwAdres, .zwKop { font-size: 0.9em; }
+  .zwAdres { opacity: 0.8; }
+  .zwNu { margin-top: 6px; font-weight: 600; }
+  .zwPaginas { margin: 4px 0 0; padding-left: 18px; }
+  .zwAntwoord { margin-top: 4px; padding: 6px 8px; border-left: 4px solid #1D4ED8; }
+  .zwReden { padding: 2px 8px; border-left: 4px solid #C2410C; margin-top: 2px; font-size: 0.95em; }
+  body.zoekwandGroot[data-zoekwand="gewoon"] #zoekwand, body.zoekwandGroot[data-zoekwand="prive"] #zoekwandPrive { position: fixed; left: 0; right: 0; bottom: 0; top: var(--kopHoogte, 64px); z-index: 1; overflow: auto; background: var(--nacht); padding: 12px; margin: 0; }
+  .tBijwerkStap { margin-top: 4px; padding: 2px 8px; border-left: 4px solid #1D4ED8; font-size: 0.95em; }
   .tVerbinding.v-rood { border-color: #B91C1C; font-weight: 600; }
   .tZelftest { font-size: 15px; margin-top: 6px; } .tZelftestKop { font-weight: 600; } .zt-nee { color: var(--rood); } .zt-info { color: var(--zacht); }
   /* 526: bevestigen in de pagina (geen venster van de browser): onderaan, boven alles, groot genoeg om op te tikken */
@@ -421,6 +433,13 @@
       <p id="stapelStand" aria-live="polite"></p>
       <ul id="stapelVoortgang"></ul>
       <div id="stapelUitslag"></div>
+      <!-- 555: DE ZOEKWAND. Elke telefoon een eigen zoekmachine, naast elkaar. Platte tekst, geen plaatjes, niets bewaard. -->
+      <section id="zoekwand" class="zwVak" aria-labelledby="zwKop">
+        <h3 id="zwKop">Zoekwand: elke telefoon een zoekmachine</h3>
+        <button type="button" id="zwGrootKnop" class="tweede">Volledig scherm</button>
+        <p class="klein">Per telefoon: versie, accu, warmte en model, wat hij nu zoekt, welke pagina's hij las en wat zijn eigen model eruit haalde. Geen schermafbeelding: de telefoons lezen de bronnen als tekst, niet in een browser.</p>
+        <div id="zwTegels" class="zwTegels"></div>
+      </section>
     </section>
     <!-- 538: de stemproef. Blind kiezen tussen stemmen; alles uit een map op deze computer, niets van internet. -->
     <section id="stemproefBlok" class="blok">
@@ -473,6 +492,13 @@
       <p id="onderzoekStand" aria-live="polite"></p>
       <ul id="onderzoekVoortgang"></ul>
       <div id="onderzoekUitslag"></div>
+      <!-- 555: de PRIVÉ-zoekwand. Alleen telefoons over het eigen wifi; niets via de postbus, de relay of de brievenbus; leeg zodra je de hoek verlaat. -->
+      <section id="zoekwandPrive" class="zwVak" aria-labelledby="zwPriveKop">
+        <h3 id="zwPriveKop">Privé-zoekwand</h3>
+        <button type="button" id="zwPriveGrootKnop" class="tweede">Volledig scherm</button>
+        <p class="klein">Alleen over het eigen wifi: nooit via de postbus, de relay of de brievenbus. Niets wordt bewaard; de wand is leeg zodra je de hoek verlaat.</p>
+        <div id="zwPriveTegels" class="zwTegels"></div>
+      </section>
     </div>
     <div id="priveHoek"></div>
   </section>
@@ -690,6 +716,7 @@
 <script src="avengers.js"></script>
 <script src="slimheid.js"></script>
 <script src="trap.js"></script>
+<script src="zoekwand.js"></script>
 <script src="fenna-kluis.js"></script>
 <script src="fenna.js"></script>
 <script src="fenna-geheugen.js"></script>

@@ -206,6 +206,10 @@
       // 522: de laatste zin van de werker van de gids op deze telefoon ("Wacht: niet aan de lader", "Niets gedaan: ..."), zodat
       // Veronica ziet WAAROM er niets gebeurt. Telt niet mee in hartslagSleutel (anders een hartslag per zin).
       werk: schoon(x.werk, 120),
+      // 554: BIJWERKEN. Welke nieuwe versie klaarstaat en waarom hij er (nog) niet op staat ("wacht op een tik op de melding",
+      // "Android weigerde: ..."). Zonder dit zag Veronica op een gastnetwerk nooit waarom een telefoon op een oude versie bleef.
+      bijwerk: x.bijwerk && typeof x.bijwerk === 'object' && schoon(x.bijwerk.nieuw, 16)
+        ? { nieuw: schoon(x.bijwerk.nieuw, 16), stap: schoon(x.bijwerk.stap, 160), code: schoon(x.bijwerk.code, 20) } : null,
       // 524: wat de werker van de gids deed: hoeveel concepten klaar, hoeveel afgekeurd door de eigen controle, en het laatste
       // stuk werk als getallen (soort, taal, duur, tempo) met een korte reden bij een afkeuring. Nooit de tekst zelf. In
       // hartslagSleutel tellen alleen de twee tellers (binnen het dagbudget van hartslagNodig).
@@ -234,7 +238,7 @@
     // Het dagbudget (hartslagNodig) blijft de rem.
     // 507: het geheugengebruik telt NIET mee (dat schommelt; anders een hartslag per kleine verandering), het model wel
     return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, d.batterijVrij, d.relay, d.privePost, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
-      i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast, g.klaar || 0, g.afgekeurd || 0, d.meetuur ? `${d.meetuur.bezig ? 'b' : 'u'}${d.meetuur.start}` : ''].join('|');
+      i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast, g.klaar || 0, g.afgekeurd || 0, d.bijwerk ? `${d.bijwerk.nieuw}:${d.bijwerk.code}` : '', d.meetuur ? `${d.meetuur.bezig ? 'b' : 'u'}${d.meetuur.start}` : ''].join('|');
   }
   // 522d: HET DAGBUDGET VERDELEN. ntfy.sh telt berichten per dag; een telefoon heeft er NTFY_DAG_MAX (40) en houdt er een paar
   // achter de hand voor iets anders dan de hartslag. Waren er overdag veel veranderingen, dan ging elke half uur een hartslag weg

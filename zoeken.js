@@ -207,7 +207,7 @@
 
     // 537: DE ZOEKSTAPEL. termen: lijst (of tekst, een per regel). Elke telefoon werkt zijn eigen stapel af, een vraag tegelijk;
     // de stapels lopen naast elkaar. o2.telefoons (optioneel) beperkt de lijst (bijvoorbeeld: geen brievenbus zonder relay).
-    // opVoortgang(stand) na elke vraag. Terug: { ok, stapels: [{ telefoon, naam, termen, klaar }], uitslagen: [{ term, telefoon, uitslag }] }.
+    // opVoortgang(stand) na elke vraag; opStap({ telefoon, naam, term, fase, uitslag, kern }) bij elke stap per telefoon (555, de zoekwand). Terug: { ok, stapels: [{ telefoon, naam, termen, klaar }], uitslagen: [{ term, telefoon, uitslag }] }.
     async function zoekStapel(termen, o2) {
       const op = o2 || {};
       const lijst = Array.isArray(termen) ? leesStapel(termen.join('\n')) : leesStapel(termen);
@@ -222,6 +222,9 @@
         for (const term of s.termen) {
           if (gestopt()) break;
           s.bezig = term;
+          // 555: de zoekwand volgt elke stap per telefoon (alleen weergave; een fout daar raakt het zoeken niet)
+          const meld = (x) => { if (typeof op.opStap === 'function') { try { op.opStap(Object.assign({ telefoon: s.telefoon, naam: s.naam, term }, x)); } catch (e) { /* alleen weergave */ } } };
+          meld({ fase: 'zoekt' });
           let u;
           try { u = await zoek(term, { soort: op.soort, taal: op.taal, bronnen: op.bronnen, telefoon: s.telefoon }); } catch (e) { u = { ok: false, zin: 'Zoeken lukte niet.' }; }
           // 541: HET ONDERZOEK. Dezelfde telefoon die zocht, haalt daarna met zijn EIGEN model de kern eruit (op.naUitslag). Een fout daar
@@ -229,10 +232,12 @@
           let kern = null;
           if (typeof op.naUitslag === 'function' && u && u.ok && u.samengevoegd && u.samengevoegd.length && !gestopt()) {
             s.bezig = `${term} (kern)`;
+            meld({ fase: 'denkt', uitslag: u });
             if (typeof op.opVoortgang === 'function') { try { op.opVoortgang(stand()); } catch (e) { /* alleen weergave */ } }
             try { kern = await op.naUitslag(term, tels.find((t) => t.id === s.telefoon), u); } catch (e) { kern = { ok: false, zin: 'De kern lukte niet.' }; }
           }
           s.bezig = null; s.klaar += 1;
+          meld({ fase: 'klaar', uitslag: u, kern });
           uitslagen.push({ term, telefoon: s.naam, uitslag: u, kern });
           if (typeof op.opVoortgang === 'function') { try { op.opVoortgang(stand()); } catch (e) { /* alleen weergave */ } }
         }
