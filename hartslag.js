@@ -146,6 +146,13 @@
       poort: Number.isInteger(x.poort) && x.poort > 0 && x.poort < 65536 ? x.poort : 8080,
       dagelijks: x.dagelijks === true,
       sparen: x.sparen === true,
+      // 544: het geheugen dat Android meldt (GB) en de vrije ruimte (GB), voor de keuze van de leider en de geheugen-telefoon; en of
+      // deze telefoon de geheugen-telefoon is. Alleen getallen en een ja/nee.
+      ram: getal(x.ram, 0, 64),
+      vrij: getal(x.vrij, 0, 4096),
+      geheugen: x.geheugen === true,
+      // 546: het gast-brein (de dagelijkse telefoon die 's nachts meerekent): mag hij nu, en zo niet, de code waarom. Alleen bij hem.
+      gast: x.gast && typeof x.gast === 'object' ? { mag: x.gast.mag === true, reden: schoon(x.gast.reden, 20) } : null,
       accu: getal(x.accu, 0, 100),
       laadt: x.laadt === true,
       // 527: mag Android JARVIS stilzetten? false = de batterij van JARVIS staat niet op Onbeperkt; zonder lader slaapt hij dan.

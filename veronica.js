@@ -799,7 +799,7 @@
   }
   function zoekBlokStart() {
     if (!window.VeronicaZoek || !$('zoekKnop')) return;
-    zoeker = window.VeronicaZoek.maak({ haal, telefoons: zoekTelefoons, code: () => S.code, brief: { stuur: zoekBriefStuur } });
+    zoeker = window.VeronicaZoek.maak({ haal, telefoons: zoekTelefoons, code: () => S.code, brief: { stuur: zoekBriefStuur }, voorraad: zoekVoorraadV() });
     if (zoekGebonden) return;   // de knoppen krijgen hun luisteraars hoogstens een keer (anders loopt een vraag dubbel)
     zoekGebonden = true;
     // 477: het zoekgeheugen (eerdere uitslagen, alleen in deze browser). Zonder het bestand werkt het zoeken gewoon.
@@ -1839,8 +1839,14 @@
         $('wieDoetWat').hidden = !wd.length;
       }
       morphKinderen($('wieRekentLijst'), oudRegels.concat(w.regels.map((r) => {
-        const d = el('li', r.rekent ? 'rekentJa' : 'rekentNee', `${r.naam} (${r.rol}): ${r.zin}${regelExtra(r)}`);
-        d.dataset.sleutel = `${r.id}|${r.pauze ? 'p' : ''}|${r.magWerker ? 'w' : ''}|${r.meetbaar ? 'm' : ''}`;
+        const ls = GeheugenV.id && r.id === GeheugenV.id ? langStand() : null;   // 547: Fenna's lange geheugen op deze telefoon
+        const d = el('li', r.rekent ? 'rekentJa' : 'rekentNee', `${r.naam} (${r.rol}): ${r.zin}${regelExtra(r)}${ls ? `. ${ls.zin}` : ''}`);
+        // 544: de geheugen-telefoon aanwijzen (of weer vanzelf laten kiezen). Alleen bij een telefoon met genoeg vrije ruimte.
+        const gh = HB.per[r.id]; const gKan = !!(window.GeheugenTel && gh && window.GeheugenTel.kanBewaren(gh, nu()));
+        const gStand = GeheugenV.gekozen === r.id ? 'g' : (gKan ? 'k' : '');
+        d.dataset.sleutel = `${r.id}|${r.pauze ? 'p' : ''}|${r.magWerker ? 'w' : ''}|${r.meetbaar ? 'm' : ''}|${gStand}`;
+        if (gStand === 'g') { const k = el('button', '', 'Geheugen-telefoon weer vanzelf'); k.dataset.geheugenKies = ''; d.append(' ', k); }
+        else if (gStand === 'k' && GeheugenV.id !== r.id) { const k = el('button', '', 'Maak dit de geheugen-telefoon'); k.dataset.geheugenKies = r.id; d.append(' ', k); }
         if (r.pauze) { const k = el('button', '', 'Noodstop opheffen'); k.dataset.noodstopOp = r.id; d.append(' ', k); }   // 522
         if (r.magWerker) { const k = el('button', '', 'Maak werker (rektelefoon)'); k.dataset.maakWerker = r.id; d.append(' ', k); }   // 522c
         if (r.meetbaar) { const k = el('button', '', 'Meetuur'); k.dataset.meetuur = r.id; d.append(' ', k); }   // 529: meetplan D
@@ -2444,6 +2450,7 @@
     await roepNaarId(id, { soort: 'word-werker', van: 'veronica' }, true);
   }
   document.addEventListener('click', (e) => { const b = e.target; if (b && b.dataset && b.dataset.maakWerker) maakWerkerViaHart(b.dataset.maakWerker); });
+  document.addEventListener('click', (e) => { const b = e.target; if (b && b.dataset && 'geheugenKies' in b.dataset) kiesGeheugen(b.dataset.geheugenKies || null).catch(() => {}); });   // 544
   document.addEventListener('click', (e) => { const b = e.target; if (b && b.dataset && b.dataset.meetuur) meetuurVraag(b.dataset.meetuur); if (b && b.dataset && b.dataset.wekLader) wekMetLader(b.dataset.wekLader); });   // 529
   // 529: MEETPLAN D. Een uur lang meet de telefoon zelf tempo, warmte en accu; de samenvatting komt in de hartslag.
   async function meetuurVraag(id) {
@@ -2807,7 +2814,142 @@
       }
     } finally { KastV.bezig = false; tekenKaartje().catch(() => {}); }
   }
-  setInterval(() => { kaartjeDagTik().catch(() => {}); kastTik().catch(() => {}); }, 2 * 60 * 1000);
+  // ---- 544 (Klus B): DE GEHEUGEN-TELEFOON (geheugentel.js) ----
+  // Welke rektelefoon het is, rekent Veronica met DEZELFDE regel uit als de telefoons zelf (uit de verse hartslagen). Een mens kan er
+  // een aanwijzen (de knop bij de tegel); leeg = weer vanzelf. Veronica:
+  //  - toont het in een zin op Live;
+  //  - laat het ALGEMENE zoeken eerst in zijn zoekvoorraad kijken (zoekVoorraadV; privé-zoeken nooit);
+  //  - zet het geheugen van Mijn-AI erop, alleen VERSLEUTELD met de sleutel van de hoek (privepost.js), alleen over het wifi;
+  //  - zet er elke nacht (2-5 uur) een kopie van op het kaartje, opnieuw versleuteld met een sleutel die alleen in deze browser staat
+  //    (niet uit te lezen; terugzetten kan dus alleen hier). Modelbestanden gaan naar de kast op het kaartje, als ze er nog niet zijn.
+  const GeheugenV = { id: null, gekozen: (() => { try { return localStorage.getItem('veronica-geheugen-gekozen') || null; } catch (e) { return null; } })(), nachtDag: (() => { try { return localStorage.getItem('veronica-geheugen-nacht') || ''; } catch (e) { return ''; } })(), zin: '', bezig: false };
+  function geheugenHarten() { return Object.values(HB.per).filter((h) => h && h.t && nu() - h.t <= K.HARTSLAG_VERS_MS); }
+  function geheugenNu() {
+    if (!window.GeheugenTel) return null;
+    const harten = geheugenHarten();
+    GeheugenV.id = window.GeheugenTel.kies(harten, { nu: nu(), gekozen: GeheugenV.gekozen, huidige: GeheugenV.id });
+    // Een telefoon die zelf zegt dat hij het is (hartslag geheugen: true) wint van onze berekening als die anders uitkomt: hij heeft de
+    // bewaarplek open, en daar staat het.
+    const zegtZelf = harten.find((h) => h.geheugen === true);
+    if (zegtZelf) GeheugenV.id = zegtZelf.id;
+    GeheugenV.zin = window.GeheugenTel.zin(GeheugenV.id, harten, null);
+    const tel = GeheugenV.id ? S.telefoons.find((t) => t.id === GeheugenV.id || (meet(t.adres).status && meet(t.adres).status.toestel && meet(t.adres).status.toestel.id === GeheugenV.id)) : null;
+    return { id: GeheugenV.id, tel: tel && tel.jarvis && staat(tel.adres).bereikbaar ? tel : null, harten };
+  }
+  function tekenGeheugen() {
+    const p = $('geheugenZin');
+    if (!p || !window.GeheugenTel) return;
+    const g = geheugenNu();
+    const harten = g ? g.harten : [];
+    p.hidden = !harten.length;
+    p.textContent = GeheugenV.zin + (GeheugenV.gekozen ? ' (gekozen)' : '') + (g && g.id && !g.tel ? ' Geen directe wifi-verbinding: de kopie op het kaartje en de zoekvoorraad wachten.' : '');
+  }
+  async function kiesGeheugen(id) {
+    GeheugenV.gekozen = id || null;
+    try { if (id) localStorage.setItem('veronica-geheugen-gekozen', id); else localStorage.removeItem('veronica-geheugen-gekozen'); } catch (e) { /* alleen voor nu */ }
+    for (const t of S.telefoons) if (t.id) roepNaarId(t.id, { soort: 'geheugen-kies', id: id || '' });
+    logRegel(id ? 'De geheugen-telefoon is nu een keuze. De telefoons nemen het over bij hun volgende ronde.' : 'De geheugen-telefoon wordt weer vanzelf gekozen.');
+    tekenGeheugen();
+  }
+  function zoekVoorraadV() {
+    const G = window.GeheugenTel;
+    if (!G) return null;
+    const adres = (bron, term, taal) => { const g = geheugenNu(); return g && g.tel && S.code ? `${g.tel.jarvis}/jarvis/kast/bewaar/zoekcache/${G.zoekNaam(`${bron}:${taal}`, term)}` : null; };
+    return {
+      lees: async (bron, term, taal) => {
+        const url = adres(bron, term, taal);
+        if (!url || volLokaal()) return null;
+        const r = await haal(url, { headers: { 'X-Koppelcode': S.code } }, 4000);
+        if (!r.ok) return null;
+        const d = await r.json();
+        return d && nu() - Number(d.t) <= G.ZOEK_GELDIG_MS && Array.isArray(d.resultaten) ? d : null;
+      },
+      schrijf: async (bron, term, taal, resultaten) => {
+        const url = adres(bron, term, taal);
+        if (!url || volLokaal()) return;
+        await haal(url, { method: 'POST', headers: { 'X-Koppelcode': S.code, 'Content-Type': 'application/json' }, body: JSON.stringify({ bron, taal, t: nu(), resultaten }) }, 6000);
+      },
+    };
+  }
+  // De sleutel van de nachtkopie: AES-GCM, gemaakt in deze browser, NIET uit te lezen (extractable: false), bewaard in de eigen
+  // database van de hoek. Hij verlaat deze Chromebook nooit.
+  async function nachtSleutel() {
+    let k = null;
+    try { k = await PriveOpslag.lees('nachtkopie-sleutel'); } catch (e) { k = null; }
+    if (k) return k;
+    k = await window.crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    await PriveOpslag.schrijf('nachtkopie-sleutel', k);
+    return k;
+  }
+  async function versleutelVoorKaartje(bytes) {
+    const k = await nachtSleutel();
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, bytes));
+    const uit = new Uint8Array(6 + 12 + ct.length);
+    uit.set(new TextEncoder().encode('VNK1:\n'), 0); uit.set(iv, 6); uit.set(ct, 18);
+    return uit;
+  }
+  // Het geheugen van Mijn-AI naar de geheugen-telefoon: versleuteld met de sleutel van de hoek (dezelfde als "Praat met de rij").
+  // Zonder gekoppelde hoek, zonder wifi of met Vol lokaal: niets.
+  async function priveGeheugenNaarTelefoon(tel) {
+    if (volLokaal() || typeof PrivePost === 'undefined' || !window.PriveHoek) return 'overgeslagen';
+    await laadPriveMotorSleutel();
+    if (!PriveMotorSleutel.waarde) return 'geen-sleutel';
+    if (PrivePostV.van !== PriveMotorSleutel.waarde) { PrivePostV.post = await PrivePost.afleiden(PriveMotorSleutel.waarde); PrivePostV.van = PriveMotorSleutel.waarde; }
+    let inhoud = null;
+    try { const st = await PriveOpslag.lees('store'); inhoud = st ? JSON.stringify(window.PriveHoek.leesStore(st)) : null; } catch (e) { inhoud = null; }
+    if (!inhoud) return 'leeg';
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, PrivePostV.post.sleutel, new TextEncoder().encode(inhoud)));
+    const b64 = (u) => { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+    const lijf = `${window.GeheugenTel.VERSLEUTELD_MERK}${b64(iv)}.${b64(ct)}`;
+    const r = await haal(`${tel.jarvis}/jarvis/kast/bewaar/geheugen/mijn-ai.enc`, { method: 'POST', headers: { 'X-Koppelcode': S.code, 'Content-Type': 'application/octet-stream' }, body: lijf }, 30000);
+    return r.ok ? 'bewaard' : 'mislukt';
+  }
+  async function geheugenNachtTik(dwing) {
+    if (!window.GeheugenTel || GeheugenV.bezig || !S.code || !KaartjeL) return null;
+    const wanneer = window.GeheugenTel.nachtKopieNu(nu(), GeheugenV.nachtDag);
+    if (!dwing && !wanneer.nu) return null;
+    const g = geheugenNu();
+    if (!g || !g.tel) return null;
+    GeheugenV.bezig = true;
+    const tel = g.tel; let aantal = 0; let mis = 0;
+    try {
+      const prive = await priveGeheugenNaarTelefoon(tel).catch(() => 'mislukt');
+      const r = await haal(`${tel.jarvis}/jarvis/kast/bewaard`, { headers: { 'X-Koppelcode': S.code } }, 8000);
+      if (!r.ok) return null;
+      const lijst = await r.json();
+      const kaartje = await KaartjeL.status() === 'aanwezig';
+      for (const soort of ['geheugen', 'kennisboek', 'zoekcache', 'modellen']) {
+        for (const b of (Array.isArray(lijst && lijst[soort]) ? lijst[soort] : [])) {
+          if (!window.GeheugenTel.goedeNaam(b.naam)) continue;
+          if (soort === 'modellen') {
+            // Een model is groot: alleen naar de kast op het kaartje, en alleen als het er nog niet staat. Het blijft wat het was
+            // (openbaar en nagerekend met zijn sha256); de telefoon die hem nodig heeft rekent hem zelf na.
+            if (!kaartje || await KaartjeL.kastHeeft(b.naam, b.bytes)) continue;
+            const res = await haal(`${tel.jarvis}/jarvis/kast/bewaar/modellen/${encodeURIComponent(b.naam)}`, { headers: { 'X-Koppelcode': S.code } }, 60 * 60 * 1000).catch(() => null);
+            const w = res && res.ok && res.body ? await KaartjeL.kastSchrijfStroom(b.naam, res.body, b.bytes) : { ok: false };
+            if (w.ok) aantal += 1; else mis += 1;
+            continue;
+          }
+          if (!kaartje || b.bytes > window.GeheugenTel.SOORTEN[soort].max) continue;
+          const res = await haal(`${tel.jarvis}/jarvis/kast/bewaar/${soort}/${encodeURIComponent(b.naam)}`, { headers: { 'X-Koppelcode': S.code } }, 5 * 60 * 1000).catch(() => null);
+          if (!res || !res.ok) { mis += 1; continue; }
+          const dicht = await versleutelVoorKaartje(new Uint8Array(await res.arrayBuffer()));
+          const naam = `nacht-${soort}-${b.naam}.vnk`;
+          const w = await KaartjeL.kastSchrijfStroom(naam, new Blob([dicht]).stream(), dicht.length);
+          if (w.ok) aantal += 1; else mis += 1;
+        }
+      }
+      GeheugenV.nachtDag = wanneer.dag;
+      try { localStorage.setItem('veronica-geheugen-nacht', wanneer.dag); } catch (e) { /* dan morgen opnieuw */ }
+      const zin = !kaartje ? `De geheugen-telefoon is nagekeken; zonder kaartje is er geen nachtkopie gemaakt.`
+        : `Nachtkopie van de geheugen-telefoon: ${aantal} bestand${aantal === 1 ? '' : 'en'} versleuteld op het kaartje${mis ? `, ${mis} lukte niet (volgende nacht opnieuw)` : ''}.${prive === 'bewaard' ? ' Het geheugen van Mijn-AI staat versleuteld op de geheugen-telefoon.' : ''}`;
+      logRegel(zin);
+      return { aantal, mis, prive };
+    } finally { GeheugenV.bezig = false; }
+  }
+  setInterval(() => { kaartjeDagTik().catch(() => {}); kastTik().catch(() => {}); geheugenNachtTik().catch(() => {}); tekenGeheugen(); }, 2 * 60 * 1000);
   setTimeout(() => { kaartjeDagTik().catch(() => {}); }, 20 * 1000);
   async function vraagZelftest(adres) {
     const t = S.telefoons.find((x) => x.adres === adres);
@@ -4646,6 +4788,139 @@
     return { beeld: q.createDataURL(8, 16) };
   }
 
+  // ---- 545 (Klus C): FENNA PRAAT, en de meting per telefoon ----
+  // Erin: Web Speech (nl-NL) van deze browser, een keer per tik op de microfoon. Eruit: speechSynthesis, hoogstens twee zinnen, per
+  // zin voorgelezen zodra hij er is. Er wordt NIETS opgenomen of bewaard; de tijd tot het eerste woord is alleen een getal.
+  const FennaV = { eersteWoordMs: null, klussen: new Map() };
+  function fennaLuister() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return Promise.resolve('');
+    return new Promise((klaar) => {
+      let tekst = ''; let klaarGemeld = false;
+      const r = new SR(); r.lang = 'nl-NL'; r.interimResults = false; r.maxAlternatives = 1;
+      const eind = () => { if (!klaarGemeld) { klaarGemeld = true; klaar(tekst.trim()); } };
+      r.onresult = (e) => { tekst = Array.from(e.results).map((x) => x[0].transcript).join(' '); };
+      r.onerror = eind; r.onend = eind;
+      try { r.start(); } catch (e) { eind(); }
+      setTimeout(() => { try { r.stop(); } catch (e) { /* al klaar */ } }, 15000);
+    });
+  }
+  // start = het moment dat de vraag verstuurd werd; de meting loopt tot het eerste gesproken woord.
+  function fennaSpreek(antwoord, start, telefoon) {
+    if (telefoon) fennaTel(telefoon, nu());
+    const zinnen = window.Fenna ? window.Fenna.voorTeLezen(antwoord) : [String(antwoord || '')];
+    if (!window.speechSynthesis || typeof window.SpeechSynthesisUtterance === 'undefined' || !zinnen.length) return Promise.resolve();
+    return new Promise((klaar) => {
+      zinnen.forEach((z, i) => {
+        const u = new window.SpeechSynthesisUtterance(z); u.lang = 'nl-NL';
+        if (i === 0) u.onstart = () => { FennaV.eersteWoordMs = Math.max(0, nu() - (Number(start) || nu())); tekenFennaMeting(); };
+        if (i === zinnen.length - 1) u.onend = () => klaar();
+        window.speechSynthesis.speak(u);
+      });
+    });
+  }
+  function fennaTel(naam, t) {
+    if (!naam) return;
+    const l = (FennaV.klussen.get(naam) || []).filter((x) => t - x <= 3600 * 1000);
+    l.push(t); FennaV.klussen.set(naam, l.slice(-500));
+  }
+  // De meting: per telefoon met een verse hartslag het tempo (het laatste echte werk, anders de motor) en de klussen van het laatste
+  // uur die Veronica zelf zag terugkomen.
+  function fennaMeting(t, harten) {
+    const uit = [];
+    for (const h of (Array.isArray(harten) ? harten : [])) {
+      if (!h || !h.naam || typeof h.t !== 'number' || t - h.t > K.HARTSLAG_VERS_MS) continue;
+      const gl = h.gids && h.gids.laatst && h.gids.laatst.ok && Number(h.gids.laatst.tps) > 0 ? Number(h.gids.laatst.tps) : 0;
+      const tps = gl || (h.motor && h.motor.klaar && Number(h.motor.tps) > 0 ? Number(h.motor.tps) : null);
+      uit.push({ naam: h.naam, tps: tps ? Math.round(tps * 10) / 10 : null, klussenUur: (FennaV.klussen.get(h.naam) || []).filter((x) => t - x <= 3600 * 1000).length });
+    }
+    return uit;
+  }
+  function tekenFennaMeting() {
+    const lijst = document.getElementById('fennaMeting'); const blok = document.getElementById('fennaMetingBlok');
+    if (!lijst || !blok) return;
+    const m = fennaMeting(nu(), Object.values(HB.per));
+    blok.hidden = !m.length;
+    const regels = m.map((r) => { const li = el('li', '', `${r.naam}: ${r.tps ? `ongeveer ${String(r.tps).replace('.', ',')} tokens per seconde` : 'tempo nog niet gemeten'}, ${r.klussenUur} ${r.klussenUur === 1 ? 'klus' : 'klussen'} in het laatste uur`); li.dataset.sleutel = `fm|${r.naam}|${r.tps}|${r.klussenUur}`; return li; });
+    if (FennaV.eersteWoordMs !== null) { const li = el('li', '', `Fenna: eerste woord na ${String(Math.round(FennaV.eersteWoordMs / 100) / 10).replace('.', ',')} seconden`); li.dataset.sleutel = `fm|eerste|${FennaV.eersteWoordMs}`; regels.push(li); }
+    morphKinderen(lijst, regels);
+  }
+  setInterval(() => { try { tekenFennaMeting(); } catch (e) { /* de volgende keer */ } }, 30000);
+
+  // ---- 547: FENNA'S LANGE GEHEUGEN op de geheugen-telefoon (fenna-geheugen.js) ----
+  // Alleen over het EIGEN wifi naar die ene telefoon (/jarvis/kast/bewaar/geheugen/fenna-lang.enc, met de rij-code), alleen VERSLEUTELD
+  // met de sleutel van de privé-hoek (dezelfde als het geheugen van Mijn-AI), nooit via de relay of de brievenbus, en niet met Vol lokaal.
+  // De laatste kopie en de wachtrij staan in de eigen database van de hoek (veronica-prive); de wachtrij gaat naar de telefoon zodra hij er is.
+  const LangV = { geheugen: null, bron: 'geen', t: 0, bezig: null };
+  const b64 = (u) => { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+  const vanB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  async function langSleutel() {
+    await laadPriveMotorSleutel();
+    if (!PriveMotorSleutel.waarde || typeof PrivePost === 'undefined') return null;
+    if (PrivePostV.van !== PriveMotorSleutel.waarde) { PrivePostV.post = await PrivePost.afleiden(PriveMotorSleutel.waarde); PrivePostV.van = PriveMotorSleutel.waarde; }
+    return PrivePostV.post && PrivePostV.post.sleutel;
+  }
+  async function langDicht(obj, k) {
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode(JSON.stringify(obj))));
+    return `${window.GeheugenTel.VERSLEUTELD_MERK}${b64(iv)}.${b64(ct)}`;
+  }
+  async function langOpen(tekst, k) {
+    const m = /^VPHG1:([A-Za-z0-9+/=]+)\.([A-Za-z0-9+/=]+)$/.exec(String(tekst || '').trim());
+    if (!m) return null;
+    try { return JSON.parse(new TextDecoder().decode(await window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: vanB64(m[1]) }, k, vanB64(m[2])))); } catch (e) { return null; }
+  }
+  const langLees = async (s) => { try { return await PriveOpslag.lees(s); } catch (e) { return null; } };
+  const langBewaar = async (s, w) => { try { await PriveOpslag.schrijf(s, w); } catch (e) { /* alleen voor nu */ } };
+  // tel = { jarvis } (de geheugen-telefoon); zonder: die van geheugenNu().
+  async function fennaLangLaad(tel) {
+    if (!window.FennaGeheugen || !window.GeheugenTel) return null;
+    if (LangV.bezig) return LangV.bezig;
+    LangV.bezig = (async () => {
+      const F = window.FennaGeheugen;
+      const t = tel || (geheugenNu() || {}).tel;
+      const rij = (await langLees('fenna-lang-wachtrij')) || [];
+      const k = await langSleutel();
+      if (t && t.jarvis && k && S.code && !volLokaal()) {
+        const url = `${t.jarvis}/jarvis/kast/bewaar/geheugen/${F.BESTAND}`;
+        try {
+          const r = await haal(url, { headers: { 'X-Koppelcode': S.code } }, 8000);
+          let basis = null;
+          if (r.ok) basis = await langOpen(await r.text(), k);
+          if (r.ok && !basis) throw new Error('niet te openen');   // een bestand dat we niet kunnen lezen overschrijven we NIET
+          if (r.ok || r.status === 404) {
+            let g = F.pasToe(basis || F.leeg(), rij);
+            if (rij.length) {
+              g.t = nu();
+              const w = await haal(url, { method: 'POST', headers: { 'X-Koppelcode': S.code, 'Content-Type': 'application/octet-stream' }, body: await langDicht(g, k) }, 15000);
+              if (w.ok) await langBewaar('fenna-lang-wachtrij', []);
+              else throw new Error('niet bewaard');
+            }
+            Object.assign(LangV, { geheugen: g, bron: 'telefoon', t: nu() });
+            await langBewaar('fenna-lang-kopie', g);
+            return g;
+          }
+        } catch (e) { /* dan de kopie */ }
+      }
+      const kopie = await langLees('fenna-lang-kopie');
+      const g = F.pasToe(kopie || F.leeg(), rij);
+      Object.assign(LangV, { geheugen: g, bron: kopie || rij.length ? 'kopie' : 'geen', t: nu() });
+      return g;
+    })();
+    try { return await LangV.bezig; } finally { LangV.bezig = null; }
+  }
+  // Een wijziging: eerst in de wachtrij (dan gaat er nooit iets verloren), dan meteen proberen.
+  async function fennaLangSchrijf(op, tel) {
+    if (!window.FennaGeheugen) return null;
+    const rij = window.FennaGeheugen.wachtrijErbij((await langLees('fenna-lang-wachtrij')) || [], op);
+    await langBewaar('fenna-lang-wachtrij', rij);
+    return fennaLangLaad(tel);
+  }
+  function langStand() {
+    const F = window.FennaGeheugen;
+    return LangV.geheugen && F ? { geheugen: LangV.geheugen, bron: LangV.bron, tellingen: F.tellingen(LangV.geheugen), zin: F.zin(F.tellingen(LangV.geheugen), LangV.bron) } : null;
+  }
+
   // ---- 466: MIJN PRIVÉ-HOEK ----
   // Eigen database in deze browser; geen netwerk. De inhoud (prive-hoek.js / prive-hoek-ui.js) komt nooit in logRegel, ntfy of een telefoon.
   const PriveOpslag = (() => {
@@ -4692,6 +4967,8 @@
       koppelQr: maakPriveKoppelQr,   // 481: de telefoon koppelen aan de hoek (QR met de privé-sleutel)
       betekenis: priveBetekenisLaag(),   // 523: zoeken op betekenis (rekenen, geen netwerk; het model komt van buiten dit blok)
       rij: priveRijLaag(),   // 536: Praat met de rij (via de relay; zie hierboven)
+      luister: fennaLuister, spreek: fennaSpreek, telKlus: (tel) => fennaTel(tel, nu()),   // 545: Fenna praat
+      lang: { laad: () => fennaLangLaad(), schrijf: (op) => fennaLangSchrijf(op), stand: langStand },   // 547: het lange geheugen op de geheugen-telefoon
       model: priveModelLaag(),   // 470: zie hierboven (buiten dit blok: het is het ENIGE stukje van de hoek dat het netwerk aanraakt)
       downloadBestand: (naam, tekst) => {
         // 498: de VERSLEUTELDE back-up van de privé-hoek gaat naar het kaartje als dat er is (soort 'backup' laat alleen die vorm door).
@@ -4889,7 +5166,7 @@
     keus.firstChild.value = '';
     keus.value = voor;
   }
-  window.__veronica = { stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

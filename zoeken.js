@@ -171,6 +171,7 @@
       telefoons: () => o.telefoons().map((t) => (t.brief ? { id: t.id, brief: true, toestel: t.toestel } : { id: t.id, lokaal: false, host: t.host })),
       code: () => o.code(), wacht: o.wacht,
       briefDeel: o.brief && typeof o.brief.stuur === 'function' ? briefDeel : undefined,
+      voorraad: o.voorraad || undefined,   // 544: de zoekvoorraad op de geheugen-telefoon (eerst kijken, dan pas zoeken)
     });
 
     const metBrief = (t) => !t.brief || !!(o.brief && typeof o.brief.stuur === 'function');

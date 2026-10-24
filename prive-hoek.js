@@ -69,6 +69,9 @@
       instellingen: { deelPrive: false, meekijkT: null, laatsteBackup: null, praatLokaal: false, praatTelefoon: '' },
       favorieten: [],                 // 496: [{ naam, adres }] -- veilig browsen; NOOIT een wachtwoord of gebruikersnaam
       veilig: { manager: false, gastnet: false, dns: false, scherm: false },   // 496: de vinkjes, alleen ja/nee
+      // 545 (Fenna): de persoonlijkheid. Kaart leeg = de standaardkaart van fenna.js. Stijl schrijft alleen de eigenaar; die gaat
+      // nooit over de relay of de brievenbus (fenna.js bouw: alleen kanaal 'wifi').
+      persona: { kaart: '', feiten: '', samenvatting: '', stijl: '', modus: 'gesprek' },
     };
   }
   // Een store uit opslag of back-up lezen: alleen wat bekend is, binnen de grenzen. Rommel valt weg.
@@ -96,6 +99,8 @@
       if (!v || !/^v[a-z0-9]{3,20}$/.test(nuTekst(v.id)) || !['karakter', 'kern', 'besluit'].includes(v.soort) || typeof v.tekst !== 'string') continue;
       s.voorstellen.push({ id: v.id, soort: v.soort, titel: knip(v.titel, 120), tekst: knip(v.tekst, MAX_TEKST), door: 'rol', t: Number.isFinite(v.t) ? v.t : 0, status: v.status === true ? true : v.status === false ? false : null });
     }
+    const pe = x.persona && typeof x.persona === 'object' ? x.persona : {};   // 545
+    s.persona = { kaart: knip(pe.kaart, 3000), feiten: knip(pe.feiten, 2000), samenvatting: knip(pe.samenvatting, 2000), stijl: knip(pe.stijl, 2000), modus: pe.modus === 'werk' ? 'werk' : 'gesprek' };
     const i = x.instellingen && typeof x.instellingen === 'object' ? x.instellingen : {};
     s.instellingen = { deelPrive: i.deelPrive === true, meekijkT: Number.isFinite(i.meekijkT) ? i.meekijkT : null, laatsteBackup: Number.isFinite(i.laatsteBackup) ? i.laatsteBackup : null,
       praatLokaal: i.praatLokaal === true, praatTelefoon: isLokaalAdres(i.praatTelefoon) ? i.praatTelefoon : '' };

@@ -82,7 +82,10 @@
   // 536: PRAAT MET DE RIJ. Een vraag gaat (versleuteld met de privé-sleutel van de hoek) via de RELAY naar een vrije rektelefoon die
   // aan de hoek gekoppeld is; nooit via de brievenbus. Het netwerk zit NIET in dit bestand: d.rij (veronica.js, privepost.js) doet het.
   // "Onthoud dat ..." gaat niet naar een telefoon: dat zet deze code zelf onderaan je kern (jij typt het, dus jij schrijft het).
+  // 545: fenna.js (in de browser een globale; zonder: de oude weg met alleen het geheugen).
+  function Fn() { return (typeof window !== 'undefined' && window.Fenna) || null; }
   function rijBlok() {
+    const Fenna = Fn();
     const k = el('section', 'phBlok'); k.id = 'phRijBlok'; k.append(kop('Praat met de rij'));
     const R = d.rij && typeof d.rij.stand === 'function' ? d.rij : null;
     const st = R ? R.stand() : { klaar: false, reden: 'Deze Veronica kent de weg naar de rij nog niet.' };
@@ -99,6 +102,7 @@
       if (P.leesOnthoud(vraag)) {
         const o = P.onthoud(U.store, vraag, 'eigenaar');
         if (o.ok) { P.logToevoegen(U.store, 'Een regel aan de kern toegevoegd ("onthoud dat").', 'eigenaar', d.nu()); await bewaar(); }
+        if (o.ok && d.lang) await d.lang.schrijf({ op: 'onthoud', t: d.nu(), tekst: o.regel });   // 547: ook in Fenna's lange geheugen
         U.rijGesprek.push(o.ok ? { wie: 'hoek', tekst: `Onthouden: ${o.regel}` } : { wie: 'fout', tekst: o.fout === 'vol' ? 'Je kern is vol; haal er eerst iets uit.' : 'Dat kon ik niet onthouden.' });
         teken();
         return;
@@ -106,12 +110,45 @@
       if (!R || !R.stand().klaar) { U.rijGesprek.push({ wie: 'fout', tekst: `Niet verstuurd: ${R ? R.stand().reden : 'geen weg naar de rij.'}` }); teken(); return; }
       U.rijGesprek.push({ wie: 'model', tekst: 'Even wachten op een rektelefoon...', bezig: true }); teken();
       const g = P.geheugenVoorVraag(U.store, vraag);
-      const r = await R.vraag(vraag, { systeem: g.systeem });
+      // 545: FENNA. Elke beurt opnieuw opgebouwd: de kaart vooraan, de laatste beurten, de rest als samenvatting, de slotregel als
+      // laatste. Via de relay = kanaal 'relay': het blok Stijl gaat dan NIET mee.
+      const gr = U.gereedschap && Fenna && Fenna.GEREEDSCHAP[U.gereedschap] ? U.gereedschap : '';
+      const eerder = U.rijGesprek.slice(0, -2).filter((z) => (z.wie === 'jij' || z.wie === 'model') && !z.bezig).map((z) => ({ wie: z.wie === 'jij' ? 'jij' : 'fenna', tekst: z.tekst }));
+      // 547: het lange geheugen (feiten, samenvattingen, onthoud, stijl) komt van de geheugen-telefoon, of uit de laatste kopie.
+      const lang = d.lang ? await d.lang.laad() : null;
+      const lv = lang && window.FennaGeheugen ? window.FennaGeheugen.voorFenna(lang) : null;
+      const persona = Object.assign({}, U.store.persona, lv ? { feiten: lv.feiten, samenvatting: [U.store.persona && U.store.persona.samenvatting, lv.samenvatting].filter(Boolean).join(' '), stijl: lv.stijl } : {});
+      const f = Fenna ? Fenna.bouw({ persona, beurten: eerder, vraag: gr ? `${Fenna.GEREEDSCHAP[gr].opdracht}\n\n${vraag}` : vraag, kanaal: 'relay', geheugen: g.systeem }) : { systeem: g.systeem, vraag };
+      const start = d.nu();
+      const r = await R.vraag(f.vraag, { systeem: f.systeem });
       U.rijGesprek.pop();
-      U.rijGesprek.push(r.ok ? { wie: 'model', tekst: r.antwoord || '(leeg antwoord)', telefoon: r.telefoon } : { wie: 'fout', tekst: r.zin });
+      let vorm = '';
+      if (r.ok && gr) { const c = Fenna.controleer(gr, r.antwoord); if (!c.ok) vorm = ` (De vorm klopt niet: ${c.reden}.)`; }
+      U.rijGesprek.push(r.ok ? { wie: 'model', tekst: (r.antwoord || '(leeg antwoord)') + vorm, telefoon: r.telefoon } : { wie: 'fout', tekst: r.zin });
+      if (r.ok && d.lang && Fenna) {   // 547: de samenvatting van het gesprek van vandaag (door de code, niet door het model)
+        const alle = U.rijGesprek.filter((z) => (z.wie === 'jij' || z.wie === 'model') && !z.bezig).map((z) => ({ wie: z.wie === 'jij' ? 'jij' : 'fenna', tekst: z.tekst }));
+        const sam = Fenna.samenvatBeurten(alle);
+        if (sam) d.lang.schrijf({ op: 'samenvatting', dag: new Date(d.nu()).toISOString().slice(0, 10), tekst: sam }).catch(() => {});
+      }
+      if (r.ok && typeof d.spreek === 'function' && U.praten) d.spreek(r.antwoord || '', start, r.telefoon);
+      else if (r.ok && typeof d.telKlus === 'function') d.telKlus(r.telefoon);
       teken();
     });
-    k.append(inv, b);
+    // 545: gereedschap (zes vaste opdrachten, de code kijkt de vorm na) en praten (microfoon erin, de stem eruit, per zin).
+    const kies = el('select'); kies.id = 'phRijGereedschap'; kies.setAttribute('aria-label', 'Gereedschap');
+    const geen = el('option', '', 'Gewone vraag'); geen.value = ''; kies.append(geen);
+    if (Fenna) for (const [sleutel, gx] of Object.entries(Fenna.GEREEDSCHAP)) { const o = el('option', '', gx.naam); o.value = sleutel; if (U.gereedschap === sleutel) o.selected = true; kies.append(o); }
+    kies.addEventListener('change', () => { U.gereedschap = kies.value; });
+    const mic = el('button', '', 'Praat (microfoon)'); mic.type = 'button'; mic.id = 'phRijPraat';
+    mic.addEventListener('click', async () => {
+      if (typeof d.luister !== 'function') { meld('Praten kan in deze browser niet.'); return; }
+      U.praten = true; mic.disabled = true; mic.textContent = 'Ik luister...';
+      const t = await d.luister();
+      mic.disabled = false; mic.textContent = 'Praat (microfoon)';
+      if (!t) { meld('Ik heb niets verstaan.'); return; }
+      inv.value = t; b.click();
+    });
+    k.append(inv, b, kies, mic);
     if (U.rijGesprek.length) {
       const g = el('div', 'phGesprek'); g.id = 'phRijGesprek';
       for (const z of U.rijGesprek) {
@@ -122,6 +159,42 @@
       g.append(el('p', 'phKlein', 'Dit gesprek staat alleen op het scherm en verdwijnt als de hoek dichtgaat. De rektelefoon bewaart niets.'));
       k.append(g);
     }
+    return k;
+  }
+  // 545: FENNA, de persoonlijkheid. Kaart (leeg = de standaardkaart), feiten, samenvatting, en het blok Stijl dat alleen de eigenaar
+  // invult en dat nooit over de relay of de brievenbus gaat. Werkmodus: alleen de eerste alinea, de stijl en de eerlijkheid.
+  function fennaBlok() {
+    const Fenna = Fn();
+    const k = el('section', 'phBlok'); k.id = 'phFennaBlok'; k.append(kop('Fenna (persoonlijkheid)'));
+    const pe = Object.assign({}, U.store.persona || {});
+    const modus = el('div');
+    for (const [m, naam] of [['gesprek', 'Gespreksmodus'], ['werk', 'Werkmodus']]) {
+      const b = el('button', '', naam); b.type = 'button'; b.dataset.fennaModus = m; b.setAttribute('aria-pressed', String((pe.modus || 'gesprek') === m));
+      b.addEventListener('click', async () => { U.store.persona = Object.assign({}, U.store.persona, { modus: m }); await bewaar(); teken(); });
+      modus.append(b);
+    }
+    k.append(el('p', 'phKlein', 'Gespreksmodus: de hele kaart. Werkmodus: alleen de eerste alinea, je stijl en de eerlijkheidsregel.'), modus);
+    const veld = (sleutel, label, uitleg, standaard) => {
+      const w = el('div'); const t = el('textarea'); t.rows = sleutel === 'kaart' ? 8 : 3; t.id = `phFenna_${sleutel}`; t.setAttribute('aria-label', label);
+      t.value = pe[sleutel] || ''; if (standaard) t.placeholder = standaard;
+      w.append(el('strong', '', label), el('p', 'phKlein', uitleg), t); return { w, t };
+    };
+    // 547: Feiten en Stijl wonen op de geheugen-telefoon; hier staat de laatst gelezen versie.
+    const ls = d.lang ? d.lang.stand() : null;
+    if (ls) { pe.feiten = ls.geheugen.feiten; pe.stijl = ls.geheugen.stijl; }
+    k.append(el('p', 'phKlein', ls ? `${ls.zin}. Feiten, samenvattingen, "onthoud dat" en je stijl staan op de geheugen-telefoon (versleuteld, alleen via je eigen wifi).` : 'Feiten en stijl gaan naar de geheugen-telefoon zodra die er is (versleuteld, alleen via je eigen wifi).'));
+    const kaart = veld('kaart', 'Kaart', 'Leeg = de standaardkaart (ongeveer 400 tokens, acht voorbeeldzinnen).', Fenna ? Fenna.KAART : '');
+    const feiten = veld('feiten', 'Feiten', 'Wat Fenna als waar mag aannemen.');
+    const sam = veld('samenvatting', 'Samenvatting', 'Waar eerdere gesprekken over gingen.');
+    const stijl = veld('stijl', 'Stijl (alleen van jou)', 'Gaat NOOIT via de brievenbus of het internet, ook niet via de relay: alleen als Fenna rechtstreeks over je eigen wifi praat.');
+    const b = el('button', '', 'Bewaar Fenna'); b.type = 'button'; b.id = 'phFennaBewaar';
+    b.addEventListener('click', async () => {
+      // 547: feiten en stijl gaan naar de geheugen-telefoon (eerst in de wachtrij); in de hoek blijft alleen de kaart en de samenvatting.
+      if (d.lang) { await d.lang.schrijf({ op: 'feiten', tekst: feiten.t.value.slice(0, 2000) }); await d.lang.schrijf({ op: 'stijl', tekst: stijl.t.value.slice(0, 2000) }); }
+      U.store.persona = { kaart: kaart.t.value.slice(0, 3000), feiten: d.lang ? '' : feiten.t.value.slice(0, 2000), samenvatting: sam.t.value.slice(0, 2000), stijl: d.lang ? '' : stijl.t.value.slice(0, 2000), modus: (U.store.persona || {}).modus === 'werk' ? 'werk' : 'gesprek' };
+      P.logToevoegen(U.store, 'Fenna bijgewerkt (persoonlijkheid).', 'eigenaar', d.nu()); await bewaar(); meld('Fenna is bewaard. De volgende vraag gebruikt het al.');
+    });
+    k.append(kaart.w, feiten.w, sam.w, stijl.w, b);
     return k;
   }
   function chatBlok() {
@@ -396,7 +469,7 @@
     if (!U.klaar) { wortelEl.append(el('p', '', 'Even laden…')); return; }
     wortelEl.append(bovenbalk());
     if (U.melding) wortelEl.append(el('p', 'phMelding', U.melding));
-    wortelEl.append(statusBlok(), rijBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), betekenisBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
+    wortelEl.append(statusBlok(), rijBlok(), fennaBlok(), chatBlok(), laagBlok(), voorstelBlok(), logBlok(), betekenisBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
   }
 
   return {

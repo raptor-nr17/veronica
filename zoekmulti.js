@@ -117,7 +117,7 @@
     const Z = o.zoekmodule; const bewaker = o.bewaker; const kassa = o.kassa;
     const wacht = o.wacht || ((ms) => new Promise((r) => setTimeout(r, ms)));
     const oudeTelefoons = new Set();          // telefoons die het eindpunt nog niet kennen (404/405): daar halen we zelf op
-    const teller = { deelvragen: 0, opAnderen: 0, zelf: 0, lokaalGenoeg: 0, terugval: 0, viaBrief: 0 };
+    const teller = { deelvragen: 0, opAnderen: 0, zelf: 0, lokaalGenoeg: 0, terugval: 0, viaBrief: 0, uitVoorraad: 0 };
     const { bron, toegestaanAdres, zeef } = bronRegels(Z);
 
     async function haalZelf(adres, xml) {
@@ -192,8 +192,20 @@
         const z = zeef(naam, bx.lees(r.data, taal), bewaker);
         return { status: 200, resultaten: z.resultaten, weggelaten: z.weggelaten };
       };
+      // 544 (Klus B): DE ZOEKVOORRAAD op de geheugen-telefoon (o.voorraad = { lees, schrijf }, alleen voor het algemene zoeken).
+      // Eerst kijken; wat er staat gaat NOG EENS door dezelfde zeef (het is data van een andere telefoon). Een nieuw antwoord gaat erin.
+      // Faalt de voorraad, dan merkt niemand het: dan wordt er gewoon gezocht.
+      const metVoorraad = o.voorraad ? async (naam, id) => {
+        try {
+          const v = await o.voorraad.lees(naam, term, taal);
+          if (v && Array.isArray(v.resultaten)) { const z = zeef(naam, v.resultaten, bewaker); teller.uitVoorraad += 1; return { status: 200, resultaten: z.resultaten, weggelaten: z.weggelaten, uitVoorraad: true }; }
+        } catch (e) { /* dan zoeken */ }
+        const r = await haal(naam, id);
+        if (r && r.status === 200 && r.resultaten.length) { try { await o.voorraad.schrijf(naam, term, taal, r.resultaten); } catch (e) { /* niet erg */ } }
+        return r;
+      } : haal;
       // De register-regel van de kassa weet welke bronnen mogen; planDeelvragen gooit de rest eruit.
-      const u = await o.kassaModule.zoekVerdeeld(kassa, term, telefoons, haal, wacht, { bronnen: lijst, taal, max: 40 });
+      const u = await o.kassaModule.zoekVerdeeld(kassa, term, telefoons, metVoorraad, wacht, { bronnen: lijst, taal, max: 40 });
       const meldingen = [];
       for (const d of u.delen) {
         const naam = (bron(d.bron) || {}).naam || d.bron;

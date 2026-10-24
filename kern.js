@@ -358,11 +358,17 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.65';
+  const JARVIS_NIEUWSTE = '1.9.66';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
+  // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
+  function gastBreinModule() {
+    if (typeof self !== 'undefined' && self.GastBrein) return self.GastBrein;
+    try { return typeof require === 'function' ? require('./gastbrein.js') : null; } catch (e) { return null; }
+  }
   function rolNaam(h) {
     const w = (x) => (x && typeof x === 'object' && 'waarde' in x ? x.waarde : x);   // ook een meting uit /jarvis/status
+    if (h && h.gast && typeof h.gast === 'object') return 'gast-brein';   // 546: nooit baas, nooit rektelefoon
     if (!h || w(h.rol) !== 'baas') return 'werker';
     const voorkeur = w(h.voorkeur);
     if (voorkeur === 'kern') return 'beheerder';
@@ -617,7 +623,11 @@
       // 522: JARVIS staat uit (de Uit-knop = ook de noodstop van de AI-kern). Dan start er niets, ook geen motor.
       const p = h.pauze && typeof h.pauze === 'object' ? h.pauze : null;
       if (p) zin = `JARVIS staat uit (noodstop${p.door && p.door !== 'onbekend' ? `, door ${p.door}` : ''}${p.t ? `, sinds ${klokZin(p.t)}` : ''}); er start niets`;
-      else if (h.dagelijks) zin = 'rust (dagelijkse telefoon)';
+      else if (h.gast && typeof h.gast === 'object') {   // 546: het gast-brein, aan- of afwezig
+        const G = gastBreinModule();
+        rekent = h.gast.mag === true;
+        zin = rekent ? `aanwezig, rekent mee aan het zware werk${m && m.model ? ` (${m.model})` : ''}` : `afwezig: ${(G && G.ZINNEN[h.gast.reden]) || 'onbekend'}`;
+      } else if (h.dagelijks) zin = 'rust (dagelijkse telefoon)';
       else if (h.sparen) zin = 'spaart (de schuif Sparen staat aan)';
       else if (!m) zin = 'meldt geen eigen motor (oude JARVIS?)';
       else if (m.teOud) zin = 'te oud voor een eigen motor';
@@ -633,7 +643,7 @@
       if (typeof h.werk === 'string' && h.werk.trim()) zin += `. Werker: ${h.werk.trim().replace(/\.$/, '')}`;
       // 522c: een beheerder die als dagelijkse telefoon RUST kan per ongeluk een rektelefoon zijn (de QR van Veronica gescand).
       // 539: ook een gekozen beheerder (voorkeur kern) kan met een klik en een bevestiging rektelefoon worden.
-      regels.push({ id: h.id || naam, naam, zin, rekent, tps, pauze: !!p, magWerker: (h.voorkeur === 'kern' || (h.rol === 'baas' && h.dagelijks === true)) && !p, rol: rolNaam(h),
+      regels.push({ id: h.id || naam, naam, zin, rekent, tps, pauze: !!p, magWerker: (h.voorkeur === 'kern' || (h.rol === 'baas' && h.dagelijks === true)) && !p && !h.gast, rol: rolNaam(h), gast: !!h.gast,
         gezien: gezienZin(h, lijn(h.id)), slaap: slaapZin(h, tijd), stop: stopZin(h, tijd), meet: meetuurZin(h), meetbaar: h.rol === 'werker' && !h.dagelijks && !p && !!(m && m.klaar) });   // 529
     }
     for (const b of (Array.isArray(bekend) ? bekend : [])) {
@@ -1151,7 +1161,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.90';
+  const VERONICA_VERSIE = '1.9.91';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
