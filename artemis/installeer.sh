@@ -255,6 +255,55 @@ status() {
   if leeft "$PIDA"; then zeg "ARTEMIS draait: http://localhost:8000"; else zeg "ARTEMIS staat uit."; fi
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
+  if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
+  if command -v tailscale >/dev/null 2>&1; then zeg "Tailscale: $(tailscale ip -4 2>/dev/null | head -1 || echo 'niet ingelogd')"; fi
+}
+
+# 562: SEARXNG als EIGEN privé-zoekmachine in Linux (Docker, de officiele searxng/searxng). JSON-uitvoer aan, de bot-limiter
+# versoepeld (alleen ons eigen rek gebruikt hem), en gebonden aan 127.0.0.1 -- alleen deze computer, en via Tailscale de eigen
+# telefoons. NOOIT open op het internet. settings.yml komt in ~/.artemis-rek/searxng.
+SEARX_MAP="$REK_MAP/searxng"
+searxng() {
+  command -v docker >/dev/null 2>&1 || { zeg "Docker staat er niet. In Linux: 'sudo apt-get install -y docker.io' en 'sudo usermod -aG docker \$USER' (daarna opnieuw inloggen)."; return 1; }
+  mkdir -p "$SEARX_MAP"
+  local geheim; geheim="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  # alleen schrijven als het er nog niet is (zodat het geheim blijft staan)
+  if [ ! -f "$SEARX_MAP/settings.yml" ]; then
+    cat >"$SEARX_MAP/settings.yml" <<YML
+# 562: eigen SearXNG voor het rek. JSON aan, limiter uit (alleen wijzelf), geen openbare toegang.
+use_default_settings: true
+server:
+  secret_key: "$geheim"
+  limiter: false            # versoepeld: alleen ons eigen rek gebruikt hem
+  image_proxy: false
+  method: "GET"
+search:
+  formats:
+    - html
+    - json                 # JSON-uitvoer aan (voor de telefoons en Onderzoek)
+YML
+    chmod 600 "$SEARX_MAP/settings.yml"
+  fi
+  docker rm -f searxng >/dev/null 2>&1 || true
+  docker run -d --name searxng --restart unless-stopped \
+    -p 127.0.0.1:8888:8080 \
+    -v "$SEARX_MAP:/etc/searxng" \
+    docker.io/searxng/searxng:latest >/dev/null \
+    && zeg "SearXNG draait op http://127.0.0.1:8888 (JSON aan, limiter uit, alleen deze computer)." \
+    || { zeg "Starten lukte niet. Staat Docker aan? 'docker ps' zou moeten werken zonder sudo."; return 1; }
+  zeg "Wil je dat de telefoons hem via Tailscale bereiken, zet dan het adres in Veronica (Meer > Zoekmachine)."
+}
+
+# 562: TAILSCALE (gratis Personal-plan) zodat je van buitenaf bij Veronica, de rektelefoons en de MCP-reserve kunt, ZONDER
+# openbare tunnel. Dit script installeert alleen de Linux-kant op de Chromebook en logt in; het ACCOUNT maak je zelf aan.
+tailscale_op() {
+  if ! command -v tailscale >/dev/null 2>&1; then
+    zeg "Tailscale installeren (officieel script van tailscale.com)..."
+    curl -fsSL https://tailscale.com/install.sh | sh || { zeg "Installeren lukte niet."; return 1; }
+  fi
+  zeg "Nu inloggen. Er komt een adres; open dat in Chrome en log in met je Tailscale-account (dat maak je zelf aan op tailscale.com)."
+  sudo tailscale up || { zeg "Inloggen lukte niet."; return 1; }
+  zeg "Klaar. Dit toestel heet in Tailscale: $(tailscale ip -4 2>/dev/null | head -1). Zet de rektelefoons en de F8 met de Tailscale-app erbij."
 }
 
 case "${1:-status}" in
@@ -263,11 +312,13 @@ case "${1:-status}" in
   toestellen) toestellen ;;
   draadloos) draadloos ;;
   mcp) mcp ;;
+  searxng) searxng ;;
+  tailscale) tailscale_op ;;
   status) status ;;
   waakhond) waakhond ;;
   waak-een-keer) waakhond een ;;
   verboden) verboden "${2:-}" "${3:-voorgrond}" ;;
-  *) zeg "Gebruik: artemis-rek start | stop | toestellen | draadloos | mcp | status" ;;
+  *) zeg "Gebruik: artemis-rek start | stop | toestellen | draadloos | mcp | searxng | tailscale | status" ;;
 esac
 REK
   chmod 755 "$bin/artemis-rek"

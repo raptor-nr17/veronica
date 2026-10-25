@@ -554,6 +554,14 @@
       <p id="artemisRegel" class="klein">ARTEMIS: even kijken...</p>
       <a id="artemisConsole" href="http://localhost:8000" target="_blank" rel="noopener" style="color: var(--tekst); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; text-decoration: none; background: var(--paneel); display: inline-block; min-height: 48px; box-sizing: border-box;">🖥️ Open de console (rektelefoons)</a>
     </div>
+    <!-- 562: de eigen SearXNG op de Chromebook. Veronica draait in deze browser OP de Chromebook, dus kan zij http://127.0.0.1:8888
+         wel bereiken en /stats lezen: welke zoekmachines blokkeren. Het adres (leeg = uit) staat alleen in deze browser. -->
+    <div id="searxBlok">
+      <p id="searxRegel" class="klein">Eigen zoekmachine (SearXNG): nog geen adres ingesteld.</p>
+      <label class="klein" for="searxAdres">Adres van SearXNG (bv. http://127.0.0.1:8888; leeg = uit):</label>
+      <input id="searxAdres" type="text" inputmode="url" placeholder="http://127.0.0.1:8888" style="width: 100%; box-sizing: border-box; min-height: 44px; font-size: 18px;" />
+      <div id="searxBlokkeert" class="klein"></div>
+    </div>
     <div id="lokaalKeus" role="radiogroup" aria-label="Wat mag er naar buiten?">
       <span class="reserveKop">Naar buiten</span>
       <button type="button" data-lokaal="normaal" role="radio" aria-checked="true">Normaal</button>
@@ -755,6 +763,7 @@
 <script src="zoekgeheugen.js"></script>
 <script src="verslag.js"></script>
 <script src="stemproef.js"></script>
+<script src="searxbron.js"></script>
 <script src="hoek.js"></script>
 <script src="takenverdeling.js"></script>
 <script src="nulmeting.js"></script>
