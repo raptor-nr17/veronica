@@ -165,7 +165,45 @@ scan() {
     printf '%s\n' "$id" >>"$TOEG"; n=$((n+1))
     logregel "Nieuwe rektelefoon vanzelf op de lijst: $naam."
   done
-  [ "$n" -gt 0 ] && zeg "$n nieuwe telefoon(s) toegevoegd." || zeg "Geen nieuwe telefoons."
+  [ "$n" -gt 0 ] && zeg "$n nieuwe telefoon(s) toegevoegd." || zeg "Geen NIEUWE telefoons toegevoegd."
+  # 573: altijd tonen WAT adb ziet (ook unauthorized/offline), zodat Claude in de console leest waarom er niets bijkwam.
+  overzicht
+}
+
+# 573: WAT ADB NU ZIET, per aangesloten toestel -- zodat Claude het in de console (Chrome) kan lezen. 'unauthorized' is geen fout
+# maar "tik Toestaan op de telefoon"; een leeg model hoort daar ook bij. Geen vraag, alleen tonen.
+overzicht() {
+  "$ADB" start-server >/dev/null 2>&1 || true
+  local regels s staat id naam
+  regels="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1" "$2}')"
+  if [ -z "$regels" ]; then
+    zeg "adb ziet geen enkel toestel. Kabel erin, in ChromeOS de telefoon DELEN met Linux, en op de telefoon USB-foutopsporing aan."
+    return 0
+  fi
+  zeg "Wat adb nu ziet:"
+  while read -r s staat; do
+    [ -n "$s" ] || continue
+    case "$staat" in
+      device)
+        naam="$(toestel_naam "$s")"; naam="${naam:-onbekend model}"; id="$(toestel_id "$s")"
+        if is_f8 "$s"; then zeg "  - $naam ($s): de F8 -- blijft altijd uitgesloten."
+        elif toegestaan "$id"; then zeg "  - $naam ($s): rektelefoon, staat op de lijst."
+        else zeg "  - $naam ($s): klaar maar nog niet op de lijst -- tik 'Zoek telefoons' om hem erop te zetten."; fi ;;
+      unauthorized) zeg "  - ($s): WACHT OP JOUW TIK -- kies op de telefoon 'Toestaan' (zet een vinkje 'Altijd toestaan vanaf deze computer'). Daarna 'Zoek telefoons'." ;;
+      offline) zeg "  - ($s): offline -- kabel los en opnieuw erin, of ontgrendel de telefoon." ;;
+      *) zeg "  - ($s): geweigerd of een onbekende staat ($staat)." ;;
+    esac
+  done <<<"$regels"
+  zeg "Op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0) rektelefoon(s)."
+}
+
+# 573: "Vergeet overgeslagen". ARTEMIS onthoudt GEEN overgeslagen toestellen (scan voegt alleen toe, slaat niets op als
+# "nooit meer"), dus er is niets te wissen. Mocht een oude versie ooit een lijstje hebben weggeschreven: dat wordt opgeruimd.
+# Daarna gewoon opnieuw zoeken en tonen wat adb ziet.
+vergeet() {
+  rm -f "$REK_MAP/overgeslagen" 2>/dev/null || true
+  zeg "ARTEMIS onthoudt geen overgeslagen toestellen, dus er is niets te vergeten. Ik zoek opnieuw:"
+  scan
 }
 
 # 571: ZELF BIJWERKEN vanaf de site. Haalt het nieuwste installeer.sh op (de bron staat in ~/.artemis-rek/bron), controleert dat
@@ -216,7 +254,7 @@ console() {
 import os, subprocess, threading, time, html, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8000')); REK = os.environ.get('REK_MAP', '')
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet'}
 def doe(cmd):
     arg = {'bijwerken': 'zelf-bijwerken'}.get(cmd, cmd)
     try:
@@ -247,7 +285,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=bijwerken>Bijwerken</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button></div>
 <p>ARTEMIS zelf opent op <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a> zodra hij gestart is.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -353,6 +391,9 @@ toestellen() {
       zeg "$naam is de F8 (je dagelijkse telefoon): die komt NOOIT op de lijst."
       continue
     fi
+    # 573: een LEEG model betekent meestal dat de telefoon nog niet 'Toestaan' kreeg (unauthorized -> model onleesbaar). NOOIT
+    # vragen met een lege naam; toon de tik.
+    if [ -z "$naam" ]; then zeg "Een telefoon ($s) heeft nog geen naam -- tik op de telefoon op 'Toestaan' (vinkje 'Altijd toestaan'). Daarna opnieuw."; continue; fi
     # Een bank-, crypto- of kluisapp is GEEN reden meer om te weigeren (ARTEMIS-ronde 25 okt): die apps staan achter 2FA
     # en kunnen er niet af. De waakhond zorgt dat ARTEMIS ze nooit opent; komt er toch een op de voorgrond, dan stopt hij.
     IFS= read -r -p "Is $naam een REKtelefoon (niet je dagelijkse telefoon)? [j/N] " antwoord </dev/tty || antwoord=""
@@ -437,6 +478,7 @@ status() {
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
   if command -v tailscale >/dev/null 2>&1; then zeg "Tailscale: $(tailscale ip -4 2>/dev/null | head -1 || echo 'niet ingelogd')"; fi
+  overzicht   # 573: ook per aangesloten toestel wat adb ziet (model, unauthorized, geweigerd), leesbaar in de console
 }
 
 # 562: SEARXNG als EIGEN privé-zoekmachine in Linux (Docker, de officiele searxng/searxng). JSON-uitvoer aan, de bot-limiter
@@ -497,6 +539,8 @@ case "${1:-status}" in
   console) console ;;
   autostart) autostart_installeren ;;
   scan) scan ;;
+  overzicht) overzicht ;;
+  vergeet) vergeet ;;
   bijwerken|zelf-bijwerken) zelf_bijwerken ;;
   toestellen) toestellen ;;
   draadloos) draadloos ;;
