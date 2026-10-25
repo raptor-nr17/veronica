@@ -2138,6 +2138,10 @@
           const v = el('div', 'tBijwerkStap', bw.zin); v.dataset.code = bw.code; tegel.appendChild(v);
           if (bw.knop && hv.id) { const b = el('button', '', 'Werk nu bij'); b.dataset.bijwerkNu = hv.id; tegel.appendChild(b); }
         }
+        // 567: zelfherstel -- wat JARVIS vanzelf goedzette (rol/dagelijks). Zo ziet de eigenaar dat het rechtgetrokken is
+        // zonder zelf in instellingen te hoeven zoeken.
+        const hr = K.herstelRegel(hv);
+        if (hr) { const v = el('div', 'tHerstel', hr); tegel.appendChild(v); }
       }
       if (window.Hartslag) {
         // 500: wat de telefoon ZELF via de brievenbus meldde (ook als het wifi hem niet bij Veronica brengt): laatst gezien,

@@ -216,6 +216,9 @@
       gids: gidsBlok(x.gids),
       // 522: JARVIS staat uit (de Uit-knop = ook de noodstop van de AI-kern): sinds wanneer en waardoor. null = staat aan.
       pauze: x.pauze && typeof x.pauze === 'object' ? { t: Math.floor(Number(x.pauze.t) || 0), door: schoon(x.pauze.door, 40) } : null,
+      // 567: ZELFHERSTEL. Wat JARVIS bij de laatste start of hartslag vanzelf goedzette (rol/dagelijks), in gewone woorden. Leeg =
+      // niets te herstellen. Telt NIET mee in hartslagSleutel (anders een hartslag per correctie).
+      herstel: schoon(x.herstel, 160),
     };
   }
   // server: leeg = ntfy.sh, anders een geldig relay-adres (529); een ongeldig adres = geen verzoek.
