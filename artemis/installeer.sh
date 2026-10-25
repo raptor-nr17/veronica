@@ -45,6 +45,9 @@ schrijf_bestanden() {
   local rek="$1" bin="$2"
   mkdir -p "$rek" "$bin"
   chmod 700 "$rek"
+  # 571: de bron waarvandaan artemis-rek zichzelf bijwerkt (de site). Komt uit de omgeving bij de installatie EN bij een
+  # zelf-bijwerkronde, zodat hij blijft staan. Geen naam in de code: de eigenaar geeft hem een keer mee in de installatieregel.
+  if [ -n "${ARTEMIS_BRON:-}" ]; then printf '%s\n' "${ARTEMIS_BRON%/}" >"$rek/bron"; chmod 600 "$rek/bron"; fi
   cat >"$rek/verboden-apps.txt" <<'LIJST'
 # Apps die ARTEMIS NOOIT mag openen of aantikken. Een regel = een pakketnaam, of een stukje ervan na "~".
 # TWEE SOORTEN, en een app op een telefoon is NOOIT een reden om die telefoon te weigeren (op alle drie de rektelefoons
@@ -88,7 +91,7 @@ voorgrond:com.whatsapp
 voorgrond:org.telegram.messenger
 voorgrond:org.thoughtcrime.securesms
 LIJST
-  cat >"$bin/artemis-rek" <<'REK'
+  cat >"$bin/artemis-rek.nieuw" <<'REK'
 #!/usr/bin/env bash
 # artemis-rek -- ARTEMIS starten en stoppen met de waakhond ernaast. Geschreven door installeer.sh.
 set -uo pipefail
@@ -100,6 +103,11 @@ VERB="$REK_MAP/verboden-apps.txt"
 LOG="$REK_MAP/waakhond.log"
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
+BRONF="$REK_MAP/bron"
+AANF="$REK_MAP/aan"           # 571: de GEWENSTE stand (ARTEMIS aan). De console-lus houdt ARTEMIS aan zolang dit bestand er is.
+CONSOLE_POORT="${ARTEMIS_CONSOLE_POORT:-8000}"   # onze knoppen-console (Veronica/Claude openen die)
+ARTEMIS_POORT="${ARTEMIS_POORT:-8001}"           # ARTEMIS zelf op een EIGEN poort, zodat hij onze console op 8000 niet in de weg zit
+BIN_SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo "$HOME/.local/bin")"
 
 zeg() { printf '%s\n' "$*"; }
 logregel() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >>"$LOG"; zeg "$*"; }
@@ -140,6 +148,140 @@ verbonden() { "$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}'
 voorgrond() {
   "$ADB" -s "$1" shell dumpsys window 2>/dev/null | tr -d '\r' \
     | sed -n 's/.*mCurrentFocus=Window{[^ ]* [^ ]* \([A-Za-z0-9_.]*\)\/.*/\1/p' | head -1
+}
+
+# 571: AUTO-SCAN. Zet elk AANGESLOTEN, al toegestane (adb-stand 'device'), niet-F8 toestel vanzelf op de lijst, zonder vraag.
+# Een telefoon komt alleen in de 'device'-stand nadat er OP de telefoon 'Toestaan' is getikt (USB-foutopsporing) -- dat is de
+# bewuste mens-stap per rektelefoon. De F8 blijft ALTIJD uitgesloten. Zo is 'toestellen' met de hand niet meer nodig.
+scan() {
+  "$ADB" start-server >/dev/null 2>&1 || true
+  touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
+  local s id naam n=0
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"
+    toegestaan "$id" && continue
+    naam="$(toestel_naam "$s")"
+    printf '%s\n' "$id" >>"$TOEG"; n=$((n+1))
+    logregel "Nieuwe rektelefoon vanzelf op de lijst: $naam."
+  done
+  [ "$n" -gt 0 ] && zeg "$n nieuwe telefoon(s) toegevoegd." || zeg "Geen nieuwe telefoons."
+}
+
+# 571: ZELF BIJWERKEN vanaf de site. Haalt het nieuwste installeer.sh op (de bron staat in ~/.artemis-rek/bron), controleert dat
+# het geldige bash is EN op ARTEMIS lijkt, en laat het ALLEEN de bestanden herschrijven (--alleen-bestanden). Bij elke twijfel:
+# niets veranderd. De bron wordt doorgegeven zodat hij blijft staan. Nooit iets uitvoeren uit het opgehaalde script zelf.
+zelf_bijwerken() {
+  [ -s "$BRONF" ] || { zeg "Geen bron voor bijwerken ingesteld (niet meegegeven bij de installatie)."; return 1; }
+  command -v curl >/dev/null 2>&1 || { zeg "Bijwerken: curl ontbreekt."; return 1; }
+  local base tmp; base="$(cat "$BRONF")"; tmp="$(mktemp)" || return 1
+  if ! curl -fsSL "$base/artemis/installeer.sh" -o "$tmp"; then zeg "Bijwerken: kon het script niet ophalen (geen internet?)."; rm -f "$tmp"; return 1; fi
+  if ! bash -n "$tmp" 2>/dev/null; then zeg "Bijwerken: het opgehaalde script is geen geldige bash; niets veranderd."; rm -f "$tmp"; return 1; fi
+  if ! grep -q 'artemis-rek' "$tmp" || ! grep -q 'ARTEMIS_REPO=' "$tmp"; then zeg "Bijwerken: het opgehaalde script lijkt niet op ARTEMIS; niets veranderd."; rm -f "$tmp"; return 1; fi
+  if ARTEMIS_BRON="$base" bash "$tmp" --alleen-bestanden "$REK_MAP" "$BIN_SELF" >/dev/null 2>&1; then logregel "Bijgewerkt vanaf de site."; rm -f "$tmp"; return 0; fi
+  zeg "Bijwerken mislukte; niets veranderd."; rm -f "$tmp"; return 1
+}
+
+# 571: AUTOSTART. Een systemd --user-dienst start de console bij het inloggen op Linux; een regel in ~/.profile is de terugval
+# voor een Crostini zonder systemd --user. Zo draait de console (localhost) altijd, en hoeft de eigenaar na de installatie nooit
+# meer de terminal in.
+autostart_installeren() {
+  local svc="$HOME/.config/systemd/user/artemis-rek.service" prof="$HOME/.profile"
+  mkdir -p "$(dirname "$svc")"
+  cat >"$svc" <<UNIT
+[Unit]
+Description=ARTEMIS-rek console
+After=default.target
+[Service]
+ExecStart=$BIN_SELF/artemis-rek console
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target
+UNIT
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  systemctl --user enable --now artemis-rek.service >/dev/null 2>&1 || true
+  if ! grep -q 'artemis-rek console' "$prof" 2>/dev/null; then
+    printf '\n# ARTEMIS-rek console vanzelf starten (terugval als systemd --user er niet is)\npgrep -f "artemis-rek console" >/dev/null 2>&1 || setsid %s/artemis-rek console </dev/null >>%s/console.log 2>&1 &\n' "$BIN_SELF" "$REK_MAP" >>"$prof"
+  fi
+  zeg "Autostart aangezet: de console draait voortaan vanzelf (http://localhost:$CONSOLE_POORT)."
+}
+
+# 571: DE KNOPPEN-CONSOLE op http://localhost:CONSOLE_POORT (alleen 127.0.0.1). Hier doet Claude in Chrome alles wat vroeger een
+# terminalopdracht was: Start, Stop, Status, Zoek telefoons (scan), Bijwerken. Een achtergrondlus zoekt elke minuut zelf nieuwe
+# rektelefoons en houdt ARTEMIS aan zolang de gewenste stand "aan" is. Geen vrije invoer: alleen een vaste lijst opdrachten.
+console() {
+  command -v python3 >/dev/null 2>&1 || { zeg "python3 ontbreekt; de console kan niet starten."; return 1; }
+  AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" REK_MAP="$REK_MAP" python3 - <<'PY'
+import os, subprocess, threading, time, html, urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8000')); REK = os.environ.get('REK_MAP', '')
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken'}
+def doe(cmd):
+    arg = {'bijwerken': 'zelf-bijwerken'}.get(cmd, cmd)
+    try:
+        r = subprocess.run([AREK, arg], capture_output=True, text=True, timeout=600)
+        return (r.stdout + r.stderr).strip() or '(geen uitvoer)'
+    except Exception as e:
+        return 'fout: ' + str(e)
+def lus():
+    # elke minuut: nieuwe telefoons zoeken; en ARTEMIS aanhouden als de gewenste stand "aan" is
+    while True:
+        try:
+            doe('scan')
+            if os.path.exists(os.path.join(REK, 'aan')):
+                pida = os.path.join(REK, 'artemis.pid'); draait = False
+                try:
+                    with open(pida) as f: pid = int(f.read().strip())
+                    os.kill(pid, 0); draait = True
+                except Exception: draait = False
+                if not draait: doe('start')
+        except Exception: pass
+        time.sleep(60)
+PAGINA = """<!doctype html><html lang=nl><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>ARTEMIS-console</title><style>body{{font-family:system-ui,sans-serif;margin:0;background:#0b1020;color:#e8ecf5;font-size:18px}}
+header{{padding:16px;background:#141b33;font-weight:600}}main{{padding:16px;max-width:760px;margin:0 auto}}
+button{{font-size:18px;padding:12px 16px;margin:6px 6px 6px 0;border:0;border-radius:10px;background:#2b3a67;color:#fff;cursor:pointer;min-height:48px}}
+button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;padding:12px;border-radius:10px;white-space:pre-wrap;min-height:120px}}
+.rij{{display:flex;flex-wrap:wrap}}a{{color:#8fb7ff}}</style></head><body>
+<header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
+<div class=rij>
+<button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=bijwerken>Bijwerken</button></div>
+<p>ARTEMIS zelf opent op <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a> zodra hij gestart is.</p>
+<pre id=uit>Klaar. Kies een knop.</pre>
+<script>
+const uit=document.getElementById('uit');
+async function doe(c){{uit.textContent='Bezig: '+c+'...';try{{const r=await fetch('/doe?cmd='+encodeURIComponent(c),{{method:'POST'}});uit.textContent=await r.text();}}catch(e){{uit.textContent='Kon de console niet bereiken: '+e;}}}}
+for(const b of document.querySelectorAll('button[data-cmd]'))b.addEventListener('click',()=>doe(b.dataset.cmd));
+doe('status');
+</script></main></body></html>"""
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _schrijf(self, code, body, ctype='text/plain; charset=utf-8'):
+        b = body.encode('utf-8'); self.send_response(code)
+        self.send_header('Content-Type', ctype); self.send_header('Content-Length', str(len(b)))
+        self.end_headers(); self.wfile.write(b)
+    def do_GET(self):
+        p = urllib.parse.urlparse(self.path)
+        if p.path in ('/', '/index.html'):
+            self._schrijf(200, PAGINA.format(ap=int(os.environ.get('ARTEMIS_POORT', '8001'))), 'text/html; charset=utf-8')
+        elif p.path == '/status.json':
+            aan = os.path.exists(os.path.join(REK, 'artemis.pid'))
+            self._schrijf(200, '{"console":true,"artemis":%s}' % ('true' if aan else 'false'), 'application/json')
+        else:
+            self._schrijf(404, 'niet gevonden')
+    def do_POST(self):
+        p = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(p.query)
+        cmd = (q.get('cmd', [''])[0]) if p.path == '/doe' else ''
+        if cmd in TOEGESTAAN: self._schrijf(200, doe(cmd))
+        else: self._schrijf(400, 'onbekende opdracht')
+threading.Thread(target=lus, daemon=True).start()
+try:
+    ThreadingHTTPServer(('127.0.0.1', POORT), H).serve_forever()
+except OSError as e:
+    print('De console kon poort %d niet openen (draait hij al?): %s' % (POORT, e))
+PY
 }
 
 stop_artemis() {
@@ -269,16 +411,19 @@ mcp() {
 
 start() {
   [ -d "$ARTEMIS_MAP" ] || { zeg "ARTEMIS staat er niet. Draai eerst installeer.sh."; return 1; }
-  [ -s "$TOEG" ] || { zeg "Er staat nog geen rektelefoon op de lijst. Eerst: artemis-rek toestellen"; return 1; }
-  if leeft "$PIDA"; then zeg "ARTEMIS draait al: http://localhost:8000"; return 0; fi
+  [ -s "$TOEG" ] || { zeg "Er staat nog geen rektelefoon op de lijst. Sluit er een aan (kabel + USB-foutopsporing); de console vindt hem vanzelf."; return 1; }
+  touch "$AANF"   # 571: de gewenste stand is "aan"; de console-lus houdt hem aan
+  if leeft "$PIDA"; then zeg "ARTEMIS draait al: http://localhost:$ARTEMIS_POORT"; return 0; fi
   waak_ronde || return 1
-  ( cd "$ARTEMIS_MAP" && setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
+  # ARTEMIS op een EIGEN poort (envnamen best-effort; NIET op een echte ARTEMIS nagekeken), zodat onze console 8000 houdt.
+  ( cd "$ARTEMIS_MAP" && PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
   ( setsid "$0" waakhond </dev/null >>"$LOG" 2>&1 & echo $! >"$PIDW" )
-  zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). Console: http://localhost:8000"
+  zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://localhost:$ARTEMIS_POORT"
 }
 
 stop() {
+  rm -f "$AANF"   # 571: de gewenste stand is "uit"; de console-lus start hem niet opnieuw
   stop_artemis
   if leeft "$PIDW"; then kill "$(cat "$PIDW")" 2>/dev/null || true; fi
   rm -f "$PIDW"
@@ -286,8 +431,9 @@ stop() {
 }
 
 status() {
-  if leeft "$PIDA"; then zeg "ARTEMIS draait: http://localhost:8000"; else zeg "ARTEMIS staat uit."; fi
+  if leeft "$PIDA"; then zeg "ARTEMIS draait: http://localhost:$ARTEMIS_POORT"; else zeg "ARTEMIS staat uit."; fi
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
+  zeg "Console (knoppen): http://localhost:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
   if command -v tailscale >/dev/null 2>&1; then zeg "Tailscale: $(tailscale ip -4 2>/dev/null | head -1 || echo 'niet ingelogd')"; fi
@@ -340,9 +486,18 @@ tailscale_op() {
   zeg "Klaar. Dit toestel heet in Tailscale: $(tailscale ip -4 2>/dev/null | head -1). Zet de rektelefoons en de F8 met de Tailscale-app erbij."
 }
 
+# 571: bij start en console eerst zichzelf bijwerken vanaf de site, dan opnieuw starten met de nieuwe code (een keer, geen lus).
+if { [ "${1:-}" = start ] || [ "${1:-}" = console ]; } && [ -z "${ARTEMIS_HERSTART:-}" ]; then
+  zelf_bijwerken >/dev/null 2>&1 || true
+  ARTEMIS_HERSTART=1 exec "$0" "$@"
+fi
 case "${1:-status}" in
   start) start ;;
   stop) stop ;;
+  console) console ;;
+  autostart) autostart_installeren ;;
+  scan) scan ;;
+  bijwerken|zelf-bijwerken) zelf_bijwerken ;;
   toestellen) toestellen ;;
   draadloos) draadloos ;;
   mcp) mcp ;;
@@ -352,10 +507,12 @@ case "${1:-status}" in
   waakhond) waakhond ;;
   waak-een-keer) waakhond een ;;
   verboden) verboden "${2:-}" ;;
-  *) zeg "Gebruik: artemis-rek start | stop | toestellen | draadloos | mcp | searxng | tailscale | status" ;;
+  *) zeg "Gebruik: artemis-rek console | start | stop | status | scan | bijwerken | toestellen | draadloos | mcp | searxng | tailscale" ;;
 esac
 REK
-  chmod 755 "$bin/artemis-rek"
+  chmod 755 "$bin/artemis-rek.nieuw"
+  # Atomisch vervangen: een lopende artemis-rek (de console) houdt zijn oude inode en blijft heel; de VOLGENDE aanroep is nieuw.
+  mv "$bin/artemis-rek.nieuw" "$bin/artemis-rek"
 }
 
 if [ "${1:-}" = "--alleen-bestanden" ]; then
@@ -406,20 +563,21 @@ zet_env ARTEMIS_DEFAULT_PROFILE flash
 zet_env ARTEMIS_KEEP_DEVICE_AWAKE false
 zet_env ARTEMIS_DESKTOP_NOTIFY false
 
-# ---- 5. De eigen bestanden en de toestellenlijst ----
+# ---- 5. De eigen bestanden, de autostart en de telefoons ----
 schrijf_bestanden "$REK_MAP" "$BIN_MAP"
 case ":$PATH:" in *":$BIN_MAP:"*) ;; *) printf '\nexport PATH="%s:$PATH"\n' "$BIN_MAP" >>"$HOME/.bashrc"; export PATH="$BIN_MAP:$PATH" ;; esac
 zeg ""
 zeg "Nu de rektelefoons. Sluit ze aan (kabel), deel ze met Linux en zet USB-foutopsporing aan."
 zeg "Je dagelijkse telefoon NOOIT: daar zet je USB-foutopsporing niet aan, en die deel je niet met Linux."
-"$BIN_MAP/artemis-rek" toestellen || true
-zeg ""
-# De PATH-regel hierboven staat in ~/.bashrc, maar de TERMINAL die dit script startte kent 'artemis-rek' pas na een verse
-# shell. Daarom: zeg het met zoveel woorden. (We doen geen 'exec bash' VANUIT het script -- dat zou dit script onderbreken.)
-if command -v artemis-rek >/dev/null 2>&1; then
-  zeg "Klaar. Starten: artemis-rek start   (console: http://localhost:8000)"
-else
-  zeg "Klaar. Typ eerst EEN keer:   exec bash"
-  zeg "(dan kent de terminal het commando 'artemis-rek'; een nieuw terminalvenster openen kan ook.)"
-  zeg "Daarna: artemis-rek start   (console: http://localhost:8000)"
+# 571: TERMINALVRIJ NA DEZE ENE REGEL. Geen 'toestellen'-vraag meer: de console zoekt elke minuut zelf nieuwe rektelefoons
+# (scan). We zetten de autostart aan (de console draait voortaan vanzelf, ook na opnieuw opstarten) en starten hem nu meteen.
+"$BIN_MAP/artemis-rek" scan || true
+"$BIN_MAP/artemis-rek" autostart || true
+if ! pgrep -f "artemis-rek console" >/dev/null 2>&1; then
+  setsid "$BIN_MAP/artemis-rek" console </dev/null >>"$REK_MAP/console.log" 2>&1 &
 fi
+zeg ""
+zeg "Klaar -- en dit was de laatste keer in de terminal."
+zeg "Alles gaat nu via de console in Chrome: http://localhost:8000"
+zeg "Daar staan de knoppen Start, Stop, Status, Zoek telefoons en Bijwerken. De console draait voortaan vanzelf,"
+zeg "werkt zichzelf bij vanaf de site, en zoekt elke minuut zelf nieuwe rektelefoons. Je hoeft hier niets meer te typen."

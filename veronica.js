@@ -2142,6 +2142,9 @@
         // zonder zelf in instellingen te hoeven zoeken.
         const hr = K.herstelRegel(hv);
         if (hr) { const v = el('div', 'tHerstel', hr); tegel.appendChild(v); }
+        // 570: WAAR de telefoon staat (plek herkend aan SSID/net), uit de hartslag
+        const lr = K.locatieRegel(hv);
+        if (lr) { const v = el('div', 'tLocatie', lr); tegel.appendChild(v); }
       }
       if (window.Hartslag) {
         // 500: wat de telefoon ZELF via de brievenbus meldde (ook als het wifi hem niet bij Veronica brengt): laatst gezien,
@@ -2816,12 +2819,12 @@
   document.addEventListener('click', (e) => { if (e.target && e.target.closest && e.target.closest('#artemisConsole')) { try { localStorage.setItem('veronica-artemis', '1'); } catch (x) { /* alleen voor nu */ } } }, true);
   async function artemisKijk() {
     const r = $('artemisRegel'); if (!r) return null;
-    if (!artemisGebruikt()) { r.textContent = 'ARTEMIS: nog niet gebruikt op deze computer. Na het installeren: "artemis-rek start" in Linux, dan hieronder openen.'; return null; }
+    if (!artemisGebruikt()) { r.textContent = 'ARTEMIS: nog niet gebruikt op deze computer. Installeer hem een keer (de ene regel uit de uitleg), daarna draait de console vanzelf; open hem hieronder.'; return null; }
     const ab = new AbortController(); const klok = setTimeout(() => ab.abort(), 2500);
     let draait = false;
     try { await fetch(ARTEMIS_ADRES, { mode: 'no-cors', cache: 'no-store', signal: ab.signal }); draait = true; } catch (e) { draait = false; } finally { clearTimeout(klok); }
-    r.textContent = draait ? 'ARTEMIS draait: Claude kan de rektelefoons besturen via de console.'
-      : 'ARTEMIS draait niet. Starten: in de Linux-terminal "artemis-rek start".';
+    r.textContent = draait ? 'De console draait: open hem en gebruik de knoppen (Start, Stop, Status, Zoek telefoons, Bijwerken). Claude kan dat ook.'
+      : 'De console is niet te bereiken. Hij hoort vanzelf te draaien; is de computer net aan, wacht dan even, of installeer ARTEMIS opnieuw (de ene regel).';
     return draait;
   }
   function tekenRekKnop() { if ($('rekVanzelfKnop')) $('rekVanzelfKnop').hidden = rekAan(); }

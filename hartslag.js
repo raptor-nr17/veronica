@@ -219,6 +219,10 @@
       // 567: ZELFHERSTEL. Wat JARVIS bij de laatste start of hartslag vanzelf goedzette (rol/dagelijks), in gewone woorden. Leeg =
       // niets te herstellen. Telt NIET mee in hartslagSleutel (anders een hartslag per correctie).
       herstel: schoon(x.herstel, 160),
+      // 570: PLEK. Waar de telefoon staat: soort ('gast'/'hoofd'/'hotspot'), het etiket van de eigenaar en het /24. NOOIT de
+      // SSID zelf (die kan een gezinsnaam dragen). null = plek onbekend. Telt niet mee in hartslagSleutel.
+      locatie: x.locatie && typeof x.locatie === 'object' && ['gast', 'hoofd', 'hotspot'].includes(x.locatie.soort)
+        ? { soort: x.locatie.soort, naam: schoon(x.locatie.naam, 40), net: schoon(x.locatie.net, 15) } : null,
     };
   }
   // server: leeg = ntfy.sh, anders een geldig relay-adres (529); een ongeldig adres = geen verzoek.
