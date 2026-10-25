@@ -2145,6 +2145,9 @@
         // 570: WAAR de telefoon staat (plek herkend aan SSID/net), uit de hartslag
         const lr = K.locatieRegel(hv);
         if (lr) { const v = el('div', 'tLocatie', lr); tegel.appendChild(v); }
+        // 572: het dagbudget van het gastnetwerk (± MB vandaag, dagplafond), uit de hartslag
+        const gr = K.gastbudgetRegel(hv);
+        if (gr) { const v = el('div', 'tGastbudget', gr); tegel.appendChild(v); }
       }
       if (window.Hartslag) {
         // 500: wat de telefoon ZELF via de brievenbus meldde (ook als het wifi hem niet bij Veronica brengt): laatst gezien,

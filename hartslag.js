@@ -223,6 +223,9 @@
       // SSID zelf (die kan een gezinsnaam dragen). null = plek onbekend. Telt niet mee in hartslagSleutel.
       locatie: x.locatie && typeof x.locatie === 'object' && ['gast', 'hoofd', 'hotspot'].includes(x.locatie.soort)
         ? { soort: x.locatie.soort, naam: schoon(x.locatie.naam, 40), net: schoon(x.locatie.net, 15) } : null,
+      // 572: het dagbudget van het gastnetwerk: ± MB vandaag (schatting) en de dag. Alleen getallen; telt niet mee in de sleutel.
+      gastbudget: x.gastbudget && typeof x.gastbudget === 'object' && /^\d{4}-\d{2}-\d{2}$/.test(String(x.gastbudget.dag || ''))
+        ? { dag: String(x.gastbudget.dag), mb: getal(x.gastbudget.mb, 0, 100000) || 0 } : null,
     };
   }
   // server: leeg = ntfy.sh, anders een geldig relay-adres (529); een ongeldig adres = geen verzoek.

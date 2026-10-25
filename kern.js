@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.74';
+  const JARVIS_NIEUWSTE = '1.9.75';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
@@ -1163,7 +1163,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.103';
+  const VERONICA_VERSIE = '1.9.104';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1916,6 +1916,18 @@
     if (l.soort === 'hotspot') return `Plek: ${naam} -- reserve (hotspot), zuinig.`;
     return `Plek: ${naam} -- gastnetwerk, zuinig (aanhaken via de postbus, grote downloads 's nachts).`;
   }
+  // 572: het dagbudget van het gastnetwerk (gastbudget in de hartslag): ± MB vandaag en of het plafond bereikt is. Alleen op
+  // een gastnetwerk (soort 'gast'); anders geen regel. null = onbekend.
+  function gastbudgetRegel(h) {
+    const b = h && h.gastbudget && typeof h.gastbudget === 'object' ? h.gastbudget : null;
+    const l = h && h.locatie && typeof h.locatie === 'object' ? h.locatie : null;
+    if (!b || !l || l.soort !== 'gast') return null;
+    const mb = (Number(b.mb) || 0).toFixed(1);
+    const vol = (Number(b.mb) || 0) >= 50;
+    return vol
+      ? `Dataplafond gastnetwerk bereikt (± ${mb} MB vandaag): alles behalve de hartslag pauzeert tot morgen.`
+      : `± ${mb} van 50 MB vandaag (gastnetwerk, zuinig).`;
+  }
   function verbinding(o, tijd) {
     const x = o || {};
     const getal = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
@@ -2158,6 +2170,6 @@
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesKast, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
-    vervangBesluit, slimMeetBesluit, stekkerKort, tegelKort, bijwerkRegel, herstelRegel, locatieRegel, BIJWERK_NU_VANAF, isEigenNet, normaalAdres, leesBrievenbus, brievenbusUitleg, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    vervangBesluit, slimMeetBesluit, stekkerKort, tegelKort, bijwerkRegel, herstelRegel, locatieRegel, gastbudgetRegel, BIJWERK_NU_VANAF, isEigenNet, normaalAdres, leesBrievenbus, brievenbusUitleg, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));
