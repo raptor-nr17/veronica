@@ -10,10 +10,13 @@
 #     dat bestand lezen). De sleutel gaat nergens anders heen: niet naar een repo, niet naar Veronica, niet in een logboek;
 #   - standaard het profiel flash, en ARTEMIS_KEEP_DEVICE_AWAKE=false (ARTEMIS houdt een scherm niet wakker);
 #   - een LIJST VAN TOEGESTANE TOESTELLEN (~/.artemis-rek/toegestaan): alleen telefoons die jij hier als rektelefoon
-#     aanwijst. Een telefoon met een bank-, betaal- of wachtwoordapp erop wordt NOOIT toegevoegd (dat is een persoonlijke
-#     telefoon);
-#   - een WAAKHOND die tijdens het draaien elke twee seconden kijkt: een toestel dat niet op de lijst staat = ARTEMIS
-#     meteen uit; een verboden app op de voorgrond (verboden-apps.txt) = terug naar het beginscherm en die app gestopt.
+#     aanwijst. De F8 (de dagelijkse telefoon) komt er NOOIT op. Een bank-, crypto- of kluisapp op een telefoon is
+#     GEEN reden meer om hem te weigeren: op alle drie de rektelefoons staan zulke apps achter 2FA en die kunnen er niet
+#     af. We openen ze alleen nooit (zie de waakhond);
+#   - een WAAKHOND die tijdens het draaien elke twee seconden kijkt: een toestel dat niet op de lijst staat (of de F8) =
+#     ARTEMIS meteen uit; een GEVOELIGE app op de voorgrond (bank, betalen, crypto, Bitwarden, Authy, DigiD) = ARTEMIS
+#     meteen stoppen, geen schermfoto en niets naar Gemini, plus terug naar het beginscherm; een persoonlijke app tijdens
+#     het werk (Gmail, Foto's, WhatsApp) = terug naar het beginscherm en die app gestopt, ARTEMIS blijft draaien.
 #   - het verwijdert NOOIT een app, en het verandert geen instellingen op een telefoon.
 #
 # Daarna: `artemis-rek start` (console op http://localhost:8000), `artemis-rek stop`, `artemis-rek toestellen`,
@@ -43,11 +46,14 @@ schrijf_bestanden() {
   mkdir -p "$rek" "$bin"
   chmod 700 "$rek"
   cat >"$rek/verboden-apps.txt" <<'LIJST'
-# Apps die ARTEMIS NOOIT op de voorgrond mag hebben. Een regel = een pakketnaam, of een stukje ervan na "~".
-# Staat zo'n app op de voorgrond terwijl ARTEMIS draait, dan gaat de telefoon terug naar het beginscherm en stopt die app.
-# Staat er een op een telefoon, dan is dat geen rektelefoon en voegt `artemis-rek toestellen` hem niet toe.
-# Gmail (en andere persoonlijke apps die vaak al op een telefoon staan) houden een telefoon NIET buiten de lijst,
-# maar worden tijdens het werk wel weggehaald (regel met "voorgrond:").
+# Apps die ARTEMIS NOOIT mag openen of aantikken. Een regel = een pakketnaam, of een stukje ervan na "~".
+# TWEE SOORTEN, en een app op een telefoon is NOOIT een reden om die telefoon te weigeren (op alle drie de rektelefoons
+# staan bank-, crypto- en kluisapps achter 2FA, die kunnen er niet af):
+#  - GEVOELIG (de regels hieronder, met "~" of een volledige pakketnaam): bank, betalen, crypto, Bitwarden, Authy, DigiD.
+#    Komt zo'n app op de voorgrond terwijl ARTEMIS draait, dan STOPT ARTEMIS meteen (geen schermfoto, niets naar Gemini)
+#    en gaat de telefoon terug naar het beginscherm.
+#  - TIJDENS HET WERK (regels met "voorgrond:"): Gmail, Foto's, WhatsApp en zo Die staan vaak al op een telefoon; ze gaan
+#    tijdens het werk terug naar het beginscherm en worden gestopt, maar ARTEMIS blijft draaien.
 ~bank
 ~wallet
 ~paypal
@@ -64,6 +70,15 @@ schrijf_bestanden() {
 ~lastpass
 ~1password
 ~keepass
+~crypto
+~coinbase
+~binance
+~bitvavo
+~kraken
+~ledger
+~metamask
+~trustwallet
+~exodus
 com.ing.mobile
 nl.rabomobiel
 com.google.android.apps.walletnfcrel
@@ -90,18 +105,22 @@ zeg() { printf '%s\n' "$*"; }
 logregel() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >>"$LOG"; zeg "$*"; }
 leeft() { [ -s "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 
-# Verboden? $1 = pakketnaam; $2 = "voorgrond" (tijdens het werk) of "op-toestel" (bij het toevoegen)
+# Verboden op de voorgrond? $1 = pakketnaam. Echoot de soort en geeft 0 terug:
+#  - "streng" = bank/betalen/crypto/Bitwarden/Authy/DigiD: ARTEMIS meteen stoppen (geen schermfoto, niets naar Gemini);
+#  - "werk"   = een persoonlijke app (voorgrond:...): terug naar het beginscherm, ARTEMIS blijft draaien.
+# Niets + exit 1 = toegestaan. Een tweede argument wordt genegeerd: een app WEIGERT nooit meer een telefoon (ARTEMIS-ronde
+# 25 okt). De bank-, crypto- en kluisapps staan achter 2FA en kunnen er niet af; we openen ze alleen nooit.
 verboden() {
-  local pkg="$1" wanneer="$2" r
+  local pkg="$1" r
   [ -n "$pkg" ] || return 1
   while IFS= read -r r || [ -n "$r" ]; do
     r="${r%%#*}"; r="${r// /}"; [ -n "$r" ] || continue
     if [ "${r#voorgrond:}" != "$r" ]; then
-      [ "$wanneer" = "voorgrond" ] && [ "${r#voorgrond:}" = "$pkg" ] && return 0
+      [ "${r#voorgrond:}" = "$pkg" ] && { printf 'werk'; return 0; }
       continue
     fi
-    if [ "${r#\~}" != "$r" ]; then case "$pkg" in *"${r#\~}"*) return 0 ;; esac
-    elif [ "$r" = "$pkg" ]; then return 0; fi
+    if [ "${r#\~}" != "$r" ]; then case "$pkg" in *"${r#\~}"*) printf 'streng'; return 0 ;; esac
+    elif [ "$r" = "$pkg" ]; then printf 'streng'; return 0; fi
   done <"$VERB"
   return 1
 }
@@ -111,6 +130,11 @@ toestel_id() {   # het vaste serienummer van de telefoon (een draadloos adres ve
   [ -n "$i" ] && printf '%s' "$i" || printf 'adb:%s' "$1"
 }
 toestel_naam() { "$ADB" -s "$1" shell getprop ro.product.model 2>/dev/null | tr -d '\r'; }
+is_f8() {   # de F8 (de dagelijkse telefoon) blijft ALTIJD uitgesloten -- op naam en op modelcode
+  local n; n="$(toestel_naam "$1")"
+  case "$n" in *F8*|*25102PCBEG*) return 0 ;; esac
+  return 1
+}
 toegestaan() { [ -n "$1" ] && [ -s "$TOEG" ] && grep -qxF "$1" "$TOEG"; }
 verbonden() { "$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}'; }
 voorgrond() {
@@ -128,9 +152,15 @@ stop_artemis() {
 
 # Een ronde van de waakhond. Geeft 0 terug als ARTEMIS mag blijven draaien.
 waak_ronde() {
-  local s id pkg
+  local s id pkg soort
   for s in $(verbonden); do
     id="$(toestel_id "$s")"
+    if is_f8 "$s"; then
+      logregel "STOP: de F8 blijft uitgesloten (de dagelijkse telefoon). ARTEMIS is uitgezet."
+      case "$s" in *:*) "$ADB" disconnect "$s" >/dev/null 2>&1 || true ;; esac
+      stop_artemis
+      return 1
+    fi
     if ! toegestaan "$id"; then
       logregel "STOP: een toestel dat niet op de lijst staat ($(toestel_naam "$s")). ARTEMIS is uitgezet."
       case "$s" in *:*) "$ADB" disconnect "$s" >/dev/null 2>&1 || true ;; esac
@@ -138,10 +168,15 @@ waak_ronde() {
       return 1
     fi
     pkg="$(voorgrond "$s")"
-    if verboden "$pkg" voorgrond; then
+    if soort="$(verboden "$pkg")"; then
       "$ADB" -s "$s" shell input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
       "$ADB" -s "$s" shell am force-stop "$pkg" >/dev/null 2>&1 || true
-      logregel "Verboden app weggehaald op $(toestel_naam "$s"): $pkg"
+      if [ "$soort" = streng ]; then
+        logregel "Gevoelige app op de voorgrond op $(toestel_naam "$s"): $pkg -- ARTEMIS meteen gestopt (geen schermfoto, niets naar Gemini)."
+        stop_artemis
+        return 1
+      fi
+      logregel "Persoonlijke app weggehaald op $(toestel_naam "$s"): $pkg"
     fi
   done
   return 0
@@ -159,7 +194,7 @@ waakhond() {
 
 toestellen() {
   "$ADB" start-server >/dev/null 2>&1 || true
-  local regels s staat id naam pk antwoord n=0
+  local regels s staat id naam antwoord n=0
   regels="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1" "$2}')"
   if [ -z "$regels" ]; then
     zeg "Ik zie geen telefoon. Kabel erin, in ChromeOS de telefoon delen met Linux, en op de telefoon USB-foutopsporing aan."
@@ -172,13 +207,12 @@ toestellen() {
     [ "$staat" = "device" ] || continue
     id="$(toestel_id "$s")"; naam="$(toestel_naam "$s")"
     if toegestaan "$id"; then zeg "$naam staat al op de lijst."; continue; fi
-    pk=""
-    while IFS= read -r p; do p="${p#package:}"; p="${p%$'\r'}"; if verboden "$p" op-toestel; then pk="$p"; break; fi; done \
-      < <("$ADB" -s "$s" shell pm list packages 2>/dev/null)
-    if [ -n "$pk" ]; then
-      zeg "$naam voeg ik NIET toe: er staat een bank-, betaal- of wachtwoordapp op ($pk). Dat is een persoonlijke telefoon."
+    if is_f8 "$s"; then
+      zeg "$naam is de F8 (je dagelijkse telefoon): die komt NOOIT op de lijst."
       continue
     fi
+    # Een bank-, crypto- of kluisapp is GEEN reden meer om te weigeren (ARTEMIS-ronde 25 okt): die apps staan achter 2FA
+    # en kunnen er niet af. De waakhond zorgt dat ARTEMIS ze nooit opent; komt er toch een op de voorgrond, dan stopt hij.
     IFS= read -r -p "Is $naam een REKtelefoon (niet je dagelijkse telefoon)? [j/N] " antwoord </dev/tty || antwoord=""
     case "$antwoord" in j|J|ja|Ja) printf '%s\n' "$id" >>"$TOEG"; n=$((n+1)); zeg "$naam staat op de lijst." ;; *) zeg "$naam overgeslagen." ;; esac
   done <<<"$regels"
@@ -317,7 +351,7 @@ case "${1:-status}" in
   status) status ;;
   waakhond) waakhond ;;
   waak-een-keer) waakhond een ;;
-  verboden) verboden "${2:-}" "${3:-voorgrond}" ;;
+  verboden) verboden "${2:-}" ;;
   *) zeg "Gebruik: artemis-rek start | stop | toestellen | draadloos | mcp | searxng | tailscale | status" ;;
 esac
 REK
@@ -380,4 +414,12 @@ zeg "Nu de rektelefoons. Sluit ze aan (kabel), deel ze met Linux en zet USB-fout
 zeg "Je dagelijkse telefoon NOOIT: daar zet je USB-foutopsporing niet aan, en die deel je niet met Linux."
 "$BIN_MAP/artemis-rek" toestellen || true
 zeg ""
-zeg "Klaar. Starten: artemis-rek start   (console: http://localhost:8000)"
+# De PATH-regel hierboven staat in ~/.bashrc, maar de TERMINAL die dit script startte kent 'artemis-rek' pas na een verse
+# shell. Daarom: zeg het met zoveel woorden. (We doen geen 'exec bash' VANUIT het script -- dat zou dit script onderbreken.)
+if command -v artemis-rek >/dev/null 2>&1; then
+  zeg "Klaar. Starten: artemis-rek start   (console: http://localhost:8000)"
+else
+  zeg "Klaar. Typ eerst EEN keer:   exec bash"
+  zeg "(dan kent de terminal het commando 'artemis-rek'; een nieuw terminalvenster openen kan ook.)"
+  zeg "Daarna: artemis-rek start   (console: http://localhost:8000)"
+fi

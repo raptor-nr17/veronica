@@ -383,6 +383,7 @@
     geefRelay(h).catch(() => {});   // 529: het relay-adres (of uit) als zijn hartslag iets anders zegt
     MeetV.boek = K.meetboekBij(MeetV.boek, h, nu()); Opslag.schrijf('meetboek', MeetV.boek).catch(() => {});   // 529: meetplan B en D
     if (WensV.per[h.id]) werkerWensTik(h.id, { rol: h.rol, voorkeur: null, dagelijks: !!h.dagelijks }, null).catch(() => {});   // 525
+    dagelijksCorrigeer(h).catch(() => {});   // 564: er is maar één dagelijkse telefoon (de F8); zet elke andere die op dagelijks staat terug op werker
     try { tekenLive(); } catch (e) { /* de volgende keer */ }
     return true;
   }
@@ -2808,6 +2809,18 @@
     return draait;
   }
   function tekenRekKnop() { if ($('rekVanzelfKnop')) $('rekVanzelfKnop').hidden = rekAan(); }
+
+  // 564: ÉÉN dagelijkse telefoon. De eigenaar wijst zijn telefoon aan (het toestel-id in veronica-dagelijks-id, standaard leeg). Een
+  // telefoon die op dagelijks staat maar NIET die id is (een werker die per ongeluk beheerder+dagelijks was) krijgt de roep
+  // 'dagelijks' -- die zet hem terug op werker -- en Veronica meldt dat in één regel. Een werker stuurt zelf nooit iets naar buiten hiervoor.
+  const dagelijksId = () => { try { return localStorage.getItem('veronica-dagelijks-id') || ''; } catch (e) { return ''; } };
+  async function dagelijksCorrigeer(h) {
+    if (!h || !h.id || !h.dagelijks) return;   // alleen een telefoon die zegt dat hij dagelijks is
+    const mag = dagelijksId();
+    if (mag && String(h.id) === String(mag)) return;   // dit IS de aangewezen dagelijkse telefoon: met rust laten
+    const ok = await roepNaarId(h.id, { soort: 'dagelijks', van: 'veronica', id: mag });
+    if (ok) { const naam = K.naamVan ? K.naamVan(h) : (h.naam || 'Een telefoon'); meld(`${naam} stond op "dagelijkse telefoon"; teruggezet op werker (de dagelijkse telefoon is de F8).`); logRegel(`${naam}: dagelijks -> werker (maar één dagelijkse telefoon).`); }
+  }
 
   // 562: de eigen SearXNG. Het adres staat alleen in deze browser (leeg = uit); Veronica draait OP de Chromebook, dus kan zij
   // http://127.0.0.1:8888/stats?format=json lezen en tonen welke zoekmachines blokkeren. Alleen een PRIVÉ adres mag (SearxBron).
