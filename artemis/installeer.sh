@@ -197,6 +197,42 @@ draadloos() {
   zeg "Verbonden. Nu nog op de lijst zetten:"; toestellen
 }
 
+# 561: Android Remote Control MCP (danielealbano, GPL-3.0) als RESERVE naast ARTEMIS: besturen zonder kabel, maar ALLEEN binnen het
+# eigen wifi. We binden de app aan het LAN-adres van de telefoon zelf, zetten ELKE tunnel UIT (nooit een openbaar adres), en zetten
+# een vers bedacht bearer-token EN OAuth aan. De verboden-apps-waakhond hierboven geldt ook hier (de app heeft zelf geen zo'n lijst).
+# Instellen kan alleen via adb (de kabel), daarna werkt het draadloos. Per toestel schrijven we het adres en het token in ~/.artemis-rek.
+MCP_APP="com.danielealbano.androidremotecontrolmcp"
+mcp() {
+  "$ADB" start-server >/dev/null 2>&1 || true
+  [ -s "$TOEG" ] || { zeg "Eerst een rektelefoon op de lijst: artemis-rek toestellen"; return 1; }
+  local s id naam ip token poort=8080 raak=0
+  for s in $(verbonden); do
+    id="$(toestel_id "$s")"; naam="$(toestel_naam "$s")"
+    toegestaan "$id" || { zeg "$naam staat niet op de lijst; overgeslagen."; continue; }
+    if ! "$ADB" -s "$s" shell pm path "$MCP_APP" >/dev/null 2>&1; then
+      zeg "$naam: de app 'Android Remote Control MCP' staat er nog niet. Zet hem er eerst op (GitHub-release, foss-APK)."; continue
+    fi
+    ip="$("$ADB" -s "$s" shell ip -f inet addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
+    [ -n "$ip" ] || { zeg "$naam: geen wifi-adres gevonden. Zit hij op het wifi?"; continue; }
+    token="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    # DUMP-recht: de adb-shell heeft het, een app op de telefoon niet -- zo kan geen app op het toestel dit omzetten.
+    "$ADB" -s "$s" shell am broadcast \
+      -a "$MCP_APP.ADB_CONFIGURE" \
+      -n "$MCP_APP/$MCP_APP.services.mcp.AdbConfigReceiver" \
+      --es binding_address "$ip" --ei port "$poort" \
+      --ez tunnel_enabled false \
+      --ez bearer_token_enabled true --es bearer_token "$token" \
+      --ez oauth_enabled true \
+      --ez https_enabled false \
+      --ez block_local_network_downloads true \
+      --ez auto_start_on_boot true >/dev/null 2>&1 \
+      && { printf '%s\t%s\thttp://%s:%s/mcp\t%s\n' "$id" "$naam" "$ip" "$poort" "$token" >>"$REK_MAP/mcp"; raak=$((raak+1));
+           zeg "$naam: bereikbaar op http://$ip:$poort/mcp (tunnel UIT, token aan). Token staat in ~/.artemis-rek/mcp."; } \
+      || zeg "$naam: instellen lukte niet (heeft de app het DUMP-recht? zie docs)."
+  done
+  [ "$raak" -gt 0 ] && { chmod 600 "$REK_MAP/mcp" 2>/dev/null || true; zeg "Klaar. De adressen gelden ALLEEN binnen je eigen wifi; er is geen openbare tunnel."; } || zeg "Geen enkele telefoon ingesteld."
+}
+
 start() {
   [ -d "$ARTEMIS_MAP" ] || { zeg "ARTEMIS staat er niet. Draai eerst installeer.sh."; return 1; }
   [ -s "$TOEG" ] || { zeg "Er staat nog geen rektelefoon op de lijst. Eerst: artemis-rek toestellen"; return 1; }
@@ -226,11 +262,12 @@ case "${1:-status}" in
   stop) stop ;;
   toestellen) toestellen ;;
   draadloos) draadloos ;;
+  mcp) mcp ;;
   status) status ;;
   waakhond) waakhond ;;
   waak-een-keer) waakhond een ;;
   verboden) verboden "${2:-}" "${3:-voorgrond}" ;;
-  *) zeg "Gebruik: artemis-rek start | stop | toestellen | draadloos | status" ;;
+  *) zeg "Gebruik: artemis-rek start | stop | toestellen | draadloos | mcp | status" ;;
 esac
 REK
   chmod 755 "$bin/artemis-rek"
