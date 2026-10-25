@@ -381,6 +381,25 @@
       <p id="stapelStand" aria-live="polite"></p>
       <ul id="stapelVoortgang"></ul>
       <div id="stapelUitslag"></div>
+      <!-- 579: DIEP ONDERZOEK over ALLE groene telefoons, ook telefoons zonder eigen wifi (via de relay). Eén vraag -> zoekdeelvragen;
+           elke telefoon zoekt zijn deel op openbare pagina's en vat het samen met zijn EIGEN model; Veronica voegt het samen met de
+           bronnen. Meer telefoons = meer zoekers. Dit zijn publieke zoektermen: je privé-hoek gaat hier NOOIT doorheen (die blijft eigen wifi). -->
+      <h3>Diep onderzoek (alle telefoons)</h3>
+      <p class="klein">Eén vraag. Ik knip hem in zoekdeelvragen en verdeel die over alle groene telefoons -- ook telefoons zonder eigen wifi, via de relay. Elke telefoon zoekt zijn deel op openbare pagina's en vat het samen met zijn eigen model; ik voeg het samen met de bronnen. Meer telefoons = meer zoekers. Je privé-hoek gaat hier nooit doorheen.</p>
+      <label for="algOnderzoekVraag">Wat wil je uitzoeken?</label>
+      <textarea id="algOnderzoekVraag" rows="3" maxlength="600" spellcheck="false"></textarea>
+      <label for="algOnderzoekSoort">Soort vraag</label>
+      <select id="algOnderzoekSoort">
+        <option value="algemeen">Algemeen</option>
+        <option value="plaats">Een plaats of adres</option>
+        <option value="wetenschap">Wetenschap</option>
+        <option value="fotos">Foto's (vrije licentie)</option>
+      </select>
+      <button type="button" id="algOnderzoekKnop">Onderzoek met alle telefoons</button>
+      <button type="button" id="algOnderzoekStop" hidden>Stop</button>
+      <p id="algOnderzoekStand" aria-live="polite"></p>
+      <ul id="algOnderzoekVoortgang"></ul>
+      <div id="algOnderzoekUitslag"></div>
       <!-- 555: DE ZOEKWAND. Elke telefoon een eigen zoekmachine, naast elkaar. Platte tekst, geen plaatjes, niets bewaard. -->
       <section id="zoekwand" class="zwVak" aria-labelledby="zwKop">
         <h3 id="zwKop">Zoekwand: elke telefoon een zoekmachine</h3>

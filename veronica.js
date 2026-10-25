@@ -960,9 +960,12 @@
     // 537: de zoekstapel
     if ($('stapelKnop')) $('stapelKnop').addEventListener('click', () => { zoekStapelDoe(); });
     if ($('stapelStop')) $('stapelStop').addEventListener('click', () => { StapelV.stop = true; $('stapelStand').textContent = 'Ik stop na de vragen die nu lopen.'; });
-    // 541: het onderzoek in de privé-hoek
-    if ($('onderzoekKnop')) $('onderzoekKnop').addEventListener('click', () => { onderzoekDoe(); });
+    // 541: het onderzoek in de privé-hoek (alleen eigen wifi)
+    if ($('onderzoekKnop')) $('onderzoekKnop').addEventListener('click', () => { onderzoekDoe(true); });
     if ($('onderzoekStop')) $('onderzoekStop').addEventListener('click', () => { OnderzoekV.stop = true; $('onderzoekStand').textContent = 'Ik stop na de klussen die nu lopen.'; });
+    // 579: het algemene diepe onderzoek (alle groene telefoons, ook off-wifi via de relay)
+    if ($('algOnderzoekKnop')) $('algOnderzoekKnop').addEventListener('click', () => { onderzoekDoe(false); });
+    if ($('algOnderzoekStop')) $('algOnderzoekStop').addEventListener('click', () => { AlgOnderzoekV.stop = true; $('algOnderzoekStand').textContent = 'Ik stop na de klussen die nu lopen.'; });
     $('zoekVraag').addEventListener('keydown', (e) => { if (e.key === 'Enter') doe(); });
     if ($('zoekGeheugenKnop')) $('zoekGeheugenKnop').addEventListener('click', () => { toonGeheugen(false); });
     if ($('zoekGeheugenWis')) $('zoekGeheugenWis').addEventListener('click', async () => {
@@ -1023,7 +1026,8 @@
   // daarna met zijn eigen model de kern eruit. Geen model over telefoons verdeeld: elke telefoon doet zijn eigen klus helemaal.
   // Wat er bij elkaar komt staat ALLEEN op het scherm: niet in de opslag, niet in het logboek. Over de brievenbus alleen via de relay,
   // nooit via ntfy.sh (stapelTelefoons laat de brievenbus zonder relay al weg).
-  const OnderzoekV = { bezig: false, stop: false, laatste: null };
+  const OnderzoekV = { bezig: false, stop: false, laatste: null };          // 541: de privé-hoek (555: alleen eigen wifi)
+  const AlgOnderzoekV = { bezig: false, stop: false, laatste: null };       // 579: algemeen, mag ook off-wifi via de relay (publieke zoekwoorden)
   function kernVanWifi(tel, tekst) {
     const t = S.telefoons.find((x) => x.adres === tel.id);
     if (!t) return Promise.resolve({ ok: false, zin: 'Deze telefoon is niet meer te bereiken.' });
@@ -1044,33 +1048,44 @@
       return { ok: !!tekstUit.trim(), tekst: tekstUit, telefoon: t.naam, ms, tps: ms > 0 && tokens > 0 ? Math.round(tokens * 10000 / ms) / 10 : null, zin: tekstUit.trim() ? '' : `${t.naam} gaf een leeg antwoord.` };
     }).catch(() => ({ ok: false, zin: `${t.naam} gaf geen kern (geen antwoord).` })).finally(() => { s.bezig = false; werkTik(); });
   }
-  async function kernVanBrief(tel, tekst) {
+  async function kernVanBrief(tel, tekst, stopFn) {
     if (postbusBasis() === 'https://ntfy.sh') return { ok: false, zin: 'Zonder relay gaat een onderzoek niet via de brievenbus.' };
     const r = await window.RekenPostbus.stuurKaartje({ http: postbusHttp, basis: postbusBasis(), geheim: S.ntfy.onderwerp, soort: 'vraag', eigen: true, naar: tel.toestel,
       tekst: String(tekst).slice(0, Pool.MAX_TEKST), max_tokens: 300, wachtMs: 180000, pollMs: PostbusV.POLL_MS,
-      wacht: (ms) => new Promise((klaar, weg) => setTimeout(() => (OnderzoekV.stop ? weg(new Error('gestopt')) : klaar()), ms)) });
+      wacht: (ms) => new Promise((klaar, weg) => setTimeout(() => ((stopFn && stopFn()) ? weg(new Error('gestopt')) : klaar()), ms)) });
     if (!r || r.fout) return { ok: false, zin: (r && r.reden) || 'Geen kern via de brievenbus.' };
     return { ok: true, tekst: K.zonderDenken(String(r.tekst || '')), telefoon: String(r.telefoon || tel.naam || 'een telefoon').slice(0, 60), ms: r.ms || null, tps: r.tokens_per_s || null };
   }
-  function onderzoekKern(vraag) {
+  function onderzoekKern(vraag, stopFn) {
     return async (term, tel, u) => {
       if (!tel) return { ok: false, zin: 'Geen telefoon voor de kern.' };
       const tekst = window.VeronicaZoek.kernTekst(vraag, term, u);
-      return tel.brief ? kernVanBrief(tel, tekst) : kernVanWifi(tel, tekst);
+      return tel.brief ? kernVanBrief(tel, tekst, stopFn) : kernVanWifi(tel, tekst);
     };
   }
-  async function onderzoekDoe() {
-    if (OnderzoekV.bezig || !zoeker || !window.VeronicaZoek) return;
-    const stand = $('onderzoekStand'), voortgang = $('onderzoekVoortgang'), uit = $('onderzoekUitslag');
-    if (volLokaal()) { stand.textContent = 'Vol lokaal staat aan: de telefoons zoeken nu niet op internet. Zet Vol lokaal uit in dit scherm.'; return; }
-    const vraag = $('onderzoekVraag').value;
+  // 541 (privé-hoek) + 579 (algemeen): een onderzoeksvraag -> zoekdeelvragen (knipOnderzoek), verdeeld over de telefoons; elke telefoon
+  // zoekt zijn deel en haalt met ZIJN EIGEN model de kern eruit; Veronica voegt het samen met de bronnen. prive=true: alleen eigen wifi
+  // (555), de privé-hoek-UI en de privé-zoekwand. prive=false: ALLE groene telefoons, ook off-wifi VIA DE RELAY -- dit zijn publieke
+  // zoekwoorden, geen privé-inhoud; de Wachtrij-UI en de gewone zoekwand. Meer telefoons = meer zoekers.
+  async function onderzoekDoe(prive) {
+    const V = prive ? OnderzoekV : AlgOnderzoekV;
+    const p = prive ? 'onderzoek' : 'algOnderzoek';
+    if (V.bezig || !zoeker || !window.VeronicaZoek) return;
+    const stand = $(p + 'Stand'), voortgang = $(p + 'Voortgang'), uit = $(p + 'Uitslag');
+    if (volLokaal()) { stand.textContent = prive ? 'Vol lokaal staat aan: de telefoons zoeken nu niet op internet. Zet Vol lokaal uit in dit scherm.' : 'Vol lokaal staat aan: zoeken op internet doe ik nu niet. Zet het uit in Mijn privé-hoek.'; return; }
+    const vraag = $(p + 'Vraag').value;
     const termen = window.VeronicaZoek.knipOnderzoek(vraag);
     if (!termen.length) { stand.textContent = 'Schrijf een vraag van minstens twee woorden.'; return; }
-    // 555: DE PRIVÉ-HOEK GAAT ALLEEN OVER HET EIGEN WIFI: geen postbus, geen relay, geen brievenbus (besluit van de eigenaar).
-    const tels = stapelTelefoons().filter((t) => !t.brief);
-    if (!tels.length) { stand.textContent = 'Geen rektelefoon over het eigen wifi. Het onderzoek uit de privé-hoek gaat nooit via de postbus, de relay of de brievenbus.'; return; }
-    OnderzoekV.bezig = true; OnderzoekV.stop = false;
-    $('onderzoekKnop').disabled = true; $('onderzoekStop').hidden = false;
+    // prive: 555 -- alleen eigen wifi (geen brief). alg: ook off-wifi via de relay (stapelTelefoons laat brief zonder relay al weg).
+    const tels = prive ? stapelTelefoons().filter((t) => !t.brief) : stapelTelefoons();
+    if (!tels.length) {
+      stand.textContent = prive
+        ? 'Geen rektelefoon over het eigen wifi. Het onderzoek uit de privé-hoek gaat nooit via de postbus, de relay of de brievenbus.'
+        : (zoekTelefoons().length ? 'Zonder relay doet het onderzoek alleen telefoons over het eigen wifi mee; de brievenbus van ntfy.sh is te klein voor een hele stapel. Zet de relay aan.' : 'Geen telefoon bereikbaar. Veronica haalt zelf niets van internet: alleen de telefoons doen de deelvragen.');
+      return;
+    }
+    V.bezig = true; V.stop = false;
+    $(p + 'Knop').disabled = true; $(p + 'Stop').hidden = false;
     uit.replaceChildren();
     stand.textContent = `${termen.length} zoekklussen over ${tels.length} ${tels.length === 1 ? 'telefoon' : 'telefoons'}.`;
     const toon = (s) => {
@@ -1079,10 +1094,10 @@
     };
     let r = null;
     try {
-      r = await zoeker.zoekStapel(termen, { soort: $('onderzoekSoort') ? $('onderzoekSoort').value : 'algemeen', telefoons: tels, stop: () => OnderzoekV.stop, opVoortgang: toon, naUitslag: onderzoekKern(vraag), opStap: (x) => zoekwandStap('prive', x) });
+      r = await zoeker.zoekStapel(termen, { soort: $(p + 'Soort') ? $(p + 'Soort').value : 'algemeen', telefoons: tels, stop: () => V.stop, opVoortgang: toon, naUitslag: onderzoekKern(vraag, () => V.stop), opStap: (x) => zoekwandStap(prive ? 'prive' : 'gewoon', x) });
     } catch (e) { r = { ok: false, zin: 'Het onderzoek lukte niet. Probeer het zo nog eens.' }; }
-    OnderzoekV.bezig = false;
-    $('onderzoekKnop').disabled = false; $('onderzoekStop').hidden = true;
+    V.bezig = false; V.laatste = r;
+    $(p + 'Knop').disabled = false; $(p + 'Stop').hidden = true;
     if (!r || !r.ok) { stand.textContent = (r && r.zin) || 'Het onderzoek lukte niet.'; return; }
     toon({ stapels: r.stapels, klaar: r.uitslagen.length, totaal: termen.length });
     if (r.gestopt) stand.textContent += ' Gestopt.';
