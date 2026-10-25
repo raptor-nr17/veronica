@@ -161,10 +161,17 @@
       await (o.wacht || ((ms) => new Promise((r) => setTimeout(r, ms))))(o.claimWachtMs == null ? 3000 : o.claimWachtMs);
       const verz = maakVerzamelaar(sleutels.sleutel, 'resultaat', nu);
       let laagste = o.tag;
+      // 578: in DEZELFDE leesronde ook kijken of een ANDERE telefoon dit kaartje al beantwoordde. Een telefoon met een lage tag die
+      // net vrijkomt en opnieuw rondkijkt zou anders een al gedane klus opnieuw claimen (zijn tag wint de her-stemming) en het hele
+      // model nog een keer draaien -- verspilde rekenkracht van de rij, precies het tegenovergestelde van delen. Al beantwoord = verliezen.
+      let alBeantwoord = false;
       for (const m of await leesOnderwerp(o.http, o.basis, sleutels.resultaten, '1h')) {
         const l = await verz.voeg(m.bericht);
-        if (l && l.id === `${id}.claim` && typeof l.tag === 'string' && l.tag < laagste) laagste = l.tag;
+        if (!l) continue;
+        if (l.id === `${id}.claim`) { if (typeof l.tag === 'string' && l.tag < laagste) laagste = l.tag; }
+        else if (l.id === id) alBeantwoord = true;
       }
+      if (alBeantwoord) return false;
       return laagste === o.tag;
     }
 

@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.75';
+  const JARVIS_NIEUWSTE = '1.9.76';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
@@ -1163,7 +1163,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.104';
+  const VERONICA_VERSIE = '1.9.105';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1820,6 +1820,15 @@
     if (h.sparen) uit.push({ code: 'spaart', zin: 'Deze telefoon spaart (de schuif op de telefoon): hij neemt geen werk aan.' });
     if (h.dagelijks) uit.push({ code: 'dagelijks', zin: 'Dit is de dagelijkse telefoon: hij rust terwijl je hem gebruikt.' });
     if (h.motor && h.motor.aan && h.motor.fase === 'fout') uit.push({ code: 'motor', zin: 'De eigen motor staat aan maar liep vast; Veronica vraagt hem vanzelf opnieuw te starten.' });
+    // 578: EEN TELEFOON KAN VERBONDEN ZIJN (groen) EN TOCH NIETS DOEN. Twee redenen die nergens anders stonden: te oud voor een
+    // eigen model, en een model dat nog laadt of wacht. Zo weet je dat een stille, groene telefoon niet kapot is.
+    if (h.motor && (h.motor.teOud === true || h.motor.soort === 'te-oud')) {
+      uit.push({ code: 'te-oud', zin: 'Deze telefoon is te oud voor een eigen model. Hij helpt wel met kleine klussen (zoeken, controleren), maar niet met een gesprek of een vertaling.' });
+    } else if (h.motor && h.motor.aan && h.motor.klaar === false && (h.motor.fase === 'laden' || h.motor.fase === 'wacht' || h.motor.fase === 'download')) {
+      const watZin = h.motor.fase === 'download' ? 'haalt het model nog op' : h.motor.fase === 'wacht' ? 'wacht om het model te laden' : 'laadt het model nog';
+      const pct = typeof h.motor.procent === 'number' && h.motor.procent > 0 && h.motor.procent < 100 ? ` (${Math.round(h.motor.procent)}%)` : '';
+      uit.push({ code: 'model-laadt', zin: `De eigen motor staat aan, maar ${watZin}${pct}: hij neemt nog geen werk aan tot het model klaar is.` });
+    }
     return uit;
   }
   // 554: BIJWERKEN PER TELEFOON, uit zijn eigen hartslag (ook op een gastnetwerk). Wat de telefoon zegt (bijwerk.stap), en of de
