@@ -220,40 +220,74 @@ zelf_bijwerken() {
   zeg "Bijwerken mislukte; niets veranderd."; rm -f "$tmp"; return 1
 }
 
-# 576: ARTEMIS draait op uv. uv koos cpython-3.15, en grpcio (via langchain-google-vertexai) heeft daar geen kant-en-klare wheel
-# voor -> uv bouwt het vanaf de bron -> 'c++' ontbreekt in Crostini -> ARTEMIS start NOOIT. We pinnen Python op 3.12: dan zijn er
-# wheels en is er geen compiler nodig. De pin staat in .python-version (leest uv altijd) EN start() geeft UV_PYTHON=3.12 mee.
+# 576/577: ARTEMIS draait op uv. uv koos cpython-3.15, en grpcio/zstandard hebben daar geen kant-en-klare wheel voor -> uv bouwt
+# ze vanaf de bron -> 'cc'/'c++' ontbreekt in Crostini -> ARTEMIS start NOOIT. Twee sloten, allebei nodig:
+#  (1) Python FORCEREN op 3.12 -- niet alleen .python-version/UV_PYTHON (ARTEMIS' eigen start.sh/uv kan dat negeren), maar de venv
+#      ZELF aanmaken met `uv venv --python 3.12`, zodat elke latere `uv run`/`uv sync` die bestaande 3.12-venv hergebruikt.
+#  (2) build-essential als VANGNET: lukt uv sync toch niet (een pakket zonder wheel, welke Python dan ook), dan een compiler
+#      installeren (sudo -n) en opnieuw proberen. Zo start ARTEMIS ook als 3.12 om wat voor reden dan ook niet pakt.
+# 577: controleer NA afloop echt welke Python in de venv staat en meld dat (zichtbaar in Status/Log).
+
+# 577: een compiler installeren als die ontbreekt (Crostini-gebruiker heeft normaal sudo zonder wachtwoord).
+venv_vangnet() {
+  { command -v cc >/dev/null 2>&1 && command -v c++ >/dev/null 2>&1; } && return 0
+  if sudo -n true 2>/dev/null; then
+    zeg "Een pakket heeft geen kant-en-klaar wheel; ik installeer een compiler (build-essential)..."
+    sudo -n apt-get update -qq >>"$REK_MAP/artemis.log" 2>&1 || true
+    if sudo -n apt-get install -y -qq build-essential >>"$REK_MAP/artemis.log" 2>&1; then zeg "Compiler geinstalleerd."; return 0; fi
+    zeg "build-essential installeren lukte niet -- kijk bij Log."; return 1
+  fi
+  zeg "Geen compiler (cc) en geen sudo zonder wachtwoord. Typ EENMALIG in de Linux-terminal: sudo apt-get install -y build-essential"
+  return 1
+}
+
 zorg_venv() {
   [ -d "$ARTEMIS_MAP" ] || return 0
   printf '3.12\n' >"$ARTEMIS_MAP/.python-version" 2>/dev/null || true   # uv kiest nooit meer 3.15, ook via ARTEMIS' eigen start.sh
   local nu=""
   [ -x "$ARTEMIS_MAP/.venv/bin/python" ] && nu="$("$ARTEMIS_MAP/.venv/bin/python" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null)"
-  if [ "${1:-}" = forceer ] || { [ -n "$nu" ] && [ "$nu" != "3.12" ]; }; then
-    [ -n "$nu" ] && [ "$nu" != "3.12" ] && zeg "De venv draaide op Python $nu (daar faalt grpcio); ik bouw hem opnieuw op met 3.12."
-    rm -rf "$ARTEMIS_MAP/.venv"
+  if [ "${1:-}" = forceer ] || [ "$nu" != "3.12" ]; then
+    [ -n "$nu" ] && [ "$nu" != "3.12" ] && zeg "De venv draaide op Python $nu (daar faalt grpcio/zstandard); ik bouw hem opnieuw op met 3.12."
     if command -v uv >/dev/null 2>&1; then
-      ( cd "$ARTEMIS_MAP" && uv python install 3.12 >>"$REK_MAP/artemis.log" 2>&1; UV_PYTHON=3.12 uv sync >>"$REK_MAP/artemis.log" 2>&1 ) \
-        && zeg "venv opnieuw opgebouwd met Python 3.12 (wheels, geen compiler)." \
-        || zeg "Opbouwen gaf een fout -- kijk bij Log."
+      rm -rf "$ARTEMIS_MAP/.venv"
+      # (1) de venv ZELF op 3.12 zetten, zodat latere uv-aanroepen hem hergebruiken i.p.v. 3.15 te kiezen.
+      ( cd "$ARTEMIS_MAP" && uv python install 3.12 >>"$REK_MAP/artemis.log" 2>&1; UV_PYTHON=3.12 uv venv --python 3.12 .venv >>"$REK_MAP/artemis.log" 2>&1 )
+      if ! ( cd "$ARTEMIS_MAP" && UV_PYTHON=3.12 uv sync >>"$REK_MAP/artemis.log" 2>&1 ); then
+        # (2) vangnet: een compiler erbij en nog een keer (laat uv nu zelf de Python kiezen -- met een compiler bouwt elke versie).
+        venv_vangnet && ( cd "$ARTEMIS_MAP" && uv sync >>"$REK_MAP/artemis.log" 2>&1 ) \
+          && zeg "venv opgebouwd na het installeren van de compiler." \
+          || zeg "venv opbouwen bleef mislukken -- kijk bij Log."
+      else
+        zeg "venv opgebouwd met Python 3.12 (wheels, geen compiler)."
+      fi
     else
-      zeg "uv staat er nog niet; ARTEMIS bouwt de venv zelf bij de eerste start -- nu met Python 3.12 (.python-version)."
+      zeg "uv staat er nog niet; ARTEMIS bouwt de venv zelf bij de eerste start -- met Python 3.12 (.python-version)."
     fi
   fi
+  # 577: EERLIJK melden welke Python er nu echt in de venv staat (dit is de Python waarmee ARTEMIS draait).
+  local na=""
+  [ -x "$ARTEMIS_MAP/.venv/bin/python" ] && na="$("$ARTEMIS_MAP/.venv/bin/python" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null)"
+  [ -n "$na" ] && zeg "De venv draait nu op Python $na." || zeg "Er is nog geen venv; ARTEMIS bouwt hem bij de eerste start."
 }
 
-# 576: na Bijwerken laadt de DRAAIENDE console-server de nieuwe code niet vanzelf (geen Log-knop zichtbaar). Stop de oude en
-# start een verse. Deze opdracht draait in een eigen sessie (niet als "console"), dus pkill op "artemis-rek console" raakt
-# onszelf niet. In een test staat ARTEMIS_GEEN_HERSTART, zodat er geen echte server opstart.
+# 576/577: na Bijwerken laadt de DRAAIENDE console-server de nieuwe code niet vanzelf (geen Log-knop zichtbaar). Herstart hem.
+# Onder systemd gaat dat via `systemctl --user restart` (schoon, geen poortgevecht met de auto-restart); anders pkill + een verse.
+# Deze opdracht draait in een eigen sessie (niet als "console"), dus pkill op "artemis-rek console" raakt onszelf niet. In een
+# test staat ARTEMIS_GEEN_HERSTART, zodat er geen echte server opstart.
 herstart_console() {
   [ -n "${ARTEMIS_GEEN_HERSTART:-}" ] && return 0
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet artemis-rek.service 2>/dev/null; then
+    systemctl --user restart artemis-rek.service >/dev/null 2>&1 && { zeg "De console is opnieuw gestart (systemd) met de nieuwe code -- herlaad de pagina in Chrome."; return 0; }
+  fi
   pkill -f "artemis-rek console" 2>/dev/null || true
   sleep 1
   setsid "$BIN_SELF/artemis-rek" console </dev/null >>"$REK_MAP/console.log" 2>&1 &
   zeg "De console is opnieuw gestart met de nieuwe code -- herlaad de pagina in Chrome."
 }
 
-# 576: de Bijwerken-knop. Werkt het script bij, bouwt de venv opnieuw op met Python 3.12, en herstart de console zodat de nieuwe
-# code (zoals de Log-knop) meteen zichtbaar is.
+# 576/577: de Bijwerken-knop. Werkt het script bij, bouwt de venv opnieuw op (3.12, met compiler-vangnet), en herstart de console
+# zodat de nieuwe code (zoals de Log-knop) meteen zichtbaar is. 577: ook de OUDE console-route (die Bijwerken naar `zelf-bijwerken`
+# stuurde) komt hier terecht, zodat de venv-rebuild en de herstart ook dan gebeuren.
 bijwerken() {
   zelf_bijwerken || zeg "Het script bijwerken ging niet door; ik ga wel verder met de venv en de console."
   zorg_venv forceer
@@ -316,10 +350,23 @@ def doe(cmd):
         return '%s duurt langer dan verwacht. Druk op Status of Log om te zien wat er gebeurt.' % cmd
     except Exception as e:
         return 'fout: ' + str(e)
+try: START_MT = os.path.getmtime(AREK)
+except Exception: START_MT = 0
+def herstart_als_nieuwer():
+    # 577: laadt de nieuwe code zodra het script op schijf nieuwer is (na Bijwerken), zodat o.a. de Log-knop vanzelf verschijnt.
+    try: mt = os.path.getmtime(AREK)
+    except Exception: return
+    if mt <= START_MT: return
+    if os.environ.get('INVOCATION_ID'):
+        os._exit(0)   # onder systemd: Restart=always start de console meteen opnieuw met de nieuwe code
+    try: subprocess.Popen([AREK, 'console'], stdin=subprocess.DEVNULL, start_new_session=True)
+    except Exception: pass
+    os._exit(0)
 def lus():
     # elke minuut: nieuwe telefoons zoeken; en ARTEMIS aanhouden als de gewenste stand "aan" is
     while True:
         try:
+            herstart_als_nieuwer()
             doe('scan')
             if os.path.exists(os.path.join(REK, 'aan')):
                 pida = os.path.join(REK, 'artemis.pid'); draait = False
@@ -639,7 +686,7 @@ case "${1:-status}" in
   overzicht) overzicht ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
-  zelf-bijwerken) zelf_bijwerken ;;
+  zelf-bijwerken) bijwerken ;;   # 577: de oude console stuurt Bijwerken hierheen -> ook dan venv-rebuild + console-herstart
   toestellen) toestellen ;;
   draadloos) draadloos ;;
   mcp) mcp ;;
