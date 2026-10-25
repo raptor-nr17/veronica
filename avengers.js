@@ -53,7 +53,7 @@
     fenna: 'de AI-kern doet voorstellen die de eigenaar keurt' });
   // 553: de trap van klein naar groot -- alle telefoons tegelijk, elk een stukje, groter alleen als de controle faalt.
   registreer({ id: 'trap', titel: 'Samen van klein naar groot', effect: 'geen', rollen: ['werker', 'beheerder', 'gast'],
-    uitleg: 'Fenna knipt een doel in stukjes; alle telefoons doen tegelijk een stukje met het kleinste model dat goed genoeg is.',
+    uitleg: 'Veronica knipt een doel in stukjes; alle telefoons doen tegelijk een stukje met het kleinste model dat goed genoeg is.',
     fenna: 'alle telefoons tegelijk een stukje, van klein naar groot' });
   const modus = (id) => MODI.find((m) => m.id === id) || null;
 

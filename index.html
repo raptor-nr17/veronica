@@ -76,6 +76,22 @@
   #statusRegel { flex: 1 1 20em; margin: 0; font-size: 20px; font-weight: 600; }
   #meldRegel { padding: 8px 16px; background: var(--paneel); border-bottom: 1px solid var(--lijn); font-size: 18px; }
   #meldRegel[hidden] { display: none; }
+  /* 563: Veronica als levende vorm (geen echt gezicht). Blauw rustig, oranje bezig, rood probleem; meebewegen als ze praat. */
+  #veronicaVorm { display: block; margin: 8px auto 2px; width: 140px; height: 140px; padding: 0; border: none; background: none; cursor: pointer; }
+  #veronicaVorm svg { width: 100%; height: 100%; display: block; }
+  #vormBol { fill: var(--vormKleur, #2b7fff); transform-origin: 60px 60px; transition: fill .6s ease; animation: vormAdem 4s ease-in-out infinite; }
+  #vormGolf { stroke: #fff; stroke-width: 3; opacity: .85; stroke-linecap: round; }
+  #veronicaVorm[data-stand="bezig"] { --vormKleur: #e68a00; }
+  #veronicaVorm[data-stand="probleem"] { --vormKleur: #d64141; }
+  #veronicaVorm.praat #vormBol { animation: vormPraat .5s ease-in-out infinite; }
+  @keyframes vormAdem { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+  @keyframes vormPraat { 0%,100% { transform: scale(0.97); } 50% { transform: scale(1.1); } }
+  @media (prefers-reduced-motion: reduce) { #vormBol { animation: none; } #veronicaVorm.praat #vormBol { animation: none; } }
+  #veronicaZin { text-align: center; font-size: 20px; font-weight: 600; margin: 0 0 6px; min-height: 1.4em; }
+  /* Wandstand: Veronica vult het hele scherm. */
+  body.wand #veronicaVorm { width: min(70vh, 90vw); height: min(70vh, 90vw); margin: 4vh auto 2vh; }
+  body.wand #veronicaZin { font-size: 6vmin; }
+  body.wand #hoofdKnoppen > :not(#veronicaVorm):not(#veronicaZin) { display: none; }
   .verborgen { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   #vraagRij { display: flex; gap: 8px; align-items: center; flex: 1 1 30em; }
   #hoofdVraag { flex: 1; font: inherit; font-size: 20px; padding: 10px 12px; min-height: 52px; color: var(--tekst); background: var(--paneel); border: 1px solid var(--lijn); border-radius: 12px; }
@@ -259,6 +275,15 @@
 <main>
   <!-- 549: de grote knop staat BUITEN de vaste kop (die moet laag blijven: hij ligt over de pagina). -->
   <div id="hoofdKnoppen">
+    <!-- 563: Veronica als levende vorm (geen echt gezicht): een rustige bol/golf die meebeweegt als ze praat. Blauw = rustig,
+         oranje = bezig, rood = probleem. Tik erop (of "Hé Veronica") om haar te laten luisteren. Haar zin staat eronder in woorden. -->
+    <button type="button" id="veronicaVorm" aria-label="Veronica — tik om te praten" data-stand="rust">
+      <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+        <circle id="vormBol" cx="60" cy="60" r="34" />
+        <path id="vormGolf" d="M26 62 Q43 50 60 62 T94 62" fill="none" />
+      </svg>
+    </button>
+    <p id="veronicaZin" aria-live="polite"></p>
     <div id="vraagRij"><label for="hoofdVraag" class="verborgen">Vraag of opdracht</label><input id="hoofdVraag" type="text" autocomplete="off" maxlength="12000" placeholder="Vraag iets, of geef een opdracht"> <button id="micKnop" aria-pressed="false" aria-label="Spreek een opdracht in">🎤</button> <button type="button" id="vraagKnop">Vraag</button></div>
     <span id="spraakZin" aria-live="polite"></span>
     <button type="button" id="startStopKnop" class="startGroot" aria-pressed="false">Start</button>
@@ -387,7 +412,7 @@
     </div>
     <div class="zsPaneel" id="kluisVak">
       <h2>Kluis op het kaartje</h2>
-      <p class="eerlijk">Fenna's lange geheugen staat op de geheugen-telefoon (de werkplek). Hier haal je er een VERSLEUTELDE kopie van naar het kaartje van deze Chromebook (de kluis):
+      <p class="eerlijk">Veronica's lange geheugen staat op de geheugen-telefoon (de werkplek). Hier haal je er een VERSLEUTELDE kopie van naar het kaartje van deze Chromebook (de kluis):
         met een wachtwoord uit je wachtwoordkluis, dat nergens bewaard wordt. Een richting: telefoon naar kaartje. Zolang dit tabblad open is, gebeurt het elke nacht vanzelf. Bewaard: zeven dagen en vier weken.</p>
       <button type="button" id="kluisKnop">Back-up halen</button>
       <p id="kluisStand" aria-live="polite"></p>
@@ -512,6 +537,8 @@
     <button id="spraakKnop" aria-pressed="true">Spraak: aan</button>
     <label for="stemKeus">Stem</label>
     <select id="stemKeus"></select>
+    <!-- 563: stemproef. Kies een stem en tik Probeer; Veronica zegt een zin in haar stijl. Zo kies je een rustige vrouwenstem. -->
+    <button type="button" id="stemProefKnop">▶ Probeer deze stem</button>
     <label for="spraakTempo">Tempo</label>
     <select id="spraakTempo"><option value="0.85">Rustig</option><option value="1">Gewoon</option><option value="1.15">Vlot</option></select>
     <label for="spraakVolume">Volume</label>
@@ -592,8 +619,8 @@
   <p class="eerlijk" id="wakkerZin">Veronica werkt alleen zolang deze computer aan is en niet slaapt. Tik op "Houd het scherm aan", of zet slapen uit.
     Elk getal komt van een meting: eronder staat de bron en hoe oud hij is. Ouder dan 10 seconden is grijs. Niet gemeten = onbekend.</p>
     <!-- 522: wie rekent nu (uit de hartslagen) -->
-    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="geheugenZin" hidden></p><div id="fennaMetingBlok" hidden><h3>Meting per telefoon</h3><ul id="fennaMeting"></ul></div><div id="slimBlok"><h3>Slimheid van Fenna</h3><button type="button" id="meetFennaKnop">Meet Fenna nu</button> <button type="button" id="meetFennaStop" class="tweede" hidden>Stop de meting</button><p id="slimStand" aria-live="polite"></p><div id="slimGrafiek"></div><div class="tabelVak"><table id="slimTabel"></table></div></div><div id="trapBlok"><h3>Samen van klein naar groot</h3>
-      <p class="eerlijk">Fenna knipt je doel in stukjes. Alle telefoons doen tegelijk een stukje, elk met het kleinste model dat voor die soort klus goed genoeg scoort.
+    <div id="wieRekent"><p id="wieRekentKop" class="groteMelding"></p><p id="geheugenZin" hidden></p><div id="fennaMetingBlok" hidden><h3>Meting per telefoon</h3><ul id="fennaMeting"></ul></div><div id="slimBlok"><h3>Slimheid van Veronica</h3><button type="button" id="meetFennaKnop">Meet Veronica nu</button> <button type="button" id="meetFennaStop" class="tweede" hidden>Stop de meting</button><p id="slimStand" aria-live="polite"></p><div id="slimGrafiek"></div><div class="tabelVak"><table id="slimTabel"></table></div></div><div id="trapBlok"><h3>Samen van klein naar groot</h3>
+      <p class="eerlijk">Veronica knipt je doel in stukjes. Alle telefoons doen tegelijk een stukje, elk met het kleinste model dat voor die soort klus goed genoeg scoort.
         Haalt een antwoord de controle niet, dan gaat dat stukje naar een groter model op een andere telefoon. De F8 alleen als het niet anders kan, en voor het samenvoegen en de eindcontrole. Alles blijft in huis.</p>
       <label for="trapDoel">Doel</label> <textarea id="trapDoel" rows="4" maxlength="12000"></textarea>
       <!-- 556: de soort klus bepaalt Fenna zelf, en dubbel sturen gaat vanzelf als de controle faalt: geen keuzevak en geen vinkje meer -->

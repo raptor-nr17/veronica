@@ -79,7 +79,7 @@
       await d.lang.schrijf({ op: 'vergeet', t: d.nu(), tekst: vg[2].trim() });
       const na = d.lang.stand ? d.lang.stand().tellingen : null;
       const weg = voor && na ? voor.feiten - na.feiten : null;
-      gesprek.push({ wie: 'hoek', tekst: weg ? `Vergeten: ${weg} ${weg === 1 ? 'regel' : 'regels'} uit Fenna's lange geheugen (met een versienummer, niet stil gewist).` : 'Daar vond ik geen regel over in het lange geheugen. Staat het in je kern, haal het daar weg.' });
+      gesprek.push({ wie: 'hoek', tekst: weg ? `Vergeten: ${weg} ${weg === 1 ? 'regel' : 'regels'} uit Veronica's lange geheugen (met een versienummer, niet stil gewist).` : 'Daar vond ik geen regel over in het lange geheugen. Staat het in je kern, haal het daar weg.' });
       return true;
     }
     const o = P.onthoud(U.store, vraag, 'eigenaar');
@@ -163,7 +163,7 @@
   // invult en dat nooit over de relay of de brievenbus gaat. Werkmodus: alleen de eerste alinea, de stijl en de eerlijkheid.
   function fennaBlok() {
     const Fenna = Fn();
-    const k = el('section', 'phBlok'); k.id = 'phFennaBlok'; k.append(kop('Fenna (persoonlijkheid)'));
+    const k = el('section', 'phBlok'); k.id = 'phFennaBlok'; k.append(kop('Veronica (persoonlijkheid)'));
     const pe = Object.assign({}, U.store.persona || {});
     const modus = el('div');
     for (const [m, naam] of [['gesprek', 'Gespreksmodus'], ['werk', 'Werkmodus']]) {
@@ -182,15 +182,15 @@
     if (ls) { pe.feiten = ls.geheugen.feiten; pe.stijl = ls.geheugen.stijl; }
     k.append(el('p', 'phKlein', ls ? `${ls.zin}. Feiten, samenvattingen, "onthoud dat" en je stijl staan op de geheugen-telefoon (versleuteld, alleen via je eigen wifi).` : 'Feiten en stijl gaan naar de geheugen-telefoon zodra die er is (versleuteld, alleen via je eigen wifi).'));
     const kaart = veld('kaart', 'Kaart', 'Leeg = de standaardkaart (ongeveer 400 tokens, acht voorbeeldzinnen).', Fenna ? Fenna.KAART : '');
-    const feiten = veld('feiten', 'Feiten', 'Wat Fenna als waar mag aannemen.');
+    const feiten = veld('feiten', 'Feiten', 'Wat Veronica als waar mag aannemen.');
     const sam = veld('samenvatting', 'Samenvatting', 'Waar eerdere gesprekken over gingen.');
-    const stijl = veld('stijl', 'Stijl (alleen van jou)', 'Gaat NOOIT via de brievenbus of het internet, ook niet via de relay: alleen als Fenna rechtstreeks over je eigen wifi praat.');
-    // 556: Fenna bewaart zelf (na elke wijziging); de knop "Bewaar Fenna" is weg.
+    const stijl = veld('stijl', 'Stijl (alleen van jou)', 'Gaat NOOIT via de brievenbus of het internet, ook niet via de relay: alleen als Veronica rechtstreeks over je eigen wifi praat.');
+    // 556: Fenna bewaart zelf (na elke wijziging); de knop "Bewaar Veronica" is weg.
     const bewaarFenna = async () => {
       // 547: feiten en stijl gaan naar de geheugen-telefoon (eerst in de wachtrij); in de hoek blijft alleen de kaart en de samenvatting.
       if (d.lang) { await d.lang.schrijf({ op: 'feiten', tekst: feiten.t.value.slice(0, 2000) }); await d.lang.schrijf({ op: 'stijl', tekst: stijl.t.value.slice(0, 2000) }); }
       U.store.persona = { kaart: kaart.t.value.slice(0, 3000), feiten: d.lang ? '' : feiten.t.value.slice(0, 2000), samenvatting: sam.t.value.slice(0, 2000), stijl: d.lang ? '' : stijl.t.value.slice(0, 2000), modus: (U.store.persona || {}).modus === 'werk' ? 'werk' : 'gesprek' };
-      P.logToevoegen(U.store, 'Fenna bijgewerkt (persoonlijkheid).', 'eigenaar', d.nu()); await bewaar(); meld('Fenna is bewaard. De volgende vraag gebruikt het al.');
+      P.logToevoegen(U.store, 'Veronica bijgewerkt (persoonlijkheid).', 'eigenaar', d.nu()); await bewaar(); meld('Veronica is bewaard. De volgende vraag gebruikt het al.');
     };
     for (const v of [kaart, feiten, sam, stijl]) v.t.addEventListener('change', () => { bewaarFenna().catch(() => {}); });
     k.append(kaart.w, feiten.w, sam.w, stijl.w);
@@ -449,7 +449,7 @@
   // ===================================================================
   // 556: DE HOEK IN ACHT DINGEN. Een statusregel, EEN vraagveld (Fenna snapt zelf wat je bedoelt), de schakelaar Gesprek/Werk, de drie
   // rollen als statusregels, voorstellen alleen als er een is, en Meer voor de rest (kern, karakter, logboek, zoeken, karakter testen,
-  // back-up, herstelproef, wissen). De tweede NOODSTOP, Stop, Sluiten, "Ik heb meegekeken" en "Bewaar Fenna" zijn weg: de NOODSTOP staat
+  // back-up, herstelproef, wissen). De tweede NOODSTOP, Stop, Sluiten, "Ik heb meegekeken" en "Bewaar Veronica" zijn weg: de NOODSTOP staat
   // EEN keer rechtsboven, de hoek ruimt op als je weggaat, en Fenna bewaart zelf.
   // ===================================================================
   function priveStatus() {
@@ -467,9 +467,9 @@
     const st = M ? M.stand() : { klaar: false, reden: 'Geen model geladen.' };
     const modus = ((U.store.persona || {}).modus === 'werk') ? 'werk' : 'gesprek';
     const sch = el('button', '', modus === 'werk' ? 'Werk' : 'Gesprek'); sch.type = 'button'; sch.id = 'phModus'; sch.setAttribute('aria-pressed', String(modus === 'werk'));
-    sch.title = 'Gesprek: Fenna met haar hele karakter. Werk: kort en zakelijk.';
+    sch.title = 'Gesprek: Veronica met haar hele karakter. Werk: kort en zakelijk.';
     sch.addEventListener('click', async () => { raak(); U.store.persona = Object.assign({}, U.store.persona, { modus: modus === 'werk' ? 'gesprek' : 'werk' }); await bewaar(); teken(); });
-    const inv = el('textarea'); inv.rows = 2; inv.id = 'phVraag'; inv.placeholder = 'Vraag het Fenna, of zeg "onthoud dat ..."'; inv.setAttribute('aria-label', 'Vraag aan Fenna');
+    const inv = el('textarea'); inv.rows = 2; inv.id = 'phVraag'; inv.placeholder = 'Vraag het Veronica, of zeg "onthoud dat ..."'; inv.setAttribute('aria-label', 'Vraag aan Veronica');
     const b = el('button', '', 'Stuur'); b.type = 'button'; b.id = 'phStuur';
     b.addEventListener('click', async () => {
       const vraag = inv.value.trim();
@@ -495,7 +495,7 @@
     for (const r of U.store.rollen) k.append(el('p', 'phRolRegel', `${r.naam}: ${st.klaar ? 'klaar' : 'wacht op een telefoon in de hoek'} (${r.taak})`));
     if (U.gesprek.length) {
       const g = el('div', 'phGesprek');
-      for (const z of U.gesprek) { const r = el('div', `phZin ${z.wie}`); r.append(el('strong', '', z.wie === 'jij' ? 'Jij' : z.wie === 'hoek' ? 'Je hoek' : z.wie === 'model' ? 'Fenna (data, geen bevel)' : 'Niet gelukt'), el('div', '', z.tekst)); if (z.vlaggen && z.vlaggen.length) r.append(el('div', 'phKlein', `Vlag: ${z.vlaggen.join(', ')}`)); g.append(r); }
+      for (const z of U.gesprek) { const r = el('div', `phZin ${z.wie}`); r.append(el('strong', '', z.wie === 'jij' ? 'Jij' : z.wie === 'hoek' ? 'Je hoek' : z.wie === 'model' ? 'Veronica (data, geen bevel)' : 'Niet gelukt'), el('div', '', z.tekst)); if (z.vlaggen && z.vlaggen.length) r.append(el('div', 'phKlein', `Vlag: ${z.vlaggen.join(', ')}`)); g.append(r); }
       if (U.geheugenZin) g.append(el('p', 'phKlein', U.geheugenZin));
       g.append(el('p', 'phKlein', 'Dit gesprek staat alleen op het scherm en verdwijnt als je de hoek verlaat. Het wordt niet bewaard.'));
       k.append(g);

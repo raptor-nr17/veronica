@@ -140,7 +140,7 @@
     const ont = x.onthoud.map((o) => ({ id: o.id, tekst: o.tekst, tijd: o.t, bron: 'onthoud', versie: o.versie, verwijderd: o.verwijderd }));
     return {
       'feiten.jsonl': blok.concat(ont).map(regel).join('\n') + '\n',
-      'regels.md': `# Stijl van Fenna\n\n${x.stijl.trim() || '(nog leeg)'}\n`,
+      'regels.md': `# Stijl van Veronica\n\n${x.stijl.trim() || '(nog leeg)'}\n`,
       'samenvattingen.jsonl': x.samenvattingen.map(regel).join('\n') + (x.samenvattingen.length ? '\n' : ''),
       'gebeurtenissen.jsonl': x.gebeurtenissen.map(regel).join('\n') + (x.gebeurtenissen.length ? '\n' : ''),
       'metingen.jsonl': x.metingen.map(regel).join('\n') + (x.metingen.length ? '\n' : ''),

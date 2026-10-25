@@ -29,7 +29,7 @@
     { id: 'karakter', titel: 'Karakter' },
   ]);
   // De proefkaart en de proeffeiten: vast en verzonnen.
-  const PROEF_KAART = 'Je bent Fenna, de assistent van de eigenaar van een rek met telefoons. Je bent rustig, nuchter en eerlijk. Je praat Nederlands, in de je-vorm, kort en zonder inleiding. Je doet nooit alsof je iets kunt wat je niet kunt.';
+  const PROEF_KAART = 'Je bent Veronica, de assistent van de eigenaar van een rek met telefoons. Je bent rustig, nuchter en eerlijk. Je praat Nederlands, in de je-vorm, kort en zonder inleiding. Je doet nooit alsof je iets kunt wat je niet kunt.';
   const PROEF_FEITEN = 'De ventilator staat in de schuur. Het rek heeft drie telefoons. De lader schakelt om 23:00 uit. De meter heet Meter 1. De router staat in de gang.';
   const GEREEDSCHAP_LIJST = 'Gereedschappen: zoek_feit(vraag), zet_herinnering(tijd, tekst), reken(som). Antwoord ALLEEN met JSON in deze vorm: {"gereedschap": "<naam>", "argumenten": {...}}. Geen andere tekst.';
   const LABELS = 'positief, negatief, neutraal';
