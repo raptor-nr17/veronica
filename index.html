@@ -22,12 +22,12 @@
   header select { width: auto; max-width: 18em; }
   #hoofdKnoppen[hidden] { display: none; }
   #hoofdKnoppen { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 4px 0 8px; }
-  #slimTabel { border-collapse: collapse; font-size: 15px; } #slimTabel th, #slimTabel td { border-bottom: 1px solid var(--lijn); padding: 4px 6px; text-align: left; }
+  #slimTabel { border-collapse: collapse; font-size: 18px; } #slimTabel th, #slimTabel td { border-bottom: 1px solid var(--lijn); padding: 4px 6px; text-align: left; }
   #slimGrafiek svg { max-width: 100%; }
   #avengersKnop { font-size: 20px; font-weight: 800; padding: 12px 18px; border: 3px solid #b8860b; }
-  #avLijst li, #avNieuw li { padding: 6px 0; border-bottom: 1px solid var(--lijn); font-size: 17px; }
+  #avLijst li, #avNieuw li { padding: 6px 0; border-bottom: 1px solid var(--lijn); font-size: 18px; }
   #avLijst li.avMee::before { content: "✓ "; font-weight: 800; } #avLijst li.avNiet::before { content: "✗ "; font-weight: 800; }
-  #avModiLijst button { display: block; margin: 8px 0; min-height: 48px; text-align: left; } #avModiLijst .avUitleg { display: block; font-weight: 400; font-size: 15px; }
+  #avModiLijst button { display: block; margin: 8px 0; min-height: 48px; text-align: left; } #avModiLijst .avUitleg { display: block; font-weight: 400; font-size: 18px; }
   /* 542: DE PRIVÉ-HOEK ALS EIGEN PAGINA (index.html#hoek). Veiligheid vast bovenaan; breed scherm: rail links, kaarten in een raster;
      staand/smal: een onderbalk met vier knoppen en een kaart per rij. Elke knop staat op elk scherm op dezelfde plek. */
   body.hoekModus > header, body.hoekModus > nav, body.hoekModus > main, body.hoekModus > #wandBalk, body.hoekModus > #volLokaalBalk { display: none !important; }
@@ -47,7 +47,7 @@
   .hoekKaart { border: 2px solid var(--lijn); border-radius: 14px; padding: 12px; background: var(--paneel); }
   .hoekKaart h3 { margin: 0 0 4px; font-size: 22px; }
   .hoekStand { font-size: 20px; font-weight: 700; margin: 6px 0; }
-  .hoekBeeld { border: 1px dashed var(--lijn); border-radius: 10px; min-height: 90px; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--zacht); padding: 8px; margin: 8px 0; font-size: 16px; }
+  .hoekBeeld { border: 1px dashed var(--lijn); border-radius: 10px; min-height: 90px; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--zacht); padding: 8px; margin: 8px 0; font-size: 18px; }
   .hoekKnoppen { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
   .hoekMeer { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; }
   .hoekVak { border-radius: 14px; padding: 12px; margin: 0 0 14px; border: 3px solid; }
@@ -89,16 +89,16 @@
   .klein, .tBron, .eerlijk, .phKlein, .tAdres, .zwFeiten, .zwAdres, .zwKop { font-size: 18px !important; }
   nav { display: flex; gap: 8px; padding: 8px 16px; }
   main { padding: 8px 16px 24px; }
-  .eerlijk { color: var(--zacht); font-size: 15px; margin: 4px 0 10px; }
+  .eerlijk { color: var(--zacht); font-size: 18px; margin: 4px 0 10px; }
   #tegels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
   .tegel.oud { filter: grayscale(1); opacity: .7; }
   .tegel.oud .tBereik { font-size: 18px; font-weight: 700; }
-  .tRol { font-size: 16px; color: var(--zacht); margin-top: 2px; }
-  .tOverzicht { font-size: 17px; font-weight: 600; margin-top: 4px; }
+  .tRol { font-size: 18px; color: var(--zacht); margin-top: 2px; }
+  .tOverzicht { font-size: 18px; font-weight: 600; margin-top: 4px; }
   .tVerbinding { margin-top: 4px; padding: 4px 8px; border-radius: 8px; border-left: 6px solid; }
   .tVerbinding.v-groen { border-color: #15803D; }
   .tVerbinding.v-oranje { border-color: #C2410C; }
-  .tWeg { margin-top: 4px; font-size: 0.95em; }
+  .tWeg { margin-top: 4px; font-size: 1em; }
   #trapBlok textarea { width: 100%; min-height: 96px; }
   .trapVink { display: flex; align-items: center; gap: 8px; min-height: 48px; }
   .trapVink input { width: 28px; height: 28px; }
@@ -108,35 +108,35 @@
   .zwTegels { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
   .zwTegel { border: 1px solid var(--lijn); border-radius: 12px; padding: 10px; background: var(--paneel); min-width: 0; overflow-wrap: anywhere; }
   .zwTegel h4 { margin: 0 0 4px; }
-  .zwFeiten, .zwAdres, .zwKop { font-size: 0.9em; }
+  .zwFeiten, .zwAdres, .zwKop { font-size: 1em; }
   .zwAdres { opacity: 0.8; }
   .zwNu { margin-top: 6px; font-weight: 600; }
   .zwPaginas { margin: 4px 0 0; padding-left: 18px; }
   .zwAntwoord { margin-top: 4px; padding: 6px 8px; border-left: 4px solid #1D4ED8; }
-  .zwReden { padding: 2px 8px; border-left: 4px solid #C2410C; margin-top: 2px; font-size: 0.95em; }
+  .zwReden { padding: 2px 8px; border-left: 4px solid #C2410C; margin-top: 2px; font-size: 1em; }
   body.zoekwandGroot[data-zoekwand="gewoon"] #zoekwand, body.zoekwandGroot[data-zoekwand="prive"] #zoekwandPrive { position: fixed; left: 0; right: 0; bottom: 0; top: var(--kopHoogte, 64px); z-index: 1; overflow: auto; background: var(--nacht); padding: 12px; margin: 0; }
-  .tBijwerkStap { margin-top: 4px; padding: 2px 8px; border-left: 4px solid #1D4ED8; font-size: 0.95em; }
+  .tBijwerkStap { margin-top: 4px; padding: 2px 8px; border-left: 4px solid #1D4ED8; font-size: 1em; }
   .tVerbinding.v-rood { border-color: #B91C1C; font-weight: 600; }
-  .tZelftest { font-size: 15px; margin-top: 6px; } .tZelftestKop { font-weight: 600; } .zt-nee { color: var(--rood); } .zt-info { color: var(--zacht); }
+  .tZelftest { font-size: 18px; margin-top: 6px; } .tZelftestKop { font-weight: 600; } .zt-nee { color: var(--rood); } .zt-info { color: var(--zacht); }
   /* 526: bevestigen in de pagina (geen venster van de browser): onderaan, boven alles, groot genoeg om op te tikken */
   #vraagVak { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2147483000; width: min(560px, calc(100vw - 32px));
     background: var(--paneel); color: var(--tekst); border: 2px solid var(--zacht); border-radius: 14px; padding: 16px 18px; box-shadow: 0 8px 32px rgba(0,0,0,.6); }
-  #vraagVak p { margin: 0 0 12px; font-size: 17px; line-height: 1.4; }
+  #vraagVak p { margin: 0 0 12px; font-size: 18px; line-height: 1.4; }
   #vraagVeld { width: 100%; box-sizing: border-box; font-size: 20px; padding: 8px 10px; margin: 0 0 12px; }
   #vraagVak .vraagKnoppen { display: flex; gap: 12px; flex-wrap: wrap; }
-  #vraagVak button { min-height: 48px; padding: 0 18px; font-size: 17px; }
+  #vraagVak button { min-height: 48px; padding: 0 18px; font-size: 18px; }
   #vraagJa { background: #15803D; color: #fff; border: 0; border-radius: 10px; }
-  #wieRekentLijst { margin: 0 0 12px; padding-left: 20px; font-size: 17px; } .rekentJa { color: #4caf50; } .rekentNee { color: var(--zacht); }
-  .tVersie { font-size: 14px; color: var(--zacht); margin-top: 2px; }
-  .tVersie.achter { font-size: 16px; color: #f5a524; }
-  .tGemma { font-size: 16px; color: #f5a524; margin-top: 4px; line-height: 1.35; }   /* 456b: twee Gemma-apps of twee modelkopieen */
-  .taakTegel .taakRegel { display: flex; gap: 10px; align-items: baseline; margin: 4px 0; font-size: 15px; }   /* 469: wie doet wat */
+  #wieRekentLijst { margin: 0 0 12px; padding-left: 20px; font-size: 18px; } .rekentJa { color: #4caf50; } .rekentNee { color: var(--zacht); }
+  .tVersie { font-size: 18px; color: var(--zacht); margin-top: 2px; }
+  .tVersie.achter { font-size: 18px; color: #f5a524; }
+  .tGemma { font-size: 18px; color: #f5a524; margin-top: 4px; line-height: 1.35; }   /* 456b: twee Gemma-apps of twee modelkopieen */
+  .taakTegel .taakRegel { display: flex; gap: 10px; align-items: baseline; margin: 4px 0; font-size: 18px; }   /* 469: wie doet wat */
   .taakTegel .taakRegel.magNiet .taakUitleg { color: #888; }
   .taakTegel .taakRegel.mag .taakUitleg { color: #4caf50; }
   .taakTegel .taakSchakel { display: inline-flex; gap: 6px; align-items: center; min-width: 190px; }
   .taakTegel .taakNaam { min-width: 190px; display: inline-block; }
-  .taakSamen { margin: 10px 0; font-size: 15px; color: #9ab; }
-  .tMotorKlaar { font-size: 15px; color: #9ab; margin-top: 4px; line-height: 1.35; }   /* 468: klaar voor de eigen motor? */
+  .taakSamen { margin: 10px 0; font-size: 18px; color: #9ab; }
+  .tMotorKlaar { font-size: 18px; color: #9ab; margin-top: 4px; line-height: 1.35; }   /* 468: klaar voor de eigen motor? */
   .tMotorKlaar.klaar { color: #4caf50; }
   .tMotorKlaar.kanNiet { color: #888; }
   #wandBalk { display: none; }
@@ -149,32 +149,32 @@
   .tegel { background: var(--paneel); border: 3px solid var(--lijn); border-radius: 18px; padding: 12px; min-width: 0; }
   .tKop { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
   .tKop h2 { margin: 0; font-size: 22px; }
-  .tAdres { color: var(--zacht); font-size: 14px; }
-  .badge { font-size: 13px; border: 1px solid #7cc4ff; border-radius: 8px; padding: 0 6px; color: #7cc4ff; }
-  .tBereik, .tTaak { font-size: 15px; margin-top: 4px; }
+  .tAdres { color: var(--zacht); font-size: 18px; }
+  .badge { font-size: 18px; border: 1px solid #7cc4ff; border-radius: 8px; padding: 0 6px; color: #7cc4ff; }
+  .tBereik, .tTaak { font-size: 18px; margin-top: 4px; }
   .oud { color: var(--oud); }
-  .tLive { white-space: pre-wrap; background: #08101a; border-radius: 10px; padding: 8px; max-height: 160px; overflow: auto; font: 15px/1.35 ui-monospace, monospace; margin: 6px 0 2px; }
-  .tBron { color: var(--zacht); font-size: 12px; }
-  .tCijfers { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 8px 0; font-size: 15px; }
+  .tLive { white-space: pre-wrap; background: #08101a; border-radius: 10px; padding: 8px; max-height: 160px; overflow: auto; font: 18px/1.35 ui-monospace, monospace; margin: 6px 0 2px; }
+  .tBron { color: var(--zacht); font-size: 18px; }
+  .tCijfers { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 8px 0; font-size: 18px; }
   .tCijfers dt { color: var(--zacht); }
   .tCijfers dd { margin: 0; overflow-wrap: anywhere; }
-  .tCijfers dd .bron { display: block; color: var(--zacht); font-size: 11px; }
+  .tCijfers dd .bron { display: block; color: var(--zacht); font-size: 18px; }
   .tCijfers dd.oud .waarde, .tCijfers dd.oud .bron { color: var(--oud); }
   .tCijfers dd.onbekend .waarde { color: var(--oud); font-style: italic; }
   .tKnoppen { display: flex; gap: 6px; flex-wrap: wrap; }
-  .klein-knop { font-size: 14px; padding: 6px 10px; }
-  #koppelDiag { margin-top: 12px; font-size: 15px; } #koppelDiag summary { cursor: pointer; font-weight: 600; }
+  .klein-knop { font-size: 18px; padding: 6px 10px; }
+  #koppelDiag { margin-top: 12px; font-size: 18px; } #koppelDiag summary { cursor: pointer; font-weight: 600; }
   #koppelDiagLijst dt { font-weight: 600; margin-top: 6px; } #koppelDiagLijst dd { margin: 0 0 0 0; word-break: break-all; }
   .tScherm { width: 100%; max-height: 360px; object-fit: contain; border-radius: 10px; margin-top: 6px; background: #000; }
   textarea, input, select { font: inherit; color: var(--tekst); background: #08101a; border: 1px solid var(--lijn); border-radius: 10px; padding: 8px; width: 100%; }
   textarea { min-height: 120px; }
   .taak { border-bottom: 1px solid var(--lijn); padding: 6px 0; }
   .taak.fout .taakKop { color: var(--rood); }
-  .taakUit { white-space: pre-wrap; color: var(--zacht); font-size: 15px; }
-  #log { color: var(--zacht); font-size: 14px; margin-top: 12px; }
+  .taakUit { white-space: pre-wrap; color: var(--zacht); font-size: 18px; }
+  #log { color: var(--zacht); font-size: 18px; margin-top: 12px; }
   #leeg { color: var(--zacht); }
   #veronicaZegt { flex-basis: 100%; font-size: 20px; font-weight: 700; }
-  #spraakZin { flex-basis: 100%; color: var(--zacht); font-size: 17px; }
+  #spraakZin { flex-basis: 100%; color: var(--zacht); font-size: 18px; }
   #micKnop { font-size: 24px; } #micKnop[aria-pressed="true"] { background: #45d8ff; color: #000; }
   #noodstopBevestig { background: var(--rood); border-color: var(--rood); color: #fff; font-weight: 800; }
   #noodstopBevestig[hidden] { display: none; }
@@ -204,10 +204,10 @@
   #reserveZin { font-size: 18px; margin: 6px 0 0; }
   #vSamen { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 0 0 12px; }
   .vSamen { background: var(--paneel); border: 2px solid var(--lijn); border-radius: 16px; padding: 10px; min-width: 0; }
-  .vIcoon { font-size: 28px; } .vGetal { font-size: 30px; font-weight: 800; overflow-wrap: anywhere; } .vWat2 { color: var(--zacht); font-size: 15px; }
+  .vIcoon { font-size: 28px; } .vGetal { font-size: 30px; font-weight: 800; overflow-wrap: anywhere; } .vWat2 { color: var(--zacht); font-size: 18px; }
   .vMeters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
   .vMeter { text-align: center; min-width: 0; } .vMeter svg { width: 100%; height: auto; }
-  .vWat { font-weight: 700; } .vOud { color: var(--zacht); font-size: 12px; }
+  .vWat { font-weight: 700; } .vOud { color: var(--zacht); font-size: 18px; }
   .vAccu { font-size: 20px; font-weight: 700; } .vAccu.leert { color: var(--zacht); font-weight: 400; }
   .tMeer summary { cursor: pointer; color: var(--zacht); }
   /* 556b: de uitleg achter een vraagteken; het vraagteken is minstens 48 bij 48 te raken */
@@ -217,7 +217,7 @@
   .zsBalk { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: var(--lijn); margin: 8px 0 4px; }
   .zsBalk.oud { opacity: .45; }
   .zsZon { background: #f2c94c; } .zsBuiten { background: #5b7bd5; } .zsOnbekend { background: var(--oud); }
-  .zsStaaf .bron { color: var(--zacht); font-size: 12px; }
+  .zsStaaf .bron { color: var(--zacht); font-size: 18px; }
   #qrVideo { width: 100%; max-width: 420px; }
   /* 466: Mijn privé-hoek */
   #priveHoek { max-width: 900px; }
@@ -227,12 +227,12 @@
   #priveHoek .phBoven .phKlein, #priveHoek .phKijk { flex-basis: 100%; }
   #priveHoek button { min-height: 48px; font-size: 18px; padding: 8px 16px; margin: 4px 6px 4px 0; }
   #priveHoek .phNood { background: #b91c1c; color: #fff; font-weight: 800; } #priveHoek .phStop { font-weight: 800; }
-  #priveHoek .phKlein { color: var(--zacht); font-size: 15px; } #priveHoek .phEerlijk { color: var(--zacht); font-size: 17px; font-weight: 600; }
+  #priveHoek .phKlein { color: var(--zacht); font-size: 18px; } #priveHoek .phEerlijk { color: var(--zacht); font-size: 18px; font-weight: 600; }
   #priveHoek .phMelding { font-weight: 700; } #priveHoek .phGoed { font-weight: 700; }
   #priveHoek .phKijk.moet { border: 2px solid #d97706; border-radius: 12px; padding: 8px; }
   #priveHoek input[type=password], #priveHoek input[type=search], #priveHoek select, #priveHoek textarea { font-size: 18px; width: 100%; max-width: 520px; padding: 8px; box-sizing: border-box; display: block; margin: 4px 0; }
   #priveHoek input[type=checkbox] { width: 28px; height: 28px; vertical-align: middle; }
-  #priveHoek .phTabel { border-collapse: collapse; width: 100%; } #priveHoek .phTabel th, #priveHoek .phTabel td { border-bottom: 1px solid var(--lijn); padding: 6px; text-align: left; font-size: 17px; }
+  #priveHoek .phTabel { border-collapse: collapse; width: 100%; } #priveHoek .phTabel th, #priveHoek .phTabel td { border-bottom: 1px solid var(--lijn); padding: 6px; text-align: left; font-size: 18px; }
   #priveHoek .phRollen { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 8px 0; } #priveHoek .phRol { border: 2px solid var(--lijn); border-radius: 12px; padding: 8px; }
   #priveHoek details { margin: 8px 0; } #priveHoek summary { font-size: 18px; cursor: pointer; padding: 6px 0; }
   #priveHoek .phLabel { font-weight: 800; } #priveHoek .phLogRegel { padding: 4px 0; border-bottom: 1px solid var(--lijn); }
@@ -547,6 +547,12 @@
     <button id="tab-koppel" aria-pressed="false">Koppelen</button>
     <!-- 521: een rektelefoon aan de USB-kabel van deze computer: scherm zien en tikken (eigen pagina) -->
     <a id="tab-besturen" href="besturen.html" style="color: var(--tekst); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; text-decoration: none; background: var(--paneel);">📱 Telefoon besturen</a>
+    </div>
+    <!-- 560: ARTEMIS (Google, Apache 2.0) draait op de Linux-kant van deze computer en bestuurt de REKtelefoons; Claude bedient het
+         via de console. Veronica kijkt alleen OF hij draait (bij het openen van Meer) en opent de console in een nieuw tabblad. -->
+    <div id="artemisBlok">
+      <p id="artemisRegel" class="klein">ARTEMIS: even kijken...</p>
+      <a id="artemisConsole" href="http://localhost:8000" target="_blank" rel="noopener" style="color: var(--tekst); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; text-decoration: none; background: var(--paneel); display: inline-block; min-height: 48px; box-sizing: border-box;">🖥️ Open de console (rektelefoons)</a>
     </div>
     <div id="lokaalKeus" role="radiogroup" aria-label="Wat mag er naar buiten?">
       <span class="reserveKop">Naar buiten</span>
