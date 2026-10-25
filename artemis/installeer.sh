@@ -254,12 +254,26 @@ console() {
 import os, subprocess, threading, time, html, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8000')); REK = os.environ.get('REK_MAP', '')
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log'}
+# 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
+# ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
+LOPEND = {'start', 'bijwerken'}
 def doe(cmd):
     arg = {'bijwerken': 'zelf-bijwerken'}.get(cmd, cmd)
+    if cmd in LOPEND:
+        pad = os.path.join(REK, 'console-%s.log' % cmd)
+        try:
+            f = open(pad, 'ab')
+            f.write(('\n=== %s %s ===\n' % (cmd, time.strftime('%Y-%m-%d %H:%M:%S'))).encode())
+            subprocess.Popen([AREK, arg], stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+            return '%s draait nu op de achtergrond (dit duurt de eerste keer een paar minuten). Druk zo op Status of Log om te zien hoe het ging.' % cmd
+        except Exception as e:
+            return 'fout: ' + str(e)
     try:
-        r = subprocess.run([AREK, arg], capture_output=True, text=True, timeout=600)
+        r = subprocess.run([AREK, arg], capture_output=True, text=True, timeout=120)
         return (r.stdout + r.stderr).strip() or '(geen uitvoer)'
+    except subprocess.TimeoutExpired:
+        return '%s duurt langer dan verwacht. Druk op Status of Log om te zien wat er gebeurt.' % cmd
     except Exception as e:
         return 'fout: ' + str(e)
 def lus():
@@ -285,8 +299,8 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button></div>
-<p>ARTEMIS zelf opent op <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a> zodra hij gestart is.</p>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=log>Log</button></div>
+<p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
 const uit=document.getElementById('uit');
@@ -471,14 +485,55 @@ stop() {
   zeg "ARTEMIS staat uit."
 }
 
+# 575: welke TCP-poorten luistert de PROCESGROEP van ARTEMIS echt? (eigen processen, geen root nodig).
+# De env-namen voor onze gok-poort 8001 zijn NIET op een echte ARTEMIS nagekeken; dit toont waar hij echt luistert.
+poorten_van() {
+  local pid="$1" pids
+  pids="$(printf '%s\n' "$pid" $(pgrep -g "$pid" 2>/dev/null) | grep -E '^[0-9]+$' | sort -u)"
+  [ -n "$pids" ] || return 0
+  if command -v ss >/dev/null 2>&1; then
+    local re; re="$(printf '%s' "$pids" | paste -sd'|')"
+    ss -ltnH -p 2>/dev/null | awk -v re="$re" '$0 ~ ("pid=("re")"){n=split($4,a,":"); print a[n]}' | sort -un | paste -sd', '
+  elif command -v lsof >/dev/null 2>&1; then
+    local csv; csv="$(printf '%s' "$pids" | paste -sd',')"
+    lsof -nP -iTCP -sTCP:LISTEN -a -p "$csv" 2>/dev/null | awk 'NR>1{n=split($9,a,":"); print a[n]}' | sort -un | paste -sd', '
+  fi
+}
+# 575: antwoordt er iets op localhost:<poort>?
+antwoordt() { command -v curl >/dev/null 2>&1 && curl -fsS -m 3 -o /dev/null "http://localhost:$1/" 2>/dev/null; }
+
+# 575: de laatste logregels, zodat Cowork in Chrome ziet waarom ARTEMIS wel/niet luistert.
+log() {
+  zeg "== Laatste logregels (ARTEMIS) =="
+  if [ -s "$REK_MAP/artemis.log" ]; then tail -n 20 "$REK_MAP/artemis.log"; else zeg "(nog geen artemis.log -- ARTEMIS is nog niet gestart)"; fi
+  local f
+  for f in console-start console-bijwerken waakhond; do
+    [ -s "$REK_MAP/$f.log" ] && { zeg "== $f (laatste 10) =="; tail -n 10 "$REK_MAP/$f.log"; } || true
+  done
+}
+
 status() {
-  if leeft "$PIDA"; then zeg "ARTEMIS draait: http://localhost:$ARTEMIS_POORT"; else zeg "ARTEMIS staat uit."; fi
+  if leeft "$PIDA"; then
+    local p poorten; p="$(cat "$PIDA" 2>/dev/null)"
+    zeg "ARTEMIS draait (pid $p)."
+    poorten="$(poorten_van "$p")"
+    if [ -n "$poorten" ]; then
+      zeg "Luistert op poort(en): $poorten"
+      zeg "Open ARTEMIS op: http://localhost:$(printf '%s' "$poorten" | tr -d ' ' | cut -d, -f1)"
+    else
+      zeg "Luistert nog op GEEN enkele poort -- hij start nog op (de eerste keer duurt het een paar minuten) of hij is gestopt. Kijk bij Log."
+    fi
+    if antwoordt "$ARTEMIS_POORT"; then zeg "http://localhost:$ARTEMIS_POORT antwoordt."; else zeg "http://localhost:$ARTEMIS_POORT (onze gok) antwoordt niet -- gebruik de poort hierboven, of kijk bij Log."; fi
+  else
+    zeg "ARTEMIS staat uit."
+  fi
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
   zeg "Console (knoppen): http://localhost:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
   if command -v tailscale >/dev/null 2>&1; then zeg "Tailscale: $(tailscale ip -4 2>/dev/null | head -1 || echo 'niet ingelogd')"; fi
   overzicht   # 573: ook per aangesloten toestel wat adb ziet (model, unauthorized, geweigerd), leesbaar in de console
+  log         # 575: en de laatste logregels erbij
 }
 
 # 562: SEARXNG als EIGEN privé-zoekmachine in Linux (Docker, de officiele searxng/searxng). JSON-uitvoer aan, de bot-limiter
@@ -548,10 +603,11 @@ case "${1:-status}" in
   searxng) searxng ;;
   tailscale) tailscale_op ;;
   status) status ;;
+  log) log ;;
   waakhond) waakhond ;;
   waak-een-keer) waakhond een ;;
   verboden) verboden "${2:-}" ;;
-  *) zeg "Gebruik: artemis-rek console | start | stop | status | scan | bijwerken | toestellen | draadloos | mcp | searxng | tailscale" ;;
+  *) zeg "Gebruik: artemis-rek console | start | stop | status | log | scan | bijwerken | toestellen | draadloos | mcp | searxng | tailscale" ;;
 esac
 REK
   chmod 755 "$bin/artemis-rek.nieuw"
