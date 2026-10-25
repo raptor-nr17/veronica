@@ -220,6 +220,46 @@ zelf_bijwerken() {
   zeg "Bijwerken mislukte; niets veranderd."; rm -f "$tmp"; return 1
 }
 
+# 576: ARTEMIS draait op uv. uv koos cpython-3.15, en grpcio (via langchain-google-vertexai) heeft daar geen kant-en-klare wheel
+# voor -> uv bouwt het vanaf de bron -> 'c++' ontbreekt in Crostini -> ARTEMIS start NOOIT. We pinnen Python op 3.12: dan zijn er
+# wheels en is er geen compiler nodig. De pin staat in .python-version (leest uv altijd) EN start() geeft UV_PYTHON=3.12 mee.
+zorg_venv() {
+  [ -d "$ARTEMIS_MAP" ] || return 0
+  printf '3.12\n' >"$ARTEMIS_MAP/.python-version" 2>/dev/null || true   # uv kiest nooit meer 3.15, ook via ARTEMIS' eigen start.sh
+  local nu=""
+  [ -x "$ARTEMIS_MAP/.venv/bin/python" ] && nu="$("$ARTEMIS_MAP/.venv/bin/python" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null)"
+  if [ "${1:-}" = forceer ] || { [ -n "$nu" ] && [ "$nu" != "3.12" ]; }; then
+    [ -n "$nu" ] && [ "$nu" != "3.12" ] && zeg "De venv draaide op Python $nu (daar faalt grpcio); ik bouw hem opnieuw op met 3.12."
+    rm -rf "$ARTEMIS_MAP/.venv"
+    if command -v uv >/dev/null 2>&1; then
+      ( cd "$ARTEMIS_MAP" && uv python install 3.12 >>"$REK_MAP/artemis.log" 2>&1; UV_PYTHON=3.12 uv sync >>"$REK_MAP/artemis.log" 2>&1 ) \
+        && zeg "venv opnieuw opgebouwd met Python 3.12 (wheels, geen compiler)." \
+        || zeg "Opbouwen gaf een fout -- kijk bij Log."
+    else
+      zeg "uv staat er nog niet; ARTEMIS bouwt de venv zelf bij de eerste start -- nu met Python 3.12 (.python-version)."
+    fi
+  fi
+}
+
+# 576: na Bijwerken laadt de DRAAIENDE console-server de nieuwe code niet vanzelf (geen Log-knop zichtbaar). Stop de oude en
+# start een verse. Deze opdracht draait in een eigen sessie (niet als "console"), dus pkill op "artemis-rek console" raakt
+# onszelf niet. In een test staat ARTEMIS_GEEN_HERSTART, zodat er geen echte server opstart.
+herstart_console() {
+  [ -n "${ARTEMIS_GEEN_HERSTART:-}" ] && return 0
+  pkill -f "artemis-rek console" 2>/dev/null || true
+  sleep 1
+  setsid "$BIN_SELF/artemis-rek" console </dev/null >>"$REK_MAP/console.log" 2>&1 &
+  zeg "De console is opnieuw gestart met de nieuwe code -- herlaad de pagina in Chrome."
+}
+
+# 576: de Bijwerken-knop. Werkt het script bij, bouwt de venv opnieuw op met Python 3.12, en herstart de console zodat de nieuwe
+# code (zoals de Log-knop) meteen zichtbaar is.
+bijwerken() {
+  zelf_bijwerken || zeg "Het script bijwerken ging niet door; ik ga wel verder met de venv en de console."
+  zorg_venv forceer
+  herstart_console
+}
+
 # 571: AUTOSTART. Een systemd --user-dienst start de console bij het inloggen op Linux; een regel in ~/.profile is de terugval
 # voor een Crostini zonder systemd --user. Zo draait de console (localhost) altijd, en hoeft de eigenaar na de installatie nooit
 # meer de terminal in.
@@ -259,7 +299,7 @@ TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log'}
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
 def doe(cmd):
-    arg = {'bijwerken': 'zelf-bijwerken'}.get(cmd, cmd)
+    arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
         pad = os.path.join(REK, 'console-%s.log' % cmd)
         try:
@@ -470,8 +510,10 @@ start() {
   touch "$AANF"   # 571: de gewenste stand is "aan"; de console-lus houdt hem aan
   if leeft "$PIDA"; then zeg "ARTEMIS draait al: http://localhost:$ARTEMIS_POORT"; return 0; fi
   waak_ronde || return 1
+  zorg_venv   # 576: zorg dat de venv op Python 3.12 staat (anders faalt grpcio en start ARTEMIS nooit)
   # ARTEMIS op een EIGEN poort (envnamen best-effort; NIET op een echte ARTEMIS nagekeken), zodat onze console 8000 houdt.
-  ( cd "$ARTEMIS_MAP" && PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
+  # UV_PYTHON=3.12: ook als ARTEMIS' eigen start.sh uv draait, kiest hij 3.12 (wheels, geen compiler).
+  ( cd "$ARTEMIS_MAP" && UV_PYTHON=3.12 PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
   ( setsid "$0" waakhond </dev/null >>"$LOG" 2>&1 & echo $! >"$PIDW" )
   zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://localhost:$ARTEMIS_POORT"
@@ -596,7 +638,8 @@ case "${1:-status}" in
   scan) scan ;;
   overzicht) overzicht ;;
   vergeet) vergeet ;;
-  bijwerken|zelf-bijwerken) zelf_bijwerken ;;
+  bijwerken) bijwerken ;;
+  zelf-bijwerken) zelf_bijwerken ;;
   toestellen) toestellen ;;
   draadloos) draadloos ;;
   mcp) mcp ;;
