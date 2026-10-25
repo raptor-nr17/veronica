@@ -1963,6 +1963,23 @@
   const TEGEL_BOVEN = ['tKop', 'tVerbinding', 'tWeg', 'tBijwerkStap', 'tKort'];
   // De knoppen die een mens moet beslissen (en die dus boven blijven); alle andere knoppen (testen, meten, instellen) staan onder Meer.
   const TEGEL_BESLIS = ['bijwerkNu', 'rekWerker', 'versAdres', 'versPlak', 'versPlakKnop', 'versQr', 'maakWerker', 'noodstopOp'];
+  // 556b: EEN ZIN UITLEG, DE REST ACHTER EEN "?". Een vaste uitlegalinea (p.eerlijk zonder id, alleen tekst) laat zijn eerste zin
+  // staan; de rest staat in een dichtgeklapt vak met een vraagteken. Er verdwijnt niets: het vak gaat met een tik open. Alinea's met
+  // een id schrijft de code zelf (die blijven heel), en een korte alinea blijft zoals hij is.
+  function uitlegInkorten(wortel) {
+    for (const p of wortel.querySelectorAll('section[id^="scherm-"] p.eerlijk:not([id])')) {
+      if (p.dataset.ingekort || [...p.childNodes].some((n) => n.nodeType !== 3)) continue;
+      const tekst = p.textContent.replace(/\s+/g, ' ').trim();
+      const m = /^(.{20,}?[.!?])\s+(?=[A-Z"(])/.exec(tekst);
+      if (!m || tekst.length - m[1].length < 60) continue;
+      p.dataset.ingekort = '1';
+      p.textContent = `${m[1]} `;
+      const d = el('details', 'uitlegMeer');
+      const sm = el('summary', '', '?'); sm.setAttribute('aria-label', 'Meer uitleg');
+      d.append(sm, document.createTextNode(tekst.slice(m[1].length).trim()));
+      p.appendChild(d);
+    }
+  }
   function vereenvoudigTegel(tegel, t, tijd) {
     const hv = (t.id && HB.per[t.id]) || hartslagVoorAdres(t.adres);
     const m = meet(t.adres);
@@ -1980,6 +1997,9 @@
       model, doet, tps, slim, geheugen: !!(hv && hv.geheugen), kopieT: KluisV.laatst ? KluisV.laatst.t : null }, tijd));
     const vb = tegel.querySelector('.tVerbinding');
     if (vb && vb.nextSibling) tegel.insertBefore(kort, vb.nextSibling); else tegel.appendChild(kort);
+    // 556b: de stekkers in de tegel van de beheerder (die schakelt ze); de handknop blijft op Meer
+    const sk = t.kern ? K.stekkerKort(S.stekkers, S.stekkerMeting, tijd) : '';
+    if (sk) { const r = el('div', 'tKort tStekkers', sk); kort.after(r); }
     const meer = el('details', 'tMeer');
     meer.dataset.sleutel = 'meer';
     meer.appendChild(el('summary', '', 'Meer over deze telefoon'));
@@ -5448,6 +5468,8 @@
     window.addEventListener('pageshow', weerWakker);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') weerWakker(); });
     if ('serviceWorker' in navigator) zelfBijwerken();
+    uitlegInkorten(document);   // 556b
+    hoekAansluiten();   // 558
     S.klaar = true;   // 553: het opstarten is klaar (opslag gelezen, knoppen aangesloten); browsertests wachten hierop
   }
   function vulVervang() {
@@ -6075,7 +6097,145 @@
       betekenisModelLaden().then((st) => { if (st === 'klaar') logRegel('Het betekenismodel is opgehaald: zoeken op betekenis werkt nu.'); }).catch(() => {});
     }
   }
-  window.__veronica = { SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  // ===================================================================
+  // 558: DE PRIVÉ-HOEK ALS HELE PAGINA (index.html#hoek), aangesloten. De regels staan in hoek.js; hier alleen tekenen en de knoppen
+  // die er al waren: NOODSTOP (noodstop), Stop (het pantser uit), Alles uit (motor-uit per telefoon, met bevestiging en het aantal),
+  // Vol lokaal, het zoeken van de zoekstapel (alleen de aangevinkte bronnen) en de motorinstellingen (model wisselen op een bezige
+  // telefoon vraagt eerst bevestiging). Geen nieuwe weg naar buiten, niets in het logboek dat uit de hoek komt.
+  // ===================================================================
+  const HoekV = { open: false, vinkjes: null, tik: null };
+  function hoekVinkjes() {
+    if (HoekV.vinkjes) return HoekV.vinkjes;
+    let v = null;
+    try { v = JSON.parse(localStorage.getItem('veronica-hoek-bronnen') || 'null'); } catch (e) { v = null; }
+    HoekV.vinkjes = Array.isArray(v) ? v.filter((b) => window.Hoek.BRONNEN_ALGEMEEN.includes(b)) : window.Hoek.BRONNEN_ALGEMEEN.slice();
+    return HoekV.vinkjes;
+  }
+  function hoekKaarten() {
+    const bezig = (id) => S.taken.some((x) => x.status === 'bezig' && (HB.per[id] || {}).naam === x.telefoon);
+    return window.Hoek.kaarten(Object.values(HB.per || {}), nu(), { rolNaam: K.rolNaam, versMs: K.HARTSLAG_VERS_MS, bezig,
+      tps: (h) => (h.gids && h.gids.laatst && h.gids.laatst.tps) || (h.motor && h.motor.tps) || null });
+  }
+  function tekenHoek() {
+    if (!HoekV.open || !window.Hoek) return;
+    const H = window.Hoek;
+    const kaarten = hoekKaarten();
+    const bereikbaar = kaarten.filter((k) => k.vers).length;
+    $('hoekStatus').textContent = H.statusZin({ volLokaal: volLokaal(), pantser: !!S.aan, totaal: kaarten.length, bereikbaar });
+    $('hoekVolLokaal').textContent = `Vol lokaal: ${volLokaal() ? 'AAN' : 'UIT'}`;
+    $('hoekVolLokaal').setAttribute('aria-pressed', String(volLokaal()));
+    morphKinderen($('hoekWand'), kaarten.length ? kaarten.map((k) => {
+      const d = el('div', `hoekKaart stand-${k.stand}`);
+      d.dataset.sleutel = k.id;
+      d.append(el('h3', '', k.naam), el('p', 'hoekWoord', `${k.teken} ${k.woord}${k.rol ? ` · ${k.rol}` : ''}`), el('p', 'klein', H.kaartRegel(k)));
+      return d;
+    }) : [el('p', 'eerlijk', 'Nog geen telefoon met een hartslag.')]);
+    morphKinderen($('hoekModellen'), kaarten.length ? H.modelRegels(kaarten).map((m) => {
+      const d = el('div', 'hoekKaart');
+      d.dataset.sleutel = m.id;
+      d.append(el('p', '', m.zin));
+      const b = el('button', '', 'Model wisselen'); b.type = 'button'; b.dataset.hoekModel = m.id;
+      d.appendChild(b);
+      return d;
+    }) : [el('p', 'eerlijk', 'Nog geen telefoon met een hartslag.')]);
+    const soort = $('hoekZoekSoort').value;
+    const tels = zoekTelefoons().length;
+    const vink = hoekVinkjes();
+    morphKinderen($('hoekBronnen'), H.bronnenLijst((b) => { try { return zoeker && zoeker.kassa ? zoeker.kassa.stand(b).stand : 'ok'; } catch (e) { return 'ok'; } }, tels, soort).map((b) => {
+      const l = el('label', 'hoekBron');
+      l.dataset.sleutel = b.bron;
+      const c = document.createElement('input'); c.type = 'checkbox'; c.dataset.hoekBron = b.bron;
+      c.checked = soort === 'fotos' ? true : vink.includes(b.bron); c.disabled = soort === 'fotos';
+      l.append(c, document.createTextNode(` ${b.naam} · ${b.teken} ${b.woord}`));
+      return l;
+    }));
+    if (!$('hoekPriveZoek').childNodes.length) $('hoekPriveZoek').append(el('p', 'eerlijk', 'Privé zoeken gaat alleen over je eigen wifi, in de privé-hoek (Meer, onderzoek met de telefoons). Hier gaat er niets privé naar buiten.'));
+    if (!$('hoekMijn').childNodes.length) { const a = document.createElement('a'); a.href = '#'; a.textContent = 'Naar de privé-hoek (back-up, wissen, je kern en karakter)'; a.addEventListener('click', (e) => { e.preventDefault(); location.hash = ''; setTimeout(() => { const t = $('tab-prive'); if (t) t.click(); }, 0); }); $('hoekMijn').appendChild(a); }
+  }
+  function hoekVolgHash() {
+    const aan = location.hash === '#hoek';
+    if (aan === HoekV.open) return;
+    HoekV.open = aan;
+    $('hoekPagina').hidden = !aan;
+    document.body.classList.toggle('hoekModus', aan);
+    if (HoekV.tik) { clearInterval(HoekV.tik); HoekV.tik = null; }
+    if (aan) { tekenHoek(); HoekV.tik = setInterval(tekenHoek, 5000); }
+  }
+  async function hoekAllesUit() {
+    const aan = Object.values(HB.per || {}).filter((h) => h && h.id && h.t && nu() - h.t <= K.HARTSLAG_VERS_MS && h.motor && h.motor.aan);
+    if (!aan.length) { meld('Er staat geen enkele motor aan.'); return 0; }
+    if (!(await vraagJa(window.Hoek.allesUitVraag(aan.length), 'Ja, zet ze uit'))) return 0;
+    let n = 0;
+    for (const h of aan) {
+      const t = S.telefoons.find((x) => x.id === h.id);
+      if (t && t.jarvis && staat(t.adres).bereikbaar) { await motorVanuitVeronica(t, false); n += 1; }
+      else if (await roepNaarId(h.id, { soort: 'motor-uit', van: 'veronica' })) n += 1;
+    }
+    meld(`${n} van ${aan.length} motoren uitgezet. Er is niets gewist.`);
+    return n;
+  }
+  async function hoekZoek() {
+    if (!zoeker) return;
+    const vraag = $('hoekZoekVraag').value.trim();
+    const soort = $('hoekZoekSoort').value;
+    const bronnen = window.Hoek.gekozenBronnen(hoekVinkjes(), soort);
+    const stand = $('hoekZoekStand'); const uit = $('hoekZoekUitslag');
+    if (!vraag) { stand.textContent = 'Typ eerst een zoekvraag.'; return; }
+    if (volLokaal()) { stand.textContent = 'Vol lokaal staat aan: zoeken op internet doe ik nu niet.'; return; }
+    if (!bronnen.length) { stand.textContent = 'Geen bron aangevinkt, dus ik vraag niets.'; return; }
+    const tels = stapelTelefoons();
+    if (!tels.length) { stand.textContent = 'Geen telefoon bereikbaar. Veronica haalt zelf niets van internet: alleen de telefoons zoeken.'; return; }
+    stand.textContent = 'Bezig...';
+    let r = null;
+    try { r = await zoeker.zoekStapel(vraag, { soort, bronnen, telefoons: tels, opStap: (x) => zoekwandStap('gewoon', x) }); } catch (e) { r = null; }
+    uit.replaceChildren();
+    if (!r || !r.ok) { stand.textContent = (r && r.zin) || 'Zoeken lukte niet.'; return; }
+    stand.textContent = `${r.uitslagen.length} ${r.uitslagen.length === 1 ? 'vraag' : 'vragen'} klaar.`;
+    for (const x of r.uitslagen) {
+      const u = x.uitslag || {};
+      const k = el('div', 'zoekRes');
+      k.appendChild(el('b', '', `${x.term}: ${u.ok ? `${u.aantal} ${u.aantal === 1 ? 'resultaat' : 'resultaten'}` : (u.zin || 'niet gelukt')} · door ${x.telefoon}`));
+      for (const res of (u.samengevoegd || []).slice(0, 5)) k.appendChild(el('div', 'klein', `${res.titel} · ${res.bronnen.join(', ')} · ${res.url}`));   // platte tekst
+      uit.appendChild(k);
+    }
+  }
+  function hoekAansluiten() {
+    if (!$('hoekPagina') || !window.Hoek) return;
+    $('hoekNoodstop').addEventListener('click', () => { noodstop(); tekenHoek(); });
+    $('hoekStop').addEventListener('click', () => { if (S.aan) zetPantser(false); tekenHoek(); });
+    $('hoekAllesUit').addEventListener('click', () => { hoekAllesUit().then(tekenHoek); });
+    $('hoekVolLokaal').addEventListener('click', () => { zetVolLokaal(!volLokaal()); tekenHoek(); });
+    $('hoekTerug').addEventListener('click', () => { location.hash = ''; });
+    $('hoekZoekKnop').addEventListener('click', () => { hoekZoek(); });
+    $('hoekZoekSoort').addEventListener('change', tekenHoek);
+    $('hoekBronnen').addEventListener('change', (e) => {
+      const b = e.target && e.target.dataset && e.target.dataset.hoekBron;
+      if (!b) return;
+      const v = new Set(hoekVinkjes());
+      if (e.target.checked) v.add(b); else v.delete(b);
+      HoekV.vinkjes = window.Hoek.BRONNEN_ALGEMEEN.filter((x) => v.has(x));
+      try { localStorage.setItem('veronica-hoek-bronnen', JSON.stringify(HoekV.vinkjes)); } catch (e2) { /* alleen voor nu */ }
+    });
+    $('hoekModellen').addEventListener('click', async (e) => {
+      const id = e.target && e.target.dataset && e.target.dataset.hoekModel;
+      if (!id) return;
+      const k = hoekKaarten().find((x) => x.id === id);
+      const v = window.Hoek.modelWisselVraag(k);
+      if (v && !(await vraagJa(v, 'Ja, wissel toch'))) return;
+      const t = S.telefoons.find((x) => x.id === id);
+      openInstel(id, t ? t.adres : '');
+    });
+    $('hoekRail').addEventListener('click', (e) => {
+      const z = e.target && e.target.dataset && e.target.dataset.hoekZone;
+      if (!z) return;
+      for (const b of $('hoekRail').querySelectorAll('button')) b.setAttribute('aria-current', String(b.dataset.hoekZone === z));
+      const sec = $(`hoekZone-${z}`) || $('hoekVeilig');
+      if (sec && sec.scrollIntoView) sec.scrollIntoView({ block: 'start' });
+    });
+    window.addEventListener('hashchange', hoekVolgHash);
+    hoekVolgHash();
+  }
+  window.__veronica = { HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

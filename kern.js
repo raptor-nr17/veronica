@@ -1163,7 +1163,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.95';
+  const VERONICA_VERSIE = '1.9.96';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1864,6 +1864,22 @@
     if (x.geheugen) delen.push(x.kopieT ? `laatste kopie ${klokZin(x.kopieT).slice(0, 5)}${(tijd || Date.now()) - x.kopieT > 36 * 3600 * 1000 ? ' (ouder dan een dag)' : ''}` : 'nog geen kopie');
     return delen.join(' · ');
   }
+  // 556b: DE STEKKERS IN DE TEGEL. Een regel in de tegel van de beheerder (die schakelt ze): per stekker aan of uit, en bij een
+  // meter het vermogen. Alleen verse metingen; ouder of onbekend = "onbekend". Geen knop: de handknop staat op Meer.
+  function stekkerKort(stekkers, metingen, tijd) {
+    const lijst = Array.isArray(stekkers) ? stekkers.filter(Boolean) : [];
+    if (!lijst.length) return '';
+    const nuT = tijd || Date.now();
+    const vers = (m) => m && typeof m.t === 'number' && nuT - m.t <= MAX_LEEFTIJD_MS;
+    const ROL = { lader: 'lader', ventilator: 'ventilator', meter: 'meter' };
+    const delen = lijst.map((k) => {
+      const m = (metingen || {})[k.ip] || {};
+      const naam = ROL[k.rol] || 'stekker';
+      if (k.rol === 'meter') return vers(m.watt) && typeof m.watt.waarde === 'number' ? `meter ${Math.round(m.watt.waarde)} W` : 'meter onbekend';
+      return vers(m.aan) && typeof m.aan.waarde === 'boolean' ? `${naam} ${m.aan.waarde ? 'aan' : 'uit'}` : `${naam} onbekend`;
+    });
+    return `Stekkers: ${delen.join(' · ')}`;
+  }
   function bijwerkRegel(h, nieuwste) {
     if (!h || !h.t || !h.versie) return null;
     const b = h.bijwerk && typeof h.bijwerk === 'object' ? h.bijwerk : null;
@@ -2122,6 +2138,6 @@
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
     leesSamenwerken, TREDE_ZIN, motorKandidaat, magNaarBuiten, leesVolLokaal, leesNalees, meting, vakje, leeftijdZin, klokZin, leesHealth, leesStatus, leesStekker, motorKlaarZin, meterZin, leesTarief, leesKast, leesTokenprijs, TOKENPRIJS_STANDAARD, verbruikRegel, TARIEF_STANDAARD, scanZin, hitteNaam, ruweStand,
-    vervangBesluit, slimMeetBesluit, tegelKort, bijwerkRegel, BIJWERK_NU_VANAF, isEigenNet, normaalAdres, leesBrievenbus, brievenbusUitleg, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
+    vervangBesluit, slimMeetBesluit, stekkerKort, tegelKort, bijwerkRegel, BIJWERK_NU_VANAF, isEigenNet, normaalAdres, leesBrievenbus, brievenbusUitleg, leesVertrouwd, leesNieuweTelefoon, overzicht, leesNieuwKoppel, leesPostbusAdres, adresGetekend, postbusQrTekst, adresVers, leesPlakCode, ADRES_GELDIG_MS, leesApkAdres, pakUit, leesMail, geldigTot, nogGeldig, totZin, bijwerkHulp, VERS_ADRES_VANAF, gekoppeldZin, nieuweNamen, GANGBARE_NETTEN, isThuisNet, thuisAdressenUitKandidaten, zoekPlan, zoekZin, NOG_NIET_ZIN, koppelStand, GEEN_LNA_ZIN, BRIEF_WACHT_MS, VERONICA_VERSIE, OLLITERT_PAGINA, WACHT_ZIN, rekOverzicht, REK_WARM, REK_HEET, RESERVES, reserveZin, leesQr, geenAntwoordZin, proefAdres, lnaOpties, kiesTelefoon, maakSseLezer, zonderDenken,
   };
 }));

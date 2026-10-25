@@ -210,6 +210,8 @@
   .vWat { font-weight: 700; } .vOud { color: var(--zacht); font-size: 12px; }
   .vAccu { font-size: 20px; font-weight: 700; } .vAccu.leert { color: var(--zacht); font-weight: 400; }
   .tMeer summary { cursor: pointer; color: var(--zacht); }
+  /* 556b: de uitleg achter een vraagteken; het vraagteken is minstens 48 bij 48 te raken */
+  details.uitlegMeer { display: inline; } details.uitlegMeer summary { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; min-height: 48px; cursor: pointer; font-weight: 700; color: var(--zacht); list-style: none; } details.uitlegMeer summary::-webkit-details-marker { display: none; } details.uitlegMeer[open] { display: block; }
   @media (max-width: 520px) { .vMeters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .zsPaneel { background: var(--paneel); border: 3px solid var(--lijn); border-radius: 18px; padding: 12px; }
   .zsBalk { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: var(--lijn); margin: 8px 0 4px; }
@@ -375,6 +377,7 @@
   </section>
   <section id="scherm-prive" hidden>
     <div id="priveHoek"></div>
+    <p class="klein"><a href="#hoek" id="hoekLink">De hoek als hele pagina: veiligheid, rek, zoeken en modellen naast elkaar</a></p>
     <!-- 556: back-up en onderzoek staan achter Meer; de twee losse lokaal-schakelaars zijn vervangen door de driestandenkeuze op Meer -->
     <details id="priveMeerVast"><summary>Meer: back-up op het kaartje en onderzoek met de telefoons</summary>
     <div class="zsPaneel" id="alleenLokaalVak" hidden>
