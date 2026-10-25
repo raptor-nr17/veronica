@@ -260,33 +260,33 @@
   <p id="statusRegel" aria-live="polite"></p>
   <div id="lnaUitleg" role="alert" hidden></div>
   <div id="vindUitleg" role="status" hidden></div>
-  <button id="noodstopBevestig" hidden>Bevestig noodstop</button>
-  <button id="noodstop">NOODSTOP</button>
+  <button id="noodstopBevestig" data-proef="noodstop-bevestig" hidden>Bevestig noodstop</button>
+  <button id="noodstop" data-proef="noodstop">NOODSTOP</button>
 </header>
 <div id="meldRegel" role="status" aria-live="polite" hidden></div>
 <div id="volLokaalBalk" hidden role="status" style="background:#1b5e20;color:#fff;padding:8px 16px;font-weight:600">🔒 Vol lokaal staat AAN: niets gaat naar buiten. Alleen je eigen telefoons.</div>
 <div id="alleenLokaalBalk" hidden role="status" style="background:#0d47a1;color:#fff;padding:8px 16px;font-weight:600">🏠 Alleen lokaal staat AAN: niets gaat naar Claude of een ander model buiten huis. Alleen de Gemma's op je telefoons rekenen; lukt iets daar niet, dan zeg ik dat.</div>
 <div id="wandBalk"><span id="wandKlok"></span><span id="wandZin"></span><button id="wandUit">← Terug</button></div>
 <nav>
-  <button id="tab-live" aria-pressed="true">Live</button>
+  <button id="tab-live" data-proef="tab-live" aria-pressed="true">Live</button>
   <button id="tab-prive" aria-pressed="false">🔒 Mijn privé-hoek</button>
-  <button type="button" id="meerKnop" aria-pressed="false">Meer</button>
+  <button type="button" id="meerKnop" data-proef="meer-openen" aria-pressed="false">Meer</button>
 </nav>
 <main>
   <!-- 549: de grote knop staat BUITEN de vaste kop (die moet laag blijven: hij ligt over de pagina). -->
   <div id="hoofdKnoppen">
     <!-- 563: Veronica als levende vorm (geen echt gezicht): een rustige bol/golf die meebeweegt als ze praat. Blauw = rustig,
          oranje = bezig, rood = probleem. Tik erop (of "Hé Veronica") om haar te laten luisteren. Haar zin staat eronder in woorden. -->
-    <button type="button" id="veronicaVorm" aria-label="Veronica — tik om te praten" data-stand="rust">
+    <button type="button" id="veronicaVorm" data-proef="vorm" aria-label="Veronica — tik om te praten" data-stand="rust">
       <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
         <circle id="vormBol" cx="60" cy="60" r="34" />
         <path id="vormGolf" d="M26 62 Q43 50 60 62 T94 62" fill="none" />
       </svg>
     </button>
     <p id="veronicaZin" aria-live="polite"></p>
-    <div id="vraagRij"><label for="hoofdVraag" class="verborgen">Vraag of opdracht</label><input id="hoofdVraag" type="text" autocomplete="off" maxlength="12000" placeholder="Vraag iets, of geef een opdracht"> <button id="micKnop" aria-pressed="false" aria-label="Spreek een opdracht in">🎤</button> <button type="button" id="vraagKnop">Vraag</button></div>
+    <div id="vraagRij"><label for="hoofdVraag" class="verborgen">Vraag of opdracht</label><input id="hoofdVraag" type="text" autocomplete="off" maxlength="12000" placeholder="Vraag iets, of geef een opdracht"> <button id="micKnop" data-proef="mic" aria-pressed="false" aria-label="Spreek een opdracht in">🎤</button> <button type="button" id="vraagKnop" data-proef="vraag">Vraag</button></div>
     <span id="spraakZin" aria-live="polite"></span>
-    <button type="button" id="startStopKnop" class="startGroot" aria-pressed="false">Start</button>
+    <button type="button" id="startStopKnop" data-proef="start-stop" class="startGroot" aria-pressed="false">Start</button>
     <span hidden><button id="avengersKnop" class="avengersGroot" title="Alle telefoons bij elkaar roepen; eerst zie je wie meedoet">🛡 Avengers assemble</button> <button id="alleenLokaalKnop" aria-pressed="false" title="Niets naar Claude of een ander model buiten huis; alleen de Gemma's op de telefoons">Alleen lokaal: uit</button></span>
   </div>
   <div id="lnaRegel" role="status" hidden><span id="lnaZin"></span> <button type="button" id="lnaKnop" hidden>Sta lokaal netwerk toe</button></div>
@@ -355,7 +355,7 @@
         <option value="wetenschap">Wetenschap (arXiv, Wikipedia, Wikidata)</option>
         <option value="fotos">Foto's met een vrije licentie (Openverse)</option>
       </select>
-      <button type="button" id="zoekKnop">Zoek</button>
+      <button type="button" id="zoekKnop" data-proef="zoek">Zoek</button>
       <button type="button" id="zoekGeheugenKnop">Zoek in eerdere resultaten</button>
       <button type="button" id="zoekGeheugenWis">Geheugen wissen</button>
       <p id="zoekGeheugenTel" class="klein">Nog niets onthouden.</p>
@@ -538,7 +538,7 @@
     <label for="stemKeus">Stem</label>
     <select id="stemKeus"></select>
     <!-- 563: stemproef. Kies een stem en tik Probeer; Veronica zegt een zin in haar stijl. Zo kies je een rustige vrouwenstem. -->
-    <button type="button" id="stemProefKnop">▶ Probeer deze stem</button>
+    <button type="button" id="stemProefKnop" data-proef="stemproef">▶ Probeer deze stem</button>
     <label for="spraakTempo">Tempo</label>
     <select id="spraakTempo"><option value="0.85">Rustig</option><option value="1">Gewoon</option><option value="1.15">Vlot</option></select>
     <label for="spraakVolume">Volume</label>
@@ -604,18 +604,20 @@
     <span id="bureauZin" aria-live="polite"></span>
     <span id="veronicaZegt" aria-live="polite"></span>
     <div id="pantserHelp" role="status"></div>
-    <button id="motorAlleKnop" hidden>Zet de eigen motor aan</button>
-    <button id="rekVanzelfKnop" title="Telefoons die achterlopen laten kijken naar een nieuwe versie, en werkers hun eigen motor aan laten zetten">Rek vanzelf: aan</button>
+    <button id="motorAlleKnop" data-proef="motor-alle" hidden>Zet de eigen motor aan</button>
+    <button id="rekVanzelfKnop" data-proef="rek-vanzelf" title="Telefoons die achterlopen laten kijken naar een nieuwe versie, en werkers hun eigen motor aan laten zetten">Rek vanzelf: aan</button>
     <button id="heyKnop">Hé Veronica</button>
-    <button id="roepKnop">📣 Roep de rij op</button>
-    <button id="pantserKnop" aria-pressed="false">Pantser uit</button>
+    <button id="roepKnop" data-proef="roep">📣 Roep de rij op</button>
+    <button id="pantserKnop" data-proef="pantser" aria-pressed="false">Pantser uit</button>
     <select id="vervangKeus" aria-label="Welk onderdeel vervangen"></select>
     <button id="vervangKnop">Vervang onderdeel</button>
     <button id="wakkerKnop" aria-pressed="false">Houd het scherm aan</button>
     <button id="volKnop">Volledig scherm</button>
-    <button id="wandKnop" aria-pressed="false">🖥 Wandstand</button>
+    <button id="wandKnop" data-proef="wand" aria-pressed="false">🖥 Wandstand</button>
     <button id="nieuwQrKnop">📱 QR voor een nieuwe telefoon</button>
+    <button id="proefrondeKnop" data-proef="proefronde-tonen" title="De proeflijst waarmee Claude elke knop nakijkt">🧪 Proefronde</button>
     </div>
+  <div id="proefrondeVak" hidden><p class="eerlijk">De proeflijst (PROEFRONDE.md) waarmee Claude in Chrome elke knop en werking nakijkt. In de veilige proefstand (<code>?proef=1</code>) gaat er niets naar buiten.</p><pre id="proefrondeTekst" style="white-space:pre-wrap;max-height:60vh;overflow:auto"></pre></div>
   <p class="eerlijk" id="wakkerZin">Veronica werkt alleen zolang deze computer aan is en niet slaapt. Tik op "Houd het scherm aan", of zet slapen uit.
     Elk getal komt van een meting: eronder staat de bron en hoe oud hij is. Ouder dan 10 seconden is grijs. Niet gemeten = onbekend.</p>
     <!-- 522: wie rekent nu (uit de hartslagen) -->

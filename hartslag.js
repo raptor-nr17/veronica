@@ -209,7 +209,7 @@
       // 554: BIJWERKEN. Welke nieuwe versie klaarstaat en waarom hij er (nog) niet op staat ("wacht op een tik op de melding",
       // "Android weigerde: ..."). Zonder dit zag Veronica op een gastnetwerk nooit waarom een telefoon op een oude versie bleef.
       bijwerk: x.bijwerk && typeof x.bijwerk === 'object' && schoon(x.bijwerk.nieuw, 16)
-        ? { nieuw: schoon(x.bijwerk.nieuw, 16), stap: schoon(x.bijwerk.stap, 160), code: schoon(x.bijwerk.code, 20) } : null,
+        ? { nieuw: schoon(x.bijwerk.nieuw, 16), stap: schoon(x.bijwerk.stap, 160), code: schoon(x.bijwerk.code, 20), stil: x.bijwerk.stil === true ? true : x.bijwerk.stil === false ? false : null } : null,
       // 524: wat de werker van de gids deed: hoeveel concepten klaar, hoeveel afgekeurd door de eigen controle, en het laatste
       // stuk werk als getallen (soort, taal, duur, tempo) met een korte reden bij een afkeuring. Nooit de tekst zelf. In
       // hartslagSleutel tellen alleen de twee tellers (binnen het dagbudget van hartslagNodig).

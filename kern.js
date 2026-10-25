@@ -1163,7 +1163,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.99';
+  const VERONICA_VERSIE = '1.9.100';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1890,8 +1890,12 @@
     if (!achter && !b) return null;
     const kan = vergelijkVersie(h.versie, BIJWERK_NU_VANAF) >= 0;
     const code = b && b.code ? String(b.code) : (achter ? (kan ? 'achter' : 'met-de-hand') : '');
+    // 566: of de laatste update stil ging (Android 12+, zonder tik) of dat Android toch een tik vroeg
+    const stilZin = b && b.stil === true ? 'Werkte zichzelf bij zonder tik. '
+      : b && b.stil === false ? 'Android vroeg een tik op Bijwerken. ' : '';
     let zin = '';
-    if (b && b.stap) zin = `De telefoon zegt: ${b.stap}`;
+    if (b && b.stap) zin = `${stilZin}De telefoon zegt: ${b.stap}`;
+    else if (stilZin) zin = stilZin.trim();
     else if (achter && kan) zin = `Er is een nieuwere JARVIS (${doel}). Tik op Werk nu bij: de telefoon haalt hem op en zet een melding; tik daar op de telefoon op, en daarna op Bijwerken.`;
     else if (achter) zin = `Deze telefoon draait JARVIS ${h.versie}; die kan nog niet op afstand worden bijgewerkt. Een keer met de hand: open JARVIS op de telefoon, Instellingen, Versie, tik op Download en installeer en daarna op Bijwerken. Gebeurt er niets, open dan de downloadlink uit de mail in Chrome op die telefoon en tik op Installeren. Daarna gaat het voortaan met een tik.`;
     return zin ? { code, zin, knop: achter && kan } : null;
