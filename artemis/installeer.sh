@@ -28,6 +28,9 @@ ARTEMIS_VERSIE="351ca8422f7b5b54e80a9c1ce03a222e02415b6b"   # nagekeken op 25 ok
 ARTEMIS_MAP="${ARTEMIS_MAP:-$HOME/artemis}"
 REK_MAP="${REK_MAP:-$HOME/.artemis-rek}"
 BIN_MAP="${BIN_MAP:-$HOME/.local/bin}"
+# 583b: ook in de INSTALLER-body nodig (de slotmelding noemt de console-poort). CONSOLE_POORT zat alleen in het GEGENEREERDE
+# artemis-rek, dus gaf de slotregel "unbound variable" onder set -u. Zelfde standaard als daar (581: console op 8765).
+CONSOLE_POORT="${ARTEMIS_CONSOLE_POORT:-8765}"
 
 zeg() { printf '%s\n' "$*"; }
 tty_lees() {   # lees van het toetsenbord, ook als dit script via een pijp binnenkwam
