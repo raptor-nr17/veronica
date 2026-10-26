@@ -56,6 +56,28 @@ schrijf_bestanden() {
   for gb in xdg-open x-www-browser www-browser sensible-browser gnome-open kde-open google-chrome google-chrome-stable chromium chromium-browser chrome firefox open; do
     printf '#!/bin/sh\nexit 0\n' >"$rek/geen-browser/$gb"; chmod 755 "$rek/geen-browser/$gb"
   done
+  # 585: een EIGEN artemis.jsonc met modellen die op de GRATIS laag van Gemini bestaan. ARTEMIS' eigen config wijst naar
+  # gemini-3.8-flash / gemini-robotics-er-2-preview en zo -- die bestaan niet op een gewone/gratis sleutel en geven een stille
+  # 'Retrying LLM request' + falen. We zetten alleen 'default' (gemini-2.5-flash, fallback gemini-2.0-flash); ARTEMIS breidt dat
+  # uit naar alle sub-agents (_expand_default_into_nodes), dus ook de object-detector gebruikt dan 2.5-flash i.p.v. de ER-preview.
+  # ARTEMIS leest dit bestand via de env ARTEMIS_ARTEMIS_JSONC (resolutievolgorde #1); de eigen config in de repo blijft met rust.
+  cat >"$rek/artemis.jsonc" <<'JSONC'
+{
+  // 585: gezet door installeer.sh -- modellen die op de gratis Gemini-laag werken. Pas gerust aan (bv. gemini-2.5-flash-lite
+  // voor sneller/goedkoper). Een AQ-sleutel werkt niet; gebruik een AIza-sleutel (zie de installatie).
+  "default": {
+    "provider": "google",
+    "model": "gemini-2.5-flash",
+    "thinking_level": "medium",
+    "fallback": { "provider": "google", "model": "gemini-2.0-flash", "thinking_level": "medium" }
+  },
+  "presets": {
+    "gemini-flash": { "provider": "google", "model": "gemini-2.5-flash", "fallback": { "provider": "google", "model": "gemini-2.0-flash" } },
+    "cost-saving": { "provider": "google", "model": "gemini-2.5-flash-lite", "fallback": { "provider": "google", "model": "gemini-2.0-flash" } }
+  }
+}
+JSONC
+  chmod 600 "$rek/artemis.jsonc"
   # 571: de bron waarvandaan artemis-rek zichzelf bijwerkt (de site). Komt uit de omgeving bij de installatie EN bij een
   # zelf-bijwerkronde, zodat hij blijft staan. Geen naam in de code: de eigenaar geeft hem een keer mee in de installatieregel.
   if [ -n "${ARTEMIS_BRON:-}" ]; then printf '%s\n' "${ARTEMIS_BRON%/}" >"$rek/bron"; chmod 600 "$rek/bron"; fi
@@ -613,7 +635,9 @@ start_kern() {
   # 581: ARTEMIS HOUDT zijn eigen 8000 (onze console staat op 8765). UV_PYTHON=3.12: ook ARTEMIS' eigen start.sh pakt 3.12.
   # 583: ARTEMIS mag NOOIT zelf een browser openen (anders: tientallen tabs bij elke herstart). BROWSER=true, DISPLAY leeg,
   # en een map met nep-browsers (xdg-open en soortgenoten, elk een lege 'exit 0') vooraan in PATH -- alleen voor dit ARTEMIS-subproces.
-  ( cd "$ARTEMIS_MAP" && PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
+  # 585: ARTEMIS_ARTEMIS_JSONC wijst ARTEMIS naar onze gratis-laag-config ($REK_MAP/artemis.jsonc) -- NIET ARTEMIS_APP_DIR zetten
+  # (dat verplaatst ook .env en breekt de sleutel). ARTEMIS_<FILE> is resolutievolgorde #1 in get_config_path.
+  ( cd "$ARTEMIS_MAP" && PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
   ( setsid "$0" waakhond </dev/null >>"$LOG" 2>&1 & echo $! >"$PIDW" )
   zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://localhost:$ARTEMIS_POORT"
@@ -669,11 +693,33 @@ poorten_van() {
 # 575: antwoordt er iets op localhost:<poort>?
 antwoordt() { command -v curl >/dev/null 2>&1 && curl -fsS -m 3 -o /dev/null "http://localhost:$1/" 2>/dev/null; }
 
-# 575: de laatste logregels, zodat Cowork in Chrome ziet waarom ARTEMIS wel/niet luistert.
+# 585: waar bewaart ARTEMIS zijn eigen staat (daemon-log, traces)? Spiegelt de Linux-resolutie van ARTEMIS: ARTEMIS_APP_DIR,
+# anders XDG_DATA_HOME/artemis, anders ~/.gemini/jetski of ~/.artemis als die bestaan, anders ~/.local/share/artemis.
+artemis_app_dir() {
+  if [ -n "${ARTEMIS_APP_DIR:-}" ]; then printf '%s' "$ARTEMIS_APP_DIR"; return; fi
+  if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s' "$XDG_DATA_HOME/artemis"; return; fi
+  [ -d "$HOME/.gemini/jetski" ] && { printf '%s' "$HOME/.gemini/jetski"; return; }
+  [ -d "$HOME/.artemis" ] && { printf '%s' "$HOME/.artemis"; return; }
+  printf '%s' "$HOME/.local/share/artemis"
+}
+
+# 575/585: de laatste logregels, zodat Cowork in Chrome ziet waarom ARTEMIS wel/niet luistert. 585: ARTEMIS' LLM-fouten
+# (401/429/404, modelnaam, quota) staan NIET in onze artemis.log (dat is de launcher/uvicorn) maar in de DAEMON-log en de
+# per-taak trace-logs onder de app-map. Die tonen we er nu bij.
 log() {
-  zeg "== Laatste logregels (ARTEMIS) =="
+  zeg "== Laatste logregels (ARTEMIS launcher) =="
   if [ -s "$REK_MAP/artemis.log" ]; then tail -n 20 "$REK_MAP/artemis.log"; else zeg "(nog geen artemis.log -- ARTEMIS is nog niet gestart)"; fi
-  local f
+  local f dl tr tl ad; ad="$(artemis_app_dir)"
+  for dl in "$ad"/logs/daemon-*.log; do
+    [ -s "$dl" ] && { zeg "== ARTEMIS daemon $(basename "$dl") (laatste 20 -- hier staan LLM-fouten) =="; tail -n 20 "$dl"; } || true
+  done
+  # de nieuwste taak-trace: stderr/stdout bevatten de echte LLM-fout (statuscode + bericht)
+  tr="$(ls -1dt "$ad"/traces/*/ 2>/dev/null | head -1)"
+  if [ -n "$tr" ]; then
+    for tl in stderr.log stdout.log; do
+      [ -s "$tr$tl" ] && { zeg "== laatste taak $tl (laatste 15) =="; tail -n 15 "$tr$tl"; } || true
+    done
+  fi
   for f in console-start console-bijwerken waakhond; do
     [ -s "$REK_MAP/$f.log" ] && { zeg "== $f (laatste 10) =="; tail -n 10 "$REK_MAP/$f.log"; } || true
   done
@@ -718,6 +764,10 @@ status() {
   zeg "Console (knoppen): http://localhost:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
   sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
+  # 585: welk model gebruikt ARTEMIS? (uit onze gratis-laag-config die via ARTEMIS_ARTEMIS_JSONC meegaat)
+  if [ -s "$REK_MAP/artemis.jsonc" ]; then
+    zeg "ARTEMIS-model (onze config): $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | head -1) (gratis Gemini-laag)."
+  fi
   schijf      # 580: altijd de vrije schijfruimte erbij -- een volle schijf is de reden dat ARTEMIS niet start
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
   if command -v tailscale >/dev/null 2>&1; then zeg "Tailscale: $(tailscale ip -4 2>/dev/null | head -1 || echo 'niet ingelogd')"; fi
