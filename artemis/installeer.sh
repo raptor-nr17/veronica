@@ -328,7 +328,7 @@ console() {
 import os, subprocess, threading, time, html, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8000')); REK = os.environ.get('REK_MAP', '')
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -386,7 +386,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -619,6 +619,7 @@ status() {
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
   zeg "Console (knoppen): http://localhost:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
+  schijf      # 580: altijd de vrije schijfruimte erbij -- een volle schijf is de reden dat ARTEMIS niet start
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
   if command -v tailscale >/dev/null 2>&1; then zeg "Tailscale: $(tailscale ip -4 2>/dev/null | head -1 || echo 'niet ingelogd')"; fi
   overzicht   # 573: ook per aangesloten toestel wat adb ziet (model, unauthorized, geweigerd), leesbaar in de console
@@ -672,6 +673,65 @@ tailscale_op() {
   zeg "Klaar. Dit toestel heet in Tailscale: $(tailscale ip -4 2>/dev/null | head -1). Zet de rektelefoons en de F8 met de Tailscale-app erbij."
 }
 
+# 580: hoeveel ruimte is er, en is dat genoeg voor ARTEMIS? ARTEMIS heeft Node.js 22 (~150 MB), een Python-venv (~300-500 MB)
+# en werkruimte nodig; reken op minstens ~2 GB vrij. Een volle Linux-schijf is GEEN netwerkfout -- vandaar deze meting in Status.
+ARTEMIS_MIN_MB=2048
+schijf() {
+  zeg "== Schijfruimte =="
+  zeg "Je Linux-map ($HOME):"; df -h "$HOME" 2>/dev/null | awk 'NR==1||NR==2{print "  " $0}'
+  zeg "Hele schijf (/):"; df -h / 2>/dev/null | awk 'NR==1||NR==2{print "  " $0}'
+  local vrij_kb vrij_mb
+  vrij_kb="$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
+  if [ -n "$vrij_kb" ] && [ "$vrij_kb" -eq "$vrij_kb" ] 2>/dev/null; then
+    vrij_mb=$(( vrij_kb / 1024 ))
+    zeg "Vrij op je Linux-map: ${vrij_mb} MB."
+    if [ "$vrij_mb" -lt "$ARTEMIS_MIN_MB" ]; then
+      zeg "LET OP: dit is te weinig. ARTEMIS heeft ongeveer ${ARTEMIS_MIN_MB} MB (2 GB) vrij nodig: Node.js 22, de Python-venv en werkruimte."
+      zeg "Tik eerst op 'Ruim op'. Is er daarna nog steeds te weinig, maak dan de Linux-schijf groter:"
+      zeg "ChromeOS > Instellingen > Over ChromeOS > Linux-ontwikkelomgeving > Schijfgrootte (zet hem op 10 GB of meer)."
+    else
+      zeg "Dit is genoeg voor ARTEMIS."
+    fi
+  fi
+}
+
+# 580: veilig opruimen bij een volle schijf. ALLEEN caches en mislukte downloads -- nooit de actieve venv, de ARTEMIS-code
+# of iets van de gebruiker. Meet de vrije ruimte voor en na, en meldt hoeveel het scheelde.
+opruimen() {
+  local voor na
+  voor="$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
+  zeg "== Opruimen (alleen caches en mislukte downloads) =="
+  # apt: de pakketcache en mislukte .deb's (o.a. de nodejs-22 die niet paste)
+  if command -v apt-get >/dev/null 2>&1; then
+    if sudo -n apt-get clean >/dev/null 2>&1; then zeg "- apt-pakketcache geleegd."; else zeg "- apt overslaan (geen sudo zonder wachtwoord)."; fi
+    sudo -n sh -c 'rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*.deb' >/dev/null 2>&1 \
+      && zeg "- mislukte .deb-downloads (o.a. nodejs) weggehaald." || true
+  fi
+  # uv: de buildcache kan honderden MB zijn
+  if command -v uv >/dev/null 2>&1; then
+    uv cache prune >/dev/null 2>&1 && zeg "- uv-cache opgeschoond (prune)." || true
+  fi
+  # npm: de cache van Node
+  [ -d "$HOME/.npm/_cacache" ] && { rm -rf "$HOME/.npm/_cacache" >/dev/null 2>&1 && zeg "- npm-cache weggehaald."; } || true
+  # de rest van ~/.cache (pip, uv, thumbnails) -- veilig, wordt vanzelf opnieuw opgebouwd. NOOIT de ARTEMIS-map zelf.
+  if [ -d "$HOME/.cache" ]; then
+    find "$HOME/.cache" -mindepth 1 -maxdepth 1 ! -name 'artemis-rek' -exec rm -rf {} + >/dev/null 2>&1 || true
+    zeg "- ~/.cache geleegd."
+  fi
+  # oude/mislukte venvs IN de ARTEMIS-map -- nooit de actieve .venv
+  local v
+  for v in "$REK_MAP"/.venv.oud "$REK_MAP"/.venv-mislukt "$REK_MAP"/.venv.*; do
+    [ -e "$v" ] && [ "$v" != "$REK_MAP/.venv" ] && { rm -rf "$v" >/dev/null 2>&1 && zeg "- oude venv weg: $(basename "$v")"; } || true
+  done
+  na="$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
+  if [ -n "$voor" ] && [ -n "$na" ]; then
+    zeg ""
+    zeg "Vrijgemaakt: ongeveer $(( (na - voor) / 1024 )) MB."
+  fi
+  zeg ""
+  schijf
+}
+
 # 571: bij start en console eerst zichzelf bijwerken vanaf de site, dan opnieuw starten met de nieuwe code (een keer, geen lus).
 if { [ "${1:-}" = start ] || [ "${1:-}" = console ]; } && [ -z "${ARTEMIS_HERSTART:-}" ]; then
   zelf_bijwerken >/dev/null 2>&1 || true
@@ -694,6 +754,8 @@ case "${1:-status}" in
   tailscale) tailscale_op ;;
   status) status ;;
   log) log ;;
+  schijf) schijf ;;
+  opruimen) opruimen ;;
   waakhond) waakhond ;;
   waak-een-keer) waakhond een ;;
   verboden) verboden "${2:-}" ;;
