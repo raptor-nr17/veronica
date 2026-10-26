@@ -270,20 +270,47 @@ zorg_venv() {
   [ -n "$na" ] && zeg "De venv draait nu op Python $na." || zeg "Er is nog geen venv; ARTEMIS bouwt hem bij de eerste start."
 }
 
-# 576/577: na Bijwerken laadt de DRAAIENDE console-server de nieuwe code niet vanzelf (geen Log-knop zichtbaar). Herstart hem.
-# Onder systemd gaat dat via `systemctl --user restart` (schoon, geen poortgevecht met de auto-restart); anders pkill + een verse.
-# Deze opdracht draait in een eigen sessie (niet als "console"), dus pkill op "artemis-rek console" raakt onszelf niet. In een
-# test staat ARTEMIS_GEEN_HERSTART, zodat er geen echte server opstart.
+# 582: welke pids luisteren op een TCP-poort (eigen processen, geen root nodig). Nodig om de ECHTE console-server (de python op
+# de oude poort) te stoppen: een pkill van de bash-wrapper liet de python-server -- die de poort vasthoudt -- in leven, en dan
+# bleef 8000 bezet zodat ARTEMIS nooit startte (de bug van 581/582).
+pids_op_poort() {
+  local poort="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnpH 2>/dev/null | awk -v p=":$poort\$" '$4 ~ p {print}' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$poort" -sTCP:LISTEN -t 2>/dev/null | sort -u
+  fi
+}
+
+# 582: na Bijwerken moet de DRAAIENDE console ECHT vervangen worden door een verse op de nieuwe poort (8765), en moet de oude
+# poort (8000) vrijkomen voor ARTEMIS. 581 deed alleen `pkill -f "artemis-rek console"` -- dat doodt de bash-wrapper maar laat de
+# python-server (die 8000 vasthoudt) in leven, dus bleef 8000 bezet. Nu:
+#  (1) de autostart-unit/.profile opnieuw schrijven met de NIEUWE poort + daemon-reload;
+#  (2) het oude console-proces ECHT stoppen: via zijn eigen pid-file, via de naam, en via de pids die op de poorten luisteren;
+#  (3) een verse console op 8765 starten (onder systemd: restart; anders setsid);
+#  (4) 8000 vrijmaken van wat er van ons nog op luistert, zodat ARTEMIS die kan pakken (de console-lus start ARTEMIS daarna).
+# In een test staat ARTEMIS_GEEN_HERSTART, zodat er geen echte server opstart.
 herstart_console() {
   [ -n "${ARTEMIS_GEEN_HERSTART:-}" ] && return 0
+  local oudpid="" q
+  [ -s "$REK_MAP/console.pid" ] && oudpid="$(cat "$REK_MAP/console.pid" 2>/dev/null)"
+  autostart_installeren >/dev/null 2>&1 || true   # (1) unit (met ARTEMIS_CONSOLE_POORT in Environment) + .profile + daemon-reload
   if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet artemis-rek.service 2>/dev/null; then
-    systemctl --user restart artemis-rek.service >/dev/null 2>&1 && { zeg "De console draait nu op http://localhost:$CONSOLE_POORT (581: weg van 8000, dat is nu voor ARTEMIS). Open die in Chrome."; return 0; }
+    # (2+3) onder systemd: schoon herstarten -- de service stopt zijn hele cgroup (python incl.) en start op met de nieuwe poort.
+    systemctl --user restart artemis-rek.service >/dev/null 2>&1 || true
+  else
+    # (2) geen systemd (Crostini-geval): het OUDE console-proces ECHT stoppen -- pid-file, naam, EN de poort zelf.
+    [ -n "$oudpid" ] && { kill "$oudpid" 2>/dev/null || true; }
+    pkill -f "artemis-rek console" 2>/dev/null || true
+    for q in $(pids_op_poort "$CONSOLE_POORT"); do kill "$q" 2>/dev/null || true; done
+    sleep 1
+    # (3) een verse console op de nieuwe poort
+    setsid "$BIN_SELF/artemis-rek" console </dev/null >>"$REK_MAP/console.log" 2>&1 &
   fi
-  # 581: de OUDE console zat op 8000 (nu voor ARTEMIS). pkill stopt hem netjes zodat 8000 vrijkomt; de nieuwe console bindt 8765.
-  pkill -f "artemis-rek console" 2>/dev/null || true
-  sleep 1
-  setsid "$BIN_SELF/artemis-rek" console </dev/null >>"$REK_MAP/console.log" 2>&1 &
-  zeg "De console draait nu op http://localhost:$CONSOLE_POORT (581: weg van 8000, dat is nu voor ARTEMIS). Open die in Chrome."
+  # (4) 8000 (ARTEMIS' poort) vrijmaken van wat er van ONS nog op luistert -- alleen als ARTEMIS niet al draait (dan zit onze
+  # console daar niet). Zo komt de oude console-server (de python die 8000 vasthield) er echt af en kan ARTEMIS binden.
+  if ! leeft "$PIDA"; then for q in $(pids_op_poort "$ARTEMIS_POORT"); do kill "$q" 2>/dev/null || true; done; fi
+  zeg "De console draait nu op http://localhost:$CONSOLE_POORT (581/582: weg van 8000, dat is nu voor ARTEMIS). Open die in Chrome; de oude op 8000 werkt niet meer."
 }
 
 # 576/577: de Bijwerken-knop. Werkt het script bij, bouwt de venv opnieuw op (3.12, met compiler-vangnet), en herstart de console
@@ -306,6 +333,7 @@ autostart_installeren() {
 Description=ARTEMIS-rek console
 After=default.target
 [Service]
+Environment=ARTEMIS_CONSOLE_POORT=$CONSOLE_POORT
 ExecStart=$BIN_SELF/artemis-rek console
 Restart=always
 RestartSec=10
@@ -418,7 +446,13 @@ class H(BaseHTTPRequestHandler):
         else: self._schrijf(400, 'onbekende opdracht')
 threading.Thread(target=lus, daemon=True).start()
 try:
-    ThreadingHTTPServer(('127.0.0.1', POORT), H).serve_forever()
+    srv = ThreadingHTTPServer(('127.0.0.1', POORT), H)
+    # 582: de server bindt -> schrijf PAS DAN de pid weg (de python-server zelf, die de poort vasthoudt). herstart_console leest
+    # deze om bij Bijwerken de ECHTE console te stoppen; een pkill van de bash-wrapper alleen liet deze python in leven.
+    try:
+        with open(os.path.join(REK, 'console.pid'), 'w') as f: f.write(str(os.getpid()))
+    except Exception: pass
+    srv.serve_forever()
 except OSError as e:
     print('De console kon poort %d niet openen (draait hij al?): %s' % (POORT, e))
 PY
