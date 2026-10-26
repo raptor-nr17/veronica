@@ -404,7 +404,7 @@ console() {
     local q; for q in $(pids_op_poort "$ARTEMIS_POORT" 2>/dev/null); do kill "$q" 2>/dev/null || true; done
   fi
   AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" ARTEMIS_POORT="$ARTEMIS_POORT" REK_MAP="$REK_MAP" python3 - <<'PY'
-import os, subprocess, threading, time, html, urllib.parse
+import os, subprocess, threading, time, html, urllib.parse, hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen'}
@@ -429,25 +429,36 @@ def doe(cmd):
         return '%s duurt langer dan verwacht. Druk op Status of Log om te zien wat er gebeurt.' % cmd
     except Exception as e:
         return 'fout: ' + str(e)
-try: START_MT = os.path.getmtime(AREK)
-except Exception: START_MT = 0
+def _hash(p):
+    try:
+        with open(p, 'rb') as f: return hashlib.sha256(f.read()).hexdigest()
+    except Exception: return ''
+START_HASH = _hash(AREK)
 def herstart_als_nieuwer():
-    # 577: laadt de nieuwe code zodra het script op schijf nieuwer is (na Bijwerken), zodat o.a. de Log-knop vanzelf verschijnt.
-    try: mt = os.path.getmtime(AREK)
-    except Exception: return
-    if mt <= START_MT: return
+    # 577/587: laadt de nieuwe code zodra het script op schijf ANDERS is dan toen deze console startte. 587: op de HASH, niet op
+    # de mtime -- zelf_bijwerken herschrijft de bestanden elke keer (ook als de inhoud gelijk is), dus mtime bumpt altijd en dat
+    # zou een eindeloze herstart-lus geven. Met de hash herstart hij ALLEEN bij een echte nieuwe versie; gelijk = niets doen.
+    h = _hash(AREK)
+    if not h or h == START_HASH: return
     if os.environ.get('INVOCATION_ID'):
         os._exit(0)   # onder systemd: Restart=always start de console meteen opnieuw met de nieuwe code
     try: subprocess.Popen([AREK, 'console'], stdin=subprocess.DEVNULL, start_new_session=True)
     except Exception: pass
     os._exit(0)
+RONDE = 0
 def lus():
     # elke minuut: nieuwe telefoons zoeken; en ARTEMIS aanhouden als de gewenste stand "aan" is.
     # 583: NIET meer blind 'start' aanroepen (dat startte ARTEMIS elke minuut opnieuw, en ARTEMIS opende elke keer een
     # browsertab voor hij op "poort bezet" stopte -> tientallen tabs). 'start-stil' houdt een pogingenteller bij en stopt
     # na 3 mislukte starts met een reden in Status; een mens die op Start drukt reset dat.
+    # 587: EN elke ~10 min zichzelf bijwerken vanaf de site (stil: alleen ONZE bestanden ophalen, geen venv-rebuild). Zo hoeft
+    # niemand meer op Bijwerken te klikken voor een nieuwe versie -- herstart_als_nieuwer laadt de nieuwe code daarna vanzelf.
+    global RONDE
     while True:
         try:
+            if RONDE % 10 == 0:
+                doe('zelf-bijwerken-stil')
+            RONDE += 1
             herstart_als_nieuwer()
             doe('scan')
             doe('start-stil')
@@ -507,16 +518,23 @@ class H(BaseHTTPRequestHandler):
         if cmd in TOEGESTAAN: self._schrijf(200, doe(cmd))
         else: self._schrijf(400, 'onbekende opdracht')
 threading.Thread(target=lus, daemon=True).start()
-try:
-    srv = ThreadingHTTPServer(('127.0.0.1', POORT), H)
+# 587: bind met korte herhaling. Na een zelf-herstart (herstart_als_nieuwer) start deze verse console terwijl de OUDE de poort
+# nog een ogenblik vasthoudt; zonder herhaling zou de verse meteen op OSError sterven en bleef er niets draaien. Max ~6 s wachten.
+srv = None
+for _ in range(12):
+    try:
+        srv = ThreadingHTTPServer(('127.0.0.1', POORT), H); break
+    except OSError:
+        time.sleep(0.5)
+if srv is None:
+    print('De console kon poort %d niet openen (draait hij al?).' % POORT)
+else:
     # 582: de server bindt -> schrijf PAS DAN de pid weg (de python-server zelf, die de poort vasthoudt). herstart_console leest
     # deze om bij Bijwerken de ECHTE console te stoppen; een pkill van de bash-wrapper alleen liet deze python in leven.
     try:
         with open(os.path.join(REK, 'console.pid'), 'w') as f: f.write(str(os.getpid()))
     except Exception: pass
     srv.serve_forever()
-except OSError as e:
-    print('De console kon poort %d niet openen (draait hij al?): %s' % (POORT, e))
 PY
 }
 
@@ -932,6 +950,7 @@ case "${1:-status}" in
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
   zelf-bijwerken) bijwerken ;;   # 577: de oude console stuurt Bijwerken hierheen -> ook dan venv-rebuild + console-herstart
+  zelf-bijwerken-stil) zelf_bijwerken >/dev/null 2>&1 || true ;;   # 587: de console-lus; ALLEEN ophalen (geen venv/herstart) -- herstart_als_nieuwer laadt de nieuwe code
   toestellen) toestellen ;;
   draadloos) draadloos ;;
   mcp) mcp ;;
