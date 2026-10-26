@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # installeer.sh -- ARTEMIS (Google, Apache 2.0) op de Linux-kant van de Chromebook, zodat Claude de REKTELEFOONS kan besturen
-# via de webconsole op http://localhost:8000. Een keer plakken in de Linux-terminal:
+# via de webconsole op http://localhost:8765 (581: WEG van 8000, want ARTEMIS wil 8000 zelf). Een keer plakken in de Linux-terminal:
 #
 #     bash <(curl -fsSL <adres van Veronica>/artemis/installeer.sh)
 #
@@ -19,7 +19,7 @@
 #     het werk (Gmail, Foto's, WhatsApp) = terug naar het beginscherm en die app gestopt, ARTEMIS blijft draaien.
 #   - het verwijdert NOOIT een app, en het verandert geen instellingen op een telefoon.
 #
-# Daarna: `artemis-rek start` (console op http://localhost:8000), `artemis-rek stop`, `artemis-rek toestellen`,
+# Daarna: `artemis-rek start` (console op http://localhost:8765), `artemis-rek stop`, `artemis-rek toestellen`,
 # `artemis-rek draadloos`, `artemis-rek status`.
 set -euo pipefail
 
@@ -105,8 +105,8 @@ PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
 AANF="$REK_MAP/aan"           # 571: de GEWENSTE stand (ARTEMIS aan). De console-lus houdt ARTEMIS aan zolang dit bestand er is.
-CONSOLE_POORT="${ARTEMIS_CONSOLE_POORT:-8000}"   # onze knoppen-console (Veronica/Claude openen die)
-ARTEMIS_POORT="${ARTEMIS_POORT:-8001}"           # ARTEMIS zelf op een EIGEN poort, zodat hij onze console op 8000 niet in de weg zit
+CONSOLE_POORT="${ARTEMIS_CONSOLE_POORT:-8765}"   # onze knoppen-console (Veronica/Claude openen die). 581: WEG van 8000 -- ARTEMIS wil 8000 zelf
+ARTEMIS_POORT="${ARTEMIS_POORT:-8000}"           # 581: ARTEMIS HOUDT zijn eigen 8000 (hij negeerde onze poort-envs en pakte 8000); de console wijkt uit naar 8765
 BIN_SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo "$HOME/.local/bin")"
 
 zeg() { printf '%s\n' "$*"; }
@@ -277,12 +277,13 @@ zorg_venv() {
 herstart_console() {
   [ -n "${ARTEMIS_GEEN_HERSTART:-}" ] && return 0
   if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet artemis-rek.service 2>/dev/null; then
-    systemctl --user restart artemis-rek.service >/dev/null 2>&1 && { zeg "De console is opnieuw gestart (systemd) met de nieuwe code -- herlaad de pagina in Chrome."; return 0; }
+    systemctl --user restart artemis-rek.service >/dev/null 2>&1 && { zeg "De console draait nu op http://localhost:$CONSOLE_POORT (581: weg van 8000, dat is nu voor ARTEMIS). Open die in Chrome."; return 0; }
   fi
+  # 581: de OUDE console zat op 8000 (nu voor ARTEMIS). pkill stopt hem netjes zodat 8000 vrijkomt; de nieuwe console bindt 8765.
   pkill -f "artemis-rek console" 2>/dev/null || true
   sleep 1
   setsid "$BIN_SELF/artemis-rek" console </dev/null >>"$REK_MAP/console.log" 2>&1 &
-  zeg "De console is opnieuw gestart met de nieuwe code -- herlaad de pagina in Chrome."
+  zeg "De console draait nu op http://localhost:$CONSOLE_POORT (581: weg van 8000, dat is nu voor ARTEMIS). Open die in Chrome."
 }
 
 # 576/577: de Bijwerken-knop. Werkt het script bij, bouwt de venv opnieuw op (3.12, met compiler-vangnet), en herstart de console
@@ -324,10 +325,10 @@ UNIT
 # rektelefoons en houdt ARTEMIS aan zolang de gewenste stand "aan" is. Geen vrije invoer: alleen een vaste lijst opdrachten.
 console() {
   command -v python3 >/dev/null 2>&1 || { zeg "python3 ontbreekt; de console kan niet starten."; return 1; }
-  AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" REK_MAP="$REK_MAP" python3 - <<'PY'
+  AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" ARTEMIS_POORT="$ARTEMIS_POORT" REK_MAP="$REK_MAP" python3 - <<'PY'
 import os, subprocess, threading, time, html, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8000')); REK = os.environ.get('REK_MAP', '')
+AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
@@ -404,7 +405,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         p = urllib.parse.urlparse(self.path)
         if p.path in ('/', '/index.html'):
-            self._schrijf(200, PAGINA.format(ap=int(os.environ.get('ARTEMIS_POORT', '8001'))), 'text/html; charset=utf-8')
+            self._schrijf(200, PAGINA.format(ap=int(os.environ.get('ARTEMIS_POORT', '8000'))), 'text/html; charset=utf-8')
         elif p.path == '/status.json':
             aan = os.path.exists(os.path.join(REK, 'artemis.pid'))
             self._schrijf(200, '{"console":true,"artemis":%s}' % ('true' if aan else 'false'), 'application/json')
@@ -558,7 +559,8 @@ start() {
   if leeft "$PIDA"; then zeg "ARTEMIS draait al: http://localhost:$ARTEMIS_POORT"; return 0; fi
   waak_ronde || return 1
   zorg_venv   # 576: zorg dat de venv op Python 3.12 staat (anders faalt grpcio en start ARTEMIS nooit)
-  # ARTEMIS op een EIGEN poort (envnamen best-effort; NIET op een echte ARTEMIS nagekeken), zodat onze console 8000 houdt.
+  # 581: ARTEMIS HOUDT zijn eigen 8000 (hij negeerde deze envs en pakte 8000). Onze console staat op 8765, dus is er geen botsing
+  # meer. We geven de envs nog mee (best-effort, = 8000), maar vertrouwen erop dat ARTEMIS gewoon zijn eigen 8000 neemt.
   # UV_PYTHON=3.12: ook als ARTEMIS' eigen start.sh uv draait, kiest hij 3.12 (wheels, geen compiler).
   ( cd "$ARTEMIS_MAP" && UV_PYTHON=3.12 PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
@@ -575,7 +577,7 @@ stop() {
 }
 
 # 575: welke TCP-poorten luistert de PROCESGROEP van ARTEMIS echt? (eigen processen, geen root nodig).
-# De env-namen voor onze gok-poort 8001 zijn NIET op een echte ARTEMIS nagekeken; dit toont waar hij echt luistert.
+# 581: ARTEMIS luistert op zijn eigen 8000 (onze gok); dit toont waar hij ECHT luistert, mocht dat afwijken.
 poorten_van() {
   local pid="$1" pids
   pids="$(printf '%s\n' "$pid" $(pgrep -g "$pid" 2>/dev/null) | grep -E '^[0-9]+$' | sort -u)"
@@ -830,6 +832,6 @@ if ! pgrep -f "artemis-rek console" >/dev/null 2>&1; then
 fi
 zeg ""
 zeg "Klaar -- en dit was de laatste keer in de terminal."
-zeg "Alles gaat nu via de console in Chrome: http://localhost:8000"
+zeg "Alles gaat nu via de console in Chrome: http://localhost:$CONSOLE_POORT"
 zeg "Daar staan de knoppen Start, Stop, Status, Zoek telefoons en Bijwerken. De console draait voortaan vanzelf,"
 zeg "werkt zichzelf bij vanaf de site, en zoekt elke minuut zelf nieuwe rektelefoons. Je hoeft hier niets meer te typen."

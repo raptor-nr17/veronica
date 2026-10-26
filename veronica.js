@@ -2828,9 +2828,10 @@
   });
   if ($('rekVanzelfKnop')) $('rekVanzelfKnop').textContent = `Rek vanzelf: ${rekAan() ? 'aan' : 'uit'}`;
   // 559: Rek vanzelf gaat vanzelf: de knop staat er ALLEEN als hij uit staat (een keer uitgezet = de weg terug blijft te zien)
-  // 560: DRAAIT ARTEMIS? Alleen een blik op de eigen computer (localhost:8000), alleen als Meer opengaat (een tik van een mens),
-  // zonder inhoud te lezen (no-cors) en zonder iets te sturen. ARTEMIS zelf bestuurt alleen de rektelefoons op zijn eigen lijst.
-  const ARTEMIS_ADRES = 'http://localhost:8000/';
+  // 560: DRAAIT DE CONSOLE? Alleen een blik op de eigen computer, alleen als Meer opengaat (een tik van een mens), zonder inhoud
+  // te lezen (no-cors) en zonder iets te sturen. ARTEMIS zelf bestuurt alleen de rektelefoons op zijn eigen lijst.
+  // 581: de console is VERHUISD van 8000 naar 8765 -- ARTEMIS wil 8000 zelf. Dit adres kijkt naar ONZE console (8765).
+  const ARTEMIS_ADRES = 'http://localhost:8765/';
   // Pas kijken nadat iemand op deze computer de console een keer opende (dan staat ARTEMIS er): wie het niet gebruikt, krijgt geen
   // enkel verzoek naar localhost.
   const artemisGebruikt = () => { try { return localStorage.getItem('veronica-artemis') === '1'; } catch (e) { return false; } };
