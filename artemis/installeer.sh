@@ -45,6 +45,14 @@ schrijf_bestanden() {
   local rek="$1" bin="$2"
   mkdir -p "$rek" "$bin"
   chmod 700 "$rek"
+  # 583: nep-browsers. ARTEMIS' start.sh opent zelf een browsertab (Angular dev-server / xdg-open); bij elke mislukte
+  # herstart gaf dat een nieuwe tab -> tientallen tabs. We zetten deze map vooraan in PATH wanneer we ARTEMIS starten, zodat
+  # elke poging om een browser te openen een lege no-op is. Alleen voor het ARTEMIS-subproces (scoped PATH), niet systeembreed.
+  mkdir -p "$rek/geen-browser"
+  local gb
+  for gb in xdg-open x-www-browser www-browser sensible-browser gnome-open kde-open google-chrome google-chrome-stable chromium chromium-browser chrome firefox open; do
+    printf '#!/bin/sh\nexit 0\n' >"$rek/geen-browser/$gb"; chmod 755 "$rek/geen-browser/$gb"
+  done
   # 571: de bron waarvandaan artemis-rek zichzelf bijwerkt (de site). Komt uit de omgeving bij de installatie EN bij een
   # zelf-bijwerkronde, zodat hij blijft staan. Geen naam in de code: de eigenaar geeft hem een keer mee in de installatieregel.
   if [ -n "${ARTEMIS_BRON:-}" ]; then printf '%s\n' "${ARTEMIS_BRON%/}" >"$rek/bron"; chmod 600 "$rek/bron"; fi
@@ -353,6 +361,12 @@ UNIT
 # rektelefoons en houdt ARTEMIS aan zolang de gewenste stand "aan" is. Geen vrije invoer: alleen een vaste lijst opdrachten.
 console() {
   command -v python3 >/dev/null 2>&1 || { zeg "python3 ontbreekt; de console kan niet starten."; return 1; }
+  # 583: de poortwissel naar 8765 moet ook werken als een OUDE console nog op 8000 hangt (bv. na een Linux-herstart met de
+  # nieuwe code). Deze nieuwe console draait op 8765; als ARTEMIS niet draait en er hangt nog iets van ons op de ARTEMIS-poort
+  # (8000), stop dat dan, zodat ARTEMIS die poort kan pakken. Veilig: alleen als ARTEMIS niet al draait.
+  if declare -f artemis_draait >/dev/null 2>&1 && ! artemis_draait; then
+    local q; for q in $(pids_op_poort "$ARTEMIS_POORT" 2>/dev/null); do kill "$q" 2>/dev/null || true; done
+  fi
   AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" ARTEMIS_POORT="$ARTEMIS_POORT" REK_MAP="$REK_MAP" python3 - <<'PY'
 import os, subprocess, threading, time, html, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -392,18 +406,15 @@ def herstart_als_nieuwer():
     except Exception: pass
     os._exit(0)
 def lus():
-    # elke minuut: nieuwe telefoons zoeken; en ARTEMIS aanhouden als de gewenste stand "aan" is
+    # elke minuut: nieuwe telefoons zoeken; en ARTEMIS aanhouden als de gewenste stand "aan" is.
+    # 583: NIET meer blind 'start' aanroepen (dat startte ARTEMIS elke minuut opnieuw, en ARTEMIS opende elke keer een
+    # browsertab voor hij op "poort bezet" stopte -> tientallen tabs). 'start-stil' houdt een pogingenteller bij en stopt
+    # na 3 mislukte starts met een reden in Status; een mens die op Start drukt reset dat.
     while True:
         try:
             herstart_als_nieuwer()
             doe('scan')
-            if os.path.exists(os.path.join(REK, 'aan')):
-                pida = os.path.join(REK, 'artemis.pid'); draait = False
-                try:
-                    with open(pida) as f: pid = int(f.read().strip())
-                    os.kill(pid, 0); draait = True
-                except Exception: draait = False
-                if not draait: doe('start')
+            doe('start-stil')
         except Exception: pass
         time.sleep(60)
 PAGINA = """<!doctype html><html lang=nl><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -586,23 +597,51 @@ mcp() {
   [ "$raak" -gt 0 ] && { chmod 600 "$REK_MAP/mcp" 2>/dev/null || true; zeg "Klaar. De adressen gelden ALLEEN binnen je eigen wifi; er is geen openbare tunnel."; } || zeg "Geen enkele telefoon ingesteld."
 }
 
-start() {
+# 583: draait ARTEMIS? pid levend OF hij antwoordt op zijn poort (start.sh kan zijn pid afsplitsen).
+artemis_draait() { leeft "$PIDA" || antwoordt "$ARTEMIS_POORT"; }
+
+# De ECHTE start (geen teller-reset, geen AANF-touch). Aangeroepen door start() (mens) en start_stil() (console-lus).
+start_kern() {
   [ -d "$ARTEMIS_MAP" ] || { zeg "ARTEMIS staat er niet. Draai eerst installeer.sh."; return 1; }
   [ -s "$TOEG" ] || { zeg "Er staat nog geen rektelefoon op de lijst. Sluit er een aan (kabel + USB-foutopsporing); de console vindt hem vanzelf."; return 1; }
-  touch "$AANF"   # 571: de gewenste stand is "aan"; de console-lus houdt hem aan
-  if leeft "$PIDA"; then zeg "ARTEMIS draait al: http://localhost:$ARTEMIS_POORT"; return 0; fi
+  if artemis_draait; then zeg "ARTEMIS draait al: http://localhost:$ARTEMIS_POORT"; return 0; fi
   waak_ronde || return 1
   zorg_venv   # 576: zorg dat de venv op Python 3.12 staat (anders faalt grpcio en start ARTEMIS nooit)
-  # 581: ARTEMIS HOUDT zijn eigen 8000 (hij negeerde deze envs en pakte 8000). Onze console staat op 8765, dus is er geen botsing
-  # meer. We geven de envs nog mee (best-effort, = 8000), maar vertrouwen erop dat ARTEMIS gewoon zijn eigen 8000 neemt.
-  # UV_PYTHON=3.12: ook als ARTEMIS' eigen start.sh uv draait, kiest hij 3.12 (wheels, geen compiler).
-  ( cd "$ARTEMIS_MAP" && UV_PYTHON=3.12 PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
+  # 581: ARTEMIS HOUDT zijn eigen 8000 (onze console staat op 8765). UV_PYTHON=3.12: ook ARTEMIS' eigen start.sh pakt 3.12.
+  # 583: ARTEMIS mag NOOIT zelf een browser openen (anders: tientallen tabs bij elke herstart). BROWSER=true, DISPLAY leeg,
+  # en een map met nep-browsers (xdg-open en soortgenoten, elk een lege 'exit 0') vooraan in PATH -- alleen voor dit ARTEMIS-subproces.
+  ( cd "$ARTEMIS_MAP" && PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
   ( setsid "$0" waakhond </dev/null >>"$LOG" 2>&1 & echo $! >"$PIDW" )
   zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://localhost:$ARTEMIS_POORT"
 }
 
+# Door een MENS (console-knop Start): de gewenste stand AAN, de pogingenteller RESET (vers budget), dan starten.
+start() {
+  touch "$AANF"   # 571: de gewenste stand is "aan"; de console-lus houdt hem aan
+  rm -f "$REK_MAP/start-pogingen" "$REK_MAP/start-gestopt"
+  start_kern
+}
+
+# 583: aangeroepen door de console-lus (elke minuut). Houdt een pogingenteller bij; na 3 mislukte starts STOPT hij met
+# proberen en schrijft een reden (zichtbaar in Status), zodat ARTEMIS niet elke minuut opnieuw start. Een mens die op Start
+# drukt reset de teller. Lukt een start wel, dan wordt de teller gewist.
+START_MAX=3
+start_stil() {
+  [ -f "$AANF" ] || return 0
+  if artemis_draait; then rm -f "$REK_MAP/start-pogingen" "$REK_MAP/start-gestopt"; return 0; fi
+  [ -f "$REK_MAP/start-gestopt" ] && return 0
+  local n; n="$(cat "$REK_MAP/start-pogingen" 2>/dev/null || echo 0)"; [ "$n" -eq "$n" ] 2>/dev/null || n=0; n=$((n+1))
+  if [ "$n" -gt "$START_MAX" ]; then
+    printf 'ARTEMIS startte %s keer niet (vaak: poort %s bezet, of een startfout -- kijk bij Log). Gestopt met automatisch opnieuw proberen om geen browsertabs te blijven openen. Druk op Start om het opnieuw te proberen.\n' "$START_MAX" "$ARTEMIS_POORT" >"$REK_MAP/start-gestopt"
+    return 0
+  fi
+  printf '%s' "$n" >"$REK_MAP/start-pogingen"
+  start_kern
+}
+
 stop() {
+  rm -f "$REK_MAP/start-pogingen" "$REK_MAP/start-gestopt"   # 583: Stop wist de pogingenteller; een latere Start begint vers
   rm -f "$AANF"   # 571: de gewenste stand is "uit"; de console-lus start hem niet opnieuw
   stop_artemis
   if leeft "$PIDW"; then kill "$(cat "$PIDW")" 2>/dev/null || true; fi
@@ -638,7 +677,7 @@ log() {
 }
 
 status() {
-  if leeft "$PIDA"; then
+  if artemis_draait; then
     local p poorten; p="$(cat "$PIDA" 2>/dev/null)"
     zeg "ARTEMIS draait (pid $p)."
     poorten="$(poorten_van "$p")"
@@ -649,6 +688,9 @@ status() {
       zeg "Luistert nog op GEEN enkele poort -- hij start nog op (de eerste keer duurt het een paar minuten) of hij is gestopt. Kijk bij Log."
     fi
     if antwoordt "$ARTEMIS_POORT"; then zeg "http://localhost:$ARTEMIS_POORT antwoordt."; else zeg "http://localhost:$ARTEMIS_POORT (onze gok) antwoordt niet -- gebruik de poort hierboven, of kijk bij Log."; fi
+  elif [ -f "$REK_MAP/start-gestopt" ]; then
+    # 583: na 3 mislukte starts stopte de lus met proberen -- zeg dat duidelijk in plaats van stil te blijven.
+    zeg "ARTEMIS staat uit. $(cat "$REK_MAP/start-gestopt")"
   else
     zeg "ARTEMIS staat uit."
   fi
@@ -775,6 +817,7 @@ if { [ "${1:-}" = start ] || [ "${1:-}" = console ]; } && [ -z "${ARTEMIS_HERSTA
 fi
 case "${1:-status}" in
   start) start ;;
+  start-stil) start_stil ;;   # 583: door de console-lus; respecteert de pogingenteller (geen eindeloze herstart + tabs)
   stop) stop ;;
   console) console ;;
   autostart) autostart_installeren ;;
