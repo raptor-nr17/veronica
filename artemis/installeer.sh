@@ -679,6 +679,23 @@ log() {
   done
 }
 
+# 584: de Gemini-sleutel moet met 'AIza' beginnen. Google AI Studio maakt sinds kort alleen 'AQ.'-sleutels, die ARTEMIS met
+# 401 'API key not valid' afwijst. Deze controle leest ALLEEN het begin (nooit de hele sleutel loggen) en waarschuwt met de
+# weg naar een AIza-sleutel. ARTEMIS' .env staat in $ARTEMIS_MAP/.env.
+sleutel_check() {
+  local env="$ARTEMIS_MAP/.env" k
+  [ -f "$env" ] || return 0
+  k="$(sed -n 's/^GEMINI_API_KEY=//p' "$env" 2>/dev/null | head -1)"
+  case "$k" in
+    AIza*) : ;;   # goed
+    "") zeg "LET OP: er staat geen Gemini-sleutel. Draai de installatieregel opnieuw; hij vraagt om een AIza-sleutel." ;;
+    AQ.*|AQ*) zeg "LET OP: de Gemini-sleutel begint met 'AQ' -- die werkt NIET met ARTEMIS (401 'API key not valid')."
+      zeg "Nodig: een klassieke 'AIza'-sleutel via console.cloud.google.com > APIs & Services > Library > 'Generative Language API' (Enable) > Credentials > Create credentials > API key."
+      zeg "Draai daarna de installatieregel opnieuw; hij ziet de AQ-sleutel en vraagt om de nieuwe AIza-sleutel." ;;
+    *) zeg "LET OP: de Gemini-sleutel begint niet met 'AIza'; controleer hem (ARTEMIS geeft anders 401)." ;;
+  esac
+}
+
 status() {
   if artemis_draait; then
     local p poorten; p="$(cat "$PIDA" 2>/dev/null)"
@@ -700,6 +717,7 @@ status() {
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
   zeg "Console (knoppen): http://localhost:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
+  sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
   schijf      # 580: altijd de vrije schijfruimte erbij -- een volle schijf is de reden dat ARTEMIS niet start
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
   if command -v tailscale >/dev/null 2>&1; then zeg "Tailscale: $(tailscale ip -4 2>/dev/null | head -1 || echo 'niet ingelogd')"; fi
@@ -881,18 +899,49 @@ zet_env() {   # zet_env NAAM WAARDE  (de waarde gaat via de omgeving, nooit via 
     $0 ~ "^#? *"n"=" {print n"="w; g=1; next} {print} END{if(!g) print n"="w}' "$ENV" >"$ENV.nieuw"
   mv "$ENV.nieuw" "$ENV"; chmod 600 "$ENV"
 }
-if ! grep -qE '^GEMINI_API_KEY=.+' "$ENV"; then
-  zeg ""
-  zeg "Nu de Gemini-sleutel. Maak hem op aistudio.google.com/apikey (gratis) en plak hem hier."
-  zeg "Je ziet niets terwijl je plakt; dat hoort zo. Druk daarna op Enter."
-  SLEUTEL=""
-  tty_lees SLEUTEL "Sleutel: " stil
-  SLEUTEL="${SLEUTEL//[$'\r\n ']/}"
-  if [ -z "$SLEUTEL" ]; then zeg "Geen sleutel ingevuld. Draai dit script later nog eens."; exit 1; fi
-  zet_env GEMINI_API_KEY "$SLEUTEL"
-  unset SLEUTEL
-  zeg "Bewaard in $ENV (alleen jij kunt het lezen)."
-fi
+# 584: ARTEMIS heeft een KLASSIEKE "AIza..."-sleutel nodig. Google AI Studio maakt sinds kort alleen nog "AQ."-sleutels
+# (authenticatie-tokens); die geven 401 ACCESS_TOKEN_TYPE_UNSUPPORTED en WERKEN NIET met ARTEMIS, ook niet met de nieuwste SDK.
+# Daarom: vraag opnieuw zodra de opgeslagen sleutel GEEN AIza-sleutel is (ook als er al een AQ-sleutel staat), en wijs de
+# weg naar een AIza-sleutel via de Google Cloud Console.
+sleutel_uitleg() {
+  zeg "ARTEMIS heeft een KLASSIEKE sleutel nodig die begint met 'AIza'."
+  zeg "Let op: aistudio.google.com/apikey maakt tegenwoordig vaak een 'AQ.'-sleutel -- die WERKT NIET (401)."
+  zeg "Maak een AIza-sleutel zo (gratis):"
+  zeg "  1. Open console.cloud.google.com en kies/maak een project."
+  zeg "  2. APIs & Services > Library > zoek 'Generative Language API' > Enable."
+  zeg "  3. APIs & Services > Credentials > Create credentials > API key."
+  zeg "  4. (aanrader) Edit API key > API restrictions > beperk tot 'Generative Language API'."
+  zeg "  5. Kopieer de sleutel (begint met 'AIza') en plak hem hieronder."
+}
+HUIDIG="$(sed -n 's/^GEMINI_API_KEY=//p' "$ENV" 2>/dev/null | head -1)"
+case "$HUIDIG" in
+  AIza*) : ;;   # al een goede sleutel: met rust laten
+  *)
+    zeg ""
+    case "$HUIDIG" in
+      AQ.*|AQ*) zeg "De opgeslagen Gemini-sleutel begint met 'AQ' -- die werkt niet met ARTEMIS (401 'API key not valid'). Ik vraag om een AIza-sleutel." ;;
+    esac
+    sleutel_uitleg
+    zeg "Je ziet niets terwijl je plakt; dat hoort zo. Druk daarna op Enter."
+    SLEUTEL=""; POGING=0
+    while :; do
+      POGING=$((POGING+1))
+      tty_lees SLEUTEL "AIza-sleutel: " stil
+      SLEUTEL="${SLEUTEL//[$'\r\n ']/}"
+      case "$SLEUTEL" in
+        AIza*) break ;;
+        "") if [ -n "$HUIDIG" ]; then zeg "Niets ingevuld; de bestaande sleutel blijft staan (die werkt mogelijk niet)."; SLEUTEL=""; break; fi
+            zeg "Geen sleutel ingevuld. Draai deze regel later nog eens."; SLEUTEL=""; break ;;
+        AQ.*|AQ*) if [ "$POGING" -ge 3 ]; then zeg "Nog steeds een AQ-sleutel; ik bewaar hem, maar ARTEMIS zal 401 geven tot er een AIza-sleutel staat."; break; fi
+            zeg "Dat is weer een 'AQ'-sleutel; die werkt niet. Maak een AIza-sleutel via de Cloud Console (zie hierboven) en plak die, of druk Enter om te stoppen." ;;
+        *) if [ "$POGING" -ge 3 ]; then zeg "Onbekend sleutelformaat; ik bewaar hem, maar controleer of hij met 'AIza' begint."; break; fi
+            zeg "Een Gemini-sleutel begint normaal met 'AIza'. Controleer wat je kopieerde en plak opnieuw, of druk Enter om te stoppen." ;;
+      esac
+    done
+    if [ -n "$SLEUTEL" ]; then zet_env GEMINI_API_KEY "$SLEUTEL"; zeg "Bewaard in $ENV (alleen jij kunt het lezen)."; fi
+    unset SLEUTEL
+    ;;
+esac
 zet_env ARTEMIS_DEFAULT_PROFILE flash
 zet_env ARTEMIS_KEEP_DEVICE_AWAKE false
 zet_env ARTEMIS_DESKTOP_NOTIFY false
