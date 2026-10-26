@@ -245,12 +245,19 @@ vergeet() {
 zelf_bijwerken() {
   [ -s "$BRONF" ] || { zeg "Geen bron voor bijwerken ingesteld (niet meegegeven bij de installatie)."; return 1; }
   command -v curl >/dev/null 2>&1 || { zeg "Bijwerken: curl ontbreekt."; return 1; }
-  local base tmp; base="$(cat "$BRONF")"; tmp="$(mktemp)" || return 1
-  if ! curl -fsSL "$base/artemis/installeer.sh" -o "$tmp"; then zeg "Bijwerken: kon het script niet ophalen (geen internet?)."; rm -f "$tmp"; return 1; fi
+  local base tmp code; base="$(cat "$BRONF")"; tmp="$(mktemp)" || return 1
+  # 586: toon de HTTP-code, zodat je ziet WAAROM het niet lukt (000 = geen internet/site weg, 404 = verkeerd adres).
+  zeg "Bijwerken 1/4: script ophalen van $base/artemis/installeer.sh ..."
+  code="$(curl -fsSL -m 30 -w '%{http_code}' "$base/artemis/installeer.sh" -o "$tmp" 2>/dev/null)"; code="${code:-000}"
+  if [ "$code" != "200" ] || [ ! -s "$tmp" ]; then zeg "Bijwerken: ophalen mislukte (http $code). Geen internet, of de site is even weg. Niets veranderd."; rm -f "$tmp"; return 1; fi
   if ! bash -n "$tmp" 2>/dev/null; then zeg "Bijwerken: het opgehaalde script is geen geldige bash; niets veranderd."; rm -f "$tmp"; return 1; fi
   if ! grep -q 'artemis-rek' "$tmp" || ! grep -q 'ARTEMIS_REPO=' "$tmp"; then zeg "Bijwerken: het opgehaalde script lijkt niet op ARTEMIS; niets veranderd."; rm -f "$tmp"; return 1; fi
-  if ARTEMIS_BRON="$base" bash "$tmp" --alleen-bestanden "$REK_MAP" "$BIN_SELF" >/dev/null 2>&1; then logregel "Bijgewerkt vanaf de site."; rm -f "$tmp"; return 0; fi
-  zeg "Bijwerken mislukte; niets veranderd."; rm -f "$tmp"; return 1
+  if ARTEMIS_BRON="$base" bash "$tmp" --alleen-bestanden "$REK_MAP" "$BIN_SELF" >/dev/null 2>&1; then
+    logregel "Bijgewerkt vanaf de site (http $code)."
+    [ -s "$REK_MAP/artemis.jsonc" ] && zeg "Bijwerken 2/4: nieuwe instellingen binnen (ARTEMIS-model: $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | head -1))."
+    rm -f "$tmp"; return 0
+  fi
+  zeg "Bijwerken: het herschrijven van de bestanden mislukte; niets veranderd."; rm -f "$tmp"; return 1
 }
 
 # 576/577: ARTEMIS draait op uv. uv koos cpython-3.15, en grpcio/zstandard hebben daar geen kant-en-klare wheel voor -> uv bouwt
@@ -350,9 +357,13 @@ herstart_console() {
 # zodat de nieuwe code (zoals de Log-knop) meteen zichtbaar is. 577: ook de OUDE console-route (die Bijwerken naar `zelf-bijwerken`
 # stuurde) komt hier terecht, zodat de venv-rebuild en de herstart ook dan gebeuren.
 bijwerken() {
+  zeg "== Bijwerken gestart $(date '+%H:%M:%S') =="
   zelf_bijwerken || zeg "Het script bijwerken ging niet door; ik ga wel verder met de venv en de console."
+  zeg "Bijwerken 3/4: de Python-venv nalopen (3.12) ..."
   zorg_venv forceer
+  zeg "Bijwerken 4/4: de console herstarten op poort $CONSOLE_POORT ..."
   herstart_console
+  zeg "== Bijwerken klaar. Doe nu: Stop, dan Start, dan een taak. (De console draait op http://localhost:$CONSOLE_POORT.) =="
 }
 
 # 571: AUTOSTART. Een systemd --user-dienst start de console bij het inloggen op Linux; een regel in ~/.profile is de terugval
@@ -455,8 +466,23 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
+// 586: elke knop geeft ALTIJD een zichtbaar, getimed antwoord en de pagina hangt nooit (AbortController-timeout). Bijwerken en
+// Start draaien op de achtergrond; daarna halen we vanzelf Log en Status op zodat je de voortgang ziet zonder nog een klik.
 const uit=document.getElementById('uit');
-async function doe(c){{uit.textContent='Bezig: '+c+'...';try{{const r=await fetch('/doe?cmd='+encodeURIComponent(c),{{method:'POST'}});uit.textContent=await r.text();}}catch(e){{uit.textContent='Kon de console niet bereiken: '+e;}}}}
+function nu(){{return new Date().toLocaleTimeString();}}
+async function doe(c){{
+  uit.textContent=nu()+' — bezig: '+c+'…';
+  const ac=new AbortController();const t=setTimeout(()=>ac.abort(),25000);
+  try{{
+    const r=await fetch('/doe?cmd='+encodeURIComponent(c),{{method:'POST',signal:ac.signal}});
+    clearTimeout(t);
+    uit.textContent=nu()+' — '+c+':\n'+(await r.text());
+    if(c==='bijwerken'||c==='start'){{setTimeout(()=>doe('log'),7000);setTimeout(()=>doe('status'),20000);}}
+  }}catch(e){{
+    clearTimeout(t);
+    uit.textContent=nu()+' — '+c+': de console antwoordt nog niet (hij start soms heel even opnieuw na Bijwerken). Druk zo op Log of Status. ('+e+')';
+  }}
+}}
 for(const b of document.querySelectorAll('button[data-cmd]'))b.addEventListener('click',()=>doe(b.dataset.cmd));
 doe('status');
 </script></main></body></html>"""
@@ -744,16 +770,25 @@ sleutel_check() {
 
 status() {
   if artemis_draait; then
-    local p poorten; p="$(cat "$PIDA" 2>/dev/null)"
+    local p poorten open_poort; p="$(cat "$PIDA" 2>/dev/null)"
     zeg "ARTEMIS draait (pid $p)."
     poorten="$(poorten_van "$p")"
-    if [ -n "$poorten" ]; then
+    # 586: poorten_van kijkt in de PROCESGROEP van onze pid; ARTEMIS' echte server kan in een EIGEN sessie draaien en dan
+    # valt hij buiten die groep ("GEEN poort") terwijl hij wel antwoordt. Spreek elkaar niet tegen: als iets op ARTEMIS_POORT
+    # antwoordt, DAT is de poort. Geen "GEEN poort" meer zolang er iets antwoordt.
+    open_poort=""
+    if [ -n "$poorten" ]; then open_poort="$(printf '%s' "$poorten" | tr -d ' ' | cut -d, -f1)"; fi
+    if antwoordt "$ARTEMIS_POORT"; then
+      [ -n "$open_poort" ] || open_poort="$ARTEMIS_POORT"
+      [ -n "$poorten" ] && zeg "Luistert op poort(en): $poorten" || zeg "Luistert op poort: $ARTEMIS_POORT (ARTEMIS antwoordt daar)."
+      zeg "Open ARTEMIS op: http://localhost:$open_poort"
+    elif [ -n "$poorten" ]; then
       zeg "Luistert op poort(en): $poorten"
-      zeg "Open ARTEMIS op: http://localhost:$(printf '%s' "$poorten" | tr -d ' ' | cut -d, -f1)"
+      zeg "Open ARTEMIS op: http://localhost:$open_poort"
+      zeg "(http://localhost:$ARTEMIS_POORT antwoordt nog niet -- gebruik de poort hierboven, of kijk bij Log.)"
     else
-      zeg "Luistert nog op GEEN enkele poort -- hij start nog op (de eerste keer duurt het een paar minuten) of hij is gestopt. Kijk bij Log."
+      zeg "Luistert nog op GEEN enkele poort en http://localhost:$ARTEMIS_POORT antwoordt niet -- hij start nog op (de eerste keer duurt het een paar minuten) of hij is gestopt. Kijk bij Log."
     fi
-    if antwoordt "$ARTEMIS_POORT"; then zeg "http://localhost:$ARTEMIS_POORT antwoordt."; else zeg "http://localhost:$ARTEMIS_POORT (onze gok) antwoordt niet -- gebruik de poort hierboven, of kijk bij Log."; fi
   elif [ -f "$REK_MAP/start-gestopt" ]; then
     # 583: na 3 mislukte starts stopte de lus met proberen -- zeg dat duidelijk in plaats van stil te blijven.
     zeg "ARTEMIS staat uit. $(cat "$REK_MAP/start-gestopt")"
