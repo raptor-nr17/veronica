@@ -767,7 +767,10 @@ start_kern() {
     fi
     [ -n "$lm_base" ] && lok_env="OPENAI_BASE_URL=$lm_base OPENAI_API_KEY=${lm_token:-local}"
   fi
-  ( cd "$ARTEMIS_MAP" && PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 $lok_env PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
+  # 592fix: via `env` -- een VARIABELE ($lok_env) in prefix-positie wordt door bash als het COMMANDO gelezen (niet als
+  # toewijzing), waardoor 'PORT=8000: command not found' kwam. `env` neemt alle KEY=VAL (ook de lege/gevulde $lok_env)
+  # gewoon als argumenten, dus het werkt met en zonder lokaal model.
+  ( cd "$ARTEMIS_MAP" && env PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 $lok_env PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
   ( setsid "$0" waakhond </dev/null >>"$LOG" 2>&1 & echo $! >"$PIDW" )
   zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://localhost:$ARTEMIS_POORT"
