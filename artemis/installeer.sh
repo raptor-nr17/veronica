@@ -487,7 +487,7 @@ async function doe(c){{
   try{{
     const r=await fetch('/doe?cmd='+encodeURIComponent(c),{{method:'POST',signal:ac.signal}});
     clearTimeout(t);
-    uit.textContent=nu()+' — '+c+':\n'+(await r.text());
+    uit.textContent=nu()+' — '+c+':\\n'+(await r.text());
     if(c==='bijwerken'||c==='start'){{setTimeout(()=>doe('log'),7000);setTimeout(()=>doe('status'),20000);}}
   }}catch(e){{
     clearTimeout(t);
