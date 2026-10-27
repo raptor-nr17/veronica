@@ -860,7 +860,34 @@ else:
     print('(geen duidelijke LLM-fout -- de taak lukte, was leeg, of is nog bezig)')
 PY
 }
+# 591: WELK MODEL gebruikte de laatste taak ECHT? De modelnaam staat in de daemon-/trace-logs (de stappen-API draagt alleen de
+# provider). Zo zie je of ARTEMIS bij een 503/429 op gemini-3.8-flash is overgestapt op de reserve gemini-3.6-flash -- en of hij
+# daarna weer terugging. Puur lezen. ARTEMIS schakelt na 4 mislukte pogingen (provider_unavailable) over op de reserve, en begint
+# de volgende taak weer bij het primaire model (dat is "overstappen en terug" -- deze regel maakt het alleen zichtbaar).
+model_gebruikt() {
+  local ad tr bestanden modellen prim res
+  ad="$(artemis_app_dir)"
+  bestanden="$(ls -1t "$ad"/logs/daemon-*.log 2>/dev/null | head -2)"
+  tr="$(ls -1dt "$ad"/traces/*/ 2>/dev/null | head -1)"
+  [ -n "$tr" ] && bestanden="$bestanden ${tr}stderr.log ${tr}stdout.log"
+  prim="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" 2>/dev/null | head -1)"
+  res="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" 2>/dev/null | sed -n 2p)"
+  zeg "Ingesteld: primair ${prim:-?}, reserve ${res:-?} (ARTEMIS stapt na een paar 503/429-pogingen over op de reserve, en terug op de volgende taak)."
+  if [ -n "$bestanden" ]; then
+    modellen="$(grep -hoE 'gemini-[0-9]+\.[0-9]+-flash(-lite)?' $bestanden 2>/dev/null | sort | uniq -c | sort -rn)"
+    if [ -n "$modellen" ]; then
+      zeg "Modellen die ARTEMIS echt aanriep (recente logs, met aantal):"; printf '%s\n' "$modellen" | sed 's/^/  /'
+    else
+      zeg "(nog geen modelnaam in de logs gezien -- draait er al een taak?)"
+    fi
+    grep -qiE 'fallback|on_fallback|switching to fallback|overstap' $bestanden 2>/dev/null \
+      && zeg "-> ARTEMIS is minstens een keer op de RESERVE overgestapt (fallback gezien in de logs)."
+  fi
+}
 log() {
+  zeg "== Welk model gebruikte de laatste taak (591) =="
+  model_gebruikt
+  zeg ""
   zeg "== LLM-fout uit de laatste ARTEMIS-sessie (589) =="
   llm_laatste_fout
   zeg ""
@@ -930,9 +957,9 @@ status() {
   zeg "Console (knoppen): http://localhost:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
   sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
-  # 585: welk model gebruikt ARTEMIS? (uit onze gratis-laag-config die via ARTEMIS_ARTEMIS_JSONC meegaat)
+  # 585/591: welk model gebruikt ARTEMIS? Primair + reserve uit onze config; Log toont bovendien welk model ECHT werd aangeroepen.
   if [ -s "$REK_MAP/artemis.jsonc" ]; then
-    zeg "ARTEMIS-model (onze config): $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | head -1) (gratis Gemini-laag)."
+    zeg "ARTEMIS-model (onze config): primair $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | head -1), reserve $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | sed -n 2p) (gratis Gemini-laag; Log toont welk model echt werd gebruikt)."
   fi
   schijf      # 580: altijd de vrije schijfruimte erbij -- een volle schijf is de reden dat ARTEMIS niet start
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
