@@ -64,23 +64,13 @@ schrijf_bestanden() {
   # object-detector gebruikt 3.8-flash. ARTEMIS leest dit via de env ARTEMIS_ARTEMIS_JSONC (resolutievolgorde #1);
   # de config in de ARTEMIS-repo blijft met rust. Faalt 3.8-flash ooit toch, dan toont Log de ECHTE llm-fout uit de
   # laatste sessie (met het model dat Gemini dán aanraadt), zodat de keuze zich zelf laat bijsturen.
-  cat >"$rek/artemis.jsonc" <<'JSONC'
-{
-  // 589: gezet door installeer.sh -- een model dat op de gratis Gemini-laag werkt (gemini-3.8-flash sinds 27 okt;
-  // het vorige model werd ingetrokken voor nieuwe gebruikers). Gebruik een AIza-sleutel (een AQ-sleutel werkt niet).
-  "default": {
-    "provider": "google",
-    "model": "gemini-3.8-flash",
-    "thinking_level": "medium",
-    "fallback": { "provider": "google", "model": "gemini-3.6-flash", "thinking_level": "medium" }
-  },
-  "presets": {
-    "gemini-flash": { "provider": "google", "model": "gemini-3.8-flash", "fallback": { "provider": "google", "model": "gemini-3.6-flash" } },
-    "cost-saving": { "provider": "google", "model": "gemini-3.6-flash", "fallback": { "provider": "google", "model": "gemini-3.8-flash" } }
-  }
-}
-JSONC
-  chmod 600 "$rek/artemis.jsonc"
+  # 592 (#130/§585-3): is er een LOKAAL model geconfigureerd ($rek/lokaal-model.conf, gezet door de knop 'Lokaal model'),
+  # dan denkt ARTEMIS met dat lokale, OpenAI-compatibele model (OlliteRT/eigen motor op een rektelefoon, of de F8 als
+  # gast-brein over het LAN) en is Gemini ALLEEN nog de terugval. Geen conf = Gemini-primair (589). ARTEMIS breidt 'default'
+  # (incl. de fallback) uit naar alle rollen, dus ook de planner.
+  # 592: artemis.jsonc wordt NIET meer hier geschreven, maar door de RUNTIME-functie schrijf_artemis_jsonc (in artemis-rek zelf),
+  # zodat er EEN bron is: zowel de installatie (aan het eind van deze functie) als de knoppen Lokaal model / Lokaal uit roepen
+  # dezelfde functie aan. Zo kan lokaal/lokaal_uit de config herschrijven zonder schrijf_bestanden (die bestaat alleen hier).
   # 571: de bron waarvandaan artemis-rek zichzelf bijwerkt (de site). Komt uit de omgeving bij de installatie EN bij een
   # zelf-bijwerkronde, zodat hij blijft staan. Geen naam in de code: de eigenaar geeft hem een keer mee in de installatieregel.
   if [ -n "${ARTEMIS_BRON:-}" ]; then printf '%s\n' "${ARTEMIS_BRON%/}" >"$rek/bron"; chmod 600 "$rek/bron"; fi
@@ -138,6 +128,7 @@ TOEG="$REK_MAP/toegestaan"
 VERB="$REK_MAP/verboden-apps.txt"
 LOG="$REK_MAP/waakhond.log"
 JARVIS_PKG="nl.eigen.jarvis"   # 590: het ENIGE pakket dat de JARVIS-waakhond ooit aanraakt (nooit bank/betaal/wachtwoord/authenticator)
+LOKAAL_POORT="${ARTEMIS_LOKAAL_POORT:-8791}"   # 592: lokale poort op deze computer die via adb naar het model op een rektelefoon wijst
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
@@ -408,11 +399,11 @@ console() {
     local q; for q in $(pids_op_poort "$ARTEMIS_POORT" 2>/dev/null); do kill "$q" 2>/dev/null || true; done
   fi
   AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" ARTEMIS_POORT="$ARTEMIS_POORT" REK_MAP="$REK_MAP" MIN_MB="$ARTEMIS_MIN_MB" python3 - <<'PY'
-import os, subprocess, threading, time, html, urllib.parse, hashlib
+import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -487,6 +478,8 @@ def lus():
             doe('start-stil')
             if RONDE % 3 == 0:
                 doe('jarvis-waak')   # 590: elke ~3 min JARVIS nakijken op de rektelefoons (nooit de F8)
+            if RONDE % 15 == 7:
+                doe('lokaal-auto')   # 592: lokaal model AANzetten zodra er een lokale server verschijnt ("standaard AAN")
         except Exception: pass
         time.sleep(60)
 PAGINA = """<!doctype html><html lang=nl><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -498,7 +491,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -522,12 +515,40 @@ async function doe(c){{
 for(const b of document.querySelectorAll('button[data-cmd]'))b.addEventListener('click',()=>doe(b.dataset.cmd));
 doe('status');
 </script></main></body></html>"""
+# 592b: alleen een lokaal/LAN-adres (de telefoon) mag het ARTEMIS-model worden -- nooit een publiek internet-adres.
+def _lan_adres_ok(u):
+    try: pu = urllib.parse.urlparse(u)
+    except Exception: return False
+    if pu.scheme not in ('http', 'https') or not pu.path.endswith('/v1'): return False
+    h = pu.hostname or ''
+    if h in ('localhost', '127.0.0.1') or h.endswith('.local'): return True
+    if h.startswith('10.') or h.startswith('192.168.'): return True
+    if re.match(r'^172\.(1[6-9]|2[0-9]|3[0-1])\.', h): return True
+    return False
+def _probe_model(base):
+    # lees /v1/models van het lokale adres en kies een model dat schermbeelden aankan (e4b/e2b/gemma/3n/vision), anders het eerste.
+    try:
+        with urllib.request.urlopen(base + '/models', timeout=6) as r:
+            ids = [m.get('id', '') for m in (json.load(r).get('data') or []) if isinstance(m, dict)]
+    except Exception:
+        return ''
+    ids = [i for i in ids if i]
+    for i in ids:
+        if re.search(r'e4b|e2b|gemma|3n|vision', i, re.I): return i
+    return ids[0] if ids else ''
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _schrijf(self, code, body, ctype='text/plain; charset=utf-8'):
         b = body.encode('utf-8'); self.send_response(code)
         self.send_header('Content-Type', ctype); self.send_header('Content-Length', str(len(b)))
         self.end_headers(); self.wfile.write(b)
+    def _cors(self, code, body):
+        b = body.encode('utf-8'); self.send_response(code)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8'); self.send_header('Content-Length', str(len(b)))
+        self.send_header('Access-Control-Allow-Origin', '*'); self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers(); self.wfile.write(b)
+    def do_OPTIONS(self):
+        self._cors(204, '')
     def do_GET(self):
         p = urllib.parse.urlparse(self.path)
         if p.path in ('/', '/index.html'):
@@ -539,6 +560,29 @@ class H(BaseHTTPRequestHandler):
             self._schrijf(404, 'niet gevonden')
     def do_POST(self):
         p = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(p.query)
+        if p.path == '/lokaal-zet':
+            # 592b: Veronica (die de hartslag/relay kent) geeft het modeladres van een TELEFOON door -- het model draait NOOIT
+            # op deze Chromebook (1,6 GB vrij; en het maakt hem traag). Alleen een LOKAAL/LAN-adres wordt aangenomen; geen
+            # publiek internet-adres (anders zou een willekeurige website ARTEMIS naar zijn eigen model kunnen sturen).
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace')) if ln else {}
+            base = (f.get('base', [''])[0]).strip(); model = (f.get('model', [''])[0]).strip(); token = ((f.get('token', ['local'])[0]).strip() or 'local')
+            if not _lan_adres_ok(base):
+                self._cors(400, 'alleen een lokaal/LAN-modeladres wordt aangenomen (de telefoon, niet het internet)'); return
+            if not model:
+                model = _probe_model(base)
+            if not model:
+                self._cors(502, 'geen model gevonden op %s/models (draait OlliteRT met een geladen model?)' % base); return
+            try:
+                with open(os.path.join(REK, 'lokaal-model.conf'), 'w') as fh:
+                    fh.write('BASE_URL=%s\nMODEL=%s\nTOKEN=%s\n' % (base, model, token))
+                try: os.chmod(os.path.join(REK, 'lokaal-model.conf'), 0o600)
+                except Exception: pass
+                subprocess.run([AREK, 'schrijf-jsonc'], timeout=30)
+                self._cors(200, 'lokaal model gezet: %s via %s (Gemini blijft terugval). Doe: Stop, dan Start.' % (model, base))
+            except Exception as e:
+                self._cors(500, 'fout: ' + str(e))
+            return
         cmd = (q.get('cmd', [''])[0]) if p.path == '/doe' else ''
         if cmd in TOEGESTAAN: self._schrijf(200, doe(cmd))
         else: self._schrijf(400, 'onbekende opdracht')
@@ -705,9 +749,25 @@ start_kern() {
   # 581: ARTEMIS HOUDT zijn eigen 8000 (onze console staat op 8765). UV_PYTHON=3.12: ook ARTEMIS' eigen start.sh pakt 3.12.
   # 583: ARTEMIS mag NOOIT zelf een browser openen (anders: tientallen tabs bij elke herstart). BROWSER=true, DISPLAY leeg,
   # en een map met nep-browsers (xdg-open en soortgenoten, elk een lege 'exit 0') vooraan in PATH -- alleen voor dit ARTEMIS-subproces.
-  # 585: ARTEMIS_ARTEMIS_JSONC wijst ARTEMIS naar onze gratis-laag-config ($REK_MAP/artemis.jsonc) -- NIET ARTEMIS_APP_DIR zetten
+  # 585: ARTEMIS_ARTEMIS_JSONC wijst ARTEMIS naar onze config ($REK_MAP/artemis.jsonc) -- NIET ARTEMIS_APP_DIR zetten
   # (dat verplaatst ook .env en breekt de sleutel). ARTEMIS_<FILE> is resolutievolgorde #1 in get_config_path.
-  ( cd "$ARTEMIS_MAP" && PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
+  # 592: staat er een LOKAAL model (lokaal-model.conf), geef ARTEMIS dan OPENAI_BASE_URL/OPENAI_API_KEY mee -- dan denkt hij
+  # lokaal (OpenAI-compatibel) en is Gemini alleen terugval. Bij een adb-doorgestuurde poort (127.0.0.1:...) wordt de doorsturing
+  # hier opnieuw gelegd, want die kan na een herstart/herverbinding wegvallen.
+  local lok_env=""
+  if [ -s "$REK_MAP/lokaal-model.conf" ]; then
+    local lm_base lm_token lm_serial lm_fport
+    lm_base="$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+    lm_token="$(sed -n 's/^TOKEN=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+    lm_serial="$(sed -n 's/^ADB_SERIAL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+    lm_fport="$(sed -n 's/^ADB_FORWARD=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+    # een adb-doorsturing opnieuw leggen (alleen naar een toegestane, niet-F8 telefoon)
+    if [ -n "$lm_serial" ] && [ -n "$lm_fport" ] && ! is_f8 "$lm_serial"; then
+      "$ADB" -s "$lm_serial" forward tcp:"${lm_fport%%:*}" tcp:"${lm_fport##*:}" >/dev/null 2>&1 || true
+    fi
+    [ -n "$lm_base" ] && lok_env="OPENAI_BASE_URL=$lm_base OPENAI_API_KEY=${lm_token:-local}"
+  fi
+  ( cd "$ARTEMIS_MAP" && PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 $lok_env PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
   ( setsid "$0" waakhond </dev/null >>"$LOG" 2>&1 & echo $! >"$PIDW" )
   zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://localhost:$ARTEMIS_POORT"
@@ -860,6 +920,135 @@ else:
     print('(geen duidelijke LLM-fout -- de taak lukte, was leeg, of is nog bezig)')
 PY
 }
+# 592 (#130/§585-3): ARTEMIS lokaal laten denken. Zoekt een OpenAI-compatibele server ZONDER sleutel op een rektelefoon
+# (OlliteRT/ollama op 8000/11434/8080 -- de eigen motor op 8081 vraagt de rij-code, die de console niet heeft en dus overslaat),
+# via een adb-doorsturing naar 127.0.0.1:$LOKAAL_POORT. Vindt hij een (liefst multimodaal/vision) Gemma-model, dan schrijft hij
+# lokaal-model.conf en herschrijft artemis.jsonc naar lokaal-primair; Gemini wordt de terugval. NOOIT de F8 via adb (die mag thuis
+# wel als gast-brein over het LAN dienen -- zet dan met de hand BASE_URL in lokaal-model.conf). Raakt geen enkele app aan.
+# 592: DE ENE plek die artemis.jsonc schrijft (runtime, in artemis-rek zelf -- aangeroepen door de installatie en door
+# lokaal/lokaal_uit/lokaal_auto). Lokaal-model.conf aanwezig = LOKAAL primair (openai) + Gemini als terugval; anders Gemini-primair.
+schrijf_artemis_jsonc() {
+  local lm_model
+  if [ -s "$REK_MAP/lokaal-model.conf" ]; then
+    lm_model="$(sed -n 's/^MODEL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+    [ -n "$lm_model" ] || lm_model="local-model"
+    cat >"$REK_MAP/artemis.jsonc" <<JSONC
+{
+  // 592: LOKAAL model als primair (OpenAI-compatibel; adres/sleutel staan in lokaal-model.conf en gaan via
+  // OPENAI_BASE_URL/OPENAI_API_KEY mee bij het starten). Gemini (gemini-3.8-flash) is ALLEEN de terugval.
+  "default": {
+    "provider": "openai",
+    "model": "$lm_model",
+    "fallback": { "provider": "google", "model": "gemini-3.8-flash", "thinking_level": "medium" }
+  }
+}
+JSONC
+  else
+    cat >"$REK_MAP/artemis.jsonc" <<'JSONC'
+{
+  // 589: een model dat op de gratis Gemini-laag werkt (gemini-3.8-flash sinds 27 okt; het vorige model werd ingetrokken
+  // voor nieuwe gebruikers). Gebruik een AIza-sleutel (een AQ-sleutel werkt niet).
+  "default": {
+    "provider": "google",
+    "model": "gemini-3.8-flash",
+    "thinking_level": "medium",
+    "fallback": { "provider": "google", "model": "gemini-3.6-flash", "thinking_level": "medium" }
+  },
+  "presets": {
+    "gemini-flash": { "provider": "google", "model": "gemini-3.8-flash", "fallback": { "provider": "google", "model": "gemini-3.6-flash" } },
+    "cost-saving": { "provider": "google", "model": "gemini-3.6-flash", "fallback": { "provider": "google", "model": "gemini-3.8-flash" } }
+  }
+}
+JSONC
+  fi
+  chmod 600 "$REK_MAP/artemis.jsonc" 2>/dev/null || true
+}
+lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokale server, of niets
+  local s id poort model lp="$LOKAAL_POORT"
+  for s in $(verbonden); do
+    id="$(toestel_id "$s")"; [ -n "$id" ] || continue
+    toegestaan "$id" || continue
+    is_f8 "$s" && continue
+    for poort in 8000 11434 8080; do
+      "$ADB" -s "$s" forward --remove tcp:"$lp" >/dev/null 2>&1 || true
+      "$ADB" -s "$s" forward tcp:"$lp" tcp:"$poort" >/dev/null 2>&1 || continue
+      model="$(curl -fsS -m 5 "http://127.0.0.1:$lp/v1/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | grep -iE 'e4b|e2b|gemma|3n|vision' | head -1)"
+      [ -n "$model" ] || model="$(curl -fsS -m 5 "http://127.0.0.1:$lp/v1/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
+      "$ADB" -s "$s" forward --remove tcp:"$lp" >/dev/null 2>&1 || true
+      if [ -n "$model" ]; then printf '%s|%s|%s' "$s" "$poort" "$model"; return 0; fi
+    done
+  done
+  return 1
+}
+lokaal() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
+  [ -s "$TOEG" ] || { zeg "Geen rektelefoon op de lijst."; return 1; }
+  local vondst serial poort model lp="$LOKAAL_POORT"
+  zeg "Zoek een lokaal model op de rektelefoons (OlliteRT/ollama, zonder sleutel)..."
+  vondst="$(lokaal_vind)"
+  if [ -z "$vondst" ]; then
+    zeg "Geen lokale OpenAI-server zonder sleutel gevonden (geprobeerd: 8000/11434/8080 op elke rektelefoon; de eigen motor op 8081 vraagt de rij-code)."
+    zeg "Twee wegen:"
+    zeg "  1) Start OlliteRT op een rektelefoon (Start Server + een multimodaal Gemma, bv. E4B) en druk opnieuw op 'Lokaal model'."
+    zeg "  2) Of de F8 thuis als gast-brein (OlliteRT, >30% accu, niet in gebruik): zet met de hand in $REK_MAP/lokaal-model.conf:"
+    zeg "       BASE_URL=http://<F8-ip>:8000/v1 | MODEL=<modelnaam> | TOKEN=local   (elk op een eigen regel, = i.p.v. |)"
+    zeg "ARTEMIS blijft zolang op Gemini (terugval)."
+    return 1
+  fi
+  serial="${vondst%%|*}"; model="${vondst##*|}"; poort="$(printf '%s' "$vondst" | cut -d'|' -f2)"
+  "$ADB" -s "$serial" forward tcp:"$lp" tcp:"$poort" >/dev/null 2>&1 || true
+  printf 'BASE_URL=http://127.0.0.1:%s/v1\nMODEL=%s\nTOKEN=local\nADB_SERIAL=%s\nADB_FORWARD=%s:%s\n' "$lp" "$model" "$serial" "$lp" "$poort" >"$REK_MAP/lokaal-model.conf"
+  chmod 600 "$REK_MAP/lokaal-model.conf"
+  zeg "Lokaal model AAN: '$model' op $(toestel_naam "$serial") (telefoonpoort $poort, via 127.0.0.1:$lp). Gemini is nu alleen terugval."
+  schrijf_artemis_jsonc   # artemis.jsonc -> lokaal-primair
+  lokaal_meet
+  zeg "Doe nu: Stop, dan Start, dan een taak. (ARTEMIS herstart met het lokale model.)"
+}
+lokaal_uit() {
+  if [ -s "$REK_MAP/lokaal-model.conf" ]; then
+    local serial fport; serial="$(sed -n 's/^ADB_SERIAL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+    fport="$(sed -n 's/^ADB_FORWARD=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+    [ -n "$serial" ] && [ -n "$fport" ] && "$ADB" -s "$serial" forward --remove tcp:"${fport%%:*}" >/dev/null 2>&1 || true
+    rm -f "$REK_MAP/lokaal-model.conf"
+    schrijf_artemis_jsonc   # terug naar Gemini-primair
+    zeg "Lokaal model UIT. ARTEMIS denkt weer met Gemini (gemini-3.8-flash). Doe: Stop, dan Start."
+  else
+    zeg "Er stond al geen lokaal model aan."
+  fi
+}
+lokaal_meet() {
+  [ -s "$REK_MAP/lokaal-model.conf" ] || { zeg "Lokaal model staat uit."; return 0; }
+  command -v curl >/dev/null 2>&1 || return 0
+  local base model t0 t1 ant
+  base="$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+  model="$(sed -n 's/^MODEL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+  zeg "Meet het lokale model ($model op $base)..."
+  t0="$(date +%s%3N 2>/dev/null)"; [ -n "$t0" ] || t0="$(( $(date +%s) * 1000 ))"
+  ant="$(curl -fsS -m 60 "$base/chat/completions" -H 'Content-Type: application/json' \
+    -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Antwoord met EEN woord: werkt dit?\"}],\"max_tokens\":16}" 2>/dev/null)"
+  t1="$(date +%s%3N 2>/dev/null)"; [ -n "$t1" ] || t1="$(( $(date +%s) * 1000 ))"
+  if [ -n "$ant" ]; then
+    zeg "Lokaal model antwoordde in ~$(( t1 - t0 )) ms. (De echte snelheid met een schermbeeld blijkt pas op een echte taak.)"
+  else
+    zeg "Lokaal model antwoordde NIET op een testvraag -- draait OlliteRT met een geladen model? ARTEMIS valt zolang terug op Gemini."
+  fi
+}
+lokaal_auto() {   # 592: de console-lus -- zet lokaal AAN zodra er een lokale server verschijnt (geen conf nodig), zonder de 60s-meting
+  [ -s "$REK_MAP/lokaal-model.conf" ] && return 0
+  command -v "$ADB" >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || return 0
+  [ -s "$TOEG" ] || return 0
+  local vondst serial poort model lp="$LOKAAL_POORT"
+  vondst="$(lokaal_vind)" || return 0
+  [ -n "$vondst" ] || return 0
+  serial="${vondst%%|*}"; model="${vondst##*|}"; poort="$(printf '%s' "$vondst" | cut -d'|' -f2)"
+  "$ADB" -s "$serial" forward tcp:"$lp" tcp:"$poort" >/dev/null 2>&1 || true
+  printf 'BASE_URL=http://127.0.0.1:%s/v1\nMODEL=%s\nTOKEN=local\nADB_SERIAL=%s\nADB_FORWARD=%s:%s\n' "$lp" "$model" "$serial" "$lp" "$poort" >"$REK_MAP/lokaal-model.conf"
+  chmod 600 "$REK_MAP/lokaal-model.conf"
+  schrijf_artemis_jsonc
+  logregel "Lokaal model gevonden en AANgezet: $model op $(toestel_naam "$serial"). Gemini is nu terugval. Herstart ARTEMIS (Stop, Start) om het te gebruiken."
+}
+
 # 591: WELK MODEL gebruikte de laatste taak ECHT? De modelnaam staat in de daemon-/trace-logs (de stappen-API draagt alleen de
 # provider). Zo zie je of ARTEMIS bij een 503/429 op gemini-3.8-flash is overgestapt op de reserve gemini-3.6-flash -- en of hij
 # daarna weer terugging. Puur lezen. ARTEMIS schakelt na 4 mislukte pogingen (provider_unavailable) over op de reserve, en begint
@@ -957,9 +1146,11 @@ status() {
   zeg "Console (knoppen): http://localhost:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
   sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
-  # 585/591: welk model gebruikt ARTEMIS? Primair + reserve uit onze config; Log toont bovendien welk model ECHT werd aangeroepen.
-  if [ -s "$REK_MAP/artemis.jsonc" ]; then
-    zeg "ARTEMIS-model (onze config): primair $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | head -1), reserve $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | sed -n 2p) (gratis Gemini-laag; Log toont welk model echt werd gebruikt)."
+  # 585/591/592: welk model gebruikt ARTEMIS? Primair + reserve uit onze config; Log toont welk model ECHT werd aangeroepen.
+  if [ -s "$REK_MAP/lokaal-model.conf" ]; then
+    zeg "ARTEMIS denkt LOKAAL (592): $(sed -n 's/^MODEL=//p' "$REK_MAP/lokaal-model.conf" | head -1) via $(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" | head -1); Gemini (gemini-3.8-flash) is alleen terugval. 'Lokaal uit' zet hem terug."
+  elif [ -s "$REK_MAP/artemis.jsonc" ]; then
+    zeg "ARTEMIS-model (onze config): primair $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | head -1), reserve $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | sed -n 2p) (gratis Gemini-laag; 'Lokaal model' laat ARTEMIS lokaal denken; Log toont welk model echt werd gebruikt)."
   fi
   schijf      # 580: altijd de vrije schijfruimte erbij -- een volle schijf is de reden dat ARTEMIS niet start
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
@@ -1099,6 +1290,11 @@ case "${1:-status}" in
   autostart) autostart_installeren ;;
   scan) scan ;;
   jarvis-waak) jarvis_waak ;;   # 590: adb-waakhond -- JARVIS draaiend houden, batterij Onbeperkt, nieuwe versie installeren
+  lokaal) lokaal ;;             # 592: ARTEMIS op een lokaal model zetten (OpenAI-compatibel op een rektelefoon), Gemini als terugval
+  lokaal-uit) lokaal_uit ;;     # 592: terug naar Gemini-primair
+  lokaal-meet) lokaal_meet ;;   # 592: meet of het lokale model antwoordt en hoe snel
+  lokaal-auto) lokaal_auto ;;   # 592: de lus -- lokaal AANzetten zodra er een lokale server verschijnt (geen knop)
+  schrijf-jsonc) schrijf_artemis_jsonc ;;   # 592: artemis.jsonc (her)schrijven -- door de installatie en lokaal/lokaal_uit
   overzicht) overzicht ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
@@ -1122,6 +1318,8 @@ REK
   chmod 755 "$bin/artemis-rek.nieuw"
   # Atomisch vervangen: een lopende artemis-rek (de console) houdt zijn oude inode en blijft heel; de VOLGENDE aanroep is nieuw.
   mv "$bin/artemis-rek.nieuw" "$bin/artemis-rek"
+  # 592: artemis.jsonc via de ENE runtime-functie schrijven (lokaal-primair als lokaal-model.conf er is, anders Gemini-primair).
+  REK_MAP="$rek" BIN_SELF="$bin" bash "$bin/artemis-rek" schrijf-jsonc >/dev/null 2>&1 || true
 }
 
 if [ "${1:-}" = "--alleen-bestanden" ]; then
