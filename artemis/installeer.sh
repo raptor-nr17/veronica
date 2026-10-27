@@ -56,24 +56,27 @@ schrijf_bestanden() {
   for gb in xdg-open x-www-browser www-browser sensible-browser gnome-open kde-open google-chrome google-chrome-stable chromium chromium-browser chrome firefox open; do
     printf '#!/bin/sh\nexit 0\n' >"$rek/geen-browser/$gb"; chmod 755 "$rek/geen-browser/$gb"
   done
-  # 585: een EIGEN artemis.jsonc met modellen die op de GRATIS laag van Gemini bestaan. ARTEMIS' eigen config wijst naar
-  # gemini-3.8-flash / gemini-robotics-er-2-preview en zo -- die bestaan niet op een gewone/gratis sleutel en geven een stille
-  # 'Retrying LLM request' + falen. We zetten alleen 'default' (gemini-2.5-flash, fallback gemini-2.0-flash); ARTEMIS breidt dat
-  # uit naar alle sub-agents (_expand_default_into_nodes), dus ook de object-detector gebruikt dan 2.5-flash i.p.v. de ER-preview.
-  # ARTEMIS leest dit bestand via de env ARTEMIS_ARTEMIS_JSONC (resolutievolgorde #1); de eigen config in de repo blijft met rust.
+  # 585/589: een EIGEN artemis.jsonc met een model dat op de GRATIS laag van Gemini werkt. 589 (27 okt): Gemini gaf
+  # 404 "models/gemini-2.5-flash is no longer available to new users. Please update your code to use
+  # models/gemini-3.8-flash." Dus: default = gemini-3.8-flash (gratis sinds de GA van 2 sep 2026, Googles eigen
+  # advies in de 404), fallback = gemini-3.6-flash (ook gratis). Beide op de gratis AIza-sleutel; een AQ-sleutel
+  # werkt NIET (401). ARTEMIS breidt 'default' uit naar alle sub-agents (_expand_default_into_nodes), dus ook de
+  # object-detector gebruikt 3.8-flash. ARTEMIS leest dit via de env ARTEMIS_ARTEMIS_JSONC (resolutievolgorde #1);
+  # de config in de ARTEMIS-repo blijft met rust. Faalt 3.8-flash ooit toch, dan toont Log de ECHTE llm-fout uit de
+  # laatste sessie (met het model dat Gemini dán aanraadt), zodat de keuze zich zelf laat bijsturen.
   cat >"$rek/artemis.jsonc" <<'JSONC'
 {
-  // 585: gezet door installeer.sh -- modellen die op de gratis Gemini-laag werken. Pas gerust aan (bv. gemini-2.5-flash-lite
-  // voor sneller/goedkoper). Een AQ-sleutel werkt niet; gebruik een AIza-sleutel (zie de installatie).
+  // 589: gezet door installeer.sh -- een model dat op de gratis Gemini-laag werkt (gemini-3.8-flash sinds 27 okt;
+  // het vorige model werd ingetrokken voor nieuwe gebruikers). Gebruik een AIza-sleutel (een AQ-sleutel werkt niet).
   "default": {
     "provider": "google",
-    "model": "gemini-2.5-flash",
+    "model": "gemini-3.8-flash",
     "thinking_level": "medium",
-    "fallback": { "provider": "google", "model": "gemini-2.0-flash", "thinking_level": "medium" }
+    "fallback": { "provider": "google", "model": "gemini-3.6-flash", "thinking_level": "medium" }
   },
   "presets": {
-    "gemini-flash": { "provider": "google", "model": "gemini-2.5-flash", "fallback": { "provider": "google", "model": "gemini-2.0-flash" } },
-    "cost-saving": { "provider": "google", "model": "gemini-2.5-flash-lite", "fallback": { "provider": "google", "model": "gemini-2.0-flash" } }
+    "gemini-flash": { "provider": "google", "model": "gemini-3.8-flash", "fallback": { "provider": "google", "model": "gemini-3.6-flash" } },
+    "cost-saving": { "provider": "google", "model": "gemini-3.6-flash", "fallback": { "provider": "google", "model": "gemini-3.8-flash" } }
   }
 }
 JSONC
@@ -134,6 +137,7 @@ ADB="${ADB:-adb}"
 TOEG="$REK_MAP/toegestaan"
 VERB="$REK_MAP/verboden-apps.txt"
 LOG="$REK_MAP/waakhond.log"
+JARVIS_PKG="nl.eigen.jarvis"   # 590: het ENIGE pakket dat de JARVIS-waakhond ooit aanraakt (nooit bank/betaal/wachtwoord/authenticator)
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
@@ -403,11 +407,12 @@ console() {
   if declare -f artemis_draait >/dev/null 2>&1 && ! artemis_draait; then
     local q; for q in $(pids_op_poort "$ARTEMIS_POORT" 2>/dev/null); do kill "$q" 2>/dev/null || true; done
   fi
-  AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" ARTEMIS_POORT="$ARTEMIS_POORT" REK_MAP="$REK_MAP" python3 - <<'PY'
+  AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" ARTEMIS_POORT="$ARTEMIS_POORT" REK_MAP="$REK_MAP" MIN_MB="$ARTEMIS_MIN_MB" python3 - <<'PY'
 import os, subprocess, threading, time, html, urllib.parse, hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen'}
+MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -446,6 +451,23 @@ def herstart_als_nieuwer():
     except Exception: pass
     os._exit(0)
 RONDE = 0
+LAATST_OPRUIM = -999
+def vrij_mb():
+    try:
+        st = os.statvfs(REK or os.path.expanduser('~'))
+        return st.f_bavail * st.f_frsize // (1024 * 1024)
+    except Exception:
+        return None
+def schijfwacht():
+    # 588: zelfherstel -- is de schijf te krap voor ARTEMIS (Node/venv/werkruimte), ruim dan zelf de caches op. opruimen raakt
+    # ALLEEN caches en mislukte downloads (bewezen in de 585-check: nooit de venv, de code of bestanden van de gebruiker).
+    # Hoogstens eens per ~30 min, zodat het nooit in een lus gaat malen als de schijf krap blijft.
+    global LAATST_OPRUIM
+    v = vrij_mb()
+    if v is None or v >= MIN_MB: return
+    if (RONDE - LAATST_OPRUIM) < 30: return
+    LAATST_OPRUIM = RONDE
+    doe('opruimen')
 def lus():
     # elke minuut: nieuwe telefoons zoeken; en ARTEMIS aanhouden als de gewenste stand "aan" is.
     # 583: NIET meer blind 'start' aanroepen (dat startte ARTEMIS elke minuut opnieuw, en ARTEMIS opende elke keer een
@@ -460,8 +482,11 @@ def lus():
                 doe('zelf-bijwerken-stil')
             RONDE += 1
             herstart_als_nieuwer()
+            schijfwacht()
             doe('scan')
             doe('start-stil')
+            if RONDE % 3 == 0:
+                doe('jarvis-waak')   # 590: elke ~3 min JARVIS nakijken op de rektelefoons (nooit de F8)
         except Exception: pass
         time.sleep(60)
 PAGINA = """<!doctype html><html lang=nl><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -473,7 +498,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -675,6 +700,7 @@ start_kern() {
   [ -s "$TOEG" ] || { zeg "Er staat nog geen rektelefoon op de lijst. Sluit er een aan (kabel + USB-foutopsporing); de console vindt hem vanzelf."; return 1; }
   if artemis_draait; then zeg "ARTEMIS draait al: http://localhost:$ARTEMIS_POORT"; return 0; fi
   waak_ronde || return 1
+  ruim_als_krap   # 588: zelfherstel -- eerst opruimen als de schijf te krap is voor Node/venv (de blokkade van 580)
   zorg_venv   # 576: zorg dat de venv op Python 3.12 staat (anders faalt grpcio en start ARTEMIS nooit)
   # 581: ARTEMIS HOUDT zijn eigen 8000 (onze console staat op 8765). UV_PYTHON=3.12: ook ARTEMIS' eigen start.sh pakt 3.12.
   # 583: ARTEMIS mag NOOIT zelf een browser openen (anders: tientallen tabs bij elke herstart). BROWSER=true, DISPLAY leeg,
@@ -750,7 +776,94 @@ artemis_app_dir() {
 # 575/585: de laatste logregels, zodat Cowork in Chrome ziet waarom ARTEMIS wel/niet luistert. 585: ARTEMIS' LLM-fouten
 # (401/429/404, modelnaam, quota) staan NIET in onze artemis.log (dat is de launcher/uvicorn) maar in de DAEMON-log en de
 # per-taak trace-logs onder de app-map. Die tonen we er nu bij.
+# 590 (stap 78 van de lijst): WAAKHOND ZONDER AI -- gewoon adb. Per rektelefoon (NOOIT de F8, NOOIT een niet-toegestane):
+# (1) kijkt of JARVIS draait en start hem anders; (2) houdt de batterij op Onbeperkt (geen doze/standby); (3) installeert een
+# nieuwere JARVIS als er een klaarligt. Raakt UITSLUITEND het JARVIS-pakket ($JARVIS_PKG) aan -- nooit een bank-, betaal-,
+# wachtwoord- of authenticator-app, nooit een force-stop van iets anders. Dat is de veiligheidskern en er staat een test op.
+jarvis_waak() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  [ -s "$TOEG" ] || { zeg "Geen rektelefoon op de lijst (sluit er een aan + USB-foutopsporing)."; return 0; }
+  local s id naam draait apkcode opcode any=0
+  for s in $(verbonden); do
+    id="$(toestel_id "$s")"; [ -n "$id" ] || continue
+    toegestaan "$id" || continue
+    if is_f8 "$s"; then zeg "JARVIS-waakhond slaat de F8 over (de dagelijkse telefoon)."; continue; fi
+    any=1; naam="$(toestel_naam "$s")"
+    # (1) draait JARVIS? pidof is het betrouwbaarst; leeg = gestart via de LAUNCHER-intent (nooit een ander pakket aanraken).
+    draait="$("$ADB" -s "$s" shell pidof "$JARVIS_PKG" 2>/dev/null | tr -d '\r\n ')"
+    if [ -z "$draait" ]; then
+      if "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; then
+        zeg "$naam: JARVIS lag stil -> opnieuw gestart."
+      else
+        zeg "$naam: JARVIS starten lukte niet (staat de app er al op?)."
+      fi
+    else
+      zeg "$naam: JARVIS draait (pid $draait)."
+    fi
+    # (2) batterij op Onbeperkt / vrijstellen van doze -- best-effort, meerdere wegen (per Android-versie verschillend).
+    "$ADB" -s "$s" shell dumpsys deviceidle whitelist +"$JARVIS_PKG" >/dev/null 2>&1 || true
+    "$ADB" -s "$s" shell cmd deviceidle whitelist +"$JARVIS_PKG" >/dev/null 2>&1 || true
+    "$ADB" -s "$s" shell cmd appops set "$JARVIS_PKG" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || true
+    # (3) een nieuwere JARVIS installeren ALS er een klaarligt: $REK_MAP/jarvis.apk + $REK_MAP/jarvis.apk.code (de versionCode).
+    # Zonder die twee bestanden: niets installeren (we raden nooit). Alleen -r (behoudt gegevens); alleen het JARVIS-pakket.
+    if [ -s "$REK_MAP/jarvis.apk" ] && [ -s "$REK_MAP/jarvis.apk.code" ]; then
+      apkcode="$(tr -dc 0-9 < "$REK_MAP/jarvis.apk.code")"
+      opcode="$("$ADB" -s "$s" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | sed -n 's/.*versionCode=\([0-9]\{1,\}\).*/\1/p' | head -1)"
+      if [ -n "$apkcode" ] && { [ -z "$opcode" ] || [ "$apkcode" -gt "$opcode" ]; }; then
+        if "$ADB" -s "$s" install -r "$REK_MAP/jarvis.apk" >/dev/null 2>&1; then
+          zeg "$naam: JARVIS bijgewerkt naar versionCode $apkcode."
+        else
+          zeg "$naam: JARVIS bijwerken lukte niet (kijk bij de telefoon)."
+        fi
+      fi
+    fi
+  done
+  [ "$any" = 1 ] || zeg "Geen bereikbare rektelefoon om JARVIS op na te kijken."
+}
+
+# 589: haal de LLM-fout uit de LAATSTE ARTEMIS-sessie (localhost, puur lezen, geen sleutel). Hier staat WAAROM een taak faalde,
+# bv. een Gemini-404 met het model dat je dan moet gebruiken ("update your code to use models/gemini-..."). Valt stil als de
+# API anders is. Zo laat de modelkeuze zich zelf bijsturen zonder dat je in ARTEMIS' eigen console hoeft te graven.
+llm_laatste_fout() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  ARTEMIS_BASIS="http://127.0.0.1:$ARTEMIS_POORT" python3 - <<'PY' 2>/dev/null || true
+import json, os, sys, re, urllib.request
+b = os.environ['ARTEMIS_BASIS']
+def haal(u):
+    with urllib.request.urlopen(u, timeout=5) as r: return json.load(r)
+try: sess = haal(b + '/api/sessions')
+except Exception: sys.exit(0)
+rows = [r for r in (sess if isinstance(sess, list) else sess.get('sessions') or sess.get('data') or []) if isinstance(r, dict)]
+if not rows:
+    print('(geen ARTEMIS-sessies gevonden)'); sys.exit(0)
+rows.sort(key=lambda r: str(r.get('created_at') or r.get('updated_at') or r.get('start_time') or r.get('started_at') or ''))
+last = rows[-1]
+sid = str(last.get('session_id') or last.get('id') or '')
+if not sid: sys.exit(0)
+print('Laatste ARTEMIS-sessie:', sid)
+try: steps = haal(b + '/api/sessions/' + sid + '/steps')
+except Exception:
+    print('(kon de stappen niet lezen)'); sys.exit(0)
+items = steps if isinstance(steps, list) else steps.get('steps') or steps.get('data') or []
+blob = json.dumps(items, ensure_ascii=False)
+sleutels = ['llm_gave_up', 'gave_up', 'no longer available', 'not available', 'NOT_FOUND', 'PERMISSION_DENIED',
+            'RESOURCE_EXHAUSTED', 'quota', 'API key not valid', 'update your code', 'models/gemini', 'error']
+pat = '|'.join(re.escape(s) for s in sleutels)
+gezien = []
+for m in re.finditer(r'"([^"]{0,300}?(?:%s)[^"]{0,300}?)"' % pat, blob, re.I):
+    t = m.group(1).strip()
+    if t and t not in gezien: gezien.append(t)
+if gezien:
+    print('LLM-fout in de laatste sessie:')
+    for t in gezien[:8]: print('  -', t)
+else:
+    print('(geen duidelijke LLM-fout -- de taak lukte, was leeg, of is nog bezig)')
+PY
+}
 log() {
+  zeg "== LLM-fout uit de laatste ARTEMIS-sessie (589) =="
+  llm_laatste_fout
+  zeg ""
   zeg "== Laatste logregels (ARTEMIS launcher) =="
   if [ -s "$REK_MAP/artemis.log" ]; then tail -n 20 "$REK_MAP/artemis.log"; else zeg "(nog geen artemis.log -- ARTEMIS is nog niet gestart)"; fi
   local f dl tr tl ad; ad="$(artemis_app_dir)"
@@ -899,6 +1012,18 @@ schijf() {
 
 # 580: veilig opruimen bij een volle schijf. ALLEEN caches en mislukte downloads -- nooit de actieve venv, de ARTEMIS-code
 # of iets van de gebruiker. Meet de vrije ruimte voor en na, en meldt hoeveel het scheelde.
+# 588: zelfherstel -- vóór een (her)start eerst opruimen als de schijf te krap is voor Node/venv (de blokkade van 580). opruimen
+# raakt ALLEEN caches en mislukte downloads (bewezen in de 585-check: nooit de venv, de code of bestanden van de gebruiker).
+ruim_als_krap() {
+  local vrij_kb vrij_mb
+  vrij_kb="$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
+  [ -n "$vrij_kb" ] && [ "$vrij_kb" -eq "$vrij_kb" ] 2>/dev/null || return 0
+  vrij_mb=$(( vrij_kb / 1024 ))
+  if [ "$vrij_mb" -lt "$ARTEMIS_MIN_MB" ]; then
+    zeg "Schijf krap (${vrij_mb} MB < ${ARTEMIS_MIN_MB} MB) -- eerst opruimen voor de (her)start."
+    opruimen >/dev/null 2>&1 || true
+  fi
+}
 opruimen() {
   local voor na
   voor="$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
@@ -946,6 +1071,7 @@ case "${1:-status}" in
   console) console ;;
   autostart) autostart_installeren ;;
   scan) scan ;;
+  jarvis-waak) jarvis_waak ;;   # 590: adb-waakhond -- JARVIS draaiend houden, batterij Onbeperkt, nieuwe versie installeren
   overzicht) overzicht ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
