@@ -249,6 +249,10 @@ zelf_bijwerken() {
   if ! grep -q 'artemis-rek' "$tmp" || ! grep -q 'ARTEMIS_REPO=' "$tmp"; then zeg "Bijwerken: het opgehaalde script lijkt niet op ARTEMIS; niets veranderd."; rm -f "$tmp"; return 1; fi
   if ARTEMIS_BRON="$base" bash "$tmp" --alleen-bestanden "$REK_MAP" "$BIN_SELF" >/dev/null 2>&1; then
     logregel "Bijgewerkt vanaf de site (http $code)."
+    # 592g: herschrijf artemis.jsonc met de ZOJUIST opgehaalde generator (zelfherstel is de standaard). Zo landt een nieuw
+    # config-formaat -- bv. elke rol lokaal i.p.v. alleen de default -- VANZELF op een al draaiende Chromebook, zonder dat
+    # iemand opnieuw 'Lokaal model' hoeft te tikken. schrijf-jsonc is puur een bestand schrijven (geen start/venv/herstart).
+    REK_MAP="$REK_MAP" BIN_SELF="$BIN_SELF" bash "$BIN_SELF" schrijf-jsonc >/dev/null 2>&1 || true
     [ -s "$REK_MAP/artemis.jsonc" ] && zeg "Bijwerken 2/4: nieuwe instellingen binnen (ARTEMIS-model: $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | head -1))."
     rm -f "$tmp"; return 0
   fi
