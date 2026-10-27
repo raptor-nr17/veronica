@@ -565,8 +565,21 @@ class H(BaseHTTPRequestHandler):
             # op deze Chromebook (1,6 GB vrij; en het maakt hem traag). Alleen een LOKAAL/LAN-adres wordt aangenomen; geen
             # publiek internet-adres (anders zou een willekeurige website ARTEMIS naar zijn eigen model kunnen sturen).
             ln = int(self.headers.get('Content-Length', 0) or 0)
-            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace')) if ln else {}
-            base = (f.get('base', [''])[0]).strip(); model = (f.get('model', [''])[0]).strip(); token = ((f.get('token', ['local'])[0]).strip() or 'local')
+            ruw = self.rfile.read(ln).decode('utf-8', 'replace') if ln else ''
+            # 592g: accepteer ZOWEL form-encoded (base=...) ALS JSON ({"base":...} of base_url/url). Veronica stuurt form-encoded,
+            # maar een JSON-POST met de hand (of een andere client) mag ook -- anders gaf een geldig LAN-adres per ongeluk 400.
+            ct = (self.headers.get('Content-Type') or '').lower()
+            base = model = ''; token = 'local'
+            if 'application/json' in ct or ruw.lstrip().startswith('{'):
+                try:
+                    j = json.loads(ruw) if ruw.strip() else {}
+                    base = str(j.get('base') or j.get('base_url') or j.get('url') or '').strip()
+                    model = str(j.get('model') or '').strip(); token = (str(j.get('token') or 'local').strip() or 'local')
+                except Exception:
+                    base = ''
+            else:
+                f = urllib.parse.parse_qs(ruw)
+                base = (f.get('base', [''])[0]).strip(); model = (f.get('model', [''])[0]).strip(); token = ((f.get('token', ['local'])[0]).strip() or 'local')
             if not _lan_adres_ok(base):
                 self._cors(400, 'alleen een lokaal/LAN-modeladres wordt aangenomen (de telefoon, niet het internet)'); return
             if not model:
@@ -935,17 +948,30 @@ schrijf_artemis_jsonc() {
   if [ -s "$REK_MAP/lokaal-model.conf" ]; then
     lm_model="$(sed -n 's/^MODEL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
     [ -n "$lm_model" ] || lm_model="local-model"
-    cat >"$REK_MAP/artemis.jsonc" <<JSONC
-{
-  // 592: LOKAAL model als primair (OpenAI-compatibel; adres/sleutel staan in lokaal-model.conf en gaan via
-  // OPENAI_BASE_URL/OPENAI_API_KEY mee bij het starten). Gemini (gemini-3.8-flash) is ALLEEN de terugval.
-  "default": {
-    "provider": "openai",
-    "model": "$lm_model",
-    "fallback": { "provider": "google", "model": "gemini-3.8-flash", "thinking_level": "medium" }
-  }
+    # 592g (27 okt, 20:30): ELKE LLM-rol lokaal. ARTEMIS' default/nodes-formaat dekt NIET de optionele keurmeester-nodes
+    # (planner_validation, validator_pixel_safety_net, history_analyzer, output_analyzer): die blijven leeg en vallen in
+    # get_agent() terug op een HARDGECODEERDE lightweight_judge_default() = gemini-3.5-flash-lite. planner_validation draait
+    # na elke milestone-edit (dus TIJDENS het plannen) -> dat was de Gemini-429 bij de proef. We schrijven daarom het VOLLEDIGE
+    # formaat (top-level planner + utils, dan geeft _expand_default_into_nodes het ongewijzigd door) met ELKE node op het
+    # lokale model en Gemini (gemini-3.8-flash) alleen als terugval. Python bouwt de JSON (robuust bij modelnamen).
+    python3 - "$lm_model" >"$REK_MAP/artemis.jsonc" <<'PY'
+import json, sys
+m = sys.argv[1]
+def lok(temp=None):
+    d = {"provider": "openai", "model": m, "fallback": {"provider": "google", "model": "gemini-3.8-flash", "thinking_level": "medium"}}
+    if temp is not None: d["temperature"] = temp
+    return d
+cfg = {
+    "planner": lok(),
+    "utils": {"outputter": lok(), "hopper": lok(), "video_analyzer": lok(), "object_detector": lok()},
+    "summarizer": lok(), "operator": lok(), "operator_summarizer": lok(),
+    "log_reader_sub_agent": lok(), "log_analyzer": lok(), "diagnoser": lok(),
+    "checker": lok(), "planner_avatar": lok(), "history_analyzer_expert": lok(),
+    "diagnoser_expert": lok(), "explorer": lok(), "history_analyzer": lok(),
+    "validator_pixel_safety_net": lok(0.0), "planner_validation": lok(0.0), "output_analyzer": lok(),
 }
-JSONC
+print(json.dumps(cfg, indent=2))
+PY
   else
     cat >"$REK_MAP/artemis.jsonc" <<'JSONC'
 {
@@ -1057,20 +1083,34 @@ lokaal_auto() {   # 592: de console-lus -- zet lokaal AAN zodra er een lokale se
 # daarna weer terugging. Puur lezen. ARTEMIS schakelt na 4 mislukte pogingen (provider_unavailable) over op de reserve, en begint
 # de volgende taak weer bij het primaire model (dat is "overstappen en terug" -- deze regel maakt het alleen zichtbaar).
 model_gebruikt() {
-  local ad tr bestanden modellen prim res
+  local ad tr bestanden modellen prim res lokaal rollen
   ad="$(artemis_app_dir)"
   bestanden="$(ls -1t "$ad"/logs/daemon-*.log 2>/dev/null | head -2)"
   tr="$(ls -1dt "$ad"/traces/*/ 2>/dev/null | head -1)"
   [ -n "$tr" ] && bestanden="$bestanden ${tr}stderr.log ${tr}stdout.log"
   prim="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" 2>/dev/null | head -1)"
   res="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" 2>/dev/null | sed -n 2p)"
-  zeg "Ingesteld: primair ${prim:-?}, reserve ${res:-?} (ARTEMIS stapt na een paar 503/429-pogingen over op de reserve, en terug op de volgende taak)."
+  if [ -s "$REK_MAP/lokaal-model.conf" ]; then
+    lokaal="$(sed -n 's/^MODEL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+    zeg "Ingesteld: LOKAAL ${lokaal:-?} voor ELKE rol (planner, operator, checker, keurmeester...), Gemini (${res:-gemini-3.8-flash}) alleen als terugval."
+  else
+    zeg "Ingesteld: primair ${prim:-?}, reserve ${res:-?} (ARTEMIS stapt na een paar 503/429-pogingen over op de reserve, en terug op de volgende taak)."
+  fi
   if [ -n "$bestanden" ]; then
-    modellen="$(grep -hoE 'gemini-[0-9]+\.[0-9]+-flash(-lite)?' $bestanden 2>/dev/null | sort | uniq -c | sort -rn)"
+    # 592g: tel ZOWEL de Gemini-modellen ALS de lokale modelnaam (openai). Zo zie je of het lokale model echt gebeld wordt.
+    modellen="$(grep -hoE "gemini-[0-9]+\.[0-9]+-flash(-lite)?|$(printf '%s' "${lokaal:-__geen__}" | sed 's/[.[\*^$()+?{|]/\\&/g')" $bestanden 2>/dev/null | sort | uniq -c | sort -rn)"
     if [ -n "$modellen" ]; then
       zeg "Modellen die ARTEMIS echt aanriep (recente logs, met aantal):"; printf '%s\n' "$modellen" | sed 's/^/  /'
     else
       zeg "(nog geen modelnaam in de logs gezien -- draait er al een taak?)"
+    fi
+    # 592g: WELK MODEL PER ROL? De logregels noemen de node-naam vaak samen met de provider/het model; toon die regels (ontdubbeld,
+    # de laatste per rol). Format-ongevoelig: we zoeken regels die een rolnaam EN een provider/modelnaam bevatten.
+    rollen="planner|planner_validation|validator_pixel_safety_net|operator|operator_summarizer|summarizer|checker|diagnoser|diagnoser_expert|explorer|log_analyzer|log_reader_sub_agent|history_analyzer|history_analyzer_expert|planner_avatar|output_analyzer|outputter|hopper|object_detector|video_analyzer"
+    local perrol
+    perrol="$(grep -hiE "($rollen)" $bestanden 2>/dev/null | grep -iE 'openai|google|gemini|provider|model' | grep -oiE "($rollen)[^A-Za-z0-9]{1,40}(openai|google|gemini-[0-9.]+-flash(-lite)?|$(printf '%s' "${lokaal:-__geen__}" | sed 's/[.[\*^$()+?{|]/\\&/g'))" | awk '!z[$0]++' | tail -n 20)"
+    if [ -n "$perrol" ]; then
+      zeg "Per rol gezien in de logs (rol -> provider/model):"; printf '%s\n' "$perrol" | sed 's/^/  /'
     fi
     grep -qiE 'fallback|on_fallback|switching to fallback|overstap' $bestanden 2>/dev/null \
       && zeg "-> ARTEMIS is minstens een keer op de RESERVE overgestapt (fallback gezien in de logs)."
@@ -1151,7 +1191,7 @@ status() {
   sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
   # 585/591/592: welk model gebruikt ARTEMIS? Primair + reserve uit onze config; Log toont welk model ECHT werd aangeroepen.
   if [ -s "$REK_MAP/lokaal-model.conf" ]; then
-    zeg "ARTEMIS denkt LOKAAL (592): $(sed -n 's/^MODEL=//p' "$REK_MAP/lokaal-model.conf" | head -1) via $(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" | head -1); Gemini (gemini-3.8-flash) is alleen terugval. 'Lokaal uit' zet hem terug."
+    zeg "ARTEMIS denkt LOKAAL (592g): $(sed -n 's/^MODEL=//p' "$REK_MAP/lokaal-model.conf" | head -1) via $(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" | head -1) voor ELKE rol (planner, operator, checker, keurmeester); Gemini (gemini-3.8-flash) is alleen terugval. 'Lokaal uit' zet hem terug."
   elif [ -s "$REK_MAP/artemis.jsonc" ]; then
     zeg "ARTEMIS-model (onze config): primair $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | head -1), reserve $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | sed -n 2p) (gratis Gemini-laag; 'Lokaal model' laat ARTEMIS lokaal denken; Log toont welk model echt werd gebruikt)."
   fi
