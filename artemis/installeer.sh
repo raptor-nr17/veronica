@@ -417,7 +417,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -505,7 +505,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -1033,7 +1033,7 @@ schrijf_artemis_proxy() {
 # - VANGNET (altijd): nooit een tik op een knop met NOODSTOP/Stop/Verwijder/Delete/Uninstall, en nooit openen/tikken in
 #   bank-/kluis-/authenticator-/betaal-/crypto-apps -- wat het model ook kiest. Geblokkeerde acties worden NIET doorgegeven.
 # - ALLEEN-KIJKEN (vlag): dan mag ALLEEN Home ingedrukt worden; elke andere apparaat-actie wordt geblokkeerd.
-import os, re, json, sys, urllib.request
+import os, re, json, sys, urllib.request, urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 POORT = int(os.environ.get('PROXY_POORT', '8792'))
@@ -1044,6 +1044,10 @@ ALLEEN_KIJKEN_FILE = os.environ.get('ALLEEN_KIJKEN_FILE', '')
 def alleen_kijken():
     return bool(ALLEEN_KIJKEN_FILE and os.path.exists(ALLEEN_KIJKEN_FILE))
 BLOKLOG = os.environ.get('PROXY_LOG', '')
+# 592i: het kleine model (OlliteRT/Gemma op de F8) sluit de verbinding als de vraag te groot is (lange systeemprompt + veel
+# geschiedenis + een schermbeeld). We cappen de GEVRAAGDE uitvoer-tokens en krimpen de vraag; bij een afgesloten verbinding
+# proberen we het n keer kleiner. OUT_CAP = hoeveel tokens het model hoogstens mag teruggeven (een actie is kort).
+OUT_CAP = int(os.environ.get('PROXY_OUT_CAP', '2048'))
 
 # apparaat-acties van ARTEMIS (action_manifest): die kunnen het toestel VERANDEREN.
 DEVICE_ACTIES = {'click', 'click_sequence', 'long_press', 'input_text', 'swipe', 'press_key', 'manage_app',
@@ -1221,6 +1225,77 @@ def _naar_model(pad, body, is_post):
     with urllib.request.urlopen(req, timeout=600) as r:
         return r.read()
 
+# 592i: de vraag kleiner maken. niveau 0 = alleen de uitvoer-tokens cappen (veilig, altijd); hoger = minder geschiedenis en
+# kortere teksten. Een schermbeeld (image_url) blijft ALTIJD staan -- dat is juist wat het model moet zien. In de alleen-kijken-
+# stand mag het harder, want dan is er geen geschiedenis nodig (alleen kijken en Home).
+def _kort_inhoud(inhoud, maxchars):
+    if isinstance(inhoud, str):
+        return inhoud if len(inhoud) <= maxchars else inhoud[: maxchars // 2] + ' …(ingekort)… ' + inhoud[-maxchars // 2:]
+    if isinstance(inhoud, list):
+        uit = []
+        for deel in inhoud:
+            if isinstance(deel, dict) and deel.get('type') == 'text' and isinstance(deel.get('text'), str) and len(deel['text']) > maxchars:
+                d = dict(deel); d['text'] = deel['text'][: maxchars // 2] + ' …(ingekort)… ' + deel['text'][-maxchars // 2:]
+                uit.append(d)
+            else:
+                uit.append(deel)   # een image_url of ander niet-tekstdeel blijft heel
+        return uit
+    return inhoud
+
+def _krimp(body, niveau):
+    b = dict(body)
+    msgs = list(b.get('messages') or [])
+    cap = [OUT_CAP, 1024, 512][min(niveau, 2)]
+    if not isinstance(b.get('max_tokens'), int) or b['max_tokens'] > cap:
+        b['max_tokens'] = cap
+    if niveau >= 1 and len(msgs) > 2:
+        # houd de systeemprompt (als eerste) en de LAATSTE boodschap (met het schermbeeld); gooi de geschiedenis ertussenuit.
+        kop = msgs[:1] if msgs and msgs[0].get('role') == 'system' else []
+        msgs = kop + msgs[-1:]
+    if niveau >= 1:
+        maxchars = [0, 16000, 8000][min(niveau, 2)]
+        msgs = [dict(m, content=_kort_inhoud(m.get('content'), maxchars)) for m in msgs]
+    b['messages'] = msgs
+    return b
+
+# 592i: stuur de chat naar het model, met logging van de ECHTE fout (code, bytes, duur) en kleiner-opnieuw bij een afgesloten
+# verbinding. Geeft (resp_json | None, info). info.limiet = True als het model de verbinding sloot (vraag te groot).
+def _chat_naar_model(pad, body):
+    import time as _t
+    start_niveau = 1 if alleen_kijken() else 0
+    laatste = {}
+    for niveau in range(start_niveau, 3):
+        b = _krimp(body, niveau)
+        t0 = _t.time()
+        try:
+            raw = _naar_model(pad, b, True)
+            ms = int((_t.time() - t0) * 1000)
+            _notuleer(f'[model] ok niveau {niveau}: {len(raw)} bytes, {ms} ms, {len(b.get("messages") or [])} berichten, max_tokens {b.get("max_tokens")}')
+            try:
+                return json.loads(raw.decode('utf-8')), {}
+            except Exception as e:
+                laatste = {'msg': 'ongeldig JSON van het model: ' + str(e)[:200]}
+                _notuleer(f'[model-fout] niveau {niveau}: ongeldig JSON ({ms} ms)')
+                continue
+        except urllib.error.HTTPError as e:
+            ms = int((_t.time() - t0) * 1000)
+            foutlijf = b''
+            try:
+                foutlijf = e.read()
+            except Exception:
+                pass
+            laatste = {'code': e.code, 'msg': foutlijf.decode('utf-8', 'replace')[:300]}
+            limiet = e.code in (413, 400) or re.search(r'token|limit|context|length|too large|groot', laatste['msg'], re.I)
+            _notuleer(f'[model-fout] niveau {niveau}: HTTP {e.code}, {len(foutlijf)} bytes, {ms} ms{" (limiet)" if limiet else ""}: {laatste["msg"][:160]}')
+            if not limiet:
+                break   # geen limietprobleem (bv. 401/404): kleiner opnieuw helpt niet
+        except Exception as e:
+            ms = int((_t.time() - t0) * 1000)
+            laatste = {'limiet': True, 'msg': str(e)[:300]}
+            _notuleer(f'[model-fout] niveau {niveau}: verbinding afgesloten na {ms} ms ({str(e)[:120]}) -- vraag te groot, kleiner opnieuw')
+    laatste.setdefault('limiet', True)
+    return None, laatste
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1267,11 +1342,16 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json(502, {'error': str(e)})
             return
-        try:
-            raw = _naar_model(pad, body, True)
-            resp = json.loads(raw.decode('utf-8'))
-        except Exception as e:
-            self._json(502, {'error': 'model onbereikbaar: ' + str(e)}); return
+        # 592i: naar het model met capping + kleiner-opnieuw bij een afgesloten verbinding; de echte fout staat in de Log.
+        resp, info = _chat_naar_model(pad, body)
+        if resp is None:
+            if info.get('limiet'):
+                self._json(502, {'error': ('Het lokale model (F8/OlliteRT) sloot de verbinding: de vraag is te groot, ook na '
+                                           'verkleinen. Zet in OlliteRT op de F8 de Max tokens lager (bijv. 8192) en/of de '
+                                           'contextlengte hoger. Laatste fout: ' + str(info.get('msg', '')))[:600]})
+            else:
+                self._json(502, {'error': ('model onbereikbaar: ' + str(info.get('msg', '')))[:400]})
+            return
         resp = _herschrijf(resp)
         if want_stream:
             try:
@@ -1291,6 +1371,50 @@ PROXY
 # 592h: de alleen-kijken-stand. De proxy leest de vlag LIVE (bestaan van $ALLEEN_KIJKEN_F), dus een tik werkt meteen -- geen herstart.
 alleen_kijken_aan() { touch "$ALLEEN_KIJKEN_F"; touch "$REK_MAP/alleen-kijken-beslist"; zeg "Alleen-kijken AAN: het model mag ALLEEN Home indrukken en daarna beschrijven; elke andere tik wordt geblokkeerd. (Het vangnet tegen NOODSTOP/Stop/Verwijder/Uninstall en bank-/kluis-/betaal-/crypto-apps staat sowieso altijd aan.)"; }
 alleen_kijken_uit() { rm -f "$ALLEEN_KIJKEN_F"; touch "$REK_MAP/alleen-kijken-beslist"; zeg "Alleen-kijken UIT: het model mag weer handelen. Het vangnet blijft: NOODSTOP/Stop/Verwijder/Delete/Uninstall-knoppen en bank-/kluis-/authenticator-/betaal-/crypto-apps blijven ALTIJD geblokkeerd."; }
+# 116b (28 okt): de Cat (geheugen-telefoon) heeft weinig intern vrij (~0,9 GB). Deze stap KIJKT eerst wat ruimte inneemt en ruimt
+# dan ALLEEN veilig op: de app-caches via `pm trim-caches` -- dat wist NOOIT gegevens, foto's of documenten, alleen herbruikbare
+# cache. Foto's, documenten, downloads en bank-/kluis-/authenticator-apps worden NOOIT aangeraakt zonder dat de eigenaar het
+# per onderdeel zegt; die staan alleen in het overzicht. Nooit de F8. Geen rm, geen pm clear, geen uninstall.
+cat_serial() {   # serienummer van de Cat (S75) onder de toegestane rektelefoons, of niets
+  local s id naam
+  for s in $(verbonden); do
+    id="$(toestel_id "$s")"; [ -n "$id" ] || continue
+    toegestaan "$id" || continue
+    is_f8 "$s" && continue
+    naam="$(toestel_naam "$s")"
+    case "$naam" in *S75*|*s75*|*[Cc][Aa][Tt]*) printf '%s' "$s"; return 0 ;; esac
+  done
+  return 1
+}
+_vrij_kb() { "$ADB" -s "$1" shell "df -k $2 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null | tr -d '\r'; }
+_du() { "$ADB" -s "$1" shell du -sh "$2" 2>/dev/null | awk '{print $1}' | tr -d '\r'; }
+cat_kijk() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  local s; s="$(cat_serial)" || { zeg "Geen Cat (S75) onder de aangesloten rektelefoons gevonden (sluit de Cat aan met kabel + USB-foutopsporing)."; return 1; }
+  zeg "Opruimen op de Cat ($(toestel_naam "$s")) -- KIJKEN, er wordt nog niets aangeraakt:"
+  zeg "  Intern vrij: $(_vrij_kb "$s" /data) KB (/data)"
+  zeg "  Gedeeld geheugen vrij: $(_vrij_kb "$s" /storage/emulated/0) KB"
+  zeg "  Download: $(_du "$s" /sdcard/Download) -- alleen opruimen als je het per onderdeel zegt"
+  zeg "  Foto's (DCIM): $(_du "$s" /sdcard/DCIM) -- BESCHERMD, wordt niet aangeraakt"
+  zeg "  Afbeeldingen: $(_du "$s" /sdcard/Pictures) -- BESCHERMD"
+  zeg "  Documenten: $(_du "$s" /sdcard/Documents) -- BESCHERMD"
+  zeg "Veilig op te ruimen met 'Cat: caches opruimen' (knop): alle app-caches, zonder gegevens te wissen. Foto's, documenten,"
+  zeg "downloads en bank-/kluis-/authenticator-apps blijven ONAANGEROERD tot je per onderdeel zegt dat die ook mogen."
+}
+cat_ruim() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  local s voor na delta; s="$(cat_serial)" || { zeg "Geen Cat (S75) gevonden."; return 1; }
+  voor="$(_vrij_kb "$s" /data)"
+  zeg "Caches opruimen op de Cat ($(toestel_naam "$s")) -- alleen herbruikbare app-caches, geen gegevens en geen foto's..."
+  # pm trim-caches: Android wist zoveel cache als nodig om de ruimte vrij te maken. GEEN gebruikersgegevens, GEEN foto's.
+  "$ADB" -s "$s" shell pm trim-caches 999999999999 >/dev/null 2>&1 || true
+  sleep 2
+  na="$(_vrij_kb "$s" /data)"
+  delta=$(( ${na:-0} - ${voor:-0} ))
+  if [ "$delta" -gt 0 ]; then zeg "Opgeruimd: app-caches gewist, ongeveer $(( delta / 1024 )) MB intern vrijgemaakt (van ${voor:-?} naar ${na:-?} KB)."
+  else zeg "App-caches gewist; geen meetbare winst (${voor:-?} -> ${na:-?} KB). Veel ruimte zit dan in foto's, downloads of app-gegevens -- die raak ik niet aan."; fi
+  zeg "NIET aangeraakt: foto's, documenten, downloads en bank-/kluis-/authenticator-apps (en hun gegevens). Zeg het per onderdeel als je daar ook iets van wilt opruimen."
+}
 lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokale server, of niets
   local s id poort model lp="$LOKAAL_POORT"
   for s in $(verbonden); do
@@ -1422,8 +1546,8 @@ log() {
   zeg "== LLM-fout uit de laatste ARTEMIS-sessie (589) =="
   llm_laatste_fout
   zeg ""
-  zeg "== Geblokkeerde acties van het vangnet (592h) =="
-  if [ -s "$PROXY_LOG" ]; then tail -n 20 "$PROXY_LOG"; else zeg "(nog geen geblokkeerde actie -- de proxy liet alles veilig door, of ARTEMIS draait nog niet lokaal)"; fi
+  zeg "== Vangnet + modelfouten van de proxy (592h/592i) =="
+  if [ -s "$PROXY_LOG" ]; then tail -n 25 "$PROXY_LOG"; else zeg "(nog niets -- de proxy liet alles veilig door en het model antwoordde, of ARTEMIS draait nog niet lokaal)"; fi
   zeg ""
   zeg "== Laatste logregels (ARTEMIS launcher) =="
   if [ -s "$REK_MAP/artemis.log" ]; then tail -n 20 "$REK_MAP/artemis.log"; else zeg "(nog geen artemis.log -- ARTEMIS is nog niet gestart)"; fi
@@ -1503,7 +1627,7 @@ status() {
     else zeg "Vangnet-proxy (592h): nog niet gestart (start zodra ARTEMIS lokaal draait)."; fi
     if [ -f "$ALLEEN_KIJKEN_F" ]; then zeg "Alleen-kijken: AAN -- het model mag alleen Home indrukken. ('Alleen kijken: uit' om te laten handelen.)"
     else zeg "Alleen-kijken: uit -- het model mag handelen; het vangnet (NOODSTOP/Stop/Verwijder/Uninstall + bank/kluis/betaal/crypto) blijft altijd aan."; fi
-    if [ -s "$PROXY_LOG" ]; then zeg "Geblokkeerde acties (laatste): $(tail -n 3 "$PROXY_LOG" | tr '\n' ' ')"; fi
+    if [ -s "$PROXY_LOG" ]; then zeg "Proxy (laatste, vangnet + model): $(tail -n 3 "$PROXY_LOG" | tr '\n' ' ')"; fi
   fi
   schijf      # 580: altijd de vrije schijfruimte erbij -- een volle schijf is de reden dat ARTEMIS niet start
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
@@ -1651,6 +1775,8 @@ case "${1:-status}" in
   schrijf-proxy) schrijf_artemis_proxy ;;   # 592h: de vertaal-/vangnet-proxy (her)schrijven
   alleen-kijken) alleen_kijken_aan ;;       # 592h: alleen-kijken AAN -- het model mag alleen Home indrukken
   alleen-kijken-uit) alleen_kijken_uit ;;   # 592h: alleen-kijken UIT -- het model mag weer handelen (vangnet blijft)
+  cat-kijk) cat_kijk ;;                      # 116b: kijken wat ruimte inneemt op de Cat (niets aangeraakt)
+  cat-ruim) cat_ruim ;;                      # 116b: alleen app-caches opruimen op de Cat (geen gegevens/foto's)
   overzicht) overzicht ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
