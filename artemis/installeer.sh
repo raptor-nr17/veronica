@@ -635,13 +635,20 @@ PY
 }
 
 stop_artemis() {
+  local q
   if leeft "$PIDA"; then
     local p; p="$(cat "$PIDA")"
     kill -- -"$p" 2>/dev/null || kill "$p" 2>/dev/null || true
   fi
   rm -f "$PIDA"
-  # 592h: de vertaal-/vangnet-proxy hoort bij ARTEMIS -- samen aan, samen uit.
+  # 592j: het pid-bestand kan LEEG of verouderd zijn terwijl een oude ARTEMIS nog op 8000 luistert (dan hielp "Stop" niets en bleef
+  # ARTEMIS ZONDER vangnet doordraaien). Maak de poort daarom ALTIJD echt vrij: dood wat er op ARTEMIS_POORT luistert.
+  for q in $(pids_op_poort "$ARTEMIS_POORT"); do kill "$q" 2>/dev/null || true; done
+  sleep 1
+  for q in $(pids_op_poort "$ARTEMIS_POORT"); do kill -9 "$q" 2>/dev/null || true; done
+  # 592h/592j: de vertaal-/vangnet-proxy hoort bij ARTEMIS -- samen aan, samen uit; ook op zijn poort doodmaken.
   if leeft "$PROXY_PIDF"; then kill "$(cat "$PROXY_PIDF")" 2>/dev/null || true; fi
+  for q in $(pids_op_poort "$PROXY_POORT"); do kill "$q" 2>/dev/null || true; done
   rm -f "$PROXY_PIDF"
 }
 
@@ -767,12 +774,53 @@ mcp() {
 
 # 583: draait ARTEMIS? pid levend OF hij antwoordt op zijn poort (start.sh kan zijn pid afsplitsen).
 artemis_draait() { leeft "$PIDA" || antwoordt "$ARTEMIS_POORT"; }
+# 592j: is er een LOKAAL model ingesteld? Dan is de vangnet-proxy VERPLICHT -- ARTEMIS praat alleen via de proxy met het model.
+vangnet_vereist() { [ -s "$REK_MAP/lokaal-model.conf" ] && [ -n "$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" | head -1)" ]; }
+# 592j: draait de vangnet-proxy ECHT? We toetsen een TCP-verbinding naar de proxy-poort -- pid-levend alleen is te zwak (een proxy
+# die net crasht op bind leeft nog heel even tijdens het importeren). De proxy stuurt / door naar het model, dus curl op / is
+# onbetrouwbaar; een kale verbinding bewijst dat hij luistert. Terugval: iets luistert op de poort (ss/lsof).
+proxy_draait() {
+  ( exec 3<>"/dev/tcp/127.0.0.1/$PROXY_POORT" ) 2>/dev/null && return 0
+  [ -n "$(pids_op_poort "$PROXY_POORT" 2>/dev/null)" ]
+}
+# 592j: de echte pid van ARTEMIS -- uit het pid-bestand, anders (pid-bestand leeg/verouderd maar poort 8000 luistert) uit de poort.
+artemis_pid() {
+  if leeft "$PIDA"; then cat "$PIDA" 2>/dev/null; return; fi
+  pids_op_poort "$ARTEMIS_POORT" 2>/dev/null | head -1
+}
+# 592j: start de vangnet-proxy (her)schrijven + (her)starten + WACHTEN tot hij echt luistert. Geeft 0 als hij draait, anders 1.
+# Een alleen-kijken- of handel-taak mag NOOIT zonder vangnet draaien; start_kern weigert ARTEMIS als dit faalt.
+start_proxy() {
+  local base="$1" token="$2" q i
+  [ -n "$base" ] || return 1
+  schrijf_artemis_proxy
+  if leeft "$PROXY_PIDF"; then kill "$(cat "$PROXY_PIDF")" 2>/dev/null || true; fi
+  for q in $(pids_op_poort "$PROXY_POORT" 2>/dev/null); do kill "$q" 2>/dev/null || true; done
+  sleep 1
+  for q in $(pids_op_poort "$PROXY_POORT" 2>/dev/null); do kill -9 "$q" 2>/dev/null || true; done
+  rm -f "$PROXY_PIDF"
+  ( env PROXY_POORT="$PROXY_POORT" F8_BASE="$base" F8_TOKEN="${token:-local}" \
+      ALLEEN_KIJKEN_FILE="$ALLEEN_KIJKEN_F" PROXY_LOG="$PROXY_LOG" \
+      setsid python3 "$PROXYF" </dev/null >>"$REK_MAP/proxy.log" 2>&1 & echo $! >"$PROXY_PIDF" )
+  for i in 1 2 3 4 5 6 7 8 9 10; do proxy_draait && return 0; sleep 0.5; done
+  proxy_draait
+}
 
 # De ECHTE start (geen teller-reset, geen AANF-touch). Aangeroepen door start() (mens) en start_stil() (console-lus).
 start_kern() {
   [ -d "$ARTEMIS_MAP" ] || { zeg "ARTEMIS staat er niet. Draai eerst installeer.sh."; return 1; }
   [ -s "$TOEG" ] || { zeg "Er staat nog geen rektelefoon op de lijst. Sluit er een aan (kabel + USB-foutopsporing); de console vindt hem vanzelf."; return 1; }
-  if artemis_draait; then zeg "ARTEMIS draait al: http://localhost:$ARTEMIS_POORT"; return 0; fi
+  # 592j: draait ARTEMIS al? Alleen "draait al" zeggen als er GEEN vangnet nodig is, OF het vangnet ook echt draait. Draait
+  # ARTEMIS wel maar het vangnet niet (de oude bug: een herstart liet de oude ARTEMIS zonder proxy doordraaien), dan stop ik
+  # ALLES en herstart schoon MET vangnet -- een alleen-kijken-/handel-taak mag nooit zonder vangnet draaien.
+  if artemis_draait; then
+    if vangnet_vereist && ! proxy_draait; then
+      zeg "ARTEMIS draait ZONDER vangnet-proxy -- dat mag niet. Ik stop alles en herstart schoon mét vangnet."
+      stop_artemis
+    else
+      zeg "ARTEMIS draait al: http://localhost:$ARTEMIS_POORT"; return 0
+    fi
+  fi
   waak_ronde || return 1
   ruim_als_krap   # 588: zelfherstel -- eerst opruimen als de schijf te krap is voor Node/venv (de blokkade van 580)
   zorg_venv   # 576: zorg dat de venv op Python 3.12 staat (anders faalt grpcio en start ARTEMIS nooit)
@@ -798,12 +846,13 @@ start_kern() {
     # 592h: niet rechtstreeks naar de telefoon, maar via de VERTAAL-/VANGNET-proxy op 127.0.0.1:$PROXY_POORT. Die zet Gemma's
     # tekst-acties om naar echte tool_calls EN blokkeert gevaarlijke acties (NOODSTOP/Stop/Verwijder/Uninstall, bank/kluis/
     # betaal/crypto-apps), en in de alleen-kijken-stand laat hij alleen Home door. ARTEMIS praat met de proxy; de proxy met het model.
+    # 592j: het vangnet gaat ALTIJD EERST aan, en ik WACHT tot het echt luistert. Lukt dat niet, dan start ik ARTEMIS NIET --
+    # een alleen-kijken-/handel-taak mag nooit zonder vangnet draaien.
     if [ -n "$lm_base" ]; then
-      schrijf_artemis_proxy
-      if leeft "$PROXY_PIDF"; then kill "$(cat "$PROXY_PIDF")" 2>/dev/null || true; fi
-      ( env PROXY_POORT="$PROXY_POORT" F8_BASE="$lm_base" F8_TOKEN="${lm_token:-local}" \
-          ALLEEN_KIJKEN_FILE="$ALLEEN_KIJKEN_F" PROXY_LOG="$PROXY_LOG" \
-          setsid python3 "$PROXYF" </dev/null >>"$REK_MAP/proxy.log" 2>&1 & echo $! >"$PROXY_PIDF" )
+      if ! start_proxy "$lm_base" "${lm_token:-local}"; then
+        zeg "Het vangnet (proxy) start niet -- ik start ARTEMIS NIET. Een alleen-kijken- of handel-taak mag nooit zonder vangnet draaien. Kijk bij Log (proxy.log) en probeer Start opnieuw."
+        return 1
+      fi
       lok_env="OPENAI_BASE_URL=http://127.0.0.1:$PROXY_POORT/v1 OPENAI_API_KEY=${lm_token:-local}"
     fi
   fi
@@ -829,7 +878,9 @@ start() {
 START_MAX=3
 start_stil() {
   [ -f "$AANF" ] || return 0
-  if artemis_draait; then rm -f "$REK_MAP/start-pogingen" "$REK_MAP/start-gestopt"; return 0; fi
+  # 592j: gezond = ARTEMIS draait EN (geen vangnet nodig OF het vangnet draait ook). Draait ARTEMIS zonder verplicht vangnet,
+  # dan NIET "gezond" afvinken: val door naar start_kern, dat alles schoon herstart mét vangnet.
+  if artemis_draait && { ! vangnet_vereist || proxy_draait; }; then rm -f "$REK_MAP/start-pogingen" "$REK_MAP/start-gestopt"; return 0; fi
   [ -f "$REK_MAP/start-gestopt" ] && return 0
   local n; n="$(cat "$REK_MAP/start-pogingen" 2>/dev/null || echo 0)"; [ "$n" -eq "$n" ] 2>/dev/null || n=0; n=$((n+1))
   if [ "$n" -gt "$START_MAX" ]; then
@@ -1586,8 +1637,13 @@ sleutel_check() {
 
 status() {
   if artemis_draait; then
-    local p poorten open_poort; p="$(cat "$PIDA" 2>/dev/null)"
-    zeg "ARTEMIS draait (pid $p)."
+    local p poorten open_poort; p="$(artemis_pid)"   # 592j: echte pid -- ook als het pid-bestand leeg/verouderd is maar 8000 luistert
+    zeg "ARTEMIS draait (pid ${p:-onbekend})."
+    # 592j: draait ARTEMIS wel maar het verplichte vangnet NIET, waarschuw dan LUID -- dan staat de oude ARTEMIS zonder vangnet
+    # (de bug van 592j). Een alleen-kijken-/handel-taak mag zo niet draaien; Stop + Start herstelt het schoon.
+    if vangnet_vereist && ! proxy_draait; then
+      zeg "LET OP: ARTEMIS draait ZONDER vangnet-proxy! Het model kan dan ongefilterd handelen. Start GEEN alleen-kijken-/handel-taak. Druk op Stop en daarna op Start -- dan herstart ARTEMIS schoon mét vangnet."
+    fi
     poorten="$(poorten_van "$p")"
     # 586: poorten_van kijkt in de PROCESGROEP van onze pid; ARTEMIS' echte server kan in een EIGEN sessie draaien en dan
     # valt hij buiten die groep ("GEEN poort") terwijl hij wel antwoordt. Spreek elkaar niet tegen: als iets op ARTEMIS_POORT
@@ -1623,7 +1679,8 @@ status() {
   fi
   # 592h: de vertaal-/vangnet-proxy en de alleen-kijken-stand.
   if [ -s "$REK_MAP/lokaal-model.conf" ]; then
-    if leeft "$PROXY_PIDF"; then zeg "Vangnet-proxy (592h) draait: Gemma's tekst-acties worden echte tool_calls, en gevaarlijke acties worden geblokkeerd."
+    if proxy_draait; then zeg "Vangnet-proxy (592h) draait (pid $(cat "$PROXY_PIDF" 2>/dev/null || echo '?')): Gemma's tekst-acties worden echte tool_calls, en gevaarlijke acties worden geblokkeerd."
+    elif artemis_draait; then zeg "Vangnet-proxy (592h): DRAAIT NIET terwijl ARTEMIS wel draait -- ARTEMIS werkt dan ZONDER vangnet. Stop + Start herstelt dit."
     else zeg "Vangnet-proxy (592h): nog niet gestart (start zodra ARTEMIS lokaal draait)."; fi
     if [ -f "$ALLEEN_KIJKEN_F" ]; then zeg "Alleen-kijken: AAN -- het model mag alleen Home indrukken. ('Alleen kijken: uit' om te laten handelen.)"
     else zeg "Alleen-kijken: uit -- het model mag handelen; het vangnet (NOODSTOP/Stop/Verwijder/Uninstall + bank/kluis/betaal/crypto) blijft altijd aan."; fi
