@@ -39,12 +39,19 @@
   const goedeSoort = (s) => Object.prototype.hasOwnProperty.call(SOORTEN, s);
   const getal = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
+  // 116 (28 okt): de EFFECTIEVE vrije ruimte telt het SD-kaartje mee. De Cat S75 heeft maar ~0,9 GB intern vrij maar een kaartje van
+  // ~513 GB; de bewaarplek (JarvisNetPlugin.grootPlek, 548) gaat dan naar dat kaartje. Zonder dit koos geheugentel nooit de Cat (0,9 <
+  // MIN_VRIJ_GB) terwijl hij juist de meeste ruimte heeft. `kaartje` komt uit de hartslag (551, GB vrij op het kaartje; null = geen).
+  // Een telefoon zonder kaartje: ruimte = intern vrij (ongewijzigd gedrag).
+  function ruimte(h) {
+    return Math.max(getal(h && h.vrij) || 0, getal(h && h.kaartje) || 0);
+  }
   // Doet deze hartslag mee als kandidaat? (de hartslag van hartslag.js, of een eigen kandidaat in dezelfde vorm)
   function kanBewaren(h, nu) {
     if (!h || !h.id) return false;
     if (typeof h.t === 'number' && nu - h.t > VERS_MS) return false;
     if (h.dagelijks || h.zandbak || h.pauze || h.sparen) return false;
-    return (getal(h.vrij) || 0) >= MIN_VRIJ_GB;
+    return ruimte(h) >= MIN_VRIJ_GB;
   }
   // kies(harten, { nu, gekozen, huidige }) -> id of null. gekozen = de keuze van een mens (toestel-id), huidige = wie het nu is.
   function kies(harten, o) {
@@ -53,7 +60,7 @@
     const l = (Array.isArray(harten) ? harten : []).filter((h) => kanBewaren(h, nu));
     if (!l.length) return null;
     if (x.gekozen) { const g = l.find((h) => h.id === x.gekozen); if (g) return g.id; }
-    const vrij = (h) => getal(h.vrij) || 0;
+    const vrij = (h) => ruimte(h);   // 116: SD-kaartje telt mee -- de Cat (groot kaartje) wint van een telefoon met veel intern vrij
     l.sort((a, b) => (b.laadt === true ? 1 : 0) - (a.laadt === true ? 1 : 0) || vrij(b) - vrij(a) || String(a.id).localeCompare(String(b.id)));
     const beste = l[0];
     const nuH = x.huidige && l.find((h) => h.id === x.huidige);
@@ -95,7 +102,9 @@
     if (!id) return 'Geen geheugen-telefoon: geen rektelefoon met genoeg vrije ruimte aan de lader.';
     const h = (harten || []).find((x) => x && x.id === id);
     const naam = (h && h.naam) || 'een telefoon';
-    const vrij = h && getal(h.vrij) !== null ? `, ${Math.round(h.vrij)} GB vrij` : '';
+    // 116: toon de EFFECTIEVE ruimte; staat die op het kaartje, zeg dat erbij (de Cat: een klein intern geheugen, een groot kaartje).
+    const opKaartje = h && getal(h.kaartje) !== null && (getal(h.kaartje) || 0) > (getal(h.vrij) || 0);
+    const vrij = h && (getal(h.vrij) !== null || getal(h.kaartje) !== null) ? `, ${Math.round(ruimte(h))} GB vrij${opKaartje ? ' op het kaartje' : ''}` : '';
     return id === zelfId ? `Ik ben de geheugen-telefoon${vrij}.` : `${naam} is de geheugen-telefoon${vrij}.`;
   }
 
