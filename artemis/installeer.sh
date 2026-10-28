@@ -129,6 +129,16 @@ VERB="$REK_MAP/verboden-apps.txt"
 LOG="$REK_MAP/waakhond.log"
 JARVIS_PKG="nl.eigen.jarvis"   # 590: het ENIGE pakket dat de JARVIS-waakhond ooit aanraakt (nooit bank/betaal/wachtwoord/authenticator)
 LOKAAL_POORT="${ARTEMIS_LOKAAL_POORT:-8791}"   # 592: lokale poort op deze computer die via adb naar het model op een rektelefoon wijst
+# 592h: een kleine VERTAAL- EN VANGNET-proxy tussen ARTEMIS en het lokale model (OlliteRT/Gemma). Gemma geeft een actie terug
+# als TEKST ("call:click{target: 'NOODSTOP'}", JS-achtige args) i.p.v. een echte OpenAI-tool_call -> ARTEMIS' tekst-parser liep
+# daarop vast. De proxy zet die tekst om naar een STRUCTURELE tool_call (valide JSON-args), EN blokkeert gevaarlijke acties
+# (NOODSTOP/Stop/Verwijder/Delete/Uninstall-knoppen, bank-/kluis-/authenticator-/betaal-/crypto-apps), EN laat in de
+# alleen-kijken-stand alleen Home door. ARTEMIS praat met de proxy; de proxy praat met het model.
+PROXY_POORT="${ARTEMIS_PROXY_POORT:-8792}"
+PROXYF="$REK_MAP/artemis-proxy.py"
+PROXY_PIDF="$REK_MAP/proxy.pid"
+PROXY_LOG="$REK_MAP/proxy-blok.log"              # waar de proxy geblokkeerde acties noteert (Log/Status tonen dit)
+ALLEEN_KIJKEN_F="$REK_MAP/alleen-kijken"         # bestaat = alleen-kijken-stand (alleen Home mag); de console-knop zet hem
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
@@ -407,7 +417,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -495,7 +505,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -630,6 +640,9 @@ stop_artemis() {
     kill -- -"$p" 2>/dev/null || kill "$p" 2>/dev/null || true
   fi
   rm -f "$PIDA"
+  # 592h: de vertaal-/vangnet-proxy hoort bij ARTEMIS -- samen aan, samen uit.
+  if leeft "$PROXY_PIDF"; then kill "$(cat "$PROXY_PIDF")" 2>/dev/null || true; fi
+  rm -f "$PROXY_PIDF"
 }
 
 # Een ronde van de waakhond. Geeft 0 terug als ARTEMIS mag blijven draaien.
@@ -782,7 +795,17 @@ start_kern() {
     if [ -n "$lm_serial" ] && [ -n "$lm_fport" ] && ! is_f8 "$lm_serial"; then
       "$ADB" -s "$lm_serial" forward tcp:"${lm_fport%%:*}" tcp:"${lm_fport##*:}" >/dev/null 2>&1 || true
     fi
-    [ -n "$lm_base" ] && lok_env="OPENAI_BASE_URL=$lm_base OPENAI_API_KEY=${lm_token:-local}"
+    # 592h: niet rechtstreeks naar de telefoon, maar via de VERTAAL-/VANGNET-proxy op 127.0.0.1:$PROXY_POORT. Die zet Gemma's
+    # tekst-acties om naar echte tool_calls EN blokkeert gevaarlijke acties (NOODSTOP/Stop/Verwijder/Uninstall, bank/kluis/
+    # betaal/crypto-apps), en in de alleen-kijken-stand laat hij alleen Home door. ARTEMIS praat met de proxy; de proxy met het model.
+    if [ -n "$lm_base" ]; then
+      schrijf_artemis_proxy
+      if leeft "$PROXY_PIDF"; then kill "$(cat "$PROXY_PIDF")" 2>/dev/null || true; fi
+      ( env PROXY_POORT="$PROXY_POORT" F8_BASE="$lm_base" F8_TOKEN="${lm_token:-local}" \
+          ALLEEN_KIJKEN_FILE="$ALLEEN_KIJKEN_F" PROXY_LOG="$PROXY_LOG" \
+          setsid python3 "$PROXYF" </dev/null >>"$REK_MAP/proxy.log" 2>&1 & echo $! >"$PROXY_PIDF" )
+      lok_env="OPENAI_BASE_URL=http://127.0.0.1:$PROXY_POORT/v1 OPENAI_API_KEY=${lm_token:-local}"
+    fi
   fi
   # 592fix: via `env` -- een VARIABELE ($lok_env) in prefix-positie wordt door bash als het COMMANDO gelezen (niet als
   # toewijzing), waardoor 'PORT=8000: command not found' kwam. `env` neemt alle KEY=VAL (ook de lege/gevulde $lok_env)
@@ -996,6 +1019,278 @@ JSONC
   fi
   chmod 600 "$REK_MAP/artemis.jsonc" 2>/dev/null || true
 }
+# 592h: schrijf de vertaal-/vangnet-proxy (puur stdlib). start_kern start hem alleen als er een lokaal model is, en zet
+# ARTEMIS' OPENAI_BASE_URL op deze proxy i.p.v. rechtstreeks op de telefoon. De proxy stuurt elke /v1/-aanroep door naar het
+# echte model, maar herschrijft het ANTWOORD: tekst-acties -> structurele tool_calls, en een vangnet dat gevaarlijke acties
+# nooit doorlaat. De ENE plek die het bestand schrijft (idempotent, elke start opnieuw, zodat updates vanzelf landen).
+schrijf_artemis_proxy() {
+  cat >"$PROXYF" <<'PROXY'
+#!/usr/bin/env python3
+# 592h: ARTEMIS <-> lokaal model (OlliteRT/Gemma) vertaal- en vangnet-proxy. ALLEEN 127.0.0.1.
+# - Gemma geeft een actie vaak als TEKST terug ("call:click{target: 'NOODSTOP'}", JS-achtige args). ARTEMIS' tekst-parser
+#   liep daarop vast. De proxy zet zulke tekst om naar een ECHTE OpenAI-tool_call (valide JSON-args) in choices[0].message.
+#   tool_calls -- dan leest ARTEMIS de actie structureel en raakt de fragiele tekst-parser nooit.
+# - VANGNET (altijd): nooit een tik op een knop met NOODSTOP/Stop/Verwijder/Delete/Uninstall, en nooit openen/tikken in
+#   bank-/kluis-/authenticator-/betaal-/crypto-apps -- wat het model ook kiest. Geblokkeerde acties worden NIET doorgegeven.
+# - ALLEEN-KIJKEN (vlag): dan mag ALLEEN Home ingedrukt worden; elke andere apparaat-actie wordt geblokkeerd.
+import os, re, json, sys, urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+POORT = int(os.environ.get('PROXY_POORT', '8792'))
+F8_BASE = (os.environ.get('F8_BASE', '') or '').rstrip('/')          # het LAN-adres van het model, bv. http://<telefoon-ip>:8000/v1
+F8_TOKEN = os.environ.get('F8_TOKEN', 'local') or 'local'
+# 592h: de alleen-kijken-stand lezen we LIVE uit het bestaan van een bestand, zodat de console-knop meteen werkt zonder herstart.
+ALLEEN_KIJKEN_FILE = os.environ.get('ALLEEN_KIJKEN_FILE', '')
+def alleen_kijken():
+    return bool(ALLEEN_KIJKEN_FILE and os.path.exists(ALLEEN_KIJKEN_FILE))
+BLOKLOG = os.environ.get('PROXY_LOG', '')
+
+# apparaat-acties van ARTEMIS (action_manifest): die kunnen het toestel VERANDEREN.
+DEVICE_ACTIES = {'click', 'click_sequence', 'long_press', 'input_text', 'swipe', 'press_key', 'manage_app',
+                 'open_link', 'erase_one_char', 'focus_and_clear_text', 'tap', 'type', 'scroll'}
+# knop-labels die NOOIT aangetikt mogen worden (hele-woord, accent-/hoofdletterongevoelig).
+VERBODEN_LABEL = re.compile(r'(?<![a-z0-9])(noodstop|nood[ -]?stop|stop|verwijder(?:en)?|delete|uninstall|'
+                            r'deinstallier\w*|wis(?:sen)?|erase|remove|afsluiten|force[ -]?stop|forceer[ -]?stop|'
+                            r'reset|factory)(?![a-z0-9])', re.I)
+# app-/doel-woorden die bank/kluis/authenticator/betaal/crypto aanduiden -- nooit openen of in tikken.
+VERBODEN_APP = re.compile(r'(bank|abn|amro|rabo|\bing\b|\bsns\b|\basn\b|bunq|regiobank|knab|revolut|wise|paypal|tikkie|'
+                          r'ideal|creditcard|master ?card|\bvisa\b|betaal|payment|google ?pay|apple ?pay|\bwallet\b|'
+                          r'authenticator|\bauthy\b|2fa|\botp\b|microsoft authenticator|bitwarden|lastpass|1password|'
+                          r'keepass|dashlane|wachtwoord|password|\bvault\b|kluis|digid|crypto|coinbase|binance|kraken|'
+                          r'metamask|ledger|trezor|bitcoin|ethereum|blockchain|\bbtc\b|\beth\b)', re.I)
+HOME_WAARDEN = {'home', 'keycode_home', 'home_key', '3', 'go_home', 'navigate_home'}
+
+def _norm(name):
+    return (name or '').split(':')[-1].strip()
+
+def _notuleer(regel):
+    if not BLOKLOG:
+        return
+    try:
+        with open(BLOKLOG, 'a') as f:
+            f.write(regel.rstrip() + '\n')
+    except Exception:
+        pass
+
+def _tolerant_args(s):
+    # s is "{...}" in JS-achtige vorm; maak er een dict van. Eerst echte JSON, anders key:value's eruit halen.
+    s = (s or '').strip()
+    if not s:
+        return {}
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    inner = s[1:-1] if s.startswith('{') and s.endswith('}') else s
+    d = {}
+    for m in re.finditer(r"""([A-Za-z_][\w]*)\s*[:=]\s*('[^']*'|"[^"]*"|[^,}\n]+)""", inner):
+        k = m.group(1); v = m.group(2).strip()
+        if (v.startswith("'") and v.endswith("'")) or (v.startswith('"') and v.endswith('"')):
+            v = v[1:-1]
+        else:
+            low = v.lower()
+            if low in ('true', 'false'):
+                v = (low == 'true')
+            else:
+                try:
+                    v = int(v)
+                except Exception:
+                    try:
+                        v = float(v)
+                    except Exception:
+                        pass
+        d[k] = v
+    return d
+
+def _uit_tekst(content):
+    # haal "call:NAME{...}" acties uit de tekst (ook binnen ``` ``` of met whitespace). geeft [(name, argsdict), ...]
+    uit = []
+    if not content:
+        return uit
+    for m in re.finditer(r'call\s*:\s*([A-Za-z_][\w:]*)\s*(\{[^{}]*\})?', content):
+        uit.append((_norm(m.group(1)), _tolerant_args(m.group(2) or '{}')))
+    return uit
+
+def _argwaarden(args):
+    out = []
+    def loop(v):
+        if isinstance(v, str):
+            out.append(v)
+        elif isinstance(v, dict):
+            for x in v.values():
+                loop(x)
+        elif isinstance(v, list):
+            for x in v:
+                loop(x)
+    loop(args)
+    return ' '.join(out)
+
+def _verboden_reden(name, args):
+    # geeft een reden-string als deze actie GEBLOKKEERD moet worden, anders None.
+    tekst = _argwaarden(args)
+    if name in ('manage_app',):
+        if re.search(r'(uninstall|verwijder|delete|remove|stop|force|clear|disable|wis|deinstall)', tekst, re.I):
+            return 'manage_app met een gevaarlijke actie (stop/uninstall/clear)'
+        if VERBODEN_APP.search(tekst):
+            return 'manage_app op een bank-/kluis-/betaal-/crypto-app'
+        return None
+    if name in ('click', 'click_sequence', 'long_press', 'tap', 'input_text', 'type', 'open_link'):
+        if VERBODEN_LABEL.search(tekst):
+            return 'knop/label met NOODSTOP/Stop/Verwijder/Delete/Uninstall'
+        if VERBODEN_APP.search(tekst):
+            return 'bank-/kluis-/authenticator-/betaal-/crypto-app'
+    return None
+
+def _is_home(name, args):
+    if name != 'press_key':
+        return False
+    tekst = _argwaarden(args).strip().lower()
+    return any(w in HOME_WAARDEN or 'home' in w for w in re.split(r'[\s,]+', tekst) if w) or 'home' in tekst
+
+def _verwerk(calls):
+    # calls: [(name, args)]. geeft (toegestane_calls, blokmeldingen).
+    ok = []; blok = []
+    for name, args in calls:
+        n = _norm(name)
+        reden = _verboden_reden(n, args)
+        if reden:
+            blok.append(f'{n}: {reden}'); _notuleer(f'[blok] {n} {json.dumps(args)[:200]} -> {reden}'); continue
+        if alleen_kijken() and n in DEVICE_ACTIES and not _is_home(n, args):
+            blok.append(f'{n}: alleen-kijken (alleen Home mag)'); _notuleer(f'[alleen-kijken] {n} geblokkeerd'); continue
+        ok.append((n, args))
+    return ok, blok
+
+def _bouw_toolcalls(calls):
+    out = []
+    import uuid
+    for n, args in calls:
+        out.append({'id': 'call_' + uuid.uuid4().hex[:8], 'type': 'function',
+                    'function': {'name': n, 'arguments': json.dumps(args)}})
+    return out
+
+def _herschrijf(resp):
+    # resp = volledige OpenAI JSON van het model. Herschrijf choices[0].message.
+    try:
+        ch = resp.get('choices') or []
+        if not ch:
+            return resp
+        msg = ch[0].get('message') or {}
+        content = msg.get('content')
+        if isinstance(content, list):
+            content = ' '.join(x.get('text', '') for x in content if isinstance(x, dict))
+        calls = []
+        # al structurele tool_calls? neem die over (naam + args), anders uit de tekst halen.
+        for tc in (msg.get('tool_calls') or []):
+            fn = (tc or {}).get('function') or {}
+            a = fn.get('arguments')
+            if isinstance(a, str):
+                try:
+                    a = json.loads(a)
+                except Exception:
+                    a = _tolerant_args(a)
+            calls.append((_norm(fn.get('name')), a or {}))
+        if not calls:
+            calls = _uit_tekst(content or '')
+        ok, blok = _verwerk(calls)
+        nieuw = dict(msg)
+        nieuw['role'] = 'assistant'
+        # de call-regels uit de zichtbare tekst halen (anders leest ARTEMIS ze dubbel), blokmeldingen eraan toevoegen.
+        tekst = re.sub(r'call\s*:\s*[A-Za-z_][\w:]*\s*(\{[^{}]*\})?', '', content or '').strip()
+        if blok:
+            tekst = (tekst + '\n' if tekst else '') + 'Geblokkeerd (veiligheid): ' + '; '.join(blok)
+        nieuw['content'] = tekst
+        if ok:
+            nieuw['tool_calls'] = _bouw_toolcalls(ok)
+        else:
+            nieuw.pop('tool_calls', None)
+        ch[0]['message'] = nieuw
+        if ch[0].get('finish_reason') in (None, 'stop') and ok:
+            ch[0]['finish_reason'] = 'tool_calls'
+        resp['choices'] = ch
+    except Exception as e:
+        _notuleer(f'[proxy-fout] {e}')
+    return resp
+
+def _naar_model(pad, body, is_post):
+    url = F8_BASE + pad
+    data = json.dumps(body).encode() if (is_post and body is not None) else None
+    req = urllib.request.Request(url, data=data, method='POST' if is_post else 'GET')
+    req.add_header('Authorization', 'Bearer ' + F8_TOKEN)
+    if is_post:
+        req.add_header('Content-Type', 'application/json')
+    with urllib.request.urlopen(req, timeout=600) as r:
+        return r.read()
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def _json(self, code, obj):
+        b = json.dumps(obj).encode(); self.send_response(code)
+        self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b)))
+        self.end_headers(); self.wfile.write(b)
+    def _sse(self, resp):
+        # een enkele chunk met de volledige boodschap, dan [DONE]. ARTEMIS accumuleert tool_calls over chunks.
+        ch = (resp.get('choices') or [{}])[0]; msg = ch.get('message') or {}
+        delta = {'role': 'assistant', 'content': msg.get('content') or ''}
+        if msg.get('tool_calls'):
+            delta['tool_calls'] = [dict(tc, index=i) for i, tc in enumerate(msg['tool_calls'])]
+        chunk = {'id': resp.get('id', 'chatcmpl-proxy'), 'object': 'chat.completion.chunk',
+                 'model': resp.get('model', 'lokaal'),
+                 'choices': [{'index': 0, 'delta': delta, 'finish_reason': ch.get('finish_reason') or 'stop'}]}
+        self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.end_headers()
+        self.wfile.write(('data: ' + json.dumps(chunk) + '\n\n').encode())
+        self.wfile.write(b'data: [DONE]\n\n')
+    def do_GET(self):
+        try:
+            raw = _naar_model(self.path[3:] if self.path.startswith('/v1') else self.path, None, False)
+            self.send_response(200); self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(raw))); self.end_headers(); self.wfile.write(raw)
+        except Exception as e:
+            self._json(502, {'error': str(e)})
+    def do_POST(self):
+        ln = int(self.headers.get('Content-Length', 0) or 0)
+        ruw = self.rfile.read(ln) if ln else b''
+        pad = self.path[3:] if self.path.startswith('/v1') else self.path
+        try:
+            body = json.loads(ruw.decode('utf-8')) if ruw else {}
+        except Exception:
+            body = {}
+        want_stream = bool(body.get('stream'))
+        if isinstance(body, dict) and body.get('stream'):
+            body = dict(body); body['stream'] = False
+        if '/chat/completions' not in pad:
+            # alles behalve chat (bv. /embeddings) ongewijzigd doorgeven
+            try:
+                raw = _naar_model(pad, body, True); self.send_response(200)
+                self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(raw)))
+                self.end_headers(); self.wfile.write(raw)
+            except Exception as e:
+                self._json(502, {'error': str(e)})
+            return
+        try:
+            raw = _naar_model(pad, body, True)
+            resp = json.loads(raw.decode('utf-8'))
+        except Exception as e:
+            self._json(502, {'error': 'model onbereikbaar: ' + str(e)}); return
+        resp = _herschrijf(resp)
+        if want_stream:
+            try:
+                self._sse(resp)
+            except Exception:
+                self._json(200, resp)
+        else:
+            self._json(200, resp)
+
+if __name__ == '__main__':
+    if not F8_BASE:
+        sys.stderr.write('geen F8_BASE\n'); sys.exit(1)
+    ThreadingHTTPServer(('127.0.0.1', POORT), H).serve_forever()
+PROXY
+  chmod 600 "$PROXYF" 2>/dev/null || true
+}
+# 592h: de alleen-kijken-stand. De proxy leest de vlag LIVE (bestaan van $ALLEEN_KIJKEN_F), dus een tik werkt meteen -- geen herstart.
+alleen_kijken_aan() { touch "$ALLEEN_KIJKEN_F"; touch "$REK_MAP/alleen-kijken-beslist"; zeg "Alleen-kijken AAN: het model mag ALLEEN Home indrukken en daarna beschrijven; elke andere tik wordt geblokkeerd. (Het vangnet tegen NOODSTOP/Stop/Verwijder/Uninstall en bank-/kluis-/betaal-/crypto-apps staat sowieso altijd aan.)"; }
+alleen_kijken_uit() { rm -f "$ALLEEN_KIJKEN_F"; touch "$REK_MAP/alleen-kijken-beslist"; zeg "Alleen-kijken UIT: het model mag weer handelen. Het vangnet blijft: NOODSTOP/Stop/Verwijder/Delete/Uninstall-knoppen en bank-/kluis-/authenticator-/betaal-/crypto-apps blijven ALTIJD geblokkeerd."; }
 lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokale server, of niets
   local s id poort model lp="$LOKAAL_POORT"
   for s in $(verbonden); do
@@ -1127,6 +1422,9 @@ log() {
   zeg "== LLM-fout uit de laatste ARTEMIS-sessie (589) =="
   llm_laatste_fout
   zeg ""
+  zeg "== Geblokkeerde acties van het vangnet (592h) =="
+  if [ -s "$PROXY_LOG" ]; then tail -n 20 "$PROXY_LOG"; else zeg "(nog geen geblokkeerde actie -- de proxy liet alles veilig door, of ARTEMIS draait nog niet lokaal)"; fi
+  zeg ""
   zeg "== Laatste logregels (ARTEMIS launcher) =="
   if [ -s "$REK_MAP/artemis.log" ]; then tail -n 20 "$REK_MAP/artemis.log"; else zeg "(nog geen artemis.log -- ARTEMIS is nog niet gestart)"; fi
   local f dl tr tl ad; ad="$(artemis_app_dir)"
@@ -1198,6 +1496,14 @@ status() {
     zeg "ARTEMIS denkt LOKAAL (592g): $(sed -n 's/^MODEL=//p' "$REK_MAP/lokaal-model.conf" | head -1) via $(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" | head -1) voor ELKE rol (planner, operator, checker, keurmeester); Gemini (gemini-3.8-flash) is alleen terugval. 'Lokaal uit' zet hem terug."
   elif [ -s "$REK_MAP/artemis.jsonc" ]; then
     zeg "ARTEMIS-model (onze config): primair $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | head -1), reserve $(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' "$REK_MAP/artemis.jsonc" | sed -n 2p) (gratis Gemini-laag; 'Lokaal model' laat ARTEMIS lokaal denken; Log toont welk model echt werd gebruikt)."
+  fi
+  # 592h: de vertaal-/vangnet-proxy en de alleen-kijken-stand.
+  if [ -s "$REK_MAP/lokaal-model.conf" ]; then
+    if leeft "$PROXY_PIDF"; then zeg "Vangnet-proxy (592h) draait: Gemma's tekst-acties worden echte tool_calls, en gevaarlijke acties worden geblokkeerd."
+    else zeg "Vangnet-proxy (592h): nog niet gestart (start zodra ARTEMIS lokaal draait)."; fi
+    if [ -f "$ALLEEN_KIJKEN_F" ]; then zeg "Alleen-kijken: AAN -- het model mag alleen Home indrukken. ('Alleen kijken: uit' om te laten handelen.)"
+    else zeg "Alleen-kijken: uit -- het model mag handelen; het vangnet (NOODSTOP/Stop/Verwijder/Uninstall + bank/kluis/betaal/crypto) blijft altijd aan."; fi
+    if [ -s "$PROXY_LOG" ]; then zeg "Geblokkeerde acties (laatste): $(tail -n 3 "$PROXY_LOG" | tr '\n' ' ')"; fi
   fi
   schijf      # 580: altijd de vrije schijfruimte erbij -- een volle schijf is de reden dat ARTEMIS niet start
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx searxng; then zeg "SearXNG draait: http://127.0.0.1:8888 (JSON aan)"; fi
@@ -1342,6 +1648,9 @@ case "${1:-status}" in
   lokaal-meet) lokaal_meet ;;   # 592: meet of het lokale model antwoordt en hoe snel
   lokaal-auto) lokaal_auto ;;   # 592: de lus -- lokaal AANzetten zodra er een lokale server verschijnt (geen knop)
   schrijf-jsonc) schrijf_artemis_jsonc ;;   # 592: artemis.jsonc (her)schrijven -- door de installatie en lokaal/lokaal_uit
+  schrijf-proxy) schrijf_artemis_proxy ;;   # 592h: de vertaal-/vangnet-proxy (her)schrijven
+  alleen-kijken) alleen_kijken_aan ;;       # 592h: alleen-kijken AAN -- het model mag alleen Home indrukken
+  alleen-kijken-uit) alleen_kijken_uit ;;   # 592h: alleen-kijken UIT -- het model mag weer handelen (vangnet blijft)
   overzicht) overzicht ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
@@ -1367,6 +1676,11 @@ REK
   mv "$bin/artemis-rek.nieuw" "$bin/artemis-rek"
   # 592: artemis.jsonc via de ENE runtime-functie schrijven (lokaal-primair als lokaal-model.conf er is, anders Gemini-primair).
   REK_MAP="$rek" BIN_SELF="$bin" bash "$bin/artemis-rek" schrijf-jsonc >/dev/null 2>&1 || true
+  # 592h: de vertaal-/vangnet-proxy alvast schrijven, en de alleen-kijken-stand STANDAARD AAN zetten zolang niemand hem bewust
+  # koos (veiligheid eerst -- het model mag dan alleen Home). Een keuze (knop) zet de 'beslist'-markering en blijft daarna staan,
+  # ook over zelf-updates (--alleen-bestanden), omdat we hier alleen bij AFWEZIGHEID van die markering de standaard zetten.
+  REK_MAP="$rek" BIN_SELF="$bin" bash "$bin/artemis-rek" schrijf-proxy >/dev/null 2>&1 || true
+  [ -f "$rek/alleen-kijken-beslist" ] || touch "$rek/alleen-kijken"
 }
 
 if [ "${1:-}" = "--alleen-bestanden" ]; then
