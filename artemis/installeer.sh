@@ -419,7 +419,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -507,7 +507,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -1709,6 +1709,37 @@ cat_ruim() {
   else zeg "App-caches gewist; geen meetbare winst (${voor:-?} -> ${na:-?} KB). Veel ruimte zit dan in foto's, downloads of app-gegevens -- die raak ik niet aan."; fi
   zeg "NIET aangeraakt: foto's, documenten, downloads en bank-/kluis-/authenticator-apps (en hun gegevens). Zeg het per onderdeel als je daar ook iets van wilt opruimen."
 }
+# 594: HAALBAARHEID -- kan een oude rektelefoon de F8 vervangen voor het zware model (Gemma-4-E4B, 3,7 GB, met beeld)?
+# Meet per aangesloten rektelefoon het RAM, de chip en de vrije opslag (adb getprop/meminfo/df) en geef een oordeel. EERST
+# METEN: dit draait de echte adb-opvraag zodra de telefoons aan de Chromebook hangen. De F8 blijft ALTIJD uitgesloten.
+hardware() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  "$ADB" start-server >/dev/null 2>&1 || true
+  local s id naam ramkb ramgb chip android vrijkb vrijmb soc snap oordeel n=0
+  zeg "Hardware per rektelefoon (kan een oude telefoon de F8 vervangen voor het zware model, E4B met beeld?):"
+  for s in $(verbonden); do
+    if is_f8 "$s"; then zeg "  ($(toestel_naam "$s") = F8, overgeslagen -- die blijft de dagelijkse telefoon)"; continue; fi
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"
+    ramkb="$("$ADB" -s "$s" shell cat /proc/meminfo 2>/dev/null | awk '/MemTotal/{print $2}' | tr -d '\r')"
+    ramgb=$(( ( ${ramkb:-0} + 524288 ) / 1048576 ))
+    chip="$("$ADB" -s "$s" shell getprop ro.soc.manufacturer 2>/dev/null | tr -d '\r') $("$ADB" -s "$s" shell getprop ro.soc.model 2>/dev/null | tr -d '\r')"
+    [ -n "$(printf '%s' "$chip" | tr -d ' ')" ] || chip="$("$ADB" -s "$s" shell getprop ro.board.platform 2>/dev/null | tr -d '\r') $("$ADB" -s "$s" shell getprop ro.hardware 2>/dev/null | tr -d '\r')"
+    android="$("$ADB" -s "$s" shell getprop ro.build.version.release 2>/dev/null | tr -d '\r')"
+    vrijkb="$(_vrij_kb "$s" /data)"; vrijmb=$(( ${vrijkb:-0} / 1024 ))
+    soc="$(printf '%s' "$chip" | tr 'A-Z' 'a-z')"
+    case "$soc" in *qualcomm*|*snapdragon*|*qcom*|*sm[0-9][0-9]*) snap=ja ;; *) snap=nee ;; esac
+    if [ "${ramgb:-0}" -ge 7 ] && [ "$snap" = ja ]; then oordeel="KANDIDAAT als F8-vervanger (genoeg RAM + Snapdragon) -- meet de snelheid met 'Lokaal meten' voordat je het besluit."
+    elif [ "${ramgb:-0}" -ge 7 ]; then oordeel="genoeg RAM, maar GEEN Snapdragon (Exynos/MediaTek) -> hoogstens een TRAGE reserve, niet real-time als de F8."
+    elif [ "${ramgb:-0}" -ge 5 ]; then oordeel="krap voor E4B met beeld -> eerder een klein model dan een F8-vervanger."
+    else oordeel="te licht voor het zware model (E4B)."; fi
+    zeg "  $naam: ~${ramgb:-?} GB RAM (gemeld ${ramkb:-?} kB), chip: $(printf '%s' "${chip:-onbekend}" | sed 's/^ *//;s/ *$//'), Android ${android:-?}, intern vrij ~${vrijmb:-?} MB"
+    zeg "    -> $oordeel"
+    n=$((n+1))
+  done
+  [ "$n" -gt 0 ] || zeg "  Geen rektelefoon op de lijst aangesloten. Sluit er een aan (kabel + USB-foutopsporing) en druk op 'Zoek telefoons'."
+  zeg "E4B (3,7 GB) met beeld vraagt een SNELLE GPU; op een niet-Snapdragon is hij vaak te traag om de F8 te vervangen. Uitleg + advies: docs/oude-telefoon-als-f8-vervanger.md."
+}
 lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokale server, of niets
   local s id poort model lp="$LOKAAL_POORT"
   for s in $(verbonden); do
@@ -2085,6 +2116,7 @@ case "${1:-status}" in
   alleen-kijken-uit) alleen_kijken_uit ;;   # 592h: alleen-kijken UIT -- het model mag weer handelen (vangnet blijft)
   cat-kijk) cat_kijk ;;                      # 116b: kijken wat ruimte inneemt op de Cat (niets aangeraakt)
   cat-ruim) cat_ruim ;;                      # 116b: alleen app-caches opruimen op de Cat (geen gegevens/foto's)
+  hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   overzicht) overzicht ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
