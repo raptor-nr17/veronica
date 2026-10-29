@@ -1309,42 +1309,100 @@ def _krimp(body, niveau):
     b['messages'] = msgs
     return b
 
-# 592i: stuur de chat naar het model, met logging van de ECHTE fout (code, bytes, duur) en kleiner-opnieuw bij een afgesloten
-# verbinding. Geeft (resp_json | None, info). info.limiet = True als het model de verbinding sloot (vraag te groot).
+# 592k: velden die een lokale OpenAI-server (OlliteRT/llama.cpp) vaak METEEN weigert (verbinding dicht zonder antwoord). We
+# parsen de actie toch uit de TEKST (de systeemprompt vertelt het model al het call:NAME{...}-formaat), dus deze API-velden
+# zijn hier overbodig en mogen eruit als het model de volle vorm weigert.
+RISICO_VELDEN = ('tools', 'tool_choice', 'functions', 'function_call', 'parallel_tool_calls', 'response_format')
+SNEL_MS = 2000   # 592k: sneller dicht dan dit = GEEN groottegrens maar een geweigerde request-VORM.
+
+def _vorm(body):
+    # 592k: beschrijf de request-VORM voor de log -- NOOIT met beeld-/audiodata (alleen soorten en tekstlengtes).
+    msgs = body.get('messages') or []
+    delen = []
+    for m in msgs:
+        rol = (m or {}).get('role', '?'); c = (m or {}).get('content')
+        if isinstance(c, str):
+            delen.append(f'{rol}:tekst({len(c)})')
+        elif isinstance(c, list):
+            soort = {}
+            for d in c:
+                t = d.get('type', '?') if isinstance(d, dict) else '?'
+                soort[t] = soort.get(t, 0) + 1
+            delen.append(f'{rol}:[' + ','.join(f'{k}x{v}' for k, v in soort.items()) + ']')
+        else:
+            delen.append(f'{rol}:{type(c).__name__}')
+    top = [k for k in body.keys() if k != 'messages']
+    risico = [k for k in RISICO_VELDEN if k in body]
+    return f'velden={top} risico-velden={risico} berichten={len(msgs)} [{" | ".join(delen)}]'
+
+def _zonder_risico(body):
+    b = dict(body)
+    for k in RISICO_VELDEN:
+        b.pop(k, None)
+    return b
+
+def _zonder_beeld(body):
+    # elke niet-tekst inhoud (image_url, input_audio) eruit; de tekst blijft, met een notitie. ALLEEN als laatste redmiddel.
+    b = dict(body); uit = []
+    for m in b.get('messages') or []:
+        c = (m or {}).get('content')
+        if isinstance(c, list):
+            tekst = ' '.join(d.get('text', '') for d in c if isinstance(d, dict) and d.get('type') == 'text')
+            if any(isinstance(d, dict) and d.get('type') != 'text' for d in c):
+                tekst = (tekst + ' ' if tekst else '') + '[schermbeeld/audio weggelaten]'
+            uit.append(dict(m, content=tekst))
+        else:
+            uit.append(m)
+    b['messages'] = uit
+    return b
+
+# 592k: stuur de chat naar het model. De F8 (OlliteRT) sloot ELKE aanvraag al na 18-45 ms -- dat is GEEN groottegrens maar een
+# geweigerde request-VORM. We proberen daarom in volgorde: (1) de volle vorm, (2) ZONDER de OpenAI-tool-/response_format-velden
+# (die we toch niet nodig hebben -- de actie komt uit de tekst), (3) ook ZONDER beeld/audio (laatste redmiddel). Elke poging met
+# de krimp van zijn niveau. De request-VORM gaat in de log (zonder beelddata), en we onthouden of de sluiting SNEL was.
+# Geeft (resp_json | None, info). info: grootte=echte groottegrens; gesloten+snel=direct geweigerd; alle_snel=elke poging snel dicht.
 def _chat_naar_model(pad, body):
     import time as _t
+    _notuleer('[request] ' + _vorm(body))
     start_niveau = 1 if alleen_kijken() else 0
+    varianten = [
+        (lambda x: x, 'vol'),
+        (_zonder_risico, 'zonder tools/response_format'),
+        (lambda x: _zonder_beeld(_zonder_risico(x)), 'zonder tools EN zonder beeld/audio'),
+    ]
     laatste = {}
-    for niveau in range(start_niveau, 3):
-        b = _krimp(body, niveau)
+    alle_snel = True
+    for i, (schoon, naam) in enumerate(varianten):
+        niveau = min(start_niveau + i, 2)
+        b = schoon(_krimp(body, niveau))
         t0 = _t.time()
         try:
             raw = _naar_model(pad, b, True)
             ms = int((_t.time() - t0) * 1000)
-            _notuleer(f'[model] ok niveau {niveau}: {len(raw)} bytes, {ms} ms, {len(b.get("messages") or [])} berichten, max_tokens {b.get("max_tokens")}')
+            _notuleer(f'[model] ok variant "{naam}" niveau {niveau}: {len(raw)} bytes, {ms} ms')
             try:
                 return json.loads(raw.decode('utf-8')), {}
             except Exception as e:
                 laatste = {'msg': 'ongeldig JSON van het model: ' + str(e)[:200]}
-                _notuleer(f'[model-fout] niveau {niveau}: ongeldig JSON ({ms} ms)')
+                _notuleer(f'[model-fout] variant "{naam}": ongeldig JSON ({ms} ms)')
                 continue
         except urllib.error.HTTPError as e:
-            ms = int((_t.time() - t0) * 1000)
+            ms = int((_t.time() - t0) * 1000); alle_snel = alle_snel and ms < SNEL_MS
             foutlijf = b''
             try:
                 foutlijf = e.read()
             except Exception:
                 pass
-            laatste = {'code': e.code, 'msg': foutlijf.decode('utf-8', 'replace')[:300]}
-            limiet = e.code in (413, 400) or re.search(r'token|limit|context|length|too large|groot', laatste['msg'], re.I)
-            _notuleer(f'[model-fout] niveau {niveau}: HTTP {e.code}, {len(foutlijf)} bytes, {ms} ms{" (limiet)" if limiet else ""}: {laatste["msg"][:160]}')
-            if not limiet:
-                break   # geen limietprobleem (bv. 401/404): kleiner opnieuw helpt niet
+            laatste = {'code': e.code, 'msg': foutlijf.decode('utf-8', 'replace')[:300], 'ms': ms}
+            laatste['grootte'] = bool(e.code == 413 or re.search(r'token|context|length|too large|groot', laatste['msg'], re.I))
+            _notuleer(f'[model-fout] variant "{naam}": HTTP {e.code}, {len(foutlijf)} bytes, {ms} ms: {laatste["msg"][:160]}')
+            if e.code in (401, 403, 404):
+                break   # auth/endpoint fout: geen enkele variant helpt
         except Exception as e:
-            ms = int((_t.time() - t0) * 1000)
-            laatste = {'limiet': True, 'msg': str(e)[:300]}
-            _notuleer(f'[model-fout] niveau {niveau}: verbinding afgesloten na {ms} ms ({str(e)[:120]}) -- vraag te groot, kleiner opnieuw')
-    laatste.setdefault('limiet', True)
+            ms = int((_t.time() - t0) * 1000); snel = ms < SNEL_MS; alle_snel = alle_snel and snel
+            laatste = {'gesloten': True, 'ms': ms, 'snel': snel, 'msg': str(e)[:200]}
+            _notuleer(f'[model-fout] variant "{naam}": verbinding gesloten na {ms} ms ({"direct geweigerd -- request-vorm" if snel else "mogelijk te groot"}): {str(e)[:120]}')
+    laatste['alle_snel'] = alle_snel
     return None, laatste
 
 class H(BaseHTTPRequestHandler):
@@ -1393,15 +1451,26 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json(502, {'error': str(e)})
             return
-        # 592i: naar het model met capping + kleiner-opnieuw bij een afgesloten verbinding; de echte fout staat in de Log.
+        # 592k: naar het model met shape-logging + variant-opnieuw; de foutmelding is EERLIJK over de oorzaak (niet 'te groot'
+        # als de verbinding al in tientallen ms sluit). De echte fout en de request-vorm staan in de Log.
         resp, info = _chat_naar_model(pad, body)
         if resp is None:
-            if info.get('limiet'):
-                self._json(502, {'error': ('Het lokale model (F8/OlliteRT) sloot de verbinding: de vraag is te groot, ook na '
-                                           'verkleinen. Zet in OlliteRT op de F8 de Max tokens lager (bijv. 8192) en/of de '
-                                           'contextlengte hoger. Laatste fout: ' + str(info.get('msg', '')))[:600]})
+            if info.get('grootte'):
+                msg = ('Het lokale model (F8/OlliteRT) gaf een groottegrens aan: ' + str(info.get('msg', ''))[:200] +
+                       '. Zet in OlliteRT op de F8 de Max tokens lager (bijv. 8192) en/of de contextlengte hoger.')
+            elif info.get('gesloten') and info.get('alle_snel'):
+                msg = ('De F8 (OlliteRT) sloot ELKE aanvraag meteen (~' + str(info.get('ms', '?')) + ' ms), ook zonder de '
+                       'tool-velden en zonder het schermbeeld. Dit is GEEN groottegrens maar een geweigerde request-vorm: '
+                       'OlliteRT accepteert het verzoek niet. Controleer of function-calling/vision echt werkt op dit model. '
+                       'De volledige request-vorm (zonder beelddata) staat in de Log (proxy-blok.log).')
+            elif info.get('gesloten'):
+                msg = ('Het lokale model sloot de verbinding na ' + str(info.get('ms', '?')) + ' ms. Mogelijk te groot: zet '
+                       'in OlliteRT de Max tokens lager (bijv. 8192) en/of de contextlengte hoger.')
+            elif info.get('code'):
+                msg = ('Het lokale model gaf HTTP ' + str(info.get('code')) + ': ' + str(info.get('msg', ''))[:200])
             else:
-                self._json(502, {'error': ('model onbereikbaar: ' + str(info.get('msg', '')))[:400]})
+                msg = ('model onbereikbaar: ' + str(info.get('msg', ''))[:200])
+            self._json(502, {'error': msg[:600]})
             return
         resp = _herschrijf(resp)
         if want_stream:
