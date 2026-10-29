@@ -139,6 +139,7 @@ PROXYF="$REK_MAP/artemis-proxy.py"
 PROXY_PIDF="$REK_MAP/proxy.pid"
 PROXY_LOG="$REK_MAP/proxy-blok.log"              # waar de proxy geblokkeerde acties noteert (Log/Status tonen dit)
 ALLEEN_KIJKEN_F="$REK_MAP/alleen-kijken"         # bestaat = alleen-kijken-stand (alleen Home mag); de console-knop zet hem
+ACTIEF_F="$REK_MAP/proxy-actief"                 # 592L: welk model antwoordde het laatst (Status leest dit)
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
@@ -799,8 +800,14 @@ start_proxy() {
   sleep 1
   for q in $(pids_op_poort "$PROXY_POORT" 2>/dev/null); do kill -9 "$q" 2>/dev/null || true; done
   rm -f "$PROXY_PIDF"
+  # 592L: de reserve-keten. De Gemini-sleutel (gratis AIza-laag) komt uit ARTEMIS' eigen .env -- geen aankoop, geen nieuwe sleutel.
+  # PROXY_RESERVE (reserve-telefoons met dezelfde E4B op het LAN) staat in $REK_MAP/reserve-modellen.json als die er is.
+  local gkey=""; [ -f "$ARTEMIS_MAP/.env" ] && gkey="$(sed -n 's/^GEMINI_API_KEY=//p' "$ARTEMIS_MAP/.env" 2>/dev/null | head -1)"
+  local reserve="[]"; [ -s "$REK_MAP/reserve-modellen.json" ] && reserve="$(cat "$REK_MAP/reserve-modellen.json")"
   ( env PROXY_POORT="$PROXY_POORT" F8_BASE="$base" F8_TOKEN="${token:-local}" \
       ALLEEN_KIJKEN_FILE="$ALLEEN_KIJKEN_F" PROXY_LOG="$PROXY_LOG" \
+      GEMINI_KEY="$gkey" GEMINI_MODELLEN="gemini-3.8-flash,gemini-3.6-flash" \
+      PROXY_RESERVE="$reserve" PROXY_ACTIEF_FILE="$ACTIEF_F" \
       setsid python3 "$PROXYF" </dev/null >>"$REK_MAP/proxy.log" 2>&1 & echo $! >"$PROXY_PIDF" )
   for i in 1 2 3 4 5 6 7 8 9 10; do proxy_draait && return 0; sleep 0.5; done
   proxy_draait
@@ -1100,6 +1107,42 @@ BLOKLOG = os.environ.get('PROXY_LOG', '')
 # proberen we het n keer kleiner. OUT_CAP = hoeveel tokens het model hoogstens mag teruggeven (een actie is kort).
 OUT_CAP = int(os.environ.get('PROXY_OUT_CAP', '2048'))
 
+# 592L: de vangnet-proxy houdt een GEORDENDE reserve-lijst van modellen bij en kiest per verzoek automatisch het EERSTE
+# bereikbare model, met de vangnet-regels rondom ELK model. Volgorde: F8 (lokaal, slimste bereikbaar) -> reserve-telefoons met
+# dezelfde E4B (lokaal, LAN) -> Gemini (gemini-3.8-flash, dan gemini-3.6-flash). Per verzoek opnieuw, dus zodra de F8 weer
+# antwoordt gaat het vanzelf terug. Geen aankopen: Gemini is de bestaande gratis AIza-sleutel van ARTEMIS.
+GEMINI_KEY = os.environ.get('GEMINI_KEY', '') or ''
+GEMINI_BASE = (os.environ.get('GEMINI_BASE', 'https://generativelanguage.googleapis.com/v1beta/openai') or '').rstrip('/')
+GEMINI_MODELLEN = os.environ.get('GEMINI_MODELLEN', 'gemini-3.8-flash,gemini-3.6-flash')
+ACTIEF_FILE = os.environ.get('PROXY_ACTIEF_FILE', '')   # hier noteren we welk model nu antwoordt (Status leest dit)
+
+def _backends():
+    lijst = []
+    if F8_BASE:
+        lijst.append({'naam': 'F8', 'soort': 'lokaal', 'base': F8_BASE, 'token': F8_TOKEN, 'model': None})
+    try:
+        # PROXY_RESERVE: JSON-lijst reserve-telefoons met dezelfde E4B op het LAN, bv. [{"naam":"Cat","base":"http://ip:8081/v1","token":"<rij-code>"}]
+        for r in json.loads(os.environ.get('PROXY_RESERVE', '') or '[]'):
+            if isinstance(r, dict) and r.get('base'):
+                lijst.append({'naam': r.get('naam', 'rektelefoon'), 'soort': 'lokaal',
+                              'base': str(r['base']).rstrip('/'), 'token': r.get('token', 'local'), 'model': r.get('model')})
+    except Exception:
+        pass
+    if GEMINI_KEY:
+        for m in [x.strip() for x in GEMINI_MODELLEN.split(',') if x.strip()]:
+            lijst.append({'naam': 'Gemini:' + m, 'soort': 'gemini', 'base': GEMINI_BASE, 'token': GEMINI_KEY, 'model': m})
+    return lijst
+
+def _noteer_actief(be):
+    # welk model antwoordde het laatst (Status/Veronica leest dit); nooit de sleutel, alleen de naam.
+    if ACTIEF_FILE:
+        try:
+            with open(ACTIEF_FILE, 'w') as f:
+                f.write(be.get('naam', '?'))
+        except Exception:
+            pass
+    _notuleer('[actief] ' + be.get('naam', '?'))
+
 # apparaat-acties van ARTEMIS (action_manifest): die kunnen het toestel VERANDEREN.
 DEVICE_ACTIES = {'click', 'click_sequence', 'long_press', 'input_text', 'swipe', 'press_key', 'manage_app',
                  'open_link', 'erase_one_char', 'focus_and_clear_text', 'tap', 'type', 'scroll'}
@@ -1266,11 +1309,11 @@ def _herschrijf(resp):
         _notuleer(f'[proxy-fout] {e}')
     return resp
 
-def _naar_model(pad, body, is_post):
-    url = F8_BASE + pad
+def _naar_model(base, token, pad, body, is_post):
+    url = base + pad
     data = json.dumps(body).encode() if (is_post and body is not None) else None
     req = urllib.request.Request(url, data=data, method='POST' if is_post else 'GET')
-    req.add_header('Authorization', 'Bearer ' + F8_TOKEN)
+    req.add_header('Authorization', 'Bearer ' + token)
     if is_post:
         req.add_header('Content-Type', 'application/json')
     with urllib.request.urlopen(req, timeout=600) as r:
@@ -1356,14 +1399,12 @@ def _zonder_beeld(body):
     b['messages'] = uit
     return b
 
-# 592k: stuur de chat naar het model. De F8 (OlliteRT) sloot ELKE aanvraag al na 18-45 ms -- dat is GEEN groottegrens maar een
+# 592k: een LOKAAL model (OlliteRT/Gemma) proberen. De F8 sloot ELKE aanvraag al na 18-45 ms -- GEEN groottegrens maar een
 # geweigerde request-VORM. We proberen daarom in volgorde: (1) de volle vorm, (2) ZONDER de OpenAI-tool-/response_format-velden
-# (die we toch niet nodig hebben -- de actie komt uit de tekst), (3) ook ZONDER beeld/audio (laatste redmiddel). Elke poging met
-# de krimp van zijn niveau. De request-VORM gaat in de log (zonder beelddata), en we onthouden of de sluiting SNEL was.
-# Geeft (resp_json | None, info). info: grootte=echte groottegrens; gesloten+snel=direct geweigerd; alle_snel=elke poging snel dicht.
-def _chat_naar_model(pad, body):
+# (die we hier niet nodig hebben -- de actie komt uit de tekst), (3) ook ZONDER beeld/audio (laatste redmiddel). Elke poging met
+# de krimp van zijn niveau. Geeft (resp_json | None, info). info: grootte=echte groottegrens; gesloten+snel=direct geweigerd.
+def _probeer_lokaal(be, pad, body):
     import time as _t
-    _notuleer('[request] ' + _vorm(body))
     start_niveau = 1 if alleen_kijken() else 0
     varianten = [
         (lambda x: x, 'vol'),
@@ -1375,16 +1416,18 @@ def _chat_naar_model(pad, body):
     for i, (schoon, naam) in enumerate(varianten):
         niveau = min(start_niveau + i, 2)
         b = schoon(_krimp(body, niveau))
+        if be.get('model'):
+            b['model'] = be['model']
         t0 = _t.time()
         try:
-            raw = _naar_model(pad, b, True)
+            raw = _naar_model(be['base'], be['token'], pad, b, True)
             ms = int((_t.time() - t0) * 1000)
-            _notuleer(f'[model] ok variant "{naam}" niveau {niveau}: {len(raw)} bytes, {ms} ms')
+            _notuleer(f'[model] ok {be["naam"]} variant "{naam}" niveau {niveau}: {len(raw)} bytes, {ms} ms')
             try:
                 return json.loads(raw.decode('utf-8')), {}
             except Exception as e:
                 laatste = {'msg': 'ongeldig JSON van het model: ' + str(e)[:200]}
-                _notuleer(f'[model-fout] variant "{naam}": ongeldig JSON ({ms} ms)')
+                _notuleer(f'[model-fout] {be["naam"]} variant "{naam}": ongeldig JSON ({ms} ms)')
                 continue
         except urllib.error.HTTPError as e:
             ms = int((_t.time() - t0) * 1000); alle_snel = alle_snel and ms < SNEL_MS
@@ -1395,14 +1438,59 @@ def _chat_naar_model(pad, body):
                 pass
             laatste = {'code': e.code, 'msg': foutlijf.decode('utf-8', 'replace')[:300], 'ms': ms}
             laatste['grootte'] = bool(e.code == 413 or re.search(r'token|context|length|too large|groot', laatste['msg'], re.I))
-            _notuleer(f'[model-fout] variant "{naam}": HTTP {e.code}, {len(foutlijf)} bytes, {ms} ms: {laatste["msg"][:160]}')
+            _notuleer(f'[model-fout] {be["naam"]} variant "{naam}": HTTP {e.code}, {len(foutlijf)} bytes, {ms} ms: {laatste["msg"][:160]}')
             if e.code in (401, 403, 404):
                 break   # auth/endpoint fout: geen enkele variant helpt
         except Exception as e:
             ms = int((_t.time() - t0) * 1000); snel = ms < SNEL_MS; alle_snel = alle_snel and snel
             laatste = {'gesloten': True, 'ms': ms, 'snel': snel, 'msg': str(e)[:200]}
-            _notuleer(f'[model-fout] variant "{naam}": verbinding gesloten na {ms} ms ({"direct geweigerd -- request-vorm" if snel else "mogelijk te groot"}): {str(e)[:120]}')
+            _notuleer(f'[model-fout] {be["naam"]} variant "{naam}": verbinding gesloten na {ms} ms ({"direct geweigerd -- request-vorm" if snel else "mogelijk te groot"}): {str(e)[:120]}')
     laatste['alle_snel'] = alle_snel
+    return None, laatste
+
+# 592L: Gemini (gratis AIza-laag) via de OpenAI-compatibele endpoint. Gemini ONDERSTEUNT tools, dus we laten de tool-velden
+# staan en zetten alleen het model + de uitvoer-cap. De vangnet-regels gelden daarna net zo goed (_herschrijf draait altijd).
+def _probeer_gemini(be, pad, body):
+    import time as _t
+    b = dict(body); b['model'] = be['model']
+    if not isinstance(b.get('max_tokens'), int) or b['max_tokens'] > OUT_CAP:
+        b['max_tokens'] = OUT_CAP
+    t0 = _t.time()
+    try:
+        raw = _naar_model(be['base'], be['token'], pad, b, True)
+        ms = int((_t.time() - t0) * 1000)
+        _notuleer(f'[model] ok {be["naam"]}: {len(raw)} bytes, {ms} ms')
+        return json.loads(raw.decode('utf-8')), {}
+    except urllib.error.HTTPError as e:
+        ms = int((_t.time() - t0) * 1000)
+        foutlijf = b''
+        try:
+            foutlijf = e.read()
+        except Exception:
+            pass
+        info = {'code': e.code, 'msg': foutlijf.decode('utf-8', 'replace')[:300], 'ms': ms}
+        _notuleer(f'[model-fout] {be["naam"]}: HTTP {e.code}, {ms} ms: {info["msg"][:160]}')
+        return None, info
+    except Exception as e:
+        ms = int((_t.time() - t0) * 1000)
+        _notuleer(f'[model-fout] {be["naam"]}: onbereikbaar na {ms} ms ({str(e)[:120]})')
+        return None, {'onbereikbaar': True, 'ms': ms, 'msg': str(e)[:200]}
+
+# 592L: de GEORDENDE reserve-keten. Per verzoek proberen we de backends op volgorde (F8 -> reserve-E4B -> Gemini) en nemen het
+# EERSTE model dat antwoordt; de rest is terugval. Zo werkt het rek door als de F8 weg is, en gaat het vanzelf terug zodra de F8
+# weer antwoordt. De request-VORM gaat eenmalig in de log (zonder beelddata). Geeft (resp_json | None, info van de LAATSTE backend).
+def _chat_naar_model(pad, body):
+    _notuleer('[request] ' + _vorm(body))
+    backends = _backends()
+    laatste = {'geen_backend': True}
+    for be in backends:
+        resp, info = (_probeer_lokaal if be['soort'] == 'lokaal' else _probeer_gemini)(be, pad, body)
+        if resp is not None:
+            _noteer_actief(be)
+            return resp, {'naam': be['naam']}
+        laatste = dict(info, backend=be['naam'])
+        if len(backends) > 1:
+            _notuleer(f'[backend] {be["naam"]} lukte niet -- volgende reserve proberen')
     return None, laatste
 
 class H(BaseHTTPRequestHandler):
@@ -1426,7 +1514,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(b'data: [DONE]\n\n')
     def do_GET(self):
         try:
-            raw = _naar_model(self.path[3:] if self.path.startswith('/v1') else self.path, None, False)
+            raw = _naar_model(F8_BASE, F8_TOKEN, self.path[3:] if self.path.startswith('/v1') else self.path, None, False)
             self.send_response(200); self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(raw))); self.end_headers(); self.wfile.write(raw)
         except Exception as e:
@@ -1445,7 +1533,7 @@ class H(BaseHTTPRequestHandler):
         if '/chat/completions' not in pad:
             # alles behalve chat (bv. /embeddings) ongewijzigd doorgeven
             try:
-                raw = _naar_model(pad, body, True); self.send_response(200)
+                raw = _naar_model(F8_BASE, F8_TOKEN, pad, body, True); self.send_response(200)
                 self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(raw)))
                 self.end_headers(); self.wfile.write(raw)
             except Exception as e:
@@ -1455,21 +1543,29 @@ class H(BaseHTTPRequestHandler):
         # als de verbinding al in tientallen ms sluit). De echte fout en de request-vorm staan in de Log.
         resp, info = _chat_naar_model(pad, body)
         if resp is None:
-            if info.get('grootte'):
-                msg = ('Het lokale model (F8/OlliteRT) gaf een groottegrens aan: ' + str(info.get('msg', ''))[:200] +
+            # 592L: alle backends (F8 -> reserve-E4B -> Gemini) faalden. De melding noemt de LAATSTE backend en blijft eerlijk
+            # over de oorzaak (een snelle sluiting is GEEN groottegrens). 'kop' zegt dat zelfs de reserves niet lukten.
+            kop = 'Geen enkel model lukte (F8, reserve-telefoons en Gemini geprobeerd). ' if _backends() and len(_backends()) > 1 else ''
+            if info.get('geen_backend'):
+                msg = ('Er is geen model ingesteld: geen F8, geen reserve-telefoon en geen Gemini-sleutel. '
+                       'Zet een lokaal model of koppel een reservetelefoon.')
+            elif info.get('grootte'):
+                msg = (kop + 'Het lokale model gaf een groottegrens aan: ' + str(info.get('msg', ''))[:200] +
                        '. Zet in OlliteRT op de F8 de Max tokens lager (bijv. 8192) en/of de contextlengte hoger.')
             elif info.get('gesloten') and info.get('alle_snel'):
-                msg = ('De F8 (OlliteRT) sloot ELKE aanvraag meteen (~' + str(info.get('ms', '?')) + ' ms), ook zonder de '
+                msg = (kop + 'De F8 (OlliteRT) sloot ELKE aanvraag meteen (~' + str(info.get('ms', '?')) + ' ms), ook zonder de '
                        'tool-velden en zonder het schermbeeld. Dit is GEEN groottegrens maar een geweigerde request-vorm: '
                        'OlliteRT accepteert het verzoek niet. Controleer of function-calling/vision echt werkt op dit model. '
                        'De volledige request-vorm (zonder beelddata) staat in de Log (proxy-blok.log).')
             elif info.get('gesloten'):
-                msg = ('Het lokale model sloot de verbinding na ' + str(info.get('ms', '?')) + ' ms. Mogelijk te groot: zet '
+                msg = (kop + 'Het lokale model sloot de verbinding na ' + str(info.get('ms', '?')) + ' ms. Mogelijk te groot: zet '
                        'in OlliteRT de Max tokens lager (bijv. 8192) en/of de contextlengte hoger.')
+            elif info.get('onbereikbaar'):
+                msg = (kop + str(info.get('backend', 'het model')) + ' is niet bereikbaar: ' + str(info.get('msg', ''))[:200])
             elif info.get('code'):
-                msg = ('Het lokale model gaf HTTP ' + str(info.get('code')) + ': ' + str(info.get('msg', ''))[:200])
+                msg = (kop + str(info.get('backend', 'het model')) + ' gaf HTTP ' + str(info.get('code')) + ': ' + str(info.get('msg', ''))[:200])
             else:
-                msg = ('model onbereikbaar: ' + str(info.get('msg', ''))[:200])
+                msg = (kop + 'model onbereikbaar: ' + str(info.get('msg', ''))[:200])
             self._json(502, {'error': msg[:600]})
             return
         resp = _herschrijf(resp)
@@ -1753,6 +1849,11 @@ status() {
     else zeg "Vangnet-proxy (592h): nog niet gestart (start zodra ARTEMIS lokaal draait)."; fi
     if [ -f "$ALLEEN_KIJKEN_F" ]; then zeg "Alleen-kijken: AAN -- het model mag alleen Home indrukken. ('Alleen kijken: uit' om te laten handelen.)"
     else zeg "Alleen-kijken: uit -- het model mag handelen; het vangnet (NOODSTOP/Stop/Verwijder/Uninstall + bank/kluis/betaal/crypto) blijft altijd aan."; fi
+    # 592L: de reserve-keten en welk model nu antwoordt. De vangnet-regels gelden rondom ELK model in de keten.
+    local keten="F8"; [ -s "$REK_MAP/reserve-modellen.json" ] && keten="$keten -> reserve-telefoon(s)"
+    [ -f "$ARTEMIS_MAP/.env" ] && grep -q '^GEMINI_API_KEY=.' "$ARTEMIS_MAP/.env" 2>/dev/null && keten="$keten -> Gemini (gemini-3.8-flash, dan 3.6)"
+    zeg "Reserve-keten (592L): $keten. Per verzoek wordt het eerste bereikbare model gekozen; zodra de F8 weer antwoordt gaat het vanzelf terug."
+    [ -s "$ACTIEF_F" ] && zeg "Nu actief model: $(cat "$ACTIEF_F")"
     if [ -s "$PROXY_LOG" ]; then zeg "Proxy (laatste, vangnet + model): $(tail -n 3 "$PROXY_LOG" | tr '\n' ' ')"; fi
   fi
   schijf      # 580: altijd de vrije schijfruimte erbij -- een volle schijf is de reden dat ARTEMIS niet start
