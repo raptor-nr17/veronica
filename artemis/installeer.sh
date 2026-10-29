@@ -140,6 +140,7 @@ PROXY_PIDF="$REK_MAP/proxy.pid"
 PROXY_LOG="$REK_MAP/proxy-blok.log"              # waar de proxy geblokkeerde acties noteert (Log/Status tonen dit)
 ALLEEN_KIJKEN_F="$REK_MAP/alleen-kijken"         # bestaat = alleen-kijken-stand (alleen Home mag); de console-knop zet hem
 ACTIEF_F="$REK_MAP/proxy-actief"                 # 592L: welk model antwoordde het laatst (Status leest dit)
+REDEN_F="$REK_MAP/proxy-reden"                   # 592o: de laatste echte reden van een mislukt/geblokkeerd verzoek (Status leest dit)
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
@@ -807,7 +808,7 @@ start_proxy() {
   ( env PROXY_POORT="$PROXY_POORT" F8_BASE="$base" F8_TOKEN="${token:-local}" \
       ALLEEN_KIJKEN_FILE="$ALLEEN_KIJKEN_F" PROXY_LOG="$PROXY_LOG" \
       GEMINI_KEY="$gkey" GEMINI_MODELLEN="gemini-3.8-flash,gemini-3.6-flash" \
-      PROXY_RESERVE="$reserve" PROXY_ACTIEF_FILE="$ACTIEF_F" \
+      PROXY_RESERVE="$reserve" PROXY_ACTIEF_FILE="$ACTIEF_F" PROXY_REDEN_FILE="$REDEN_F" \
       setsid python3 "$PROXYF" </dev/null >>"$REK_MAP/proxy.log" 2>&1 & echo $! >"$PROXY_PIDF" )
   for i in 1 2 3 4 5 6 7 8 9 10; do proxy_draait && return 0; sleep 0.5; done
   proxy_draait
@@ -1008,7 +1009,10 @@ except Exception:
 items = steps if isinstance(steps, list) else steps.get('steps') or steps.get('data') or []
 blob = json.dumps(items, ensure_ascii=False)
 sleutels = ['llm_gave_up', 'gave_up', 'no longer available', 'not available', 'NOT_FOUND', 'PERMISSION_DENIED',
-            'RESOURCE_EXHAUSTED', 'quota', 'API key not valid', 'update your code', 'models/gemini', 'error']
+            'RESOURCE_EXHAUSTED', 'quota', 'API key not valid', 'update your code', 'models/gemini', 'error',
+            # 592o: time-outs en lege/afgebroken antwoorden horen ook bij "waarom faalde de taak".
+            'timeout', 'timed out', 'deadline', 'DEADLINE_EXCEEDED', 'took too long', 'max steps', 'no action',
+            'empty response', 'no tool', 'could not parse', 'failed to parse', 'unavailable', 'closed connection']
 pat = '|'.join(re.escape(s) for s in sleutels)
 gezien = []
 for m in re.finditer(r'"([^"]{0,300}?(?:%s)[^"]{0,300}?)"' % pat, blob, re.I):
@@ -1115,6 +1119,12 @@ GEMINI_KEY = os.environ.get('GEMINI_KEY', '') or ''
 GEMINI_BASE = (os.environ.get('GEMINI_BASE', 'https://generativelanguage.googleapis.com/v1beta/openai') or '').rstrip('/')
 GEMINI_MODELLEN = os.environ.get('GEMINI_MODELLEN', 'gemini-3.8-flash,gemini-3.6-flash')
 ACTIEF_FILE = os.environ.get('PROXY_ACTIEF_FILE', '')   # hier noteren we welk model nu antwoordt (Status leest dit)
+# 592o: een lokaal model dat NIET bereikbaar is (F8 weg: No route to host) wordt BREAKER_S seconden overgeslagen, zodat niet
+# elke stap opnieuw ~9 s op de dode F8 wacht. Gemini krijgt een eigen time-out zodat een trage stap faalt i.p.v. 351 s te hangen.
+BREAKER_S = int(os.environ.get('PROXY_BREAKER_S', '60') or '60')
+GEMINI_TIMEOUT = int(os.environ.get('PROXY_GEMINI_TIMEOUT', '90') or '90')
+_KAPOT = {}   # base -> tijd tot wanneer dit lokale model wordt overgeslagen
+REDEN_FILE = os.environ.get('PROXY_REDEN_FILE', '')   # 592o: de laatste echte reden van een mislukt verzoek (Status leest dit)
 
 def _backends():
     lijst = []
@@ -1142,6 +1152,13 @@ def _noteer_actief(be):
         except Exception:
             pass
     _notuleer('[actief] ' + be.get('naam', '?'))
+
+def _leesactief():
+    try:
+        with open(ACTIEF_FILE) as f:
+            return f.read().strip()
+    except Exception:
+        return ''
 
 # apparaat-acties van ARTEMIS (action_manifest): die kunnen het toestel VERANDEREN.
 DEVICE_ACTIES = {'click', 'click_sequence', 'long_press', 'input_text', 'swipe', 'press_key', 'manage_app',
@@ -1309,15 +1326,28 @@ def _herschrijf(resp):
         _notuleer(f'[proxy-fout] {e}')
     return resp
 
-def _naar_model(base, token, pad, body, is_post):
+def _naar_model(base, token, pad, body, is_post, timeout=600):
     url = base + pad
     data = json.dumps(body).encode() if (is_post and body is not None) else None
     req = urllib.request.Request(url, data=data, method='POST' if is_post else 'GET')
     req.add_header('Authorization', 'Bearer ' + token)
     if is_post:
         req.add_header('Content-Type', 'application/json')
-    with urllib.request.urlopen(req, timeout=600) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
+
+# 592o: een verbindingsfout (host weg / No route to host / geweigerd / time-out bij het verbinden) betekent dat de BACKEND weg
+# is -- dan heeft het geen zin de andere varianten te proberen, en gaat de circuit breaker open. Een RemoteDisconnected (wel
+# verbonden, daarna dicht) is juist een request-VORM-weigering (592k) -- dan proberen we wel de volgende variant.
+def _onbereikbaar(e):
+    import socket
+    r = getattr(e, 'reason', e)
+    if isinstance(r, (ConnectionRefusedError, socket.timeout, TimeoutError)):
+        return True
+    if isinstance(r, OSError) and getattr(r, 'errno', None) in (101, 111, 113, 110, 64):  # ENETUNREACH/ECONNREFUSED/EHOSTUNREACH/ETIMEDOUT/EHOSTDOWN
+        return True
+    t = (str(r) + ' ' + str(e)).lower()
+    return any(w in t for w in ('no route to host', 'refused', 'unreachable', 'timed out', 'host is down', 'name or service', 'getaddrinfo', 'connection reset'))
 
 # 592i: de vraag kleiner maken. niveau 0 = alleen de uitvoer-tokens cappen (veilig, altijd); hoger = minder geschiedenis en
 # kortere teksten. Een schermbeeld (image_url) blijft ALTIJD staan -- dat is juist wat het model moet zien. In de alleen-kijken-
@@ -1442,7 +1472,13 @@ def _probeer_lokaal(be, pad, body):
             if e.code in (401, 403, 404):
                 break   # auth/endpoint fout: geen enkele variant helpt
         except Exception as e:
-            ms = int((_t.time() - t0) * 1000); snel = ms < SNEL_MS; alle_snel = alle_snel and snel
+            ms = int((_t.time() - t0) * 1000)
+            if _onbereikbaar(e):
+                # 592o: de backend is WEG (No route to host / geweigerd / time-out). Geen zin de andere varianten te proberen;
+                # de circuit breaker in _chat_naar_model slaat hem daarna even over.
+                _notuleer(f'[model-fout] {be["naam"]} variant "{naam}": ONBEREIKBAAR na {ms} ms ({str(e)[:120]})')
+                return None, {'onbereikbaar': True, 'ms': ms, 'msg': str(e)[:200], 'alle_snel': alle_snel}
+            snel = ms < SNEL_MS; alle_snel = alle_snel and snel
             laatste = {'gesloten': True, 'ms': ms, 'snel': snel, 'msg': str(e)[:200]}
             _notuleer(f'[model-fout] {be["naam"]} variant "{naam}": verbinding gesloten na {ms} ms ({"direct geweigerd -- request-vorm" if snel else "mogelijk te groot"}): {str(e)[:120]}')
     laatste['alle_snel'] = alle_snel
@@ -1452,12 +1488,14 @@ def _probeer_lokaal(be, pad, body):
 # staan en zetten alleen het model + de uitvoer-cap. De vangnet-regels gelden daarna net zo goed (_herschrijf draait altijd).
 def _probeer_gemini(be, pad, body):
     import time as _t
-    b = dict(body); b['model'] = be['model']
-    if not isinstance(b.get('max_tokens'), int) or b['max_tokens'] > OUT_CAP:
-        b['max_tokens'] = OUT_CAP
+    # 592o: Gemini duurde 58-351 s per stap. De grootste last is de geschiedenis + een groot schermbeeld. We krimpen daarom
+    # ook voor Gemini (geschiedenis eruit, het BEELD blijft -- het model moet kijken), cappen de uitvoer, en zetten een time-out
+    # zodat een trage stap FAALT (en de volgende reserve/ARTEMIS het overneemt) i.p.v. 351 s te hangen. Tools blijven staan (Gemini
+    # ondersteunt ze); de vangnet-regels gelden daarna via _herschrijf.
+    b = _krimp(body, 1); b['model'] = be['model']
     t0 = _t.time()
     try:
-        raw = _naar_model(be['base'], be['token'], pad, b, True)
+        raw = _naar_model(be['base'], be['token'], pad, b, True, timeout=GEMINI_TIMEOUT)
         ms = int((_t.time() - t0) * 1000)
         _notuleer(f'[model] ok {be["naam"]}: {len(raw)} bytes, {ms} ms')
         return json.loads(raw.decode('utf-8')), {}
@@ -1473,21 +1511,47 @@ def _probeer_gemini(be, pad, body):
         return None, info
     except Exception as e:
         ms = int((_t.time() - t0) * 1000)
-        _notuleer(f'[model-fout] {be["naam"]}: onbereikbaar na {ms} ms ({str(e)[:120]})')
-        return None, {'onbereikbaar': True, 'ms': ms, 'msg': str(e)[:200]}
+        traag = ms >= GEMINI_TIMEOUT * 1000 - 500 or _onbereikbaar(e)
+        soort = 'time-out (te traag)' if ms >= GEMINI_TIMEOUT * 1000 - 500 else 'onbereikbaar'
+        _notuleer(f'[model-fout] {be["naam"]}: {soort} na {ms} ms ({str(e)[:120]})')
+        return None, {'onbereikbaar': True, 'timeout': ms >= GEMINI_TIMEOUT * 1000 - 500, 'ms': ms, 'msg': str(e)[:200]}
 
 # 592L: de GEORDENDE reserve-keten. Per verzoek proberen we de backends op volgorde (F8 -> reserve-E4B -> Gemini) en nemen het
 # EERSTE model dat antwoordt; de rest is terugval. Zo werkt het rek door als de F8 weg is, en gaat het vanzelf terug zodra de F8
 # weer antwoordt. De request-VORM gaat eenmalig in de log (zonder beelddata). Geeft (resp_json | None, info van de LAATSTE backend).
+def _noteer_reden(tekst):
+    # 592o: de laatste echte reden (Status leest dit) -- kort, zonder beeld-/sleuteldata.
+    if REDEN_FILE:
+        try:
+            with open(REDEN_FILE, 'w') as f:
+                f.write(tekst[:300])
+        except Exception:
+            pass
+
 def _chat_naar_model(pad, body):
+    import time as _t
     _notuleer('[request] ' + _vorm(body))
     backends = _backends()
+    nu = _t.time()
     laatste = {'geen_backend': True}
     for be in backends:
+        # 592o: circuit breaker -- een lokaal model dat net ONBEREIKBAAR bleek, slaan we BREAKER_S seconden over, zodat niet
+        # elke stap opnieuw ~9 s op de dode F8 wacht. (Gemini staat achteraan en heeft een eigen time-out.)
+        if be['soort'] == 'lokaal':
+            tot = _KAPOT.get(be['base'], 0)
+            if tot > nu:
+                _notuleer(f'[breaker] {be["naam"]} overgeslagen (recent weg, nog {int(tot - nu)} s)')
+                laatste = {'backend': be['naam'], 'onbereikbaar': True, 'overgeslagen': True, 'tot': int(tot - nu)}
+                continue
         resp, info = (_probeer_lokaal if be['soort'] == 'lokaal' else _probeer_gemini)(be, pad, body)
         if resp is not None:
+            if be['soort'] == 'lokaal':
+                _KAPOT.pop(be['base'], None)   # weer bereikbaar: breaker dicht
             _noteer_actief(be)
             return resp, {'naam': be['naam']}
+        if be['soort'] == 'lokaal' and info.get('onbereikbaar'):
+            _KAPOT[be['base']] = nu + BREAKER_S   # breaker open: dit lokale model even overslaan
+            _notuleer(f'[breaker] {be["naam"]} {BREAKER_S} s overgeslagen (onbereikbaar)')
         laatste = dict(info, backend=be['naam'])
         if len(backends) > 1:
             _notuleer(f'[backend] {be["naam"]} lukte niet -- volgende reserve proberen')
@@ -1560,15 +1624,29 @@ class H(BaseHTTPRequestHandler):
             elif info.get('gesloten'):
                 msg = (kop + 'Het lokale model sloot de verbinding na ' + str(info.get('ms', '?')) + ' ms. Mogelijk te groot: zet '
                        'in OlliteRT de Max tokens lager (bijv. 8192) en/of de contextlengte hoger.')
+            elif info.get('timeout'):
+                msg = (kop + str(info.get('backend', 'het model')) + ' was te traag (time-out na ~' + str(int(info.get('ms', 0) / 1000)) +
+                       ' s). De stap is afgebroken i.p.v. lang te hangen; probeer het opnieuw of maak de vraag kleiner.')
             elif info.get('onbereikbaar'):
                 msg = (kop + str(info.get('backend', 'het model')) + ' is niet bereikbaar: ' + str(info.get('msg', ''))[:200])
             elif info.get('code'):
                 msg = (kop + str(info.get('backend', 'het model')) + ' gaf HTTP ' + str(info.get('code')) + ': ' + str(info.get('msg', ''))[:200])
             else:
                 msg = (kop + 'model onbereikbaar: ' + str(info.get('msg', ''))[:200])
+            _noteer_reden('verzoek mislukt: ' + msg)
             self._json(502, {'error': msg[:600]})
             return
         resp = _herschrijf(resp)
+        # 592o: stelde het model ALLEEN geblokkeerde acties voor (alleen-kijken / vangnet) en kwam er geen enkele actie door, dan
+        # maakt ARTEMIS geen voortgang -- noteer dat als de echte reden, zodat Status het toont i.p.v. een vage FAILED.
+        try:
+            _m = ((resp.get('choices') or [{}])[0].get('message') or {})
+            if not _m.get('tool_calls') and 'Geblokkeerd' in (_m.get('content') or ''):
+                _noteer_reden('model stelde alleen geblokkeerde acties voor (alleen-kijken/vangnet): ' + (_m.get('content') or '')[:200])
+            else:
+                _noteer_reden('ok: ' + (_leesactief() or '?'))
+        except Exception:
+            pass
         if want_stream:
             try:
                 self._sse(resp)
@@ -1578,8 +1656,8 @@ class H(BaseHTTPRequestHandler):
             self._json(200, resp)
 
 if __name__ == '__main__':
-    if not F8_BASE:
-        sys.stderr.write('geen F8_BASE\n'); sys.exit(1)
+    if not F8_BASE and not GEMINI_KEY:
+        sys.stderr.write('geen F8_BASE en geen Gemini-sleutel\n'); sys.exit(1)
     ThreadingHTTPServer(('127.0.0.1', POORT), H).serve_forever()
 PROXY
   chmod 600 "$PROXYF" 2>/dev/null || true
@@ -1854,6 +1932,9 @@ status() {
     [ -f "$ARTEMIS_MAP/.env" ] && grep -q '^GEMINI_API_KEY=.' "$ARTEMIS_MAP/.env" 2>/dev/null && keten="$keten -> Gemini (gemini-3.8-flash, dan 3.6)"
     zeg "Reserve-keten (592L): $keten. Per verzoek wordt het eerste bereikbare model gekozen; zodra de F8 weer antwoordt gaat het vanzelf terug."
     [ -s "$ACTIEF_F" ] && zeg "Nu actief model: $(cat "$ACTIEF_F")"
+    [ -s "$REDEN_F" ] && zeg "Laatste verzoek: $(cat "$REDEN_F")"   # 592o: de ECHTE reden (time-out, onbereikbaar, alle acties geblokkeerd, of ok)
+    # 592o: staat een lokaal model in de circuit breaker (recent weg), zeg dat -- dan slaat de proxy het even over i.p.v. 9 s wachten.
+    if [ -s "$PROXY_LOG" ] && tail -n 15 "$PROXY_LOG" | grep -q '\[breaker\].*overgeslagen'; then zeg "Circuit breaker: een lokaal model (F8) is net weg en wordt ${BREAKER_WEG:-60} s overgeslagen -- de reserve neemt het meteen over."; fi
     if [ -s "$PROXY_LOG" ]; then zeg "Proxy (laatste, vangnet + model): $(tail -n 3 "$PROXY_LOG" | tr '\n' ' ')"; fi
   fi
   schijf      # 580: altijd de vrije schijfruimte erbij -- een volle schijf is de reden dat ARTEMIS niet start
