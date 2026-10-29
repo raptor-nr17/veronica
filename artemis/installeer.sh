@@ -141,6 +141,7 @@ PROXY_LOG="$REK_MAP/proxy-blok.log"              # waar de proxy geblokkeerde ac
 ALLEEN_KIJKEN_F="$REK_MAP/alleen-kijken"         # bestaat = alleen-kijken-stand (alleen Home mag); de console-knop zet hem
 ACTIEF_F="$REK_MAP/proxy-actief"                 # 592L: welk model antwoordde het laatst (Status leest dit)
 REDEN_F="$REK_MAP/proxy-reden"                   # 592o: de laatste echte reden van een mislukt/geblokkeerd verzoek (Status leest dit)
+F8_GEVONDEN_F="$REK_MAP/f8-gevonden.conf"        # 592p: het teruggevonden LAN-adres van de F8 (na een IP-wissel); Status leest dit
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
@@ -419,7 +420,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -507,7 +508,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -805,10 +806,17 @@ start_proxy() {
   # PROXY_RESERVE (reserve-telefoons met dezelfde E4B op het LAN) staat in $REK_MAP/reserve-modellen.json als die er is.
   local gkey=""; [ -f "$ARTEMIS_MAP/.env" ] && gkey="$(sed -n 's/^GEMINI_API_KEY=//p' "$ARTEMIS_MAP/.env" 2>/dev/null | head -1)"
   local reserve="[]"; [ -s "$REK_MAP/reserve-modellen.json" ] && reserve="$(cat "$REK_MAP/reserve-modellen.json")"
+  # 592p: is de F8 een LAN-adres (niet 127.0.0.1 via adb)? Dan mag de proxy hem bij een IP-wissel zelf terugvinden op het subnet.
+  # Een eerder teruggevonden adres (f8-gevonden.conf) is recenter dan de conf, dus daar beginnen we.
+  local f8lan=0; case "$base" in http://127.0.0.1:*|http://localhost:*) : ;; http://*) f8lan=1 ;; esac
+  if [ "$f8lan" = 1 ] && [ -s "$F8_GEVONDEN_F" ]; then base="$(cat "$F8_GEVONDEN_F")"; fi
+  # 592p: de /24-prefixes van de Chromebook meegeven zodat de proxy de F8 op het LAN kan terugvinden -- GEEN vast IP in de code.
+  local subnetten=""; if [ "$f8lan" = 1 ]; then local sip; for sip in $(f8_eigen_ips); do subnetten="$subnetten$(printf '%s' "$sip" | sed 's/\.[0-9]*$/./'),"; done; fi
   ( env PROXY_POORT="$PROXY_POORT" F8_BASE="$base" F8_TOKEN="${token:-local}" \
       ALLEEN_KIJKEN_FILE="$ALLEEN_KIJKEN_F" PROXY_LOG="$PROXY_LOG" \
       GEMINI_KEY="$gkey" GEMINI_MODELLEN="gemini-3.8-flash,gemini-3.6-flash" \
       PROXY_RESERVE="$reserve" PROXY_ACTIEF_FILE="$ACTIEF_F" PROXY_REDEN_FILE="$REDEN_F" \
+      F8_LAN="$f8lan" F8_GEVONDEN_FILE="$F8_GEVONDEN_F" F8_SCAN_POORTEN="8000" F8_SUBNETTEN="$subnetten" \
       setsid python3 "$PROXYF" </dev/null >>"$REK_MAP/proxy.log" 2>&1 & echo $! >"$PROXY_PIDF" )
   for i in 1 2 3 4 5 6 7 8 9 10; do proxy_draait && return 0; sleep 0.5; done
   proxy_draait
@@ -1126,6 +1134,17 @@ GEMINI_TIMEOUT = int(os.environ.get('PROXY_GEMINI_TIMEOUT', '90') or '90')
 _KAPOT = {}   # base -> tijd tot wanneer dit lokale model wordt overgeslagen
 REDEN_FILE = os.environ.get('PROXY_REDEN_FILE', '')   # 592o: de laatste echte reden van een mislukt verzoek (Status leest dit)
 
+# 592p: de F8 (gast-brein) hangt thuis op het LAN en krijgt bij een ander wifi een ANDER IP. Dan is F8_BASE dood ("No route to
+# host") en zou de proxy naar Gemini vallen. Daarom: als de F8 een LAN-adres is en onbereikbaar blijkt, scant de proxy het eigen
+# subnet op /v1/models met een Gemma-model (E4B/vision), onthoudt het nieuwe adres en gebruikt dat -- NOOIT Gemini zolang de F8 te
+# vinden is. F8_LAN=1 zet dit aan (alleen voor een LAN-adres, niet voor 127.0.0.1 via adb). De test geeft F8_SCAN_HOSTS expliciet.
+F8_LAN = (os.environ.get('F8_LAN', '') or '') == '1'
+F8_SCAN_POORTEN = [int(p) for p in (os.environ.get('F8_SCAN_POORTEN', '8000').split(',')) if p.strip().isdigit()] or [8000]
+F8_SCAN_HOSTS = (os.environ.get('F8_SCAN_HOSTS', '') or '').strip()     # expliciete hostlijst (voor de test); leeg = uit F8_SUBNETTEN afleiden
+F8_SUBNETTEN = (os.environ.get('F8_SUBNETTEN', '') or '').strip()      # /24-prefixes van de Chromebook (bv. "192.168.178."), door start_proxy gezet -- zo staat er GEEN vast IP in de code
+F8_MODEL_HINT = os.environ.get('F8_MODEL_HINT', r'e4b|e2b|gemma|3n|vision|4b|3\.?8b')
+F8_GEVONDEN_FILE = os.environ.get('F8_GEVONDEN_FILE', '')              # hier onthouden we het teruggevonden LAN-adres (Status leest dit)
+
 def _backends():
     lijst = []
     if F8_BASE:
@@ -1159,6 +1178,74 @@ def _leesactief():
             return f.read().strip()
     except Exception:
         return ''
+
+# 592p: de F8 op het LAN terugvinden na een IP-wissel. We scannen het eigen subnet (of de expliciete F8_SCAN_HOSTS) op poort
+# 8000 en vragen /v1/models; het EERSTE adres dat een Gemma-model (E4B/vision) meldt, is de nieuwe F8. Geen mDNS-afhankelijkheid
+# (gastnetten blokkeren dat vaak); een kale TCP-scan + /v1/models werkt overal. Alleen aangeroepen als F8_LAN aan staat.
+def _scan_hosts():
+    # expliciete hosts (test) of de /24-prefixes die start_proxy uit de eigen LAN-adressen afleidde. Geen vast IP in de code.
+    if F8_SCAN_HOSTS:
+        return [h.strip() for h in F8_SCAN_HOSTS.split(',') if h.strip()]
+    hosts = []
+    for pre in [p.strip() for p in F8_SUBNETTEN.split(',') if p.strip()]:
+        if not pre.endswith('.'):
+            pre = pre + '.'
+        hosts += [pre + str(n) for n in range(1, 255)]
+    return hosts
+
+def _poort_open(host, poort, t=0.4):
+    import socket
+    try:
+        s = socket.create_connection((host, poort), timeout=t); s.close(); return True
+    except Exception:
+        return False
+
+def _f8_hier(host, poort):
+    # geeft de base terug als hier een Gemma-model (E4B/vision) antwoordt op /v1/models, anders None
+    base = 'http://%s:%d/v1' % (host, poort)
+    try:
+        raw = _naar_model(base, F8_TOKEN, '/models', None, False, timeout=3)
+        ids = re.findall(r'"id"\s*:\s*"([^"]+)"', raw.decode('utf-8', 'replace'))
+        if any(re.search(F8_MODEL_HINT, i, re.I) for i in ids):
+            return base
+    except Exception:
+        return None
+    return None
+
+def _vind_f8_lan():
+    if not F8_LAN:
+        return None
+    import concurrent.futures
+    hosts = _scan_hosts()
+    if not hosts:
+        return None
+    primair = F8_SCAN_POORTEN[0]
+    open_hosts = []
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
+            for h, res in zip(hosts, ex.map(lambda x: _poort_open(x, primair), hosts)):
+                if res:
+                    open_hosts.append(h)
+    except Exception:
+        open_hosts = [h for h in hosts if _poort_open(h, primair)]
+    for h in open_hosts:
+        for p in F8_SCAN_POORTEN:
+            base = _f8_hier(h, p)
+            if base:
+                _notuleer('[f8] Gemma gevonden op ' + base)
+                return base
+    return None
+
+def _zet_f8_base(nieuw):
+    # onthoud het nieuwe LAN-adres (module-breed + op schijf, zodat Status en een herstart het meteen gebruiken)
+    global F8_BASE
+    F8_BASE = nieuw.rstrip('/')
+    if F8_GEVONDEN_FILE:
+        try:
+            with open(F8_GEVONDEN_FILE, 'w') as f:
+                f.write(F8_BASE)
+        except Exception:
+            pass
 
 # apparaat-acties van ARTEMIS (action_manifest): die kunnen het toestel VERANDEREN.
 DEVICE_ACTIES = {'click', 'click_sequence', 'long_press', 'input_text', 'swipe', 'press_key', 'manage_app',
@@ -1550,6 +1637,20 @@ def _chat_naar_model(pad, body):
             _noteer_actief(be)
             return resp, {'naam': be['naam']}
         if be['soort'] == 'lokaal' and info.get('onbereikbaar'):
+            # 592p: de F8 is weg -- misschien alleen een ander IP (ander wifi). Scan het LAN, en als de F8 ergens anders
+            # antwoordt, gebruik dat adres METEEN. Zo gaan we NOOIT naar Gemini zolang de F8 te vinden is.
+            if be['naam'] == 'F8' and F8_LAN:
+                nieuw = _vind_f8_lan()
+                if nieuw and nieuw.rstrip('/') != be['base']:
+                    _notuleer('[f8] nieuw LAN-adres gevonden: ' + nieuw + ' (was ' + be['base'] + ')')
+                    _zet_f8_base(nieuw)
+                    be2 = dict(be, base=nieuw.rstrip('/'))
+                    resp2, info2 = _probeer_lokaal(be2, pad, body)
+                    if resp2 is not None:
+                        _KAPOT.pop(be2['base'], None)
+                        _noteer_actief(be2)
+                        return resp2, {'naam': be2['naam']}
+                    info = info2
             _KAPOT[be['base']] = nu + BREAKER_S   # breaker open: dit lokale model even overslaan
             _notuleer(f'[breaker] {be["naam"]} {BREAKER_S} s overgeslagen (onbereikbaar)')
         laatste = dict(info, backend=be['naam'])
@@ -1756,6 +1857,38 @@ lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokal
     done
   done
   return 1
+}
+# 592p: de F8 (gast-brein) hangt thuis op het LAN (OlliteRT op poort 8000) en krijgt bij een ander wifi een ANDER IP. Dan is het
+# oude BASE_URL dood ("No route to host"). Dit zoekt de F8 terug: scan het eigen subnet (of F8_SCAN_HOSTS) op /v1/models met een
+# Gemma-model, schrijf het nieuwe adres naar f8-gevonden.conf EN naar BASE_URL in lokaal-model.conf, en herstart de proxy zodat hij
+# het meteen gebruikt. Geen aankopen, geen mDNS (gastnetten blokkeren dat); een kale scan werkt overal.
+f8_eigen_ips() {
+  { ip -4 addr show 2>/dev/null | sed -n 's#.*inet \([0-9.]*\)/.*#\1#p'; hostname -I 2>/dev/null; } \
+    | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | grep -v '^127\.' | sort -u
+}
+f8_hosts() {
+  if [ -n "$F8_SCAN_HOSTS" ]; then printf '%s\n' $F8_SCAN_HOSTS; return; fi
+  local ip pre
+  for ip in $(f8_eigen_ips); do pre="$(printf '%s' "$ip" | sed 's/\.[0-9]*$/./')"; seq 1 254 | sed "s#^#$pre#"; done
+}
+f8_zoek() {
+  command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
+  local poort hint='e4b|e2b|gemma|3n|vision|4b' gevonden="" model
+  zeg "F8 zoeken op het lokale netwerk (poort ${F8_ZOEK_POORTEN:-8000}, /v1/models met een Gemma-model)..."
+  for poort in ${F8_ZOEK_POORTEN:-8000}; do
+    gevonden="$(f8_hosts | xargs -P 50 -I{} sh -c 'curl -fsS -m 1 "http://{}:'"$poort"'/v1/models" 2>/dev/null | grep -qiE "'"$hint"'" && echo "http://{}:'"$poort"'/v1"' 2>/dev/null | head -1)"
+    [ -n "$gevonden" ] && break
+  done
+  if [ -z "$gevonden" ]; then
+    zeg "Geen F8 op het lokale netwerk gevonden (poort ${F8_ZOEK_POORTEN:-8000}). Staat OlliteRT aan op de F8, en hangt hij op dit wifi?"
+    return 1
+  fi
+  printf '%s' "$gevonden" >"$F8_GEVONDEN_F"; chmod 600 "$F8_GEVONDEN_F" 2>/dev/null || true
+  [ -s "$REK_MAP/lokaal-model.conf" ] && sed -i "s#^BASE_URL=.*#BASE_URL=$gevonden#" "$REK_MAP/lokaal-model.conf" 2>/dev/null || true
+  model="$(curl -fsS -m 3 "$gevonden/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
+  zeg "F8 gevonden op $gevonden -- OlliteRT antwoordt (model: ${model:-?})."
+  if proxy_draait; then start_proxy "$gevonden" "local" >/dev/null 2>&1 && zeg "De vangnet-proxy gebruikt nu dit adres (geen Gemini zolang de F8 antwoordt)." || true; fi
+  return 0
 }
 lokaal() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
@@ -1964,6 +2097,17 @@ status() {
     zeg "Reserve-keten (592L): $keten. Per verzoek wordt het eerste bereikbare model gekozen; zodra de F8 weer antwoordt gaat het vanzelf terug."
     [ -s "$ACTIEF_F" ] && zeg "Nu actief model: $(cat "$ACTIEF_F")"
     [ -s "$REDEN_F" ] && zeg "Laatste verzoek: $(cat "$REDEN_F")"   # 592o: de ECHTE reden (time-out, onbereikbaar, alle acties geblokkeerd, of ok)
+    # 592p: de F8 op het LAN -- welk adres gebruiken we nu, en antwoordt OlliteRT? (Bij een ander wifi verandert het IP; de knop
+    # "F8 terugvinden" scant het subnet opnieuw.) Toon het teruggevonden adres als dat er is, anders het ingestelde BASE_URL.
+    local f8base=""; [ -s "$F8_GEVONDEN_F" ] && f8base="$(cat "$F8_GEVONDEN_F")"
+    [ -z "$f8base" ] && [ -s "$REK_MAP/lokaal-model.conf" ] && f8base="$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+    case "$f8base" in http://127.0.0.1:*|http://localhost:*|'') : ;; http://*)
+      [ -s "$F8_GEVONDEN_F" ] && zeg "F8 teruggevonden op: $f8base (na een IP-wissel vanzelf gevonden)."
+      if command -v curl >/dev/null 2>&1 && curl -fsS -m 2 "$f8base/models" >/dev/null 2>&1; then
+        zeg "F8 ($f8base): OlliteRT ANTWOORDT -- geen Gemini nodig."
+      else
+        zeg "F8 ($f8base): GEEN antwoord (ander IP? OlliteRT uit?). Druk op 'F8 terugvinden' om het subnet opnieuw te scannen." ; fi ;;
+    esac
     # 592o: staat een lokaal model in de circuit breaker (recent weg), zeg dat -- dan slaat de proxy het even over i.p.v. 9 s wachten.
     if [ -s "$PROXY_LOG" ] && tail -n 15 "$PROXY_LOG" | grep -q '\[breaker\].*overgeslagen'; then zeg "Circuit breaker: een lokaal model (F8) is net weg en wordt ${BREAKER_WEG:-60} s overgeslagen -- de reserve neemt het meteen over."; fi
     if [ -s "$PROXY_LOG" ]; then zeg "Proxy (laatste, vangnet + model): $(tail -n 3 "$PROXY_LOG" | tr '\n' ' ')"; fi
@@ -2117,6 +2261,7 @@ case "${1:-status}" in
   cat-kijk) cat_kijk ;;                      # 116b: kijken wat ruimte inneemt op de Cat (niets aangeraakt)
   cat-ruim) cat_ruim ;;                      # 116b: alleen app-caches opruimen op de Cat (geen gegevens/foto's)
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
+  motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   overzicht) overzicht ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
