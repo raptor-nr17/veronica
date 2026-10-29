@@ -1344,10 +1344,35 @@ def _verboden_reden(name, args):
     return None
 
 def _is_home(name, args):
-    if name != 'press_key':
-        return False
-    tekst = _argwaarden(args).strip().lower()
-    return any(w in HOME_WAARDEN or 'home' in w for w in re.split(r'[\s,]+', tekst) if w) or 'home' in tekst
+    n = (name or '').lower()
+    if n in ('press_home', 'go_home', 'navigate_home', 'home'):
+        return True
+    if n in ('press_key', 'press_button', 'keyevent'):
+        tekst = _argwaarden(args).strip().lower()
+        return any(w in HOME_WAARDEN or 'home' in w for w in re.split(r'[\s,]+', tekst) if w) or 'home' in tekst
+    return False
+
+# 592q: in alleen-kijken-stand drukt een klein model (OlliteRT/Gemma op de F8) soms eindeloos op Home en beschrijft het scherm
+# nooit -- de taak liep vast in een lus tot een mens hem stopte (gemeten op een rektelefoon). De proxy telt daarom de Home-drukken PER TAAK:
+# na de EERSTE Home geeft hij de opdracht terug om te beschrijven en af te ronden; een TWEEDE Home voert hij NIET nog eens uit maar
+# rondt de taak netjes af met wat er op het laatste scherm te zien was. De teller gaat terug zodra het model iets anders doet
+# (beschrijven) of zodra er een nieuwe taak begint (andere eerste gebruikersvraag).
+_HOME_TEL = 0
+_HOME_TAAK = None
+HOME_INSTRUCTIE = ('Home is gedaan. Beschrijf nu in TEKST wat je op het scherm ziet en rond daarna af '
+                   '(zeg "finish" of "done"). Druk NIET opnieuw op Home.')
+def _taak_sleutel(body):
+    try:
+        for m in (body or {}).get('messages') or []:
+            if (m or {}).get('role') == 'user':
+                c = m.get('content')
+                if isinstance(c, list):
+                    c = ' '.join(x.get('text', '') for x in c if isinstance(x, dict) and x.get('type') == 'text')
+                if c:
+                    return str(c)[:160]
+    except Exception:
+        pass
+    return ''
 
 def _verwerk(calls):
     # calls: [(name, args)]. geeft (toegestane_calls, blokmeldingen).
@@ -1370,7 +1395,7 @@ def _bouw_toolcalls(calls):
                     'function': {'name': n, 'arguments': json.dumps(args)}})
     return out
 
-def _herschrijf(resp):
+def _herschrijf(resp, body=None):
     # resp = volledige OpenAI JSON van het model. Herschrijf choices[0].message.
     try:
         ch = resp.get('choices') or []
@@ -1394,10 +1419,33 @@ def _herschrijf(resp):
         if not calls:
             calls = _uit_tekst(content or '')
         ok, blok = _verwerk(calls)
+        # de call-regels uit de zichtbare tekst halen (anders leest ARTEMIS ze dubbel).
+        tekst = re.sub(r'call\s*:\s*[A-Za-z_][\w:]*\s*(\{[^{}]*\})?', '', content or '').strip()
+        # 592q: de Home-lus in alleen-kijken-stand doorbreken (zie boven). Telt per taak; 1e Home mag, 2e Home rondt af.
+        global _HOME_TEL, _HOME_TAAK
+        afgerond = False
+        if alleen_kijken():
+            sl = _taak_sleutel(body)
+            if sl != _HOME_TAAK:
+                _HOME_TAAK = sl; _HOME_TEL = 0
+            home_only = bool(ok) and all(_is_home(n, a) for n, a in ok)
+            if home_only and _HOME_TEL >= 1:
+                # tweede (of latere) Home: NIET nog eens uitvoeren -> taak netjes afronden met het laatste scherm.
+                ok = []
+                _HOME_TEL += 1
+                beschrijving = tekst or 'alleen het beginscherm (Home) is zichtbaar; het model gaf geen verdere beschrijving.'
+                tekst = 'Taak afgerond (finish): Home is al ingedrukt en verder niet nodig. Laatste scherm: ' + beschrijving
+                afgerond = True
+                _notuleer('[home] herhaalde Home geblokkeerd -> taak afgerond')
+            elif home_only:
+                # eerste Home: wel uitvoeren, maar meteen de opdracht teruggeven om te beschrijven en af te ronden.
+                _HOME_TEL = 1
+                tekst = (tekst + '\n' if tekst else '') + HOME_INSTRUCTIE
+                _notuleer('[home] 1e Home uitgevoerd; opdracht: beschrijf en rond af')
+            else:
+                _HOME_TEL = 0   # iets anders dan Home (beschrijven/niets) -> lus doorbroken
         nieuw = dict(msg)
         nieuw['role'] = 'assistant'
-        # de call-regels uit de zichtbare tekst halen (anders leest ARTEMIS ze dubbel), blokmeldingen eraan toevoegen.
-        tekst = re.sub(r'call\s*:\s*[A-Za-z_][\w:]*\s*(\{[^{}]*\})?', '', content or '').strip()
         if blok:
             tekst = (tekst + '\n' if tekst else '') + 'Geblokkeerd (veiligheid): ' + '; '.join(blok)
         nieuw['content'] = tekst
@@ -1406,7 +1454,9 @@ def _herschrijf(resp):
         else:
             nieuw.pop('tool_calls', None)
         ch[0]['message'] = nieuw
-        if ch[0].get('finish_reason') in (None, 'stop') and ok:
+        if afgerond:
+            ch[0]['finish_reason'] = 'stop'
+        elif ch[0].get('finish_reason') in (None, 'stop') and ok:
             ch[0]['finish_reason'] = 'tool_calls'
         resp['choices'] = ch
     except Exception as e:
@@ -1737,7 +1787,7 @@ class H(BaseHTTPRequestHandler):
             _noteer_reden('verzoek mislukt: ' + msg)
             self._json(502, {'error': msg[:600]})
             return
-        resp = _herschrijf(resp)
+        resp = _herschrijf(resp, body)
         # 592o: stelde het model ALLEEN geblokkeerde acties voor (alleen-kijken / vangnet) en kwam er geen enkele actie door, dan
         # maakt ARTEMIS geen voortgang -- noteer dat als de echte reden, zodat Status het toont i.p.v. een vage FAILED.
         try:
