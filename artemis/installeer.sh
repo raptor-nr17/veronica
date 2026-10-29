@@ -420,7 +420,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -508,7 +508,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -1937,7 +1937,58 @@ f8_zoek() {
   [ -s "$REK_MAP/lokaal-model.conf" ] && sed -i "s#^BASE_URL=.*#BASE_URL=$gevonden#" "$REK_MAP/lokaal-model.conf" 2>/dev/null || true
   model="$(curl -fsS -m 3 "$gevonden/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
   zeg "F8 gevonden op $gevonden -- OlliteRT antwoordt (model: ${model:-?})."
+  # 592r: in dezelfde scan ook de ANDERE rektelefoons koppelen aan de reserve-keten (F8 -> rektelefoons -> Gemini).
+  local rj; rj="$(rek_scan_json "$gevonden")"
+  printf '%s' "$rj" >"$REK_MAP/reserve-modellen.json"; chmod 600 "$REK_MAP/reserve-modellen.json" 2>/dev/null || true
+  local rn; rn="$(printf '%s' "$rj" | grep -oE '"base"' | wc -l | tr -d ' ')"
+  [ "${rn:-0}" -gt 0 ] && zeg "$rn extra rektelefoon(s) gekoppeld aan de reserve-keten."
   if proxy_draait; then start_proxy "$gevonden" "local" >/dev/null 2>&1 && zeg "De vangnet-proxy gebruikt nu dit adres (geen Gemini zolang de F8 antwoordt)." || true; fi
+  return 0
+}
+# 592r: ALLE rektelefoons vloeiend koppelen aan de reserve-keten. Scant het LAN op modelservers (OlliteRT op 8000, de eigen motor
+# op 8081, llama.cpp/Ollama op 11434) en bouwt reserve-modellen.json: elke telefoon met zijn adres, model en (indien nodig) token.
+# De F8 (de primaire) valt eruit -- die is al de hoofdmotor. Zo valt ARTEMIS netjes terug: F8 -> rektelefoon(s) met Gemma 4/ander
+# model -> Gemini, met de vangnet-regels rondom ELK model. Geen vaste IP's in de code; de token voor de eigen motor komt uit
+# rek-token.conf (de rij-code) als die er is, anders geen token (OlliteRT is open).
+rek_scan_json() {   # argument: de F8-base om uit te sluiten. Echoot een JSON-array met de reserve-telefoons op het LAN.
+  command -v curl >/dev/null 2>&1 || { printf '[]'; return 0; }
+  local f8="$1" tok="" poorten="${REK_ZOEK_POORTEN:-8000 8081 11434}" p kand b m used naam first=1 out='['
+  [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
+  kand=""
+  for p in $poorten; do
+    kand="$kand
+$(f8_hosts | T="$tok" xargs -P 50 -I{} sh -c 'b="$1"; { curl -fsS -m 1 "$b/models" >/dev/null 2>&1 || { [ -n "$T" ] && curl -fsS -m 1 -H "Authorization: Bearer $T" "$b/models" >/dev/null 2>&1; }; } && echo "$b"' _ "http://{}:$p/v1" 2>/dev/null)"
+  done
+  for b in $(printf '%s\n' "$kand" | sed '/^$/d' | sort -u); do
+    [ "$b" = "$f8" ] && continue
+    m="$(curl -fsS -m 3 "$b/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"; used=""
+    if [ -z "$m" ] && [ -n "$tok" ]; then
+      m="$(curl -fsS -m 3 -H "Authorization: Bearer $tok" "$b/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
+      [ -n "$m" ] && used="$tok"
+    fi
+    [ -n "$m" ] || continue
+    naam="rektelefoon $(printf '%s' "$b" | sed 's#http://##;s#/v1##')"
+    [ $first -eq 1 ] || out="$out,"; first=0
+    out="$out{\"naam\":\"$naam\",\"base\":\"$b\",\"token\":\"${used:-local}\",\"model\":\"$m\"}"
+  done
+  printf '%s]' "$out"
+}
+rek_zoek() {
+  command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
+  local f8=""; [ -s "$F8_GEVONDEN_F" ] && f8="$(cat "$F8_GEVONDEN_F")"
+  [ -z "$f8" ] && [ -s "$REK_MAP/lokaal-model.conf" ] && f8="$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
+  zeg "Rektelefoons zoeken op het lokale netwerk (poorten ${REK_ZOEK_POORTEN:-8000 8081 11434}, /v1/models met een model)..."
+  local json; json="$(rek_scan_json "$f8")"
+  printf '%s' "$json" >"$REK_MAP/reserve-modellen.json"; chmod 600 "$REK_MAP/reserve-modellen.json" 2>/dev/null || true
+  local n; n="$(printf '%s' "$json" | grep -oE '"base"' | wc -l | tr -d ' ')"
+  if [ "${n:-0}" -eq 0 ]; then
+    zeg "Geen extra rektelefoons gevonden naast de F8. (Staat op elke telefoon een model aan -- OlliteRT op 8000 of de eigen motor op 8081?)"
+  else
+    zeg "$n rektelefoon(s) gekoppeld aan de reserve-keten (na de F8, voor Gemini):"
+    printf '%s' "$json" | grep -oE '"base":"[^"]*","token":"[^"]*","model":"[^"]*"' \
+      | sed 's#"base":"\([^"]*\)","token":"[^"]*","model":"\([^"]*\)"#  \1 -> \2#' | while IFS= read -r r; do zeg "$r"; done
+  fi
+  if proxy_draait && [ -n "$f8" ]; then start_proxy "$f8" "local" >/dev/null 2>&1 && zeg "De vangnet-proxy gebruikt nu: F8 -> rektelefoon(s) -> Gemini." || true; fi
   return 0
 }
 lokaal() {
@@ -2141,10 +2192,18 @@ status() {
     else zeg "Vangnet-proxy (592h): nog niet gestart (start zodra ARTEMIS lokaal draait)."; fi
     if [ -f "$ALLEEN_KIJKEN_F" ]; then zeg "Alleen-kijken: AAN -- het model mag alleen Home indrukken. ('Alleen kijken: uit' om te laten handelen.)"
     else zeg "Alleen-kijken: uit -- het model mag handelen; het vangnet (NOODSTOP/Stop/Verwijder/Uninstall + bank/kluis/betaal/crypto) blijft altijd aan."; fi
-    # 592L: de reserve-keten en welk model nu antwoordt. De vangnet-regels gelden rondom ELK model in de keten.
-    local keten="F8"; [ -s "$REK_MAP/reserve-modellen.json" ] && keten="$keten -> reserve-telefoon(s)"
+    # 592L/592r: de reserve-keten en welk model nu antwoordt. De vangnet-regels gelden rondom ELK model in de keten.
+    local keten="F8"; [ -s "$REK_MAP/reserve-modellen.json" ] && keten="$keten -> rektelefoon(s)"
     [ -f "$ARTEMIS_MAP/.env" ] && grep -q '^GEMINI_API_KEY=.' "$ARTEMIS_MAP/.env" 2>/dev/null && keten="$keten -> Gemini (gemini-3.8-flash, dan 3.6)"
     zeg "Reserve-keten (592L): $keten. Per verzoek wordt het eerste bereikbare model gekozen; zodra de F8 weer antwoordt gaat het vanzelf terug."
+    # 592r: elke gekoppelde rektelefoon met zijn model, en of hij nu antwoordt. ('Rektelefoons koppelen' scant het LAN opnieuw.)
+    if [ -s "$REK_MAP/reserve-modellen.json" ] && command -v curl >/dev/null 2>&1; then
+      printf '%s' "$(cat "$REK_MAP/reserve-modellen.json")" | grep -oE '"base":"[^"]*","token":"[^"]*","model":"[^"]*"' | while IFS= read -r r; do
+        local rb rm rt antw; rb="$(printf '%s' "$r" | sed 's#.*"base":"\([^"]*\)".*#\1#')"; rm="$(printf '%s' "$r" | sed 's#.*"model":"\([^"]*\)".*#\1#')"; rt="$(printf '%s' "$r" | sed 's#.*"token":"\([^"]*\)".*#\1#')"
+        if [ -n "$rt" ] && [ "$rt" != local ]; then curl -fsS -m 2 -H "Authorization: Bearer $rt" "$rb/models" >/dev/null 2>&1; antw=$?; else curl -fsS -m 2 "$rb/models" >/dev/null 2>&1; antw=$?; fi
+        if [ "$antw" -eq 0 ]; then zeg "  rektelefoon $rb -> $rm (antwoordt)"; else zeg "  rektelefoon $rb -> $rm (nu geen antwoord)"; fi
+      done
+    fi
     [ -s "$ACTIEF_F" ] && zeg "Nu actief model: $(cat "$ACTIEF_F")"
     [ -s "$REDEN_F" ] && zeg "Laatste verzoek: $(cat "$REDEN_F")"   # 592o: de ECHTE reden (time-out, onbereikbaar, alle acties geblokkeerd, of ok)
     # 592p: de F8 op het LAN -- welk adres gebruiken we nu, en antwoordt OlliteRT? (Bij een ander wifi verandert het IP; de knop
@@ -2312,6 +2371,7 @@ case "${1:-status}" in
   cat-ruim) cat_ruim ;;                      # 116b: alleen app-caches opruimen op de Cat (geen gegevens/foto's)
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
+  rek-zoek) rek_zoek ;;                         # 592r: alle rektelefoons koppelen aan de reserve-keten (Gemma 4 + andere modellen)
   overzicht) overzicht ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
