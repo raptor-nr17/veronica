@@ -40,6 +40,7 @@ Deze acties raken echte dingen (privé-inhoud wissen, een herstel, geld of beric
 | `noodstop-bevestig` | Live | bevestig de noodstop | alles staat uit; Veronica zegt het in één regel | **[veilig-alleen-proefstand]** buiten proef stopt dit echt werk |
 | `rek-vanzelf` | Live | klik "Rek vanzelf" (alleen zichtbaar als hij UIT staat) | hij gaat aan; de knop verdwijnt (563/559-regel) | knop bestaat alleen bij UIT |
 | `pantser` | Meer | klik Pantser | de pantserstand wisselt; de tegels tonen wie meedoet | |
+| `alle-schermen` | Meer | klik Alle rekschermen meekijken | alle rektelefoons (nooit de F8) gaan meekijken; nog een tik zet ze uit | |
 | `motor-alle` | Meer | klik "Motor voor iedereen" (alleen met pantser aan) | per klare telefoon een roep `motor-aan` | **[veilig-alleen-proefstand]** stuurt anders echt naar de telefoons |
 | `roep` | Meer | klik Roep de rij op | de telefoons worden geroepen | **[veilig-alleen-proefstand]** echte roep naar buiten |
 | `wand` | Meer | klik Wandstand | `body` krijgt de klasse `wand`, de vorm vult het scherm | |
