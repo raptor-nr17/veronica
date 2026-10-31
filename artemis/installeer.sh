@@ -745,14 +745,24 @@ draadloos() {
 # met de knop "Draadloos maken" op draadloze adb (tcpip 5555 + connect ip:5555). Geen pincode-invoer nodig (die vraagt het
 # Android-11-koppelscherm wél, en de console kan geen vrije invoer -- §571), want het toestel is al geautoriseerd over USB.
 # Daarna mag de kabel eruit en bestuurt ARTEMIS de telefoon over het gewone wifi. De F8 blijft ALTIJD uitgesloten.
-verbind_draadloos() {   # verbind de onthouden draadloze adressen opnieuw (stil); de minuut-scan roept dit aan na een herstart van een telefoon
-  [ -s "$DRAADLOOS_F" ] || return 0
+verbind_draadloos() {   # verbind de draadloze telefoons opnieuw (stil); de minuut-scan roept dit aan na een herstart/wifi-wissel van een telefoon
+  "$ADB" start-server >/dev/null 2>&1 || true
   local a verbonden_nu; verbonden_nu="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1}')"
-  while read -r a; do
-    [ -n "$a" ] || continue
-    printf '%s\n' "$verbonden_nu" | grep -qxF "$a" && continue   # al verbonden
-    "$ADB" connect "$a" >/dev/null 2>&1 || true
-  done <"$DRAADLOOS_F"
+  # 596: de onthouden tcpip:5555-adressen opnieuw verbinden.
+  if [ -s "$DRAADLOOS_F" ]; then
+    while read -r a; do
+      [ -n "$a" ] || continue
+      printf '%s\n' "$verbonden_nu" | grep -qxF "$a" && continue   # al verbonden
+      "$ADB" connect "$a" >/dev/null 2>&1 || true
+    done <"$DRAADLOOS_F"
+  fi
+  # 597: paired Wireless-debugging-telefoons (Android 11+) TERUGVINDEN via mDNS. Hun CONNECT-poort verandert na elke herstart of
+  # wifi-wissel, maar de KOPPELING (de pair) blijft bestaan -- adb vindt ze zelf (_adb-tls-connect._tcp) en verbindt opnieuw,
+  # ZONDER kabel en ZONDER koppelcode. Zo komt een telefoon na een herstart vanzelf weer onder ARTEMIS. Best-effort: kan mdns niet,
+  # dan blijven alleen de opgeslagen adressen over. (Niet op echte toestellen geprobeerd vanuit de bouwomgeving.)
+  "$ADB" mdns services 2>/dev/null | awk '/_adb-tls-connect/ {print $NF}' | while read -r m; do
+    case "$m" in *:*) printf '%s\n' "$verbonden_nu" | grep -qxF "$m" || "$ADB" connect "$m" >/dev/null 2>&1 || true ;; esac
+  done
 }
 draadloos_auto() {
   "$ADB" start-server >/dev/null 2>&1 || true
