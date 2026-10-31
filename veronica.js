@@ -2195,7 +2195,10 @@
         if (K.rekWerkerKnop(m.status, tijd)) {
           const b = el('button', '', 'Laat meerekenen (maak werker)');
           b.dataset.rekWerker = t.adres;
-          tegel.appendChild(el('div', 'tBron', 'Deze telefoon is beheerder en rust daarom (dagelijkse telefoon): geen motor, geen werk. Is dit een rektelefoon, tik dan hieronder.'));
+          const rust = m.status && m.status.dagelijks && tijd - m.status.dagelijks.t <= K.MAX_LEEFTIJD_MS && m.status.dagelijks.waarde === 'rust';
+          tegel.appendChild(el('div', 'tBron', rust
+            ? 'Deze telefoon is beheerder en rust daarom (dagelijkse telefoon): geen motor, geen werk. Is dit een rektelefoon, tik dan hieronder.'
+            : 'Deze telefoon meldt zich als beheerder en rekent daardoor niet mee. Is dit een rektelefoon, maak hem dan werker (gaat via de brievenbus, ook bij een oudere JARVIS).'));
           tegel.appendChild(b);
         }
       }
@@ -2698,7 +2701,11 @@
     const t = telefoonMetId(id);
     if (t && await werkerWensWifi(t, id)) return true;
     await roepNaarId(id, { soort: 'jarvis-aan', van: 'veronica' }, true);
-    const ok = (await roepNaarId(id, { soort: 'word-werker', van: 'veronica' }, true)) || (await roepNaarId(id, { soort: 'word-werker', van: 'veronica' }));
+    // 596: codeOvernemen -> een rektelefoon met een OUDE rij-code neemt via de brievenbus de huidige code over (hartslag.js:339,
+    // §527). Zonder dit weigerde de telefoon de roep (andere code) en kwam "maak werker" nooit aan -- de echte oorzaak van
+    // "geen antwoord van Rektelefoon 1/2" terwijl de hartslag (die geen code gebruikt) wél binnenkwam. Alleen op de brievenbus/relay
+    // (met het ntfy-onderwerp versleuteld), na de klik van een mens.
+    const ok = (await roepNaarId(id, { soort: 'word-werker', van: 'veronica', codeOvernemen: true }, true)) || (await roepNaarId(id, { soort: 'word-werker', van: 'veronica', codeOvernemen: true }));
     if (ok) { WensV.per[id].bus = nu(); bewaarWens(); }
     logRegel(ok ? `${h.naam || 'Een telefoon'}: "maak werker" is onderweg. Hij neemt het over zodra hij de brievenbus leest, zet zijn motor aan en meldt het in zijn volgende hartslag. Ik blijf het een dag lang herhalen tot hij het meldt.`
       : `${h.naam || 'Een telefoon'}: "maak werker" kwam nu niet aan (de brievenbus was niet te bereiken). Ik probeer het vanzelf opnieuw.`);
@@ -2781,9 +2788,14 @@
     // 516: ging de roep via de brievenbus of de postbus, dan is hij nog NIET werker: hij haalt het pas op (en de rol op de tegel
     // verandert pas als hij dat zelf meldt). Niet "is nu werker" zeggen als het nog onderweg is.
     if (ok && via) { logRegel(`${t.naam} antwoordt niet over het wifi; "maak werker" ligt in de ${via}. Hij neemt het over zodra hij die leest (binnen enkele minuten, als de brievenbus niet vol is).`); return true; }
+    // 596: lukt het over het wifi niet (geen antwoord of een verkeerde rij-code), val dan terug op de brievenbus MET codeOvernemen
+    // (maakWerkerViaHart): zo neemt een rektelefoon met een oude code de huidige over -- geen QR-scan meer nodig.
+    if (!ok && t.id) {
+      logRegel(`${t.naam} antwoordt niet goed over het wifi${code === 401 || code === 403 ? ' (oude rij-code)' : ''}; ik stuur "maak werker" via de brievenbus (hij neemt de code vanzelf over).`);
+      return maakWerkerViaHart(t.id, true);
+    }
     logRegel(ok ? `${t.naam} is nu werker en rekent mee. Zijn eigen motor gaat zo vanzelf aan.`
-      : code === 401 || code === 403 ? `${t.naam} kent de code van de rij niet. Scan op die telefoon een keer de QR van Veronica (Koppelen); daarna kan het met deze knop.`
-        : `${t.naam} antwoordt niet. Probeer het zo nog eens.`);
+      : `${t.naam} antwoordt niet en heeft geen toestel-id; probeer het zo nog eens of scan de QR van Veronica op die telefoon.`);
     if (ok) { delete (RekV.per[t.id || t.adres] || {}).motor; }
     return ok;
   }
@@ -4353,7 +4365,7 @@
   }
   function zetPantser(aan) {
     S.aan = !!aan;
-    Opslag.schrijf('pantserAan', S.aan).catch(() => {});   // 595: de keuze overleeft een herlaadbeurt/zelf-update
+    try { localStorage.setItem('veronica-pantser', S.aan ? 'aan' : 'uit'); } catch (e) {}   // 595/596: de keuze overleeft een herlaadbeurt/zelf-update
     pantserNaarBaas(S.aan);
     $('pantserKnop').textContent = S.aan ? 'Pantser aan' : 'Pantser uit';
     $('pantserKnop').setAttribute('aria-pressed', String(S.aan));
@@ -4378,7 +4390,6 @@
   }
   async function noodstop() {
     S.aan = false;
-    Opslag.schrijf('pantserAan', false).catch(() => {});   // 595: na een noodstop blijft het pantser ook na herladen uit
     NulS.stop = true;                              // 462: ook een lopende nulmeting stopt
     avStop();                                       // 549: ook Avengers assemble stopt (geen laatkomers meer)
     SlimV.stop = true;                              // 550: ook een lopende slimheidsmeting
@@ -4388,6 +4399,7 @@
     $('pantserKnop').setAttribute('aria-pressed', 'false');
     for (const st of S.stromen.values()) { st.reden = 'noodstop'; st.ctrl.abort(); }
     for (const x of S.taken) if (x.claude && (x.status === 'wacht' || x.status === 'bezig')) afgebroken(x, 'noodstop', 'NOODSTOP in Veronica.');
+    try { localStorage.setItem('veronica-pantser', 'uit'); } catch (e) {}   // 595/596: na een noodstop blijft het pantser ook na herladen uit
     pantserNaarBaas(false);                       // ook de rekenpool van de baas dicht
     logRegel(K.veronicaZin(S.karakter, 'noodstop'));
     spreek(K.veronicaZin(S.karakter, 'noodstop'), 'noodstop');
@@ -5435,7 +5447,7 @@
       S.karakter = (await Opslag.lees('karakter')) === 'zakelijk' ? 'zakelijk' : 'hulpdienst';
       S.wilWakker = (await Opslag.lees('wakker')) === true;
       S.bureau = !AlleenL.aan && (await Opslag.lees('bureau')) !== false;   // 550: met Alleen lokaal blijft het bureau dicht, ook na herladen
-      S.aan = (await Opslag.lees('pantserAan')) === true;   // 595: het pantser stond ALTIJD op uit na een herlaadbeurt/zelf-update (S.aan werd nooit bewaard); nu overleeft de keuze
+      try { S.aan = localStorage.getItem('veronica-pantser') === 'aan'; } catch (e) { S.aan = false; }   // 595/596: pantser overleeft een herlaadbeurt; localStorage (synchroon, betrouwbaar) i.p.v. async IndexedDB
       S.taken = ((await Opslag.alleTaken()) || []).sort((a, b) => a.sinds - b.sinds);
       // Wat bezig was toen Veronica dichtging, gaat terug in de wachtrij.
       for (const x of S.taken) if (x.status === 'bezig') { x.status = 'wacht'; x.telefoon = null; await Opslag.taak(x); }

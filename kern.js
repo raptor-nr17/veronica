@@ -663,7 +663,9 @@
   // De knop "Laat meerekenen": alleen bij een telefoon die zelf zegt dat hij beheerder is EN als dagelijkse telefoon rust.
   function rekWerkerKnop(st, tijd) {
     const v = (k) => (st && st[k] && typeof st[k].t === 'number' && tijd - st[k].t <= MAX_LEEFTIJD_MS ? st[k].waarde : null);
-    return v('voorkeur') === 'kern' && v('dagelijks') === 'rust';
+    // 596: de knop "maak werker" hoort bij ELKE telefoon die zich als beheerder meldt (voorkeur kern) -- niet alleen de
+    // dagelijkse telefoon die rust. Zo kan een mens ook een rektelefoon die ten onrechte beheerder is werker maken (0 werkers -> rek).
+    return v('voorkeur') === 'kern';
   }
   // Wie deed welk proefverhaal, en hoe snel: uit de concepten (nalees) en het tempo van de motor per telefoon. Alleen wat er staat.
   function proefPerTelefoon(nalees, tempo) {
@@ -1464,7 +1466,9 @@
     for (const t of lijst) {
       const hv = t.id ? hartVan(t.id) : null;
       const l = Math.max(Number(t.laatstGezien) || 0, Number(laatst[t.adres]) || 0, Number(laatst[t.jarvis]) || 0, hv ? Number(hv.ontvangen || hv.t) || 0 : 0);
-      const nieuw = l || tijd;
+      // 596: een BESTAANDE laatstGezien niet terugzetten naar NU als er geen vers bewijs is -- anders veroudert een spooktegel
+      // (een telefoon die al dagen niets meer meldt) nooit en blijft hij staan. Alleen een gloednieuwe regel (nog nooit gezien) krijgt NU.
+      const nieuw = l || Number(t.laatstGezien) || tijd;
       if (nieuw !== t.laatstGezien) { t.laatstGezien = nieuw; veranderd = veranderd || !l; }
     }
     // 3. dezelfde id = een regel
