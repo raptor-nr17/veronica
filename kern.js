@@ -1465,6 +1465,11 @@
     // 2. laatst gezien
     for (const t of lijst) {
       const hv = t.id ? hartVan(t.id) : null;
+      // (2) DE NAAM HOORT BIJ HET VASTE TOESTEL-ID, NOOIT BIJ HET ADRES. Een verse hartslag is versleuteld met het geheime
+      //     onderwerp van de rij en draagt het toestel-id, dus is hij de betrouwbare bron van de naam. Zo verwisselen twee tegels
+      //     nooit van naam als een telefoon van adres wisselt of een rol verandert ("Maak werker" op Rek1/Rek2 wisselde de namen).
+      const hnaam = hv && String(hv.naam || '').trim();
+      if (hnaam && hnaam !== t.naam) { t.naam = hnaam; veranderd = true; }
       const l = Math.max(Number(t.laatstGezien) || 0, Number(laatst[t.adres]) || 0, Number(laatst[t.jarvis]) || 0, hv ? Number(hv.ontvangen || hv.t) || 0 : 0);
       // 596: een BESTAANDE laatstGezien niet terugzetten naar NU als er geen vers bewijs is -- anders veroudert een spooktegel
       // (een telefoon die al dagen niets meer meldt) nooit en blijft hij staan. Alleen een gloednieuwe regel (nog nooit gezien) krijgt NU.
