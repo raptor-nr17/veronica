@@ -142,6 +142,7 @@ ALLEEN_KIJKEN_F="$REK_MAP/alleen-kijken"         # bestaat = alleen-kijken-stand
 ACTIEF_F="$REK_MAP/proxy-actief"                 # 592L: welk model antwoordde het laatst (Status leest dit)
 REDEN_F="$REK_MAP/proxy-reden"                   # 592o: de laatste echte reden van een mislukt/geblokkeerd verzoek (Status leest dit)
 F8_GEVONDEN_F="$REK_MAP/f8-gevonden.conf"        # 592p: het teruggevonden LAN-adres van de F8 (na een IP-wissel); Status leest dit
+DRAADLOOS_F="$REK_MAP/draadloos"                 # 596: onthouden draadloze adb-adressen (ip:5555) zodat de minuut-scan ze na een herstart weer verbindt
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
@@ -196,6 +197,7 @@ voorgrond() {
 # bewuste mens-stap per rektelefoon. De F8 blijft ALTIJD uitgesloten. Zo is 'toestellen' met de hand niet meer nodig.
 scan() {
   "$ADB" start-server >/dev/null 2>&1 || true
+  verbind_draadloos   # 596: onthouden draadloze telefoons weer verbinden (na een herstart van de telefoon)
   touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
   local s id naam n=0
   for s in $(verbonden); do
@@ -420,7 +422,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -508,7 +510,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -737,6 +739,48 @@ draadloos() {
   IFS= read -r -p "Adres bovenaan bij 'Draadloze foutopsporing' (ander poortnummer): " verbind </dev/tty || return 1
   "$ADB" connect "$verbind" || { zeg "Verbinden lukte niet."; return 1; }
   zeg "Verbonden. Nu nog op de lijst zetten:"; toestellen
+}
+
+# 596: DRAADLOOS MAKEN ZONDER TERMINAL. Een rektelefoon die één keer via de kabel is toegestaan (adb-stand 'device') zetten we
+# met de knop "Draadloos maken" op draadloze adb (tcpip 5555 + connect ip:5555). Geen pincode-invoer nodig (die vraagt het
+# Android-11-koppelscherm wél, en de console kan geen vrije invoer -- §571), want het toestel is al geautoriseerd over USB.
+# Daarna mag de kabel eruit en bestuurt ARTEMIS de telefoon over het gewone wifi. De F8 blijft ALTIJD uitgesloten.
+verbind_draadloos() {   # verbind de onthouden draadloze adressen opnieuw (stil); de minuut-scan roept dit aan na een herstart van een telefoon
+  [ -s "$DRAADLOOS_F" ] || return 0
+  local a verbonden_nu; verbonden_nu="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1}')"
+  while read -r a; do
+    [ -n "$a" ] || continue
+    printf '%s\n' "$verbonden_nu" | grep -qxF "$a" && continue   # al verbonden
+    "$ADB" connect "$a" >/dev/null 2>&1 || true
+  done <"$DRAADLOOS_F"
+}
+draadloos_auto() {
+  "$ADB" start-server >/dev/null 2>&1 || true
+  [ -s "$TOEG" ] || { zeg "Eerst een rektelefoon toestaan: sluit hem één keer met de kabel aan (USB-foutopsporing aan, in ChromeOS delen met Linux, op de telefoon 'Toestaan'), druk op Zoek telefoons."; return 1; }
+  local regels s staat id naam ip n=0
+  regels="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1" "$2}')"
+  [ -n "$regels" ] || { zeg "Geen telefoon via de kabel te zien. Sluit hem één keer met USB aan en druk op Zoek telefoons."; return 1; }
+  touch "$DRAADLOOS_F"; chmod 600 "$DRAADLOOS_F" 2>/dev/null || true
+  while read -r s staat; do
+    [ -n "$s" ] || continue
+    case "$s" in *:*) continue ;; esac                 # al een draadloos adres
+    [ "$staat" = "device" ] || continue
+    is_f8 "$s" && { zeg "F8 overgeslagen (de dagelijkse telefoon bestuurt ARTEMIS nooit)."; continue; }
+    id="$(toestel_id "$s")"; naam="$(toestel_naam "$s")"
+    toegestaan "$id" || { zeg "$naam staat niet op de lijst; overgeslagen (druk eerst op Zoek telefoons)."; continue; }
+    ip="$("$ADB" -s "$s" shell ip -f inet addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
+    [ -n "$ip" ] || { zeg "$naam: geen wifi-adres gevonden. Zit hij op het gewone wifi (geen gastnet)?"; continue; }
+    "$ADB" -s "$s" tcpip 5555 >/dev/null 2>&1 || { zeg "$naam: kon de draadloze modus niet aanzetten."; continue; }
+    sleep 2
+    if "$ADB" connect "$ip:5555" 2>/dev/null | grep -qiE 'connected|already'; then
+      grep -qxF "$ip:5555" "$DRAADLOOS_F" 2>/dev/null || printf '%s\n' "$ip:5555" >>"$DRAADLOOS_F"
+      n=$((n+1)); zeg "$naam: nu draadloos op $ip:5555 -- de kabel mag eruit."
+    else
+      zeg "$naam: verbinden op $ip:5555 lukte niet (probeer het nog eens, of houd de kabel erin)."
+    fi
+  done <<<"$regels"
+  zeg "Klaar: $n telefoon(s) draadloos gemaakt. ARTEMIS bestuurt ze nu over het wifi; de minuut-scan verbindt ze na een herstart vanzelf opnieuw."
+  overzicht
 }
 
 # 561: Android Remote Control MCP (danielealbano, GPL-3.0) als RESERVE naast ARTEMIS: besturen zonder kabel, maar ALLEEN binnen het
@@ -2389,7 +2433,8 @@ case "${1:-status}" in
   cat-ruim) cat_ruim ;;                      # 116b: alleen app-caches opruimen op de Cat (geen gegevens/foto's)
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
-  rek-zoek) rek_zoek ;;                         # 592r: alle rektelefoons koppelen aan de reserve-keten (Gemma 4 + andere modellen)
+  rek-zoek) rek_zoek ;;
+  draadloos-auto) draadloos_auto ;;            # 596: een al toegestane telefoon over het wifi besturen (kabel mag eruit)                         # 592r: alle rektelefoons koppelen aan de reserve-keten (Gemma 4 + andere modellen)
   overzicht) overzicht ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
@@ -2407,7 +2452,7 @@ case "${1:-status}" in
   waakhond) waakhond ;;
   waak-een-keer) waakhond een ;;
   verboden) verboden "${2:-}" ;;
-  *) zeg "Gebruik: artemis-rek console | start | stop | status | log | scan | bijwerken | toestellen | draadloos | mcp | searxng | tailscale" ;;
+  *) zeg "Gebruik: artemis-rek console | start | stop | status | log | scan | bijwerken | toestellen | draadloos | draadloos-auto | mcp | searxng | tailscale" ;;
 esac
 REK
   chmod 755 "$bin/artemis-rek.nieuw"
