@@ -1917,26 +1917,44 @@ f8_eigen_ips() {
     | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | grep -v '^127\.' | sort -u
 }
 f8_hosts() {
-  if [ -n "$F8_SCAN_HOSTS" ]; then printf '%s\n' $F8_SCAN_HOSTS; return; fi
+  # LET OP: onder `set -uo pipefail` is een KALE $F8_SCAN_HOSTS een "unbound variable" zodra de console/knop hem niet
+  # exporteert (alleen de test zet hem). Dat liet f8-terugvinden EN rektelefoons-koppelen op het echte wifi crashen op
+  # "F8_SCAN_HOSTS: unbound variable". Daarom hier met een lege standaard (${...:-}); leeg = het eigen subnet aftasten.
+  if [ -n "${F8_SCAN_HOSTS:-}" ]; then printf '%s\n' ${F8_SCAN_HOSTS:-}; return; fi
   local ip pre
   for ip in $(f8_eigen_ips); do pre="$(printf '%s' "$ip" | sed 's/\.[0-9]*$/./')"; seq 1 254 | sed "s#^#$pre#"; done
 }
 f8_zoek() {
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
-  local poort hint='e4b|e2b|gemma|3n|vision|4b' gevonden="" model
-  zeg "F8 zoeken op het lokale netwerk (poort ${F8_ZOEK_POORTEN:-8000}, /v1/models met een Gemma-model)..."
-  for poort in ${F8_ZOEK_POORTEN:-8000}; do
-    gevonden="$(f8_hosts | xargs -P 50 -I{} sh -c 'curl -fsS -m 1 "http://{}:'"$poort"'/v1/models" 2>/dev/null | grep -qiE "'"$hint"'" && echo "http://{}:'"$poort"'/v1"' 2>/dev/null | head -1)"
+  # 592s: de F8 draait nu JARVIS. Die biedt zijn model aan op poort 8081 (de EIGEN motor, met de rij-code als sleutel), niet
+  # alleen OlliteRT op 8000. Dus scannen we BEIDE poorten (8000 eerst: open OlliteRT heeft voorrang), en op 8081 sturen we de
+  # rij-code uit rek-token.conf mee. We matchen op elk model ("id" in /v1/models), niet meer op een Gemma-naam -- JARVIS kan
+  # elk model laden. Het eerste adres dat antwoordt is de primaire (F8).
+  local poort gevonden="" model tok="" used=""
+  [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
+  zeg "F8 zoeken op het lokale netwerk (poorten ${F8_ZOEK_POORTEN:-8000 8081}, /v1/models met een model)..."
+  for poort in ${F8_ZOEK_POORTEN:-8000 8081}; do
+    gevonden="$(f8_hosts | T="$tok" P="$poort" xargs -P 50 -I{} sh -c '
+      u="http://{}:$P/v1/models";
+      r="$(curl -fsS -m 1 "$u" 2>/dev/null)";
+      if [ -z "$r" ] && [ -n "$T" ]; then r="$(curl -fsS -m 1 -H "Authorization: Bearer $T" "$u" 2>/dev/null)"; fi;
+      printf "%s" "$r" | grep -q "\"id\"" && echo "http://{}:$P/v1"' 2>/dev/null | head -1)"
     [ -n "$gevonden" ] && break
   done
   if [ -z "$gevonden" ]; then
-    zeg "Geen F8 op het lokale netwerk gevonden (poort ${F8_ZOEK_POORTEN:-8000}). Staat OlliteRT aan op de F8, en hangt hij op dit wifi?"
+    zeg "Geen F8 op het lokale netwerk gevonden (poorten ${F8_ZOEK_POORTEN:-8000 8081}). Staat OlliteRT of de JARVIS-motor aan op de F8, en hangt hij op dit wifi?"
     return 1
   fi
+  # Had deze primaire de rij-code nodig (de JARVIS-motor op 8081)? Dan onthouden we die voor de proxy en de conf.
+  if ! curl -fsS -m 2 "$gevonden/models" >/dev/null 2>&1 && [ -n "$tok" ] && curl -fsS -m 2 -H "Authorization: Bearer $tok" "$gevonden/models" >/dev/null 2>&1; then used="$tok"; fi
   printf '%s' "$gevonden" >"$F8_GEVONDEN_F"; chmod 600 "$F8_GEVONDEN_F" 2>/dev/null || true
-  [ -s "$REK_MAP/lokaal-model.conf" ] && sed -i "s#^BASE_URL=.*#BASE_URL=$gevonden#" "$REK_MAP/lokaal-model.conf" 2>/dev/null || true
-  model="$(curl -fsS -m 3 "$gevonden/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
-  zeg "F8 gevonden op $gevonden -- OlliteRT antwoordt (model: ${model:-?})."
+  if [ -s "$REK_MAP/lokaal-model.conf" ]; then
+    sed -i "s#^BASE_URL=.*#BASE_URL=$gevonden#" "$REK_MAP/lokaal-model.conf" 2>/dev/null || true
+    if grep -q '^TOKEN=' "$REK_MAP/lokaal-model.conf" 2>/dev/null; then sed -i "s#^TOKEN=.*#TOKEN=${used:-local}#" "$REK_MAP/lokaal-model.conf" 2>/dev/null || true
+    else printf 'TOKEN=%s\n' "${used:-local}" >>"$REK_MAP/lokaal-model.conf" 2>/dev/null || true; fi
+  fi
+  model="$(curl -fsS -m 3 ${used:+-H "Authorization: Bearer $used"} "$gevonden/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
+  zeg "F8 gevonden op $gevonden -- een lokaal model antwoordt (model: ${model:-?}${used:+, via de rij-code op poort 8081})."
   # 592r: in dezelfde scan ook de ANDERE rektelefoons koppelen aan de reserve-keten (F8 -> rektelefoons -> Gemini).
   local rj; rj="$(rek_scan_json "$gevonden")"
   printf '%s' "$rj" >"$REK_MAP/reserve-modellen.json"; chmod 600 "$REK_MAP/reserve-modellen.json" 2>/dev/null || true
