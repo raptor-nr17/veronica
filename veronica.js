@@ -4353,6 +4353,7 @@
   }
   function zetPantser(aan) {
     S.aan = !!aan;
+    Opslag.schrijf('pantserAan', S.aan).catch(() => {});   // 595: de keuze overleeft een herlaadbeurt/zelf-update
     pantserNaarBaas(S.aan);
     $('pantserKnop').textContent = S.aan ? 'Pantser aan' : 'Pantser uit';
     $('pantserKnop').setAttribute('aria-pressed', String(S.aan));
@@ -4377,6 +4378,7 @@
   }
   async function noodstop() {
     S.aan = false;
+    Opslag.schrijf('pantserAan', false).catch(() => {});   // 595: na een noodstop blijft het pantser ook na herladen uit
     NulS.stop = true;                              // 462: ook een lopende nulmeting stopt
     avStop();                                       // 549: ook Avengers assemble stopt (geen laatkomers meer)
     SlimV.stop = true;                              // 550: ook een lopende slimheidsmeting
@@ -5433,11 +5435,16 @@
       S.karakter = (await Opslag.lees('karakter')) === 'zakelijk' ? 'zakelijk' : 'hulpdienst';
       S.wilWakker = (await Opslag.lees('wakker')) === true;
       S.bureau = !AlleenL.aan && (await Opslag.lees('bureau')) !== false;   // 550: met Alleen lokaal blijft het bureau dicht, ook na herladen
+      S.aan = (await Opslag.lees('pantserAan')) === true;   // 595: het pantser stond ALTIJD op uit na een herlaadbeurt/zelf-update (S.aan werd nooit bewaard); nu overleeft de keuze
       S.taken = ((await Opslag.alleTaken()) || []).sort((a, b) => a.sinds - b.sinds);
       // Wat bezig was toen Veronica dichtging, gaat terug in de wachtrij.
       for (const x of S.taken) if (x.status === 'bezig') { x.status = 'wacht'; x.telefoon = null; await Opslag.taak(x); }
     } catch (e) { logRegel('De opslag van deze browser is niet te lezen.'); }
     $('pantserKnop').addEventListener('click', () => zetPantser(!S.aan));
+    // 595: de knoptekst en de hervatting bij het laden -- stond het pantser aan, dan gaat het na een herlaadbeurt vanzelf weer aan.
+    $('pantserKnop').textContent = S.aan ? 'Pantser aan' : 'Pantser uit';
+    $('pantserKnop').setAttribute('aria-pressed', String(S.aan));
+    if (S.aan) { werkTik(); roepOp(true).then(() => meetRonde()).then(() => snelheidTik()).catch(() => {}); }
     $('motorAlleKnop').addEventListener('click', () => { motorAlleAan().catch(() => {}); });
     $('bureauKnop').addEventListener('click', () => zetBureau(!S.bureau));
     $('noodstop').addEventListener('click', noodstop);
