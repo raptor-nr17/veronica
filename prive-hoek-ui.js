@@ -416,13 +416,20 @@
     manager: 'Bitwarden op de zandbak, met een eigen account op het aparte mailadres (wachtwoorden staan daar, niet hier)',
     gastnet: 'De zandbak zit op het gastnetwerk van de router en is het gewone wifi vergeten',
     dns: 'Privé-DNS op de zandbak: security.cloudflare-dns.com of dns.quad9.net (alleen malware, geen volwassenenfilter)',
-    scherm: 'scrcpy werkt via de USB-kabel vanuit Linux op de Chromebook',
+    scherm: 'Het scherm van de zandbak kijk ik mee via de kabel, in Chrome (knop "Bekijk het scherm van de zandbak")',
   });
   function veiligBlok() {
     const k = el('section', 'phBlok'); k.append(kop('10. Veilig browsen'));
     k.append(el('p', '', 'Je surft op de zandbak-telefoon; zijn scherm staat via de kabel op deze Chromebook. Downloads en installaties blijven op die telefoon. De zandbak kies je op Live, bij de tegel van een werker ("Maak zandbak").'));
     k.append(el('p', 'phEerlijk', 'Wachtwoorden bewaar je NIET hier, niet in Veronica en niet in Mijn-AI. Die staan in Bitwarden op de zandbak.'));
-    k.append(el('p', 'phKlein', 'Scherm doorsturen, in de Terminal van Linux: scrcpy --no-clipboard-autosync --turn-screen-off --stay-awake'));
+    // (#150) Het scherm van de surftelefoon meekijken kan ALLEEN over de USB-kabel: de zandbak heeft al zijn systeemsleutels
+    // gewist, dus het wifi-scherm (/jarvis/scherm.jpg, met code) is er met opzet niet -- dat is de isolatie. "Telefoon besturen"
+    // (besturen.html, §521) doet scrcpy in Chrome, zodat je hiervoor niet meer de Linux-terminal in hoeft. Dit blok raakt geen
+    // netwerk: de link doet niets tot je hem klikt, en opent een eigen tabblad (de hoek blijft staan).
+    const schermLink = el('a', 'phBesturenKnop', '📱 Bekijk het scherm van de zandbak (kabel, in Chrome)');
+    schermLink.id = 'phZandbakScherm'; schermLink.href = 'besturen.html'; schermLink.target = '_blank'; schermLink.rel = 'noopener';
+    k.append(schermLink);
+    k.append(el('p', 'phKlein', 'Sluit de zandbak-telefoon met de USB-kabel aan, kies hem in "Telefoon besturen" en zijn scherm staat live in Chrome. Kijken kan altijd; tikken alleen als je dat zelf doet. Over het wifi kan dit niet: de zandbak kent geen sleutel van het systeem meer, en dat hoort zo.'));
     for (const sleutel of P.VEILIG_VINKJES) {
       const rij = el('label', 'phSchakel'); const c = el('input'); c.type = 'checkbox'; c.checked = U.store.veilig[sleutel] === true; c.id = `phVeilig-${sleutel}`;
       c.addEventListener('change', async () => { raak(); P.zetVeiligVinkje(U.store, sleutel, c.checked, 'eigenaar'); await bewaar(); });
