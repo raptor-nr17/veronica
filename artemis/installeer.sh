@@ -643,7 +643,7 @@ class H(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self._cors(204, '')
     def do_GET(self):
-        p = urllib.parse.urlparse(self.path)
+        p = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(p.query)
         if p.path in ('/', '/index.html'):
             self._schrijf(200, PAGINA.format(ap=int(os.environ.get('ARTEMIS_POORT', '8000'))), 'text/html; charset=utf-8')
         elif p.path == '/status.json':
