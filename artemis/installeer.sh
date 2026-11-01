@@ -580,7 +580,17 @@ button{font-size:18px;padding:12px 16px;border:0;border-radius:10px;background:#
 .tknop{display:flex;gap:6px;padding:8px}
 .tklein{font-size:16px;padding:10px;flex:1}
 .ttyp{flex:2;min-width:0;font-size:16px;padding:10px;border-radius:8px;border:1px solid #334;background:#0a0f1e;color:#e8ecf5}
+.tgroot{font-size:16px;padding:10px;flex:1;background:#1f6f3a}
 #melding{padding:0 16px;color:#9fb0d0}
+/* 615b: de grote, LIVE weergave van een rektelefoon (MJPEG-stroom), met bedienen */
+#groot{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.92);display:none;flex-direction:column}
+#groot.aan{display:flex}
+#grootKop{display:flex;gap:8px;align-items:center;padding:10px 14px;background:#141b33;flex-wrap:wrap}
+#grootKop .gnaam{font-weight:600;margin-right:auto}
+#grootDicht{background:#b4231f;font-weight:700}
+#grootBeeld{flex:1;min-height:0;width:100%;object-fit:contain;background:#000;cursor:crosshair;touch-action:none}
+#grootTyprij{display:flex;gap:6px;padding:8px 14px;background:#141b33}
+#grootTyp{flex:1;min-width:0;font-size:16px;padding:10px;border-radius:8px;border:1px solid #334;background:#0a0f1e;color:#e8ecf5}
 </style></head><body>
 <header><h1>Schermenwand &mdash; de rektelefoons</h1>
 <button id=noodstop>NOODSTOP</button><button id=hervat>Hervat besturen</button><button id=ververs>Ververs</button></header>
@@ -589,6 +599,11 @@ button{font-size:18px;padding:12px 16px;border:0;border-radius:10px;background:#
 <button id=zoekallen>Zoek op alle telefoons</button></div>
 <p id=melding>De schermen komen eraan&hellip; (nooit de F8; nooit een telefoon met een bank-, kluis- of betaalapp op de voorgrond.)</p>
 <div id=wand></div>
+<div id=groot><div id=grootKop><span class=gnaam></span>
+<button data-gk=terug>Terug</button><button data-gk=thuis>Home</button><button data-gk=apps>Apps</button>
+<button id=grootDicht>Sluiten</button></div>
+<img id=grootBeeld alt="">
+<div id=grootTyprij><input id=grootTyp type=text placeholder="typ hier (bijv. een zoekterm)" autocomplete=off><button id=grootTypKnop>Typ</button></div></div>
 <script>
 const wand=document.getElementById('wand'),melding=document.getElementById('melding');
 const tegels=new Map();   // serial -> {el, img, reden}
@@ -597,17 +612,20 @@ function maakTegel(t){
   const el=document.createElement('div');el.className='tegel';
   el.innerHTML='<div class=tnaam></div><img class=tbeeld alt=""><div class=treden hidden></div>'+
     '<div class=tknop><button class="tklein" data-k=terug>Terug</button><button class="tklein" data-k=thuis>Home</button><button class="tklein" data-k=apps>Apps</button></div>'+
+    '<div class=tknop><button class="tgroot">Groot + bedienen (live)</button></div>'+
     '<div class=tknop><input class=ttyp type=text placeholder="typ hier (bijv. een zoekterm)" autocomplete=off><button class="tklein ttypknop">Typ</button></div>';
   el.querySelector('.tnaam').textContent=t.naam||'Telefoon';
   const img=el.querySelector('.tbeeld'),reden=el.querySelector('.treden'),typ=el.querySelector('.ttyp');
   img.addEventListener('pointerdown',(ev)=>{ev.preventDefault();const x=ev.offsetX/(img.clientWidth||1),y=ev.offsetY/(img.clientHeight||1);post({wat:'tik',serial:t.serial,x:x.toFixed(4),y:y.toFixed(4)});});
   for(const b of el.querySelectorAll('.tknop .tklein[data-k]'))b.addEventListener('click',()=>post({wat:'toets',serial:t.serial,toets:b.dataset.k}));
+  el.querySelector('.tgroot').addEventListener('click',()=>openGroot(t.serial,t.naam||'Telefoon'));
   const typDoe=async()=>{if(!typ.value)return;const r=await post({wat:'typ',serial:t.serial,tekst:typ.value});if(r==='ok')typ.value='';else melding.textContent=r;};
   el.querySelector('.ttypknop').addEventListener('click',typDoe);
   typ.addEventListener('keydown',(e)=>{if(e.key==='Enter')typDoe();});
   wand.appendChild(el);const rec={el,img,reden};tegels.set(t.serial,rec);return rec;
 }
 async function fotoVan(serial,rec){
+  if(grootOpen&&serial===grootSerial)return;   // 615b: de live-stroom heeft die telefoon; niet tegelijk de tegel verversen (race op dezelfde PNG)
   try{
     const r=await fetch('/wand-foto?serial='+encodeURIComponent(serial)+'&t='+Date.now());
     if(r.ok){const b=await r.blob();rec.img.src=URL.createObjectURL(b);rec.img.hidden=false;rec.reden.hidden=true;setTimeout(()=>URL.revokeObjectURL(rec.img.src),8000);}
@@ -622,6 +640,23 @@ async function lijst(){
   for(const [s,rec] of tegels)if(!nu.has(s)){rec.el.remove();tegels.delete(s);}
   for(const t of l){const rec=tegels.get(t.serial)||maakTegel(t);fotoVan(t.serial,rec);}
 }
+// 615b: de grote, LIVE weergave (MJPEG-stroom) + bedienen. Hoogstens EEN tegelijk open.
+let grootSerial=null,grootOpen=false;
+const groot=document.getElementById('groot'),grootBeeld=document.getElementById('grootBeeld'),grootTyp=document.getElementById('grootTyp');
+function openGroot(serial,naam){
+  grootSerial=serial;grootOpen=true;
+  groot.querySelector('.gnaam').textContent=naam+' — live';
+  grootBeeld.src='/wand-stroom?serial='+encodeURIComponent(serial)+'&t='+Date.now();
+  groot.classList.add('aan');
+}
+function sluitGroot(){grootBeeld.src='';groot.classList.remove('aan');grootOpen=false;grootSerial=null;}
+document.getElementById('grootDicht').addEventListener('click',sluitGroot);
+grootBeeld.addEventListener('pointerdown',(ev)=>{if(!grootSerial)return;ev.preventDefault();const x=ev.offsetX/(grootBeeld.clientWidth||1),y=ev.offsetY/(grootBeeld.clientHeight||1);post({wat:'tik',serial:grootSerial,x:x.toFixed(4),y:y.toFixed(4)});});
+grootBeeld.addEventListener('error',()=>{if(grootOpen)melding.textContent='De live-weergave stopte (telefoon weg of een gevoelige app op de voorgrond).';});
+for(const b of groot.querySelectorAll('[data-gk]'))b.addEventListener('click',()=>{if(grootSerial)post({wat:'toets',serial:grootSerial,toets:b.dataset.gk});});
+const grootTypDoe=async()=>{if(!grootSerial||!grootTyp.value)return;const r=await post({wat:'typ',serial:grootSerial,tekst:grootTyp.value});if(r==='ok')grootTyp.value='';else melding.textContent=r;};
+document.getElementById('grootTypKnop').addEventListener('click',grootTypDoe);
+grootTyp.addEventListener('keydown',(e)=>{if(e.key==='Enter')grootTypDoe();});
 document.getElementById('noodstop').addEventListener('click',async()=>{melding.textContent=await post({wat:'noodstop'});});
 document.getElementById('hervat').addEventListener('click',async()=>{melding.textContent=await post({wat:'hervat'});});
 document.getElementById('ververs').addEventListener('click',lijst);
@@ -693,6 +728,40 @@ class H(BaseHTTPRequestHandler):
                 self.end_headers(); self.wfile.write(beeld)
             except Exception:
                 self._schrijf(409, 'beeld niet leesbaar')
+        elif p.path == '/wand-stroom':
+            # 615b: ECHT LIVE beeld van EEN rektelefoon als MJPEG-stroom (multipart/x-mixed-replace met PNG-frames). Pure python,
+            # geen scrcpy/node: elk frame is een `schermfoto` (adb exec-out screencap), en die gaat ELKE keer door wand_gate --
+            # dus nooit de F8, nooit een niet-toegestane telefoon, en zodra een gevoelige/persoonlijke app op de voorgrond komt
+            # STOPT de stroom meteen (geen beeld meer). ~2,5 fps; dat is ruim genoeg om zoekresultaten mee te lezen. Lokaal
+            # adb-verkeer (geen internet), dus geen gastnet-budget. ThreadingHTTPServer -> deze lange verbinding blokkeert de
+            # console niet. Hoogstens EEN tegelijk open (de pagina opent er maar een), met een harde bovengrens in tijd.
+            s = (q.get('serial', [''])[0])
+            if not WAND_SERIAL.match(s): self._schrijf(400, 'onbruikbare telefoon'); return
+            import time as _t
+            grens = 'artemiswandframe'
+            self.send_response(200)
+            self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=%s' % grens)
+            self.send_header('Cache-Control', 'no-store'); self.send_header('Connection', 'close')
+            self.end_headers()
+            eind = _t.time() + 600   # een stroom leeft hoogstens 10 minuten; de pagina heropent hem vanzelf als je blijft kijken
+            try:
+                while _t.time() < eind:
+                    uit = doe_args(['schermfoto', s]).strip()
+                    if uit.startswith('GEWEIGERD') or not uit or not os.path.isfile(uit):
+                        break   # gevoelige app op de voorgrond, F8, of telefoon weg -> de stroom stopt (de pagina toont dan de reden)
+                    try:
+                        with open(uit, 'rb') as fh: beeld = fh.read()
+                    except Exception:
+                        _t.sleep(0.4); continue
+                    try:
+                        self.wfile.write(('--%s\r\nContent-Type: image/png\r\nContent-Length: %d\r\n\r\n' % (grens, len(beeld))).encode('ascii'))
+                        self.wfile.write(beeld); self.wfile.write(b'\r\n'); self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        break   # de kijker heeft de grote weergave gesloten
+                    _t.sleep(0.4)
+            except Exception:
+                pass
+            return
         else:
             self._schrijf(404, 'niet gevonden')
     def do_POST(self):
