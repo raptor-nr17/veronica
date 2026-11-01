@@ -2929,7 +2929,7 @@
   // 560: DRAAIT DE CONSOLE? Alleen een blik op de eigen computer, alleen als Meer opengaat (een tik van een mens), zonder inhoud
   // te lezen (no-cors) en zonder iets te sturen. ARTEMIS zelf bestuurt alleen de rektelefoons op zijn eigen lijst.
   // 581: de console is VERHUISD van 8000 naar 8765 -- ARTEMIS wil 8000 zelf. Dit adres kijkt naar ONZE console (8765).
-  const ARTEMIS_ADRES = 'http://localhost:8765/';
+  const ARTEMIS_ADRES = 'http://penguin.linux.test:8765/';
   // Pas kijken nadat iemand op deze computer de console een keer opende (dan staat ARTEMIS er): wie het niet gebruikt, krijgt geen
   // enkel verzoek naar localhost.
   const artemisGebruikt = () => { try { return localStorage.getItem('veronica-artemis') === '1'; } catch (e) { return false; } };
@@ -6244,7 +6244,7 @@
     toonScherm('wachtrij');
     const z = $('zoekBlok'); if (z && z.scrollIntoView) z.scrollIntoView({ block: 'start' });
     return 'Typ je vraag in het zoekblok: "Verdeel en zoek" geeft elke telefoon zijn eigen deel. Veronica haalt zelf niets van internet, en de uitslag blijft in deze browser. '
-      + 'De schermenwand (alle telefoons naast elkaar) staat op "Telefoon besturen": die werkt met telefoons aan een USB-kabel van deze computer; over het wifi kan een telefoon zijn scherm (nog) niet sturen.';
+      + 'De schermenwand (alle telefoons naast elkaar) draait draadloos via ARTEMIS: open hem op de console (penguin.linux.test:8765). Kijken mag altijd; tikken pas na een aparte aan-knop.';
   };
   AvV.handlers.trap = () => {   // 553
     if (!S.aan) zetPantser(true);

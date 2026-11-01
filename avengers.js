@@ -46,7 +46,7 @@
     uitleg: 'De telefoons rekenen samen aan de opdrachten in de wachtrij (Pantser aan). Het zware werk gaat naar het gast-brein als dat mag.',
     fenna: 'de telefoons rekenen samen aan opdrachten' });
   registreer({ id: 'zoekmachines', titel: 'Privé-hoek: elke telefoon een eigen zoekmachine', effect: 'geen', rollen: ['werker', 'beheerder', 'bewaker'],
-    uitleg: 'Elke telefoon zoekt zijn eigen deel van je vraag. De schermenwand zet de beelden van de telefoons aan een USB-kabel naast elkaar.',
+    uitleg: 'Elke telefoon zoekt zijn eigen deel van je vraag. De schermenwand zet de beelden van de telefoons draadloos (via ARTEMIS) naast elkaar.',
     fenna: 'elke telefoon zoekt als eigen zoekmachine' });
   registreer({ id: 'opdrachten', titel: 'Andere opdrachten', effect: 'voorstel', rollen: ['werker', 'beheerder', 'gast'],
     uitleg: 'Voorstellen van de AI-kern. Jij keurt; goedkeuren voert niets uit in de echte wereld.',

@@ -427,7 +427,7 @@
     const k = el('section', 'phBlok'); k.append(kop('11. Schermenwand (alle rektelefoons)'));
     k.append(el('p', '', 'De schermen van alle rektelefoons draadloos naast elkaar op één pagina. Tik op een scherm om daar te tikken; onder elk scherm staan Terug, Home en Apps. Er is een grote NOODSTOP die het besturen in één keer stopt (kijken mag dan nog).'));
     const wandLink = el('a', 'phBesturenKnop', '📱 Open de schermenwand (draadloos, via ARTEMIS)');
-    wandLink.id = 'phSchermenwand'; wandLink.href = 'http://localhost:8765/wand'; wandLink.target = '_blank'; wandLink.rel = 'noopener';
+    wandLink.id = 'phSchermenwand'; wandLink.href = 'http://penguin.linux.test:8765/wand'; wandLink.target = '_blank'; wandLink.rel = 'noopener';
     k.append(wandLink);
     k.append(el('p', 'phKlein', 'Dit werkt als de ARTEMIS-console op deze Chromebook draait. Nooit de F8, en nooit een telefoon met een bank-, kluis- of betaalapp op de voorgrond — dan laat ARTEMIS geen beeld en geen tik toe.'));
     return k;

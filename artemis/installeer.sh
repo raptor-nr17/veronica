@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # installeer.sh -- ARTEMIS (Google, Apache 2.0) op de Linux-kant van de Chromebook, zodat Claude de REKTELEFOONS kan besturen
-# via de webconsole op http://localhost:8765 (581: WEG van 8000, want ARTEMIS wil 8000 zelf). Een keer plakken in de Linux-terminal:
+# via de webconsole op http://penguin.linux.test:8765 (618: op ChromeOS bereik je de Linux-VM NIET via localhost; 581: WEG van 8000, want ARTEMIS wil 8000 zelf). Een keer plakken in de Linux-terminal:
 #
 #     bash <(curl -fsSL <adres van Veronica>/artemis/installeer.sh)
 #
@@ -19,7 +19,7 @@
 #     het werk (Gmail, Foto's, WhatsApp) = terug naar het beginscherm en die app gestopt, ARTEMIS blijft draaien.
 #   - het verwijdert NOOIT een app, en het verandert geen instellingen op een telefoon.
 #
-# Daarna: `artemis-rek start` (console op http://localhost:8765), `artemis-rek stop`, `artemis-rek toestellen`,
+# Daarna: `artemis-rek start` (console op http://penguin.linux.test:8765), `artemis-rek stop`, `artemis-rek toestellen`,
 # `artemis-rek draadloos`, `artemis-rek status`.
 set -euo pipefail
 
@@ -31,6 +31,7 @@ BIN_MAP="${BIN_MAP:-$HOME/.local/bin}"
 # 583b: ook in de INSTALLER-body nodig (de slotmelding noemt de console-poort). CONSOLE_POORT zat alleen in het GEGENEREERDE
 # artemis-rek, dus gaf de slotregel "unbound variable" onder set -u. Zelfde standaard als daar (581: console op 8765).
 CONSOLE_POORT="${ARTEMIS_CONSOLE_POORT:-8765}"
+KBHOST="${ARTEMIS_KB_HOST:-penguin.linux.test}"   # 618: in Chrome op ChromeOS bereik je de Linux-VM via penguin.linux.test, niet via localhost
 
 zeg() { printf '%s\n' "$*"; }
 tty_lees() {   # lees van het toetsenbord, ook als dit script via een pijp binnenkwam
@@ -151,6 +152,9 @@ BRONF="$REK_MAP/bron"
 AANF="$REK_MAP/aan"           # 571: de GEWENSTE stand (ARTEMIS aan). De console-lus houdt ARTEMIS aan zolang dit bestand er is.
 CONSOLE_POORT="${ARTEMIS_CONSOLE_POORT:-8765}"   # onze knoppen-console (Veronica/Claude openen die). 581: WEG van 8000 -- ARTEMIS wil 8000 zelf
 ARTEMIS_POORT="${ARTEMIS_POORT:-8000}"           # 581: ARTEMIS HOUDT zijn eigen 8000 (hij negeerde onze poort-envs en pakte 8000); de console wijkt uit naar 8765
+# 618: de host waarmee je de console/ARTEMIS IN CHROME opent. Op ChromeOS bereikt de browser de Linux-VM NIET via localhost
+# (dat is ChromeOS zelf), maar via penguin.linux.test (de vaste Crostini-hostnaam). Binnen de VM blijft curl localhost gebruiken.
+KBHOST="${ARTEMIS_KB_HOST:-penguin.linux.test}"
 BIN_SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo "$HOME/.local/bin")"
 
 zeg() { printf '%s\n' "$*"; }
@@ -370,7 +374,7 @@ herstart_console() {
   # (4) 8000 (ARTEMIS' poort) vrijmaken van wat er van ONS nog op luistert -- alleen als ARTEMIS niet al draait (dan zit onze
   # console daar niet). Zo komt de oude console-server (de python die 8000 vasthield) er echt af en kan ARTEMIS binden.
   if ! leeft "$PIDA"; then for q in $(pids_op_poort "$ARTEMIS_POORT"); do kill "$q" 2>/dev/null || true; done; fi
-  zeg "De console draait nu op http://localhost:$CONSOLE_POORT (581/582: weg van 8000, dat is nu voor ARTEMIS). Open die in Chrome; de oude op 8000 werkt niet meer."
+  zeg "De console draait nu op http://$KBHOST:$CONSOLE_POORT (618: in Chrome op ChromeOS via penguin.linux.test, NIET localhost). Open die in Chrome; de oude op 8000 werkt niet meer."
 }
 
 # 576/577: de Bijwerken-knop. Werkt het script bij, bouwt de venv opnieuw op (3.12, met compiler-vangnet), en herstart de console
@@ -383,7 +387,7 @@ bijwerken() {
   zorg_venv forceer
   zeg "Bijwerken 4/4: de console herstarten op poort $CONSOLE_POORT ..."
   herstart_console
-  zeg "== Bijwerken klaar. Doe nu: Stop, dan Start, dan een taak. (De console draait op http://localhost:$CONSOLE_POORT.) =="
+  zeg "== Bijwerken klaar. Doe nu: Stop, dan Start, dan een taak. (De console draait op http://$KBHOST:$CONSOLE_POORT.) =="
 }
 
 # 571: AUTOSTART. Een systemd --user-dienst start de console bij het inloggen op Linux; een regel in ~/.profile is de terugval
@@ -409,10 +413,11 @@ UNIT
   if ! grep -q 'artemis-rek console' "$prof" 2>/dev/null; then
     printf '\n# ARTEMIS-rek console vanzelf starten (terugval als systemd --user er niet is)\npgrep -f "artemis-rek console" >/dev/null 2>&1 || setsid %s/artemis-rek console </dev/null >>%s/console.log 2>&1 &\n' "$BIN_SELF" "$REK_MAP" >>"$prof"
   fi
-  zeg "Autostart aangezet: de console draait voortaan vanzelf (http://localhost:$CONSOLE_POORT)."
+  zeg "Autostart aangezet: de console draait voortaan vanzelf (http://$KBHOST:$CONSOLE_POORT)."
 }
 
-# 571: DE KNOPPEN-CONSOLE op http://localhost:CONSOLE_POORT (alleen 127.0.0.1). Hier doet Claude in Chrome alles wat vroeger een
+# 571/618: DE KNOPPEN-CONSOLE op http://$KBHOST:CONSOLE_POORT (bindt alle interfaces van de VM; op ChromeOS bereikt de browser
+# de VM via penguin.linux.test, niet via localhost -- host-only netwerk met alleen de Chromebook). Hier doet Claude in Chrome alles wat vroeger een
 # terminalopdracht was: Start, Stop, Status, Zoek telefoons (scan), Bijwerken. Een achtergrondlus zoekt elke minuut zelf nieuwe
 # rektelefoons en houdt ARTEMIS aan zolang de gewenste stand "aan" is. Geen vrije invoer: alleen een vaste lijst opdrachten.
 console() {
@@ -530,7 +535,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
 <button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
-<p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
+<p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
 // 586: elke knop geeft ALTIJD een zichtbaar, getimed antwoord en de pagina hangt nooit (AbortController-timeout). Bijwerken en
@@ -579,6 +584,9 @@ button{font-size:18px;padding:12px 16px;border:0;border-radius:10px;background:#
 </style></head><body>
 <header><h1>Schermenwand &mdash; de rektelefoons</h1>
 <button id=noodstop>NOODSTOP</button><button id=hervat>Hervat besturen</button><button id=ververs>Ververs</button></header>
+<div style="padding:8px 16px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+<input id=zoekveld type=text placeholder="Eén vraag -> elke telefoon een andere zoekmachine" autocomplete=off style="flex:1;min-width:220px;font-size:16px;padding:10px;border-radius:8px;border:1px solid #334">
+<button id=zoekallen>Zoek op alle telefoons</button></div>
 <p id=melding>De schermen komen eraan&hellip; (nooit de F8; nooit een telefoon met een bank-, kluis- of betaalapp op de voorgrond.)</p>
 <div id=wand></div>
 <script>
@@ -617,6 +625,10 @@ async function lijst(){
 document.getElementById('noodstop').addEventListener('click',async()=>{melding.textContent=await post({wat:'noodstop'});});
 document.getElementById('hervat').addEventListener('click',async()=>{melding.textContent=await post({wat:'hervat'});});
 document.getElementById('ververs').addEventListener('click',lijst);
+const zoekveld=document.getElementById('zoekveld'),zoekallen=document.getElementById('zoekallen');
+async function zoekAllen(){const v=(zoekveld.value||'').trim();if(!v){melding.textContent='Typ eerst een zoekvraag.';return;}zoekallen.disabled=true;melding.textContent='Elke telefoon opent een andere zoekmachine…';try{melding.textContent=await post({wat:'zoek-allen',vraag:v});}finally{zoekallen.disabled=false;}}
+zoekallen.addEventListener('click',zoekAllen);
+zoekveld.addEventListener('keydown',(e)=>{if(e.key==='Enter')zoekAllen();});
 lijst();setInterval(lijst,15000);setInterval(()=>{for(const [s,rec] of tegels)fotoVan(s,rec);},3000);
 </script></body></html>"""
 # 592b: alleen een lokaal/LAN-adres (de telefoon) mag het ARTEMIS-model worden -- nooit een publiek internet-adres.
@@ -730,6 +742,8 @@ class H(BaseHTTPRequestHandler):
             wat = (f.get('wat', [''])[0])
             if wat == 'noodstop': self._cors(200, doe_args(['wand-noodstop'])); return
             if wat == 'hervat': self._cors(200, doe_args(['wand-hervat'])); return
+            if wat == 'zoek-allen': self._cors(200, doe_args(['wand-zoek', f.get('vraag', [''])[0]], timeout=40)); return   # 615: elke telefoon een andere zoekmachine
+            if wat == 'tik-allen': self._cors(200, doe_args(['wand-tik-allen', f.get('x', ['0'])[0], f.get('y', ['0'])[0]])); return   # 615: tik naar alle telefoons tegelijk
             s = (f.get('serial', [''])[0])
             if not WAND_SERIAL.match(s): self._cors(400, 'onbruikbare telefoon'); return
             if wat == 'tik': self._cors(200, doe_args(['wand-tik', s, f.get('x', ['0'])[0], f.get('y', ['0'])[0]])); return
@@ -746,7 +760,12 @@ threading.Thread(target=lus, daemon=True).start()
 srv = None
 for _ in range(12):
     try:
-        srv = ThreadingHTTPServer(('127.0.0.1', POORT), H); break
+        # 618: bind op ALLE interfaces van de Linux-VM (host ''), niet alleen 127.0.0.1. Op ChromeOS is de loopback van de
+        # Crostini-VM NIET de loopback van ChromeOS, dus `localhost:POORT` in de Chrome-browser kwam nooit binnen ("Nieuw
+        # tabblad"). De VM is vanuit Chrome bereikbaar via penguin.linux.test (dat lost op naar het VM-adres). De Crostini-VM
+        # zit op een host-only netwerk met ALLEEN de Chromebook (ChromeOS routeert geen inkomend LAN-verkeer naar de VM), dus
+        # '' is net zo besloten als 127.0.0.1 -- maar wel bereikbaar voor de browser. Geen IP-letterlijk in de bron.
+        srv = ThreadingHTTPServer(('', POORT), H); break
     except OSError:
         time.sleep(0.5)
 if srv is None:
@@ -1134,7 +1153,7 @@ start_kern() {
       zeg "ARTEMIS draait ZONDER vangnet-proxy -- dat mag niet. Ik stop alles en herstart schoon mét vangnet."
       stop_artemis
     else
-      zeg "ARTEMIS draait al: http://localhost:$ARTEMIS_POORT"; return 0
+      zeg "ARTEMIS draait al: http://$KBHOST:$ARTEMIS_POORT"; return 0
     fi
   fi
   waak_ronde || return 1
@@ -1178,7 +1197,7 @@ start_kern() {
   ( cd "$ARTEMIS_MAP" && env PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 $lok_env PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
   ( setsid "$0" waakhond </dev/null >>"$LOG" 2>&1 & echo $! >"$PIDW" )
-  zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://localhost:$ARTEMIS_POORT"
+  zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://$KBHOST:$ARTEMIS_POORT"
 }
 
 # Door een MENS (console-knop Start): de gewenste stand AAN, de pogingenteller RESET (vers budget), dan starten.
@@ -2656,13 +2675,13 @@ status() {
     if antwoordt "$ARTEMIS_POORT"; then
       [ -n "$open_poort" ] || open_poort="$ARTEMIS_POORT"
       [ -n "$poorten" ] && zeg "Luistert op poort(en): $poorten" || zeg "Luistert op poort: $ARTEMIS_POORT (ARTEMIS antwoordt daar)."
-      zeg "Open ARTEMIS op: http://localhost:$open_poort"
+      zeg "Open ARTEMIS op: http://$KBHOST:$open_poort"
     elif [ -n "$poorten" ]; then
       zeg "Luistert op poort(en): $poorten"
-      zeg "Open ARTEMIS op: http://localhost:$open_poort"
-      zeg "(http://localhost:$ARTEMIS_POORT antwoordt nog niet -- gebruik de poort hierboven, of kijk bij Log.)"
+      zeg "Open ARTEMIS op: http://$KBHOST:$open_poort"
+      zeg "(http://$KBHOST:$ARTEMIS_POORT antwoordt nog niet -- gebruik de poort hierboven, of kijk bij Log.)"
     else
-      zeg "Luistert nog op GEEN enkele poort en http://localhost:$ARTEMIS_POORT antwoordt niet -- hij start nog op (de eerste keer duurt het een paar minuten) of hij is gestopt. Kijk bij Log."
+      zeg "Luistert nog op GEEN enkele poort en http://$KBHOST:$ARTEMIS_POORT antwoordt niet -- hij start nog op (de eerste keer duurt het een paar minuten) of hij is gestopt. Kijk bij Log."
     fi
   elif [ -f "$REK_MAP/start-gestopt" ]; then
     # 583: na 3 mislukte starts stopte de lus met proberen -- zeg dat duidelijk in plaats van stil te blijven.
@@ -2671,7 +2690,7 @@ status() {
     zeg "ARTEMIS staat uit."
   fi
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
-  zeg "Console (knoppen): http://localhost:$CONSOLE_POORT"
+  zeg "Console (knoppen): http://$KBHOST:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
   # 609: de lokale beheerder zet een melding als een telefoon na het veilige opruimen nog krap is (dan kan alleen een mens helpen).
   [ -s "$REK_MAP/beheerder-melding.txt" ] && zeg "$(cat "$REK_MAP/beheerder-melding.txt")"
@@ -2925,6 +2944,44 @@ wand_besturen() {
 wand_noodstop() { : >"$WAND_STOP_F"; zeg "Noodstop aan: de schermenwand bestuurt niets meer (kijken mag nog)."; }
 wand_hervat() { rm -f "$WAND_STOP_F" 2>/dev/null || true; zeg "Noodstop uit: de schermenwand mag weer besturen."; }
 
+# 615: EEN VRAAG -> ELKE REKTELEFOON EEN ANDERE ZOEKMACHINE in zijn eigen browser (am start VIEW). Zo ziet de eigenaar de
+# resultaten naast elkaar op de wand. Rouleert de machines; NOOIT de F8, alleen een toegestane telefoon, en wand_gate blokkeert
+# als er een gevoelige/persoonlijke app op de voorgrond staat. De vraag gaat URL-gecodeerd mee (geen shell-injectie).
+# De machines zijn "openen in de browser om te BEKIJKEN", niet de kassa-scrapers -- daarom mogen DuckDuckGo/Brave/Google hier wel.
+ZOEKMACHINES="DuckDuckGo|https://duckduckgo.com/?q= Brave|https://search.brave.com/search?q= Mojeek|https://www.mojeek.com/search?q= Google|https://www.google.com/search?q= Wikipedia|https://nl.wikipedia.org/w/index.php?search="
+wand_zoek() {
+  local vraag="${1:-}"
+  [ -n "$vraag" ] || { zeg "GEWEIGERD geen zoekvraag"; return 3; }
+  [ -f "$WAND_STOP_F" ] && { zeg "GEWEIGERD de noodstop staat aan (druk op Hervat)"; return 3; }
+  local enc; enc="$(ZQ="$vraag" python3 -c 'import os,urllib.parse;print(urllib.parse.quote_plus(os.environ.get("ZQ","")))' 2>/dev/null)"
+  [ -n "$enc" ] || { zeg "GEWEIGERD kon de zoekvraag niet coderen"; return 3; }
+  local -a M=($ZOEKMACHINES); local i=0 s id naam reden mach machnaam machurl n=0
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"
+    if ! reden="$(wand_gate "$s")"; then zeg "$naam: overgeslagen ($reden)"; continue; fi
+    mach="${M[$(( i % ${#M[@]} ))]}"; machnaam="${mach%%|*}"; machurl="${mach##*|}"
+    if "$ADB" -s "$s" shell am start -a android.intent.action.VIEW -d "${machurl}${enc}" >/dev/null 2>&1; then
+      zeg "$naam -> $machnaam"; n=$((n+1))
+    else zeg "$naam: de zoekmachine openen lukte niet"; fi
+    i=$((i+1))
+  done
+  zeg "Klaar: $n telefoon(s) zoeken nu, elk op een andere zoekmachine. Kijk op de wand."
+}
+# 615: EEN TIK NAAR ALLE REKTELEFOONS TEGELIJK, in schermprocenten (0..1). Reuse wand_besturen (maat -> pixels, wand_gate, noodstop).
+wand_tik_allen() {
+  local xf="${1:-}" yf="${2:-}" s id n=0
+  [ -f "$WAND_STOP_F" ] && { zeg "GEWEIGERD de noodstop staat aan (druk op Hervat)"; return 3; }
+  { _frac_ok "$xf" && _frac_ok "$yf"; } || { zeg "GEWEIGERD onbruikbare plek (0..1)"; return 3; }
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    wand_besturen tik "$s" "$xf" "$yf" >/dev/null 2>&1 && n=$((n+1))
+  done
+  zeg "Getikt op $n telefoon(s) tegelijk (nooit de F8)."
+}
+
 # 571: bij start en console eerst zichzelf bijwerken vanaf de site, dan opnieuw starten met de nieuwe code (een keer, geen lus).
 if { [ "${1:-}" = start ] || [ "${1:-}" = console ]; } && [ -z "${ARTEMIS_HERSTART:-}" ]; then
   zelf_bijwerken >/dev/null 2>&1 || true
@@ -2961,6 +3018,8 @@ case "${1:-status}" in
   wand-veeg) wand_besturen veeg "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}" ;;
   wand-toets) wand_besturen toets "${2:-}" "${3:-}" ;;
   wand-typ) wand_besturen typ "${2:-}" "${3:-}" ;;
+  wand-zoek) wand_zoek "${2:-}" ;;             # 615: elke rektelefoon een andere zoekmachine openen met dezelfde vraag
+  wand-tik-allen) wand_tik_allen "${2:-}" "${3:-}" ;;   # 615: één tik naar alle rektelefoons tegelijk (schermprocenten)
   wand-noodstop) wand_noodstop ;;              # 602: alle besturing blokkeren in één keer
   wand-hervat) wand_hervat ;;
   vergeet) vergeet ;;
@@ -3088,6 +3147,6 @@ if ! pgrep -f "artemis-rek console" >/dev/null 2>&1; then
 fi
 zeg ""
 zeg "Klaar -- en dit was de laatste keer in de terminal."
-zeg "Alles gaat nu via de console in Chrome: http://localhost:$CONSOLE_POORT"
+zeg "Alles gaat nu via de console in Chrome: http://$KBHOST:$CONSOLE_POORT (op ChromeOS NIET localhost -- de Linux-VM heet penguin.linux.test)"
 zeg "Daar staan de knoppen Start, Stop, Status, Zoek telefoons en Bijwerken. De console draait voortaan vanzelf,"
 zeg "werkt zichzelf bij vanaf de site, en zoekt elke minuut zelf nieuwe rektelefoons. Je hoeft hier niets meer te typen."
