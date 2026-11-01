@@ -996,6 +996,9 @@
     if ($('onderzoekStop')) $('onderzoekStop').addEventListener('click', () => { OnderzoekV.stop = true; $('onderzoekStand').textContent = 'Ik stop na de klussen die nu lopen.'; });
     // 579: het algemene diepe onderzoek (alle groene telefoons, ook off-wifi via de relay)
     if ($('algOnderzoekKnop')) $('algOnderzoekKnop').addEventListener('click', () => { onderzoekDoe(false); });
+    // 617: de telefoons ook echt in hun browser zien zoeken = de ARTEMIS-schermenwand (draadloos, penguin.linux.test -- 618).
+    // Een knop (geen <a> in #zoekBlok: dat zou de plattetekst-regel van het zoekblok breken), window.open naar de console.
+    if ($('zoekmachineWand')) $('zoekmachineWand').addEventListener('click', () => { try { window.open('http://penguin.linux.test:8765/wand', '_blank', 'noopener'); } catch (e) {} });
     if ($('algOnderzoekStop')) $('algOnderzoekStop').addEventListener('click', () => { AlgOnderzoekV.stop = true; $('algOnderzoekStand').textContent = 'Ik stop na de klussen die nu lopen.'; });
     $('zoekVraag').addEventListener('keydown', (e) => { if (e.key === 'Enter') doe(); });
     if ($('zoekGeheugenKnop')) $('zoekGeheugenKnop').addEventListener('click', () => { toonGeheugen(false); });
