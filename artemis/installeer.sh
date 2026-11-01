@@ -515,6 +515,8 @@ def lus():
                 doe('jarvis-waak')   # 590: elke ~3 min JARVIS nakijken op de rektelefoons (nooit de F8)
             if RONDE % 15 == 7:
                 doe('lokaal-auto')   # 592: lokaal model AANzetten zodra er een lokale server verschijnt ("standaard AAN")
+            if RONDE % 180 == 45:
+                doe('beheerder-opslag')   # 609: de lokale beheerder -- elke ~3 uur de opslag van de rektelefoons bewaken + veilig opruimen (nooit de F8)
         except Exception: pass
         time.sleep(60)
 PAGINA = """<!doctype html><html lang=nl><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -526,7 +528,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
@@ -2235,19 +2237,72 @@ cat_kijk() {
   zeg "Veilig op te ruimen met 'Cat: caches opruimen' (knop): alle app-caches, zonder gegevens te wissen. Foto's, documenten,"
   zeg "downloads en bank-/kluis-/authenticator-apps blijven ONAANGEROERD tot je per onderdeel zegt dat die ook mogen."
 }
+# 609: de VEILIGE opruiming op een rektelefoon (de lokale beheerder gebruikt hem vanzelf, en de knop 'Cat: opruimen' handmatig).
+# Alleen herbruikbare/wegwerpbare dingen; NOOIT foto's, documenten, media of gegevens, en NOOIT een bank-/kluis-/betaal-/crypto-/
+# authenticator-app (we raken hun app-mappen sowieso niet aan -- pm trim-caches gaat via Android, en de rm-paden hieronder staan
+# vast op wegwerp-locaties en -extensies). De SD-kaart-AI-opslag (modellen, kennisboek) blijft staan -- die ruimen we juist NIET op.
+# Geeft het aantal vrijgemaakte MB terug op stdout (voor de automatische beheerder), en logt wat er gebeurde.
+rek_ruim_veilig() {
+  local s="$1"; [ -n "$s" ] || return 1
+  is_f8 "$s" && return 1                               # NOOIT de F8
+  local id; id="$(toestel_id "$s")"; toegestaan "$id" || return 1
+  local voor na
+  voor="$("$ADB" -s "$s" shell "df -k /data 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null | tr -d '\r')"
+  # (1) app-caches: Android wist zoveel als nodig. GEEN gebruikersgegevens, GEEN foto's, GEEN app-data.
+  "$ADB" -s "$s" shell pm trim-caches 999999999999 >/dev/null 2>&1 || true
+  # (2) adb-kladmap: /data/local/tmp is adb's eigen werkplek (push/pull-restjes). Veilig leeg te maken; nooit app-data.
+  "$ADB" -s "$s" shell "rm -rf /data/local/tmp/* 2>/dev/null" >/dev/null 2>&1 || true
+  # (3) oude JARVIS-apk's in Download: houd de NIEUWSTE, gooi oudere kopieën weg (jarvis.apk, 'jarvis (1).apk', jarvis-<versie>.apk).
+  #     Alleen de bestandsnaam 'jarvis*.apk' in /sdcard/Download -- nooit een andere apk, nooit buiten Download.
+  "$ADB" -s "$s" shell "ls -t /sdcard/Download/jarvis*.apk 2>/dev/null | tail -n +2 | while IFS= read -r f; do rm -f \"\$f\"; done" >/dev/null 2>&1 || true
+  # (4) duidelijk wegwerpbare resten in Download (mislukte/afgebroken downloads en logs), ouder dan 14 dagen. VAST op deze extensies;
+  #     NOOIT een media- of documentextensie. Foto's/documenten/muziek/video blijven altijd staan.
+  "$ADB" -s "$s" shell "find /sdcard/Download -maxdepth 1 -type f -mtime +14 \\( -iname '*.tmp' -o -iname '*.crdownload' -o -iname '*.part' -o -iname '*.partial' -o -iname '*.opdownload' -o -iname '*.log' \\) -delete 2>/dev/null" >/dev/null 2>&1 || true
+  na="$("$ADB" -s "$s" shell "df -k /data 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null | tr -d '\r')"
+  local delta=$(( ${na:-0} - ${voor:-0} )); [ "$delta" -lt 0 ] && delta=0
+  printf '%s' "$(( delta / 1024 ))"   # MB vrijgemaakt
+}
 cat_ruim() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
-  local s voor na delta; s="$(cat_serial)" || { zeg "Geen Cat (S75) gevonden."; return 1; }
-  voor="$(_vrij_kb "$s" /data)"
-  zeg "Caches opruimen op de Cat ($(toestel_naam "$s")) -- alleen herbruikbare app-caches, geen gegevens en geen foto's..."
-  # pm trim-caches: Android wist zoveel cache als nodig om de ruimte vrij te maken. GEEN gebruikersgegevens, GEEN foto's.
-  "$ADB" -s "$s" shell pm trim-caches 999999999999 >/dev/null 2>&1 || true
-  sleep 2
-  na="$(_vrij_kb "$s" /data)"
-  delta=$(( ${na:-0} - ${voor:-0} ))
-  if [ "$delta" -gt 0 ]; then zeg "Opgeruimd: app-caches gewist, ongeveer $(( delta / 1024 )) MB intern vrijgemaakt (van ${voor:-?} naar ${na:-?} KB)."
-  else zeg "App-caches gewist; geen meetbare winst (${voor:-?} -> ${na:-?} KB). Veel ruimte zit dan in foto's, downloads of app-gegevens -- die raak ik niet aan."; fi
-  zeg "NIET aangeraakt: foto's, documenten, downloads en bank-/kluis-/authenticator-apps (en hun gegevens). Zeg het per onderdeel als je daar ook iets van wilt opruimen."
+  local s mb; s="$(cat_serial)" || { zeg "Geen Cat (S75) gevonden."; return 1; }
+  zeg "Opruimen op de Cat ($(toestel_naam "$s")) -- caches, de adb-kladmap, oude JARVIS-apk's en mislukte downloads. Geen gegevens, geen foto's..."
+  mb="$(rek_ruim_veilig "$s")"
+  if [ "${mb:-0}" -gt 0 ]; then zeg "Opgeruimd: ongeveer ${mb} MB intern vrijgemaakt."
+  else zeg "Opgeruimd; geen meetbare winst. Veel ruimte zit dan in foto's, documenten of app-gegevens -- die raak ik niet aan."; fi
+  zeg "NIET aangeraakt: foto's, documenten, media, de SD-kaart-AI-opslag (modellen/kennisboek), en bank-/kluis-/authenticator-/betaal-/crypto-apps (en hun gegevens)."
+}
+# 609: DE LOKALE BEHEERDER -- opslag. Kijkt vanzelf (vanuit de console-lus) of een rektelefoon te weinig vrije ruimte heeft en ruimt
+# dan VEILIG op (rek_ruim_veilig). Alleen een stabiel verbonden, toegestane, niet-F8 telefoon; getemperd per telefoon; logt het, en
+# zet een nette LET OP-regel als het na opruimen nog krap blijft (die toont Status/Log, zodat de eigenaar het ziet). NOOIT de F8.
+BEHEERDER_VRIJ_MB_GRENS="${BEHEERDER_VRIJ_MB_GRENS:-1500}"   # onder zoveel MB vrij op /data ruimt de beheerder op
+beheerder_opslag() {
+  command -v "$ADB" >/dev/null 2>&1 || return 0
+  "$ADB" start-server >/dev/null 2>&1 || true
+  local s id naam vrijkb vrijmb mb nu laatstf
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    case "$s" in *:*) ;; *) continue ;; esac   # alleen een stabiel DRAADLOOS verbonden toestel (ip:poort); een kabeltoestel kan net aangesloten zijn
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"
+    vrijkb="$("$ADB" -s "$s" shell "df -k /data 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null | tr -d '\r')"
+    case "$vrijkb" in ''|*[!0-9]*) continue ;; esac
+    vrijmb=$(( vrijkb / 1024 ))
+    [ "$vrijmb" -ge "$BEHEERDER_VRIJ_MB_GRENS" ] && continue   # genoeg ruimte
+    # getemperd per telefoon: hoogstens eens per 6 uur (zodat het nooit blijft malen als de ruimte krap blijft)
+    laatstf="$REK_MAP/beheerder-ruim-$id.t"; nu="$(date +%s 2>/dev/null || echo 0)"
+    if [ -f "$laatstf" ]; then local l; l="$(cat "$laatstf" 2>/dev/null || echo 0)"; case "$l" in *[!0-9]*|'') l=0 ;; esac; [ $(( nu - l )) -lt 21600 ] && continue; fi
+    printf '%s\n' "$nu" >"$laatstf" 2>/dev/null || true
+    logregel "[beheerder] $naam heeft nog ${vrijmb} MB vrij (onder ${BEHEERDER_VRIJ_MB_GRENS}); veilig opruimen..."
+    mb="$(rek_ruim_veilig "$s")"
+    vrijkb="$("$ADB" -s "$s" shell "df -k /data 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null | tr -d '\r')"; case "$vrijkb" in ''|*[!0-9]*) vrijkb=0 ;; esac
+    vrijmb=$(( vrijkb / 1024 ))
+    logregel "[beheerder] $naam: ${mb:-0} MB vrijgemaakt, nu ${vrijmb} MB vrij."
+    if [ "$vrijmb" -lt "$BEHEERDER_VRIJ_MB_GRENS" ]; then
+      printf '%s LET OP: %s is nog krap (%s MB vrij) na het veilige opruimen. De rest is foto\x27s/documenten/app-gegevens -- die raak ik niet aan. Kijk zelf of er iets weg kan.\n' "$(date '+%H:%M:%S')" "$naam" "$vrijmb" >"$REK_MAP/beheerder-melding.txt" 2>/dev/null || true
+    else
+      rm -f "$REK_MAP/beheerder-melding.txt" 2>/dev/null || true
+    fi
+  done
 }
 # 594: HAALBAARHEID -- kan een oude rektelefoon de F8 vervangen voor het zware model (Gemma-4-E4B, 3,7 GB, met beeld)?
 # Meet per aangesloten rektelefoon het RAM, de chip en de vrije opslag (adb getprop/meminfo/df) en geef een oordeel. EERST
@@ -2614,6 +2669,8 @@ status() {
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
   zeg "Console (knoppen): http://localhost:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
+  # 609: de lokale beheerder zet een melding als een telefoon na het veilige opruimen nog krap is (dan kan alleen een mens helpen).
+  [ -s "$REK_MAP/beheerder-melding.txt" ] && zeg "$(cat "$REK_MAP/beheerder-melding.txt")"
   sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
   # 585/591/592: welk model gebruikt ARTEMIS? Primair + reserve uit onze config; Log toont welk model ECHT werd aangeroepen.
   if [ -s "$REK_MAP/lokaal-model.conf" ]; then
@@ -2886,7 +2943,8 @@ case "${1:-status}" in
   alleen-kijken) alleen_kijken_aan ;;       # 592h: alleen-kijken AAN -- het model mag alleen Home indrukken
   alleen-kijken-uit) alleen_kijken_uit ;;   # 592h: alleen-kijken UIT -- het model mag weer handelen (vangnet blijft)
   cat-kijk) cat_kijk ;;                      # 116b: kijken wat ruimte inneemt op de Cat (niets aangeraakt)
-  cat-ruim) cat_ruim ;;                      # 116b: alleen app-caches opruimen op de Cat (geen gegevens/foto's)
+  cat-ruim) cat_ruim ;;                      # 609: veilig opruimen op de Cat (caches, kladmap, oude apk's, mislukte downloads)
+  beheerder-opslag) beheerder_opslag ;;      # 609: de lokale beheerder -- vanzelf de opslag van de rektelefoons bewaken + veilig opruimen
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   rek-zoek) rek_zoek ;;
