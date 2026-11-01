@@ -445,6 +445,16 @@ def doe(cmd):
         return '%s duurt langer dan verwacht. Druk op Status of Log om te zien wat er gebeurt.' % cmd
     except Exception as e:
         return 'fout: ' + str(e)
+def doe_args(args, timeout=20):
+    # 602: artemis-rek met ARGUMENTEN draaien (de schermenwand: schermenwand/schermfoto/wand-tik/...). Alleen tekst terug.
+    try:
+        r = subprocess.run([AREK] + list(args), capture_output=True, text=True, timeout=timeout)
+        return (r.stdout + r.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return 'GEWEIGERD duurde te lang'
+    except Exception as e:
+        return 'GEWEIGERD ' + str(e)
+WAND_SERIAL = re.compile(r'^[A-Za-z0-9_.:-]{1,64}$')   # 602: een adb-serial/endpoint; geen spaties/argument-injectie naar adb
 def _hash(p):
     try:
         with open(p, 'rb') as f: return hashlib.sha256(f.read()).hexdigest()
@@ -512,6 +522,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
 <button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: caches opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://localhost:{ap}" target=_blank>localhost:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
@@ -535,6 +546,63 @@ async function doe(c){{
 for(const b of document.querySelectorAll('button[data-cmd]'))b.addEventListener('click',()=>doe(b.dataset.cmd));
 doe('status');
 </script></main></body></html>"""
+# 602: DE SCHERMENWAND -- de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen. Alle veiligheid zit in de
+# shell (wand_gate: nooit de F8, alleen op de lijst, nooit bij een gevoelige/persoonlijke app) en de noodstop; deze pagina toont
+# alleen en stuurt tikken door. 127.0.0.1-only, net als de rest van de console. Geen namen, geen opslag.
+WAND_PAGINA = """<!doctype html><html lang=nl><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Schermenwand</title><style>
+body{font-family:system-ui,sans-serif;margin:0;background:#0b1020;color:#e8ecf5;font-size:18px}
+header{position:sticky;top:0;z-index:5;padding:12px 16px;background:#141b33;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+h1{font-size:20px;margin:0 auto 0 0}
+button{font-size:18px;padding:12px 16px;border:0;border-radius:10px;background:#2b3a67;color:#fff;cursor:pointer;min-height:48px;min-width:48px}
+#noodstop{background:#b4231f;font-weight:700}#hervat{background:#1f6f3a}
+#wand{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;padding:16px}
+.tegel{background:#141b33;border:1px solid #233;border-radius:12px;overflow:hidden}
+.tnaam{padding:8px 10px;font-weight:600}
+.tbeeld{width:100%;display:block;background:#000;cursor:crosshair;touch-action:none}
+.treden{padding:14px;color:#ffd27d}
+.tknop{display:flex;gap:6px;padding:8px}
+.tklein{font-size:16px;padding:10px;flex:1}
+#melding{padding:0 16px;color:#9fb0d0}
+</style></head><body>
+<header><h1>Schermenwand &mdash; de rektelefoons</h1>
+<button id=noodstop>NOODSTOP</button><button id=hervat>Hervat besturen</button><button id=ververs>Ververs</button></header>
+<p id=melding>De schermen komen eraan&hellip; (nooit de F8; nooit een telefoon met een bank-, kluis- of betaalapp op de voorgrond.)</p>
+<div id=wand></div>
+<script>
+const wand=document.getElementById('wand'),melding=document.getElementById('melding');
+const tegels=new Map();   // serial -> {el, img, reden}
+async function post(f){const b=new URLSearchParams(f);try{const r=await fetch('/wand-doe',{method:'POST',body:b});return await r.text();}catch(e){return 'niet gelukt';}}
+function maakTegel(t){
+  const el=document.createElement('div');el.className='tegel';
+  el.innerHTML='<div class=tnaam></div><img class=tbeeld alt=""><div class=treden hidden></div>'+
+    '<div class=tknop><button class="tklein" data-k=terug>Terug</button><button class="tklein" data-k=thuis>Home</button><button class="tklein" data-k=apps>Apps</button></div>';
+  el.querySelector('.tnaam').textContent=t.naam||'Telefoon';
+  const img=el.querySelector('.tbeeld'),reden=el.querySelector('.treden');
+  img.addEventListener('pointerdown',(ev)=>{ev.preventDefault();const x=ev.offsetX/(img.clientWidth||1),y=ev.offsetY/(img.clientHeight||1);post({wat:'tik',serial:t.serial,x:x.toFixed(4),y:y.toFixed(4)});});
+  for(const b of el.querySelectorAll('.tklein'))b.addEventListener('click',()=>post({wat:'toets',serial:t.serial,toets:b.dataset.k}));
+  wand.appendChild(el);const rec={el,img,reden};tegels.set(t.serial,rec);return rec;
+}
+async function fotoVan(serial,rec){
+  try{
+    const r=await fetch('/wand-foto?serial='+encodeURIComponent(serial)+'&t='+Date.now());
+    if(r.ok){const b=await r.blob();rec.img.src=URL.createObjectURL(b);rec.img.hidden=false;rec.reden.hidden=true;setTimeout(()=>URL.revokeObjectURL(rec.img.src),8000);}
+    else{rec.reden.textContent=await r.text();rec.reden.hidden=false;rec.img.hidden=true;}
+  }catch(e){rec.reden.textContent='geen verbinding met de telefoon';rec.reden.hidden=false;rec.img.hidden=true;}
+}
+async function lijst(){
+  let l=[];try{l=await (await fetch('/wand-lijst')).json();}catch(e){}
+  if(!l.length){melding.textContent='Geen rektelefoon op de wand. Koppel ze in de console (Zoek telefoons / Koppel via de kabel). De F8 staat er nooit bij.';}
+  else{melding.textContent=l.length+' rektelefoon(s). Tik op een scherm om te tikken; de knoppen eronder zijn Terug/Home/Apps.';}
+  const nu=new Set(l.map(t=>t.serial));
+  for(const [s,rec] of tegels)if(!nu.has(s)){rec.el.remove();tegels.delete(s);}
+  for(const t of l){const rec=tegels.get(t.serial)||maakTegel(t);fotoVan(t.serial,rec);}
+}
+document.getElementById('noodstop').addEventListener('click',async()=>{melding.textContent=await post({wat:'noodstop'});});
+document.getElementById('hervat').addEventListener('click',async()=>{melding.textContent=await post({wat:'hervat'});});
+document.getElementById('ververs').addEventListener('click',lijst);
+lijst();setInterval(lijst,15000);setInterval(()=>{for(const [s,rec] of tegels)fotoVan(s,rec);},3000);
+</script></body></html>"""
 # 592b: alleen een lokaal/LAN-adres (de telefoon) mag het ARTEMIS-model worden -- nooit een publiek internet-adres.
 def _lan_adres_ok(u):
     try: pu = urllib.parse.urlparse(u)
@@ -576,6 +644,27 @@ class H(BaseHTTPRequestHandler):
         elif p.path == '/status.json':
             aan = os.path.exists(os.path.join(REK, 'artemis.pid'))
             self._schrijf(200, '{"console":true,"artemis":%s}' % ('true' if aan else 'false'), 'application/json')
+        elif p.path == '/wand':
+            self._schrijf(200, WAND_PAGINA, 'text/html; charset=utf-8')
+        elif p.path == '/wand-lijst':
+            # 602: welke rektelefoons horen nu op de wand (JSON uit de shell; de F8 en niet-toegestane toestellen zitten er nooit in).
+            uit = doe_args(['schermenwand'])
+            self._schrijf(200, uit if uit.strip().startswith('[') else '[]', 'application/json')
+        elif p.path == '/wand-foto':
+            # 602: één schermfoto van één rektelefoon. De shell weigert (GEWEIGERD + reden) bij de F8, een niet-toegestane telefoon,
+            # of een gevoelige/persoonlijke app op de voorgrond -- dan 409 met de reden, nooit een beeld.
+            s = (q.get('serial', [''])[0])
+            if not WAND_SERIAL.match(s): self._schrijf(400, 'onbruikbare telefoon'); return
+            uit = doe_args(['schermfoto', s]).strip()
+            if uit.startswith('GEWEIGERD') or not uit or not os.path.isfile(uit):
+                self._schrijf(409, uit or 'geen beeld'); return
+            try:
+                with open(uit, 'rb') as fh: beeld = fh.read()
+                self.send_response(200); self.send_header('Content-Type', 'image/png')
+                self.send_header('Content-Length', str(len(beeld))); self.send_header('Cache-Control', 'no-store')
+                self.end_headers(); self.wfile.write(beeld)
+            except Exception:
+                self._schrijf(409, 'beeld niet leesbaar')
         else:
             self._schrijf(404, 'niet gevonden')
     def do_POST(self):
@@ -616,6 +705,21 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._cors(500, 'fout: ' + str(e))
             return
+        if p.path == '/wand-doe':
+            # 602: de schermenwand bestuurt een rektelefoon (tik/veeg/toets/noodstop/hervat). De SHELL (wand_besturen) doet de
+            # §565-zeef (nooit de F8, alleen op de lijst, nooit bij een gevoelige/persoonlijke app) EN de noodstop; hier alleen
+            # doorgeven, met een serial die aan een veilig patroon voldoet (geen argument-injectie naar adb).
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            wat = (f.get('wat', [''])[0])
+            if wat == 'noodstop': self._cors(200, doe_args(['wand-noodstop'])); return
+            if wat == 'hervat': self._cors(200, doe_args(['wand-hervat'])); return
+            s = (f.get('serial', [''])[0])
+            if not WAND_SERIAL.match(s): self._cors(400, 'onbruikbare telefoon'); return
+            if wat == 'tik': self._cors(200, doe_args(['wand-tik', s, f.get('x', ['0'])[0], f.get('y', ['0'])[0]])); return
+            if wat == 'veeg': self._cors(200, doe_args(['wand-veeg', s, f.get('x', ['0'])[0], f.get('y', ['0'])[0], f.get('x2', ['0'])[0], f.get('y2', ['0'])[0], f.get('ms', ['250'])[0]])); return
+            if wat == 'toets' and f.get('toets', [''])[0] in ('terug', 'thuis', 'apps'): self._cors(200, doe_args(['wand-toets', s, f['toets'][0]])); return
+            self._cors(400, 'onbekende besturing'); return
         cmd = (q.get('cmd', [''])[0]) if p.path == '/doe' else ''
         if cmd in TOEGESTAAN: self._schrijf(200, doe(cmd))
         else: self._schrijf(400, 'onbekende opdracht')
@@ -2575,6 +2679,80 @@ opruimen() {
   schijf
 }
 
+# =========================================================================
+# 602: DE SCHERMENWAND -- alle rektelefoons' schermen DRAADLOOS naast elkaar, en ze kunnen bediend worden (tik/veeg/toets).
+# EERST KIJKEN, DAN BEDIENEN. Elke schermfoto EN elke tik gaat eerst door wand_gate(): nooit de F8, alleen een telefoon die op
+# de rektelefoon-lijst staat, en NOOIT terwijl er een GEVOELIGE (bank/kluis/authenticator/betaal/crypto) OF een PERSOONLIJKE
+# (werk: Gmail/WhatsApp/Foto's/...) app op de voorgrond staat -- dan geen beeld en geen tik, met een reden (dezelfde §565-zeef als
+# de waakhond: verboden()). Een NOODSTOP-bestand blokkeert in één keer ALLE besturing (kijken mag dan nog, besturen niet).
+WAND_STOP_F="$REK_MAP/wand-noodstop"
+json_s() { printf '"%s"' "$(printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+# wand_gate <serial> -- echoot een reden en geeft 1 als het NIET mag; stil + 0 als het mag.
+wand_gate() {
+  local s="${1:-}" id pkg soort
+  [ -n "$s" ] || { printf 'geen telefoon'; return 1; }
+  if is_f8 "$s"; then printf 'de F8 (de dagelijkse telefoon) wordt nooit bekeken of bestuurd'; return 1; fi
+  id="$(toestel_id "$s")"
+  toegestaan "$id" || { printf 'staat niet op de rektelefoon-lijst'; return 1; }
+  pkg="$(voorgrond "$s")"
+  if soort="$(verboden "$pkg")"; then
+    [ "$soort" = streng ] && { printf 'een gevoelige app staat op de voorgrond (%s) -- geen beeld, geen tik' "$pkg"; return 1; }
+    printf 'een persoonlijke app staat op de voorgrond (%s) -- geen beeld, geen tik' "$pkg"; return 1
+  fi
+  return 0
+}
+# schermfoto <serial> -- schrijft een PNG naar $REK_MAP en print het pad; bij een dichte poort: "GEWEIGERD <reden>" en exit 3.
+schermfoto() {
+  local s="${1:-}" reden id uit
+  if ! reden="$(wand_gate "$s")"; then zeg "GEWEIGERD $reden"; return 3; fi
+  id="$(toestel_id "$s")"; uit="$REK_MAP/wand-$(printf '%s' "$id" | tr -c 'A-Za-z0-9_.-' '_').png"
+  if "$ADB" -s "$s" exec-out screencap -p >"$uit" 2>/dev/null && [ -s "$uit" ]; then zeg "$uit"; return 0; fi
+  rm -f "$uit" 2>/dev/null || true; zeg "GEWEIGERD de schermfoto lukte niet (telefoon vergrendeld of adb kwijt)"; return 3
+}
+# schermenwand -- JSON van de telefoons die nu op de wand horen (serial, naam, id, en de reden als er nu niets getoond mag worden).
+schermenwand() {
+  local eerste=1 s id naam reden
+  printf '['
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"; naam="${naam:-onbekend}"
+    reden="$(wand_gate "$s")" && reden=""
+    [ "$eerste" = 1 ] || printf ','; eerste=0
+    printf '{"serial":%s,"naam":%s,"id":%s,"reden":%s}' "$(json_s "$s")" "$(json_s "$naam")" "$(json_s "$id")" "$(json_s "$reden")"
+  done
+  printf ']\n'
+}
+wand_maat() { "$ADB" -s "$1" shell wm size 2>/dev/null | tr -d '\r' | sed -n 's/.*Physical size: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1; }
+_frac_ok() { case "${1:-}" in ''|*[!0-9.]*) return 1 ;; esac; awk "BEGIN{exit !($1>=0 && $1<=1)}"; }
+# wand_besturen tik|veeg|toets <serial> <args...> -- altijd eerst noodstop + wand_gate.
+wand_besturen() {
+  local wat="${1:-}" s="${2:-}" reden wh w h
+  [ -f "$WAND_STOP_F" ] && { zeg "GEWEIGERD de noodstop staat aan (druk op Hervat om weer te besturen)"; return 3; }
+  if ! reden="$(wand_gate "$s")"; then zeg "GEWEIGERD $reden"; return 3; fi
+  wh="$(wand_maat "$s")"; w="${wh%% *}"; h="${wh##* }"
+  case "$wat" in
+    tik)
+      local xf="${3:-}" yf="${4:-}" x y
+      { _frac_ok "$xf" && _frac_ok "$yf" && [ -n "$w" ] && [ -n "$h" ]; } || { zeg "GEWEIGERD onbruikbare tik (maat of plek)"; return 3; }
+      x="$(awk "BEGIN{printf \"%d\", $xf*$w}")"; y="$(awk "BEGIN{printf \"%d\", $yf*$h}")"
+      "$ADB" -s "$s" shell input tap "$x" "$y" >/dev/null 2>&1 && zeg ok || { zeg "GEWEIGERD de tik lukte niet"; return 3; } ;;
+    veeg)
+      local xf="${3:-}" yf="${4:-}" xg="${5:-}" yg="${6:-}" ms="${7:-250}" x1 y1 x2 y2
+      { _frac_ok "$xf" && _frac_ok "$yf" && _frac_ok "$xg" && _frac_ok "$yg" && [ -n "$w" ] && [ -n "$h" ]; } || { zeg "GEWEIGERD onbruikbare veeg"; return 3; }
+      case "$ms" in ''|*[!0-9]*) ms=250 ;; esac
+      x1="$(awk "BEGIN{printf \"%d\", $xf*$w}")"; y1="$(awk "BEGIN{printf \"%d\", $yf*$h}")"
+      x2="$(awk "BEGIN{printf \"%d\", $xg*$w}")"; y2="$(awk "BEGIN{printf \"%d\", $yg*$h}")"
+      "$ADB" -s "$s" shell input swipe "$x1" "$y1" "$x2" "$y2" "$ms" >/dev/null 2>&1 && zeg ok || { zeg "GEWEIGERD de veeg lukte niet"; return 3; } ;;
+    toets)
+      local kc; case "${3:-}" in terug|BACK) kc=KEYCODE_BACK ;; thuis|HOME) kc=KEYCODE_HOME ;; apps|APP) kc=KEYCODE_APP_SWITCH ;; *) zeg "GEWEIGERD onbekende toets"; return 3 ;; esac
+      "$ADB" -s "$s" shell input keyevent "$kc" >/dev/null 2>&1 && zeg ok || { zeg "GEWEIGERD de toets lukte niet"; return 3; } ;;
+    *) zeg "GEWEIGERD onbekende besturing"; return 3 ;;
+  esac
+}
+wand_noodstop() { : >"$WAND_STOP_F"; zeg "Noodstop aan: de schermenwand bestuurt niets meer (kijken mag nog)."; }
+wand_hervat() { rm -f "$WAND_STOP_F" 2>/dev/null || true; zeg "Noodstop uit: de schermenwand mag weer besturen."; }
+
 # 571: bij start en console eerst zichzelf bijwerken vanaf de site, dan opnieuw starten met de nieuwe code (een keer, geen lus).
 if { [ "${1:-}" = start ] || [ "${1:-}" = console ]; } && [ -z "${ARTEMIS_HERSTART:-}" ]; then
   zelf_bijwerken >/dev/null 2>&1 || true
@@ -2604,6 +2782,13 @@ case "${1:-status}" in
   draadloos-auto) draadloos_auto ;;            # 596: een al toegestane telefoon over het wifi besturen (kabel mag eruit)
   kabel-koppel) kabel_koppel ;;                # (4): herstart-vast draadloos via Android 11+ foutopsporing (geen koppelcode nodig)                         # 592r: alle rektelefoons koppelen aan de reserve-keten (Gemma 4 + andere modellen)
   overzicht) overzicht ;;
+  schermenwand) schermenwand ;;                # 602: JSON van de telefoons op de wand (serial, naam, reden als er nu niets mag)
+  schermfoto) schermfoto "${2:-}" ;;           # 602: één schermfoto (pad), of GEWEIGERD met reden (§565-zeef, nooit de F8)
+  wand-tik) wand_besturen tik "${2:-}" "${3:-}" "${4:-}" ;;
+  wand-veeg) wand_besturen veeg "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}" ;;
+  wand-toets) wand_besturen toets "${2:-}" "${3:-}" ;;
+  wand-noodstop) wand_noodstop ;;              # 602: alle besturing blokkeren in één keer
+  wand-hervat) wand_hervat ;;
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
   zelf-bijwerken) bijwerken ;;   # 577: de oude console stuurt Bijwerken hierheen -> ook dan venv-rebuild + console-herstart

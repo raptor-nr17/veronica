@@ -418,6 +418,20 @@
     dns: 'Privé-DNS op de zandbak: security.cloudflare-dns.com of dns.quad9.net (alleen malware, geen volwassenenfilter)',
     scherm: 'Het scherm van de zandbak kijk ik mee via de kabel, in Chrome (knop "Bekijk het scherm van de zandbak")',
   });
+  // (#150/§602) DE SCHERMENWAND: de schermen van ALLE rektelefoons draadloos naast elkaar op één pagina -- kijken EN bedienen
+  // (tik/veeg/Terug/Home/Apps). Dit loopt via de ARTEMIS-console op deze Chromebook (adb over het eigen wifi); Veronica raakt er
+  // geen netwerk voor aan, de link doet niets tot je hem klikt en opent een eigen tabblad. De veiligheid zit in ARTEMIS: NOOIT de
+  // F8 (de dagelijkse telefoon), alleen telefoons op de rektelefoon-lijst, en NOOIT terwijl er een bank-, kluis-, authenticator-,
+  // betaal- of crypto-app (of een persoonlijke app) op de voorgrond staat -- dan geen beeld en geen tik. Er is een NOODSTOP.
+  function schermenwandBlok() {
+    const k = el('section', 'phBlok'); k.append(kop('11. Schermenwand (alle rektelefoons)'));
+    k.append(el('p', '', 'De schermen van alle rektelefoons draadloos naast elkaar op één pagina. Tik op een scherm om daar te tikken; onder elk scherm staan Terug, Home en Apps. Er is een grote NOODSTOP die het besturen in één keer stopt (kijken mag dan nog).'));
+    const wandLink = el('a', 'phBesturenKnop', '📱 Open de schermenwand (draadloos, via ARTEMIS)');
+    wandLink.id = 'phSchermenwand'; wandLink.href = 'http://localhost:8765/wand'; wandLink.target = '_blank'; wandLink.rel = 'noopener';
+    k.append(wandLink);
+    k.append(el('p', 'phKlein', 'Dit werkt als de ARTEMIS-console op deze Chromebook draait. Nooit de F8, en nooit een telefoon met een bank-, kluis- of betaalapp op de voorgrond — dan laat ARTEMIS geen beeld en geen tik toe.'));
+    return k;
+  }
   function veiligBlok() {
     const k = el('section', 'phBlok'); k.append(kop('10. Veilig browsen'));
     k.append(el('p', '', 'Je surft op de zandbak-telefoon; zijn scherm staat via de kabel op deze Chromebook. Downloads en installaties blijven op die telefoon. De zandbak kies je op Live, bij de tegel van een werker ("Maak zandbak").'));
@@ -520,7 +534,7 @@
     const meer = el('details', 'phMeer'); meer.id = 'phMeer'; meer.open = !!U.meerOpen;
     meer.addEventListener('toggle', () => { U.meerOpen = meer.open; });
     meer.append(el('summary', '', 'Meer'));
-    meer.append(statusBlok(), chatBlok(), rijBlok(), fennaBlok(), laagBlok(), logBlok(), betekenisBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok());
+    meer.append(statusBlok(), chatBlok(), rijBlok(), fennaBlok(), laagBlok(), logBlok(), betekenisBlok(), testBlok(), backupBlok(), privacyBlok(), veiligBlok(), schermenwandBlok());
     wortelEl.append(meer);
   }
 
