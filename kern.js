@@ -414,6 +414,22 @@
   // Een beheerder wordt NOOIT vanzelf werker: dat is een knop (rekWerkerKnop), want de dagelijkse telefoon rust (495).
   const REK_KIJK_MS = 2 * 3600 * 1000;
   const REK_MOTOR_MS = 12 * 3600 * 1000;
+  // 601: welke telefoon mag NU het model over de F8-hotspot (Vodafone, metered) downloaden? EEN tegelijk, zodat de F8 niet
+  // overbelast raakt. Alleen een telefoon die (a) op de hotspot zit (verse hartslag locatie.soort === 'hotspot'), (b) een motor
+  // heeft die nog niet klaar is (model ontbreekt/laadt), (c) geen dagelijkse telefoon en niet te oud is. Zit er al eentje te
+  // downloaden, dan blijft die aan de beurt (stabiel); anders de eerste op toestel-id. Geeft het toestel-id terug, of null.
+  // Veronica stuurt dat id een roep 'model-download'; een gastnet-telefoon komt hier nooit uit (soort !== 'hotspot').
+  function kiesHotspotDownloader(harten, tijd) {
+    const nu = typeof tijd === 'number' ? tijd : Date.now();
+    const kand = (Array.isArray(harten) ? harten : []).filter((h) => h && h.id && h.t && (nu - h.t) <= 10 * 60 * 1000
+      && h.locatie && h.locatie.soort === 'hotspot' && h.motor && h.motor.aan && h.motor.klaar !== true
+      && !h.dagelijks && !(h.motor && h.motor.teOud));
+    if (!kand.length) return null;
+    const bezig = kand.find((h) => h.motor && (h.motor.fase === 'downloaden' || h.motor.fase === 'download'));
+    if (bezig) return bezig.id;
+    kand.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    return kand[0].id;
+  }
   function rekBesluit(st, tijd, eerder, nieuwste) {
     const v = (k) => (st && st[k] && typeof st[k].t === 'number' && tijd - st[k].t <= MAX_LEEFTIJD_MS ? st[k].waarde : null);
     const e = eerder || {};
@@ -2183,7 +2199,7 @@
     (Array.isArray(t.alternatieven) ? t.alternatieven : []).forEach(voeg);
     return uit.slice(0, 6);
   }
-  return { verwachtElke, wegRedenen, OUDE_RELAY_ELKE_MS, verbinding, VERBINDING_GROEN_MS, VERBINDING_ORANJE_MS, kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
+  return { verwachtElke, wegRedenen, OUDE_RELAY_ELKE_MS, verbinding, VERBINDING_GROEN_MS, VERBINDING_ORANJE_MS, kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, kiesHotspotDownloader, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
     alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, ruimSpokenOp, SPOOK_MS, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,

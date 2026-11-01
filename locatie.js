@@ -58,6 +58,14 @@
     return true;
   }
 
+  // 601: mag een rektelefoon zijn MODEL downloaden over een door Android als 'metered' gemarkeerde verbinding? Alleen op de
+  // F8-HOTSPOT (Vodafone, ruim bemeten): daar is de datalimiet-blokkade bewust uit. NOOIT op een gastnetwerk (dat is ook metered,
+  // maar daar willen we geen 2,6 GB verbranden) en NOOIT op een onbekende plek. Op het hoofdwifi is de verbinding niet metered, dus
+  // dit is daar niet eens nodig. Dit raakt alleen de metered-uitzondering; de lader-eis en "één telefoon tegelijk" staan los.
+  function meteredDownloadMag(plek) {
+    return !!plek && plek.soort === 'hotspot';
+  }
+
   // Een korte zin voor Veronica/JARVIS: waar de telefoon is en de belangrijkste regel. Nooit zelf een merk- of plaatsnaam
   // verzinnen: de naam komt uit de lokale tabel van de eigenaar (of een neutraal woord als die leeg is).
   function zin(plek) {
@@ -76,5 +84,5 @@
     return { soort: schoonSoort(plek.soort), naam: schoon(plek.naam).slice(0, 40), net: schoon(plek.net).slice(0, 15) };
   }
 
-  return { SOORTEN, kiesPlek, regelsVoor, magGrootNu, zin, voorHartslag, schoon };
+  return { SOORTEN, kiesPlek, regelsVoor, magGrootNu, meteredDownloadMag, zin, voorHartslag, schoon };
 }));
