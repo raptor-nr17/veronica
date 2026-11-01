@@ -957,7 +957,24 @@ kabel_koppel() {
     sleep 2
     ip="$("$ADB" -s "$s" shell ip -f inet addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
     n=$((n+1))
-    zeg "$naam: draadloze foutopsporing aan${ip:+ (wifi $ip)}. De kabel mag eruit; ik vind hem over het wifi (mDNS) en verbind."
+    # 604: OOK de VASTE poort 5555 (adb tcpip) + het endpoint onthouden. Op een GASTNETWERK werkt de mDNS van de Android-11 draadloze
+    # foutopsporing vaak NIET, en dan kwam een telefoon na de kabel niet terug (alleen de telefoon aan de kabel bleef zichtbaar -- precies
+    # de klacht van deze ronde). De vaste poort heeft GEEN mDNS nodig: de minuut-scan (verbind_draadloos) verbindt ip:5555
+    # opnieuw, ook na een herstart van de Chromebook (DRAADLOOS_F overleeft dat en de autostart-console draait scan elke minuut). tcpip is
+    # wel weg na een herstart van de TELEFOON; dan brengt de boot-herinschakeling (a) de draadloze foutopsporing terug (of één keer de kabel).
+    touch "$DRAADLOOS_F" 2>/dev/null; chmod 600 "$DRAADLOOS_F" 2>/dev/null || true
+    if [ -n "$ip" ] && "$ADB" -s "$s" tcpip 5555 >/dev/null 2>&1; then
+      sleep 2
+      if "$ADB" connect "$ip:5555" 2>/dev/null | grep -qiE 'connected|already'; then
+        grep -qxF "$ip:5555" "$DRAADLOOS_F" 2>/dev/null || printf '%s\n' "$ip:5555" >>"$DRAADLOOS_F"
+        zeg "$naam: draadloze foutopsporing aan + vast op $ip:5555. De kabel mag eruit; ik vind hem terug -- ook op een gastnetwerk, en ook na een herstart van de Chromebook."
+      else
+        grep -qxF "$ip:5555" "$DRAADLOOS_F" 2>/dev/null || printf '%s\n' "$ip:5555" >>"$DRAADLOOS_F"
+        zeg "$naam: draadloze foutopsporing aan (wifi $ip); verbinden op $ip:5555 lukte nu nog niet, maar ik onthoud het en de minuut-scan probeert het opnieuw. De kabel mag eruit."
+      fi
+    else
+      zeg "$naam: draadloze foutopsporing aan${ip:+ (wifi $ip)}. De kabel mag eruit; ik vind hem over het wifi en verbind. (Geen wifi-adres gevonden? Zit hij op het wifi, niet alleen aan de kabel?)"
+    fi
   done <<<"$regels"
   verbind_draadloos   # §597: meteen over mDNS verbinden
   onthoud_wifi_adb    # 599: het draadloze endpoint onthouden, zodat het na een drop zonder mDNS (gastnet) weer terugkomt
