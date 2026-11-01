@@ -259,7 +259,10 @@ zelf_bijwerken() {
   local base tmp code; base="$(cat "$BRONF")"; tmp="$(mktemp)" || return 1
   # 586: toon de HTTP-code, zodat je ziet WAAROM het niet lukt (000 = geen internet/site weg, 404 = verkeerd adres).
   zeg "Bijwerken 1/4: script ophalen van $base/artemis/installeer.sh ..."
-  code="$(curl -fsSL -m 30 -w '%{http_code}' "$base/artemis/installeer.sh" -o "$tmp" 2>/dev/null)"; code="${code:-000}"
+  # 605: cache-buster + no-cache-koppen. GitHub Pages (Fastly) cachet een bestand ~10 min; ZONDER dit kreeg de zelf-bijwerker een
+  # OUDE installeer.sh terug en bleef een nieuwe versie (bv. §604) uren weg, ook na 'Bijwerken'. Een unieke query (?nc=<epoch>) plus
+  # Cache-Control: no-cache dwingt een VERSE kopie af, zodat een nieuwe versie altijd vanzelf binnenkomt.
+  code="$(curl -fsSL -m 30 -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' -w '%{http_code}' "$base/artemis/installeer.sh?nc=$(date +%s)" -o "$tmp" 2>/dev/null)"; code="${code:-000}"
   if [ "$code" != "200" ] || [ ! -s "$tmp" ]; then zeg "Bijwerken: ophalen mislukte (http $code). Geen internet, of de site is even weg. Niets veranderd."; rm -f "$tmp"; return 1; fi
   if ! bash -n "$tmp" 2>/dev/null; then zeg "Bijwerken: het opgehaalde script is geen geldige bash; niets veranderd."; rm -f "$tmp"; return 1; fi
   if ! grep -q 'artemis-rek' "$tmp" || ! grep -q 'ARTEMIS_REPO=' "$tmp"; then zeg "Bijwerken: het opgehaalde script lijkt niet op ARTEMIS; niets veranderd."; rm -f "$tmp"; return 1; fi
