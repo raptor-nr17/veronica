@@ -563,6 +563,7 @@ button{font-size:18px;padding:12px 16px;border:0;border-radius:10px;background:#
 .treden{padding:14px;color:#ffd27d}
 .tknop{display:flex;gap:6px;padding:8px}
 .tklein{font-size:16px;padding:10px;flex:1}
+.ttyp{flex:2;min-width:0;font-size:16px;padding:10px;border-radius:8px;border:1px solid #334;background:#0a0f1e;color:#e8ecf5}
 #melding{padding:0 16px;color:#9fb0d0}
 </style></head><body>
 <header><h1>Schermenwand &mdash; de rektelefoons</h1>
@@ -576,11 +577,15 @@ async function post(f){const b=new URLSearchParams(f);try{const r=await fetch('/
 function maakTegel(t){
   const el=document.createElement('div');el.className='tegel';
   el.innerHTML='<div class=tnaam></div><img class=tbeeld alt=""><div class=treden hidden></div>'+
-    '<div class=tknop><button class="tklein" data-k=terug>Terug</button><button class="tklein" data-k=thuis>Home</button><button class="tklein" data-k=apps>Apps</button></div>';
+    '<div class=tknop><button class="tklein" data-k=terug>Terug</button><button class="tklein" data-k=thuis>Home</button><button class="tklein" data-k=apps>Apps</button></div>'+
+    '<div class=tknop><input class=ttyp type=text placeholder="typ hier (bijv. een zoekterm)" autocomplete=off><button class="tklein ttypknop">Typ</button></div>';
   el.querySelector('.tnaam').textContent=t.naam||'Telefoon';
-  const img=el.querySelector('.tbeeld'),reden=el.querySelector('.treden');
+  const img=el.querySelector('.tbeeld'),reden=el.querySelector('.treden'),typ=el.querySelector('.ttyp');
   img.addEventListener('pointerdown',(ev)=>{ev.preventDefault();const x=ev.offsetX/(img.clientWidth||1),y=ev.offsetY/(img.clientHeight||1);post({wat:'tik',serial:t.serial,x:x.toFixed(4),y:y.toFixed(4)});});
-  for(const b of el.querySelectorAll('.tklein'))b.addEventListener('click',()=>post({wat:'toets',serial:t.serial,toets:b.dataset.k}));
+  for(const b of el.querySelectorAll('.tknop .tklein[data-k]'))b.addEventListener('click',()=>post({wat:'toets',serial:t.serial,toets:b.dataset.k}));
+  const typDoe=async()=>{if(!typ.value)return;const r=await post({wat:'typ',serial:t.serial,tekst:typ.value});if(r==='ok')typ.value='';else melding.textContent=r;};
+  el.querySelector('.ttypknop').addEventListener('click',typDoe);
+  typ.addEventListener('keydown',(e)=>{if(e.key==='Enter')typDoe();});
   wand.appendChild(el);const rec={el,img,reden};tegels.set(t.serial,rec);return rec;
 }
 async function fotoVan(serial,rec){
@@ -719,6 +724,7 @@ class H(BaseHTTPRequestHandler):
             if wat == 'tik': self._cors(200, doe_args(['wand-tik', s, f.get('x', ['0'])[0], f.get('y', ['0'])[0]])); return
             if wat == 'veeg': self._cors(200, doe_args(['wand-veeg', s, f.get('x', ['0'])[0], f.get('y', ['0'])[0], f.get('x2', ['0'])[0], f.get('y2', ['0'])[0], f.get('ms', ['250'])[0]])); return
             if wat == 'toets' and f.get('toets', [''])[0] in ('terug', 'thuis', 'apps'): self._cors(200, doe_args(['wand-toets', s, f['toets'][0]])); return
+            if wat == 'typ': self._cors(200, doe_args(['wand-typ', s, f.get('tekst', [''])[0]])); return
             self._cors(400, 'onbekende besturing'); return
         cmd = (q.get('cmd', [''])[0]) if p.path == '/doe' else ''
         if cmd in TOEGESTAAN: self._schrijf(200, doe(cmd))
@@ -2747,6 +2753,14 @@ wand_besturen() {
     toets)
       local kc; case "${3:-}" in terug|BACK) kc=KEYCODE_BACK ;; thuis|HOME) kc=KEYCODE_HOME ;; apps|APP) kc=KEYCODE_APP_SWITCH ;; *) zeg "GEWEIGERD onbekende toets"; return 3 ;; esac
       "$ADB" -s "$s" shell input keyevent "$kc" >/dev/null 2>&1 && zeg ok || { zeg "GEWEIGERD de toets lukte niet"; return 3; } ;;
+    typ)
+      # tekst typen op de telefoon (bv. een zoekterm). ALLEEN een veilige tekenset (geen ; & $ ` " ' | enz. die de shell op de
+      # telefoon zou kunnen herinterpreteren); spaties gaan als %s mee (wat `adb shell input text` verwacht). Wachtwoorden horen
+      # hier NIET (die staan in Bitwarden op de zandbak) -- en een gevoelige app op de voorgrond is sowieso al door wand_gate weg.
+      local txt="${3:-}"
+      [ -n "$txt" ] || { zeg "GEWEIGERD lege tekst"; return 3; }
+      case "$txt" in *[!A-Za-z0-9\ ._,:/@?!-]*) zeg "GEWEIGERD alleen gewone tekst (letters, cijfers en . , : / @ ? ! - _ en spaties)"; return 3 ;; esac
+      "$ADB" -s "$s" shell input text "${txt// /%s}" >/dev/null 2>&1 && zeg ok || { zeg "GEWEIGERD typen lukte niet"; return 3; } ;;
     *) zeg "GEWEIGERD onbekende besturing"; return 3 ;;
   esac
 }
@@ -2787,6 +2801,7 @@ case "${1:-status}" in
   wand-tik) wand_besturen tik "${2:-}" "${3:-}" "${4:-}" ;;
   wand-veeg) wand_besturen veeg "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}" ;;
   wand-toets) wand_besturen toets "${2:-}" "${3:-}" ;;
+  wand-typ) wand_besturen typ "${2:-}" "${3:-}" ;;
   wand-noodstop) wand_noodstop ;;              # 602: alle besturing blokkeren in één keer
   wand-hervat) wand_hervat ;;
   vergeet) vergeet ;;
