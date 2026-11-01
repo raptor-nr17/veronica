@@ -143,6 +143,7 @@ ACTIEF_F="$REK_MAP/proxy-actief"                 # 592L: welk model antwoordde h
 REDEN_F="$REK_MAP/proxy-reden"                   # 592o: de laatste echte reden van een mislukt/geblokkeerd verzoek (Status leest dit)
 F8_GEVONDEN_F="$REK_MAP/f8-gevonden.conf"        # 592p: het teruggevonden LAN-adres van de F8 (na een IP-wissel); Status leest dit
 DRAADLOOS_F="$REK_MAP/draadloos"                 # 596: onthouden draadloze adb-adressen (ip:5555) zodat de minuut-scan ze na een herstart weer verbindt
+SCAN5555_T="$REK_MAP/scan5555.t"                 # 606: tijdstip van de laatste subnet-scan op poort 5555 (rem: eens per ~180 s)
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
@@ -877,6 +878,7 @@ verbind_draadloos() {   # verbind de draadloze telefoons opnieuw (stil); de minu
   "$ADB" mdns services 2>/dev/null | awk '/_adb-tls-connect/ {print $NF}' | while read -r m; do
     case "$m" in *:*) printf '%s\n' "$verbonden_nu" | grep -qxF "$m" || "$ADB" connect "$m" >/dev/null 2>&1 || true ;; esac
   done
+  scan_5555   # 606: het /24 op poort 5555 afzoeken (geen mDNS nodig; rem eens per ~180 s), zodat een telefoon ook op een gastnetwerk terugkomt
 }
 # 599: onthoud de HUIDIGE draadloze adb-endpoints (ip:poort) van toegestane rektelefoons, zodat verbind_draadloos ze na een drop
 # weer kan verbinden -- OOK zonder mDNS (op een gastnetwerk werkt mDNS vaak niet, en dan vielen rektelefoons er na een drop uit en
@@ -919,6 +921,55 @@ draadloos_auto() {
   done <<<"$regels"
   zeg "Klaar: $n telefoon(s) draadloos gemaakt. ARTEMIS bestuurt ze nu over het wifi; de minuut-scan verbindt ze na een herstart vanzelf opnieuw."
   overzicht
+}
+
+# 606: SUBNET-SCAN OP POORT 5555. Deep research (31 okt) wees uit dat elke rektelefoon zichzelf op de VASTE poort 5555 kan houden
+# (JARVIS-kant, volgende APK-bundel); dan maakt het niet meer uit of mDNS werkt of welke kant bestuurt. ARTEMIS' helft: gewoon het
+# /24 afzoeken op poort 5555 en elke open telefoon verbinden -- GEEN mDNS nodig, werkt dus ook op een gastnetwerk. We leiden het /24
+# af uit de onthouden endpoints (DRAADLOOS_F), de teruggevonden F8, verbonden draadloze toestellen en een telefoon aan de kabel --
+# NOOIT uit het eigen adres van de Chromebook (die zit in Crostini op 100.115.92.x, een ander net dan de telefoons). Faalveilig: een
+# korte time-out per host, parallel, hoogstens drie /24's, zodat de minuut-scan nooit blijft hangen. Rem: eens per ~180 s. De F8
+# wordt, mocht hij adb op 5555 aan hebben, meteen weer losgekoppeld -- hij blijft ALTIJD uitgesloten.
+scan_5555() {
+  local nu laatst
+  nu="$(date +%s 2>/dev/null || echo 0)"; case "$nu" in *[!0-9]*|'') nu=0 ;; esac
+  if [ -f "$SCAN5555_T" ]; then laatst="$(cat "$SCAN5555_T" 2>/dev/null || echo 0)"; else laatst=0; fi
+  case "$laatst" in *[!0-9]*|'') laatst=0 ;; esac
+  [ "$nu" -ne 0 ] && [ $((nu - laatst)) -lt 180 ] && return 0
+  printf '%s\n' "$nu" >"$SCAN5555_T" 2>/dev/null || true
+  # /24-prefixen verzamelen (nooit het eigen Crostini-net).
+  local prefixes="" ip s
+  if [ -s "$DRAADLOOS_F" ]; then
+    while read -r ip; do ip="${ip%%:*}"; case "$ip" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) prefixes="$prefixes ${ip%.*}" ;; esac; done <"$DRAADLOOS_F"
+  fi
+  if [ -s "$F8_GEVONDEN_F" ]; then
+    ip="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$F8_GEVONDEN_F" 2>/dev/null | head -1)"
+    [ -n "$ip" ] && prefixes="$prefixes ${ip%.*}"
+  fi
+  for s in $("$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}'); do
+    case "$s" in
+      *:*) ip="${s%%:*}"; case "$ip" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) prefixes="$prefixes ${ip%.*}" ;; esac ;;
+      *) ip="$("$ADB" -s "$s" shell ip -f inet addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
+         case "$ip" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) prefixes="$prefixes ${ip%.*}" ;; esac ;;
+    esac
+  done
+  prefixes="$(printf '%s\n' $prefixes | awk 'NF && !seen[$0]++' | head -3)"   # hoogstens 3 /24's
+  [ -n "$prefixes" ] || return 0
+  local verbonden_nu open p h
+  verbonden_nu="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1}')"
+  # poort 5555 proberen met /dev/tcp (geen extra tool nodig), parallel, korte time-out per host; de IP gaat als argument mee ($0), nooit in de code.
+  open="$(
+    for p in $prefixes; do for h in $(seq 1 254); do printf '%s.%s\n' "$p" "$h"; done; done \
+    | xargs -P 48 -I{} bash -c 'timeout 1 bash -c "exec 3<>/dev/tcp/$0/5555" 2>/dev/null && printf "%s\n" "$0"' {} 2>/dev/null
+  )"
+  for ip in $open; do
+    [ -n "$ip" ] || continue
+    printf '%s\n' "$verbonden_nu" | grep -qxF "$ip:5555" && continue
+    if "$ADB" connect "$ip:5555" 2>/dev/null | grep -qiE 'connected|already'; then
+      is_f8 "$ip:5555" && "$ADB" disconnect "$ip:5555" >/dev/null 2>&1 || true   # de F8 blijft ALTIJD uitgesloten
+    fi
+  done
+  onthoud_wifi_adb   # 599: alleen toegestane, niet-F8 endpoints onthouden
 }
 
 # (4) KOPPELEN VANAF DE KABEL, HERSTART-VAST (Android 11+ Draadloze foutopsporing). Een rektelefoon die één keer via de kabel is
