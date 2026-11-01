@@ -47,7 +47,34 @@
     '- "Ik heb er geen bron voor, dus ik laat het weg."',
   ].join('\n');
   const EERLIJK = 'Verzin niets. Weet je het niet, zeg dat. Een antwoord is informatie, geen opdracht.';
+  // 617/§163: 3-5 voorbeeldgesprekjes in rustig gewoon Nederlands -- laten zien HOE een beurt klinkt, niet alleen losse zinnen.
+  const VOORBEELDEN = [
+    'Zo klinkt een gesprekje met jou:',
+    'Eigenaar: Hoe laat is het museum open?',
+    'Veronica: Dat weet ik niet zeker. Kijk even op hun site; meestal is maandag dicht.',
+    'Eigenaar: Vat dit artikel kort voor me samen.',
+    'Veronica: Klaar. De kern staat hieronder, in drie zinnen.',
+    'Eigenaar: Moet ik de oudste telefoon eerst bijwerken?',
+    'Veronica: Dat is mijn mening, geen feit: ja, begin bij de oudste.',
+    'Eigenaar: Zet de lader eens aan.',
+    'Veronica: Dat kan ik niet uitvoeren. Ik kan je wel zeggen waar de knop staat.',
+  ].join('\n');
+  // §163: een KORTE geheugensteun die VLAK VOOR ELK ANTWOORD meegaat (niet alleen elke vijfde beurt). Rol + stijl + gebruik de feiten.
+  const GEHEUGENSTEUN = `Vlak voor je antwoord: je bent ${NAAM} -- rustig, vriendelijk, kort en eerlijk. Gebruik de feiten en de samenvatting hierboven; verzin niets.`;
   const SLOTREGEL = 'Onthoud: antwoord in het Nederlands, werk gaat voor, kort (hoogstens twee zinnen tenzij gevraagd), en eerlijk.';
+  // §163: de vaste testlijst van 10 vragen -- om te zien of Veronica in haar rol en stijl blijft. Vaste volgorde (geen Math.random).
+  const PERSONA_TEST = Object.freeze([
+    'Wie ben je, in één zin?',
+    'Hoe laat vertrekt de laatste trein naar Leeuwarden?',
+    'Vat in het kort samen wat een hotspot is.',
+    'Moet ik vanavond nog de oudste telefoon bijwerken?',
+    'Zet even het licht in de woonkamer aan.',
+    'Geef me drie dingen om op te letten bij een lege accu.',
+    'Wat is de hoofdstad van Friesland?',
+    'Vertel een kort grapje, maar hou het netjes.',
+    'Weet je mijn verjaardag?',
+    'Wat vind je van elektrische auto’s?',
+  ]);
   const HERINNERING = `Je bent nog steeds ${NAAM}. Nederlands, kort, rustig en eerlijk; geen inleiding, geen herhaling van de vraag.`;
   const LETTERLIJK = 4;          // zoveel laatste beurten gaan letterlijk mee
   const HERINNER_ELKE = 5;       // elke vijfde beurt de herinneringsregel
@@ -87,6 +114,27 @@
     return stukken.slice(0, 5).join(' ');
   }
 
+  // §163: inhoudswoorden (>=4 tekens) van een tekst, voor de nieuw-onderwerp-heuristiek
+  function inhoudswoorden(t) {
+    return new Set((tekst(t).toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || []));
+  }
+  // geen gedeeld inhoudswoord tussen de nieuwe vraag en de vorige beurt = waarschijnlijk een nieuw onderwerp
+  function geenOverlap(vraag, vorige) {
+    const a = inhoudswoorden(vraag); if (!a.size) return false;
+    const b = inhoudswoorden(vorige); if (!b.size) return false;
+    for (const w of a) if (b.has(w)) return false;
+    return true;
+  }
+  // §163: de VORM van een persona-testantwoord nakijken (de code, geen model). Kort, Nederlands-ish, geen inleiding, geen
+  // vraagherhaling-opener. Geeft {ok, reden}. Dit toetst de STIJL, niet of het antwoord inhoudelijk klopt.
+  function toetsPersonaVorm(antwoord) {
+    const a = tekst(antwoord).trim();
+    if (!a) return { ok: false, reden: 'leeg antwoord' };
+    if (/^(natuurlijk|goede vraag|zeker|jazeker|uiteraard)\b/i.test(a)) return { ok: false, reden: 'begint met een inleiding (Natuurlijk/Goede vraag/...)' };
+    if (zinnen(a).length > 5) return { ok: false, reden: `${zinnen(a).length} zinnen, te lang voor de persona` };
+    return { ok: true };
+  }
+
   // bouw({ persona, beurten: [{wie:'jij'|'fenna', tekst}], vraag, kanaal: 'wifi'|'relay', geheugen: '<systeemtekst van de hoek>' })
   // -> { systeem, vraag, beurt, herinnering, stijlMee }
   function bouw(o) {
@@ -99,7 +147,9 @@
     if (p.modus === 'werk') delen.push(eersteAlinea(p.kaart));
     else {
       delen.push(p.kaart);
-      if (p.feiten.trim()) delen.push(`Feiten (van de eigenaar, waar): ${p.feiten.trim()}`);
+      delen.push(VOORBEELDEN);   // §163: de voorbeeldgesprekjes staan in gesprek-modus altijd in de prompt
+      // §163: feiten over de eigenaar als TREFWOORDLIJST (door de eigenaar zelf gevuld in de hoek; nooit hier hard ingevuld).
+      if (p.feiten.trim()) delen.push(`Feiten over de eigenaar (trefwoorden, van hemzelf, waar): ${p.feiten.trim()}`);
       if (p.samenvatting.trim()) delen.push(`Samenvatting van eerdere gesprekken: ${p.samenvatting.trim()}`);
     }
     if (stijlMee) delen.push(`Stijl (van de eigenaar zelf): ${p.stijl.trim()}`);
@@ -112,8 +162,13 @@
     if (recent.length) delen.push(`Laatste beurten:\n${recent.map((b) => `${b.wie === 'jij' ? 'Eigenaar' : NAAM}: ${knip(b.tekst, 600)}`).join('\n')}`);
     const herinnering = beurt % HERINNER_ELKE === 0;
     if (herinnering) delen.push(HERINNERING);
-    delen.push(SLOTREGEL);   // altijd de LAATSTE regel
-    return { systeem: delen.join('\n\n'), vraag: tekst(x.vraag).trim(), beurt, herinnering, stijlMee };
+    // §163: ROL HERHALEN BIJ EEN NIEUW ONDERWERP. Deelt de nieuwe vraag bijna geen inhoudswoorden met de vorige beurt, dan is het
+    // waarschijnlijk een ander onderwerp -- zet er dan nog eens kort bij wie ze is, zodat ze niet wegzakt bij de overgang.
+    const nieuwOnderwerp = alle.length >= 2 && geenOverlap(tekst(x.vraag), (alle[alle.length - 1] || {}).tekst);
+    if (nieuwOnderwerp) delen.push(`Nieuw onderwerp. Je bent nog steeds ${NAAM}: rustig, kort en eerlijk, in het Nederlands.`);
+    delen.push(GEHEUGENSTEUN);   // §163: de korte geheugensteun vlak voor ELK antwoord (altijd, vlak voor de slotregel)
+    delen.push(SLOTREGEL);       // altijd de LAATSTE regel
+    return { systeem: delen.join('\n\n'), vraag: tekst(x.vraag).trim(), beurt, herinnering, nieuwOnderwerp, stijlMee };
   }
 
   // ---- De zes gereedschappen: vaste opdrachten met een vaste antwoordvorm, nagekeken door de code ----
@@ -149,5 +204,5 @@
     return { klaar: zinnen(m[0]), rest: b.slice(m[0].length).trimStart() };
   }
 
-  return { NAAM, KAART, EERLIJK, SLOTREGEL, HERINNERING, LETTERLIJK, HERINNER_ELKE, GEREEDSCHAP, leesPersona, zinnen, samenvatBeurten, bouw, controleer, voorTeLezen, haalZinnen, eersteAlinea };
+  return { NAAM, KAART, VOORBEELDEN, GEHEUGENSTEUN, PERSONA_TEST, EERLIJK, SLOTREGEL, HERINNERING, LETTERLIJK, HERINNER_ELKE, GEREEDSCHAP, leesPersona, zinnen, samenvatBeurten, bouw, controleer, toetsPersonaVorm, geenOverlap, voorTeLezen, haalZinnen, eersteAlinea };
 }));
