@@ -1612,9 +1612,11 @@ GEMINI_KEY = os.environ.get('GEMINI_KEY', '') or ''
 GEMINI_BASE = (os.environ.get('GEMINI_BASE', 'https://generativelanguage.googleapis.com/v1beta/openai') or '').rstrip('/')
 GEMINI_MODELLEN = os.environ.get('GEMINI_MODELLEN', 'gemini-3.8-flash,gemini-3.6-flash')
 ACTIEF_FILE = os.environ.get('PROXY_ACTIEF_FILE', '')   # hier noteren we welk model nu antwoordt (Status leest dit)
-# 592o: een lokaal model dat NIET bereikbaar is (F8 weg: No route to host) wordt BREAKER_S seconden overgeslagen, zodat niet
-# elke stap opnieuw ~9 s op de dode F8 wacht. Gemini krijgt een eigen time-out zodat een trage stap faalt i.p.v. 351 s te hangen.
-BREAKER_S = int(os.environ.get('PROXY_BREAKER_S', '60') or '60')
+# 592o/§164: een lokale telefoon die NIET bereikbaar is (de F8 of een rektelefoon weg: No route to host) wordt BREAKER_S seconden
+# overgeslagen -- een DODE TELEFOON 30 s overslaan (besluit van de eigenaar, 1 nov) -- zodat niet elke stap opnieuw ~9 s op een dode telefoon wacht
+# en de keten meteen door kan naar de volgende (F8 -> rektelefoon -> Gemini). Gemini krijgt een eigen time-out zodat een trage stap
+# faalt i.p.v. 351 s te hangen.
+BREAKER_S = int(os.environ.get('PROXY_BREAKER_S', '30') or '30')
 GEMINI_TIMEOUT = int(os.environ.get('PROXY_GEMINI_TIMEOUT', '90') or '90')
 _KAPOT = {}   # base -> tijd tot wanneer dit lokale model wordt overgeslagen
 REDEN_FILE = os.environ.get('PROXY_REDEN_FILE', '')   # 592o: de laatste echte reden van een mislukt verzoek (Status leest dit)
