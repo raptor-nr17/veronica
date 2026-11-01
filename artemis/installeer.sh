@@ -433,7 +433,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'rek-hotspot'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -533,7 +533,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
@@ -2556,6 +2556,57 @@ $(f8_hosts | T="$tok" xargs -P 50 -I{} sh -c 'b="$1"; { curl -fsS -m 1 "$b/model
   done
   printf '%s]' "$out"
 }
+# §616: HET EIGEN REK-NETWERK dat meeverhuist. Eén rektelefoon (de hotspot-basis, NOOIT de F8) draait een hotspot; de andere
+# toegestane rektelefoons verbinden zich ermee via adb `cmd wifi connect-network`. Zo zien de rektelefoons elkaar weer op EEN
+# eigen netwerk, ook op een gastnetwerk dat clients van elkaar afschermt -- dat is wat de off-wifi rektelefoons terugbrengt in
+# het rek. Alleen `cmd wifi` (nooit via de instellingen van de telefoon), nooit de F8, alleen telefoons van de lijst. Wat adb NIET kan en dus een
+# mensentik blijft: op de hotspot-telefoon "Wi-Fi delen"/"Wi-Fi sharing" AAN zetten (dan heeft het rek internet van het huis-wifi,
+# als het toestel die schakelaar heeft) en de hotspot-time-out UIT; en als de Chromebook op het rek-netwerk moet, sluit die zich er
+# één keer bij aan (daarvoor een pushmelding). GEEN merk- of modelnaam in dit bestand (gaat naar de openbare site).
+REK_SSID_F="$REK_MAP/rek-net"             # de vaste SSID + het wachtwoord van het rek-netwerk (één keer bedacht, daarna onthouden)
+REK_BASIS_F="$REK_MAP/rek-basis"          # het toestel-id van de hotspot-basis (door Veronica/console gekozen; anders de eerste niet-F8)
+rek_net_gegevens() {
+  if [ -s "$REK_SSID_F" ]; then cat "$REK_SSID_F"; return; fi
+  local pw; pw="$(head -c 9 /dev/urandom 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-12)"
+  [ -n "$pw" ] || pw="rek$(date +%s | tail -c 10)"
+  printf 'rek-net\n%s\n' "$pw" > "$REK_SSID_F"; chmod 600 "$REK_SSID_F" 2>/dev/null || true; cat "$REK_SSID_F"
+}
+rek_hotspot() {   # rek-hotspot [basis-serial]: zet het eigen rek-netwerk op; basis = arg, of REK_BASIS_F, of de eerste niet-F8 rektelefoon
+  "$ADB" start-server >/dev/null 2>&1 || true
+  [ -s "$TOEG" ] || { zeg "Eerst rektelefoons toestaan (Zoek telefoons / Koppel via de kabel). De F8 doet nooit mee."; return 1; }
+  local geg ssid pw wens="${1:-}" basis="" s id naam bnaam n=0
+  geg="$(rek_net_gegevens)"; ssid="$(printf '%s' "$geg" | sed -n 1p)"; pw="$(printf '%s' "$geg" | sed -n 2p)"
+  [ -z "$wens" ] && [ -s "$REK_BASIS_F" ] && wens="$(cat "$REK_BASIS_F")"
+  # de hotspot-basis kiezen: een toegestane, niet-F8 rektelefoon. Een gewenst toestel-id wint; anders de eerste.
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    if [ -n "$wens" ] && [ "$id" = "$wens" ]; then basis="$s"; break; fi
+    [ -z "$basis" ] && basis="$s"
+  done
+  [ -n "$basis" ] || { zeg "Geen toegestane rektelefoon om de hotspot-basis te zijn (nooit de F8). Koppel er eerst een."; return 1; }
+  bnaam="$(toestel_naam "$basis")"
+  printf '%s\n' "$(toestel_id "$basis")" > "$REK_BASIS_F" 2>/dev/null || true
+  if "$ADB" -s "$basis" shell cmd wifi start-softap "$ssid" wpa2 "$pw" >/dev/null 2>&1; then
+    zeg "$bnaam is nu de hotspot-basis: netwerk \"$ssid\"."
+  else
+    zeg "$bnaam: de hotspot starten lukte niet via adb (cmd wifi start-softap -- niet elke Android-versie kan dit). Zet de hotspot één keer met de hand aan (naam \"$ssid\"; het wachtwoord staat in $REK_SSID_F); daarna verbinden de andere telefoons."
+  fi
+  for s in $(verbonden); do
+    [ "$s" = "$basis" ] && continue
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"
+    if "$ADB" -s "$s" shell cmd wifi connect-network "$ssid" wpa2 "$pw" >/dev/null 2>&1; then
+      zeg "$naam verbindt met het rek-netwerk \"$ssid\"."; n=$((n+1))
+    else
+      zeg "$naam: kon niet via adb met \"$ssid\" verbinden (cmd wifi connect-network -- niet elke Android-versie kan dit). Verbind hem één keer met de hand met \"$ssid\"."
+    fi
+  done
+  zeg "Klaar: $n telefoon(s) naar het rek-netwerk \"$ssid\". De basis blijft gewoon meerekenen (alleen de hotspot staat aan)."
+  zeg "NOG MET DE HAND op de hotspot-telefoon (dat kan adb niet): zet \"Wi-Fi delen\"/\"Wi-Fi sharing\" AAN (dan heeft het rek internet van het huis-wifi, als dat toestel die schakelaar heeft) en zet de hotspot-time-out UIT."
+  zeg "Moet de Chromebook ook op het rek-netwerk? Sluit die er één keer bij aan (naam \"$ssid\")."
+}
 rek_zoek() {
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
   local f8=""; [ -s "$F8_GEVONDEN_F" ] && f8="$(cat "$F8_GEVONDEN_F")"
@@ -3078,6 +3129,7 @@ case "${1:-status}" in
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   rek-zoek) rek_zoek ;;
+  rek-hotspot) rek_hotspot "${2:-}" ;;         # 616: het eigen rek-netwerk opzetten (hotspot-basis + de rest erop), nooit de F8
   draadloos-auto) draadloos_auto ;;            # 596: een al toegestane telefoon over het wifi besturen (kabel mag eruit)
   kabel-koppel) kabel_koppel ;;                # (4): herstart-vast draadloos via Android 11+ foutopsporing (geen koppelcode nodig)                         # 592r: alle rektelefoons koppelen aan de reserve-keten (Gemma 4 + andere modellen)
   overzicht) overzicht ;;
