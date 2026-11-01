@@ -46,6 +46,7 @@ Deze acties raken echte dingen (privé-inhoud wissen, een herstel, geld of beric
 | `wand` | Meer | klik Wandstand | `body` krijgt de klasse `wand`, de vorm vult het scherm | |
 | `zoek` | Meer | typ een zoekvraag en klik Zoek | de zoekstapel verschijnt; zonder telefoon een eerlijke zin | **[veilig-alleen-proefstand]** echte zoekopdracht naar de telefoons |
 | `proefronde-tonen` | Meer | klik Proefronde | deze lijst verschijnt in de pagina | |
+| `zelftest-knoppen` | Meer | klik "Veronica checkt zichzelf" | een verslag verschijnt: hoeveel knoppen er zijn, hoeveel zichtbaar, en welke zichtbare knop onder iets anders ligt (stuk) | geen telefoon nodig; klikt niets echt aan |
 
 ## Nieuwe knop erbij
 

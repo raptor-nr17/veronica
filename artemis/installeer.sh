@@ -400,7 +400,7 @@ After=default.target
 Environment=ARTEMIS_CONSOLE_POORT=$CONSOLE_POORT
 ExecStart=$BIN_SELF/artemis-rek console
 Restart=always
-RestartSec=10
+RestartSec=1
 [Install]
 WantedBy=default.target
 UNIT
@@ -551,6 +551,10 @@ async function doe(c){{
   }}
 }}
 for(const b of document.querySelectorAll('button[data-cmd]'))b.addEventListener('click',()=>doe(b.dataset.cmd));
+// 613: bij een zelf-herstart (Bijwerken) is de console ~1 s weg. Dit HERGEBRUIKT HETZELFDE tabblad: zodra de console terug is
+// laadt deze pagina zichzelf opnieuw -- geen nieuw tabblad, geen dode pagina. We openen NOOIT zelf een tab.
+let _consoleWeg=false;
+setInterval(()=>{{fetch('/',{{method:'HEAD',cache:'no-store'}}).then(()=>{{if(_consoleWeg)location.reload();}}).catch(()=>{{_consoleWeg=true;}});}},3000);
 doe('status');
 </script></main></body></html>"""
 # 602: DE SCHERMENWAND -- de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen. Alle veiligheid zit in de
