@@ -825,7 +825,7 @@ kabel_koppel() {
     if "$ADB" -s "$s" shell pm grant "$JARVIS_PKG" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1; then
       zeg "$naam: JARVIS mag nu na een herstart de draadloze foutopsporing zelf weer aanzetten."
     else
-      zeg "$naam: kon JARVIS het recht WRITE_SECURE_SETTINGS niet geven. Meestal heeft JARVIS dan nog een oude versie (zonder dit recht) en was er geen nieuwere APK om over te zetten. Zet de nieuwste JARVIS eerst op ÉÉN rektelefoon (Veronica: 'Werk nu bij', of open de JARVIS-downloadlink op die telefoon), druk daarna opnieuw op 'Koppel via de kabel': ik oogst hem dan en zet hem vanzelf op deze telefoon. Zonder de boot-herinschakeling moet je na een herstart de kabel er één keer weer in doen."
+      zeg "$naam: kon JARVIS het recht WRITE_SECURE_SETTINGS niet geven. Meestal heeft JARVIS dan nog een oude versie (zonder dit recht) en was er geen nieuwere APK om over te zetten. Download de JARVIS-apk één keer op de Chromebook (de JARVIS-downloadlink in Chrome -> hij heet 'jarvis.apk' in je downloadmap), of zet 1.9.78 op één andere rektelefoon; druk daarna opnieuw op 'Koppel via de kabel': ik installeer/oogst hem dan en zet hem vanzelf op deze telefoon. Zonder de boot-herinschakeling moet je na een herstart de kabel er één keer weer in doen."
     fi
     # (b) draadloze foutopsporing AAN. De adb-sleutel van deze computer is al vertrouwd (USB), dus geen koppelcode nodig.
     "$ADB" -s "$s" shell settings put global adb_wifi_enabled 1 >/dev/null 2>&1 || { zeg "$naam: kon de draadloze foutopsporing niet aanzetten (adb_wifi_enabled)."; continue; }
@@ -1056,8 +1056,29 @@ artemis_app_dir() {
 jarvis_apk_code() {   # de versionCode van het JARVIS-pakket op EEN telefoon (leeg = onbekend/niet geïnstalleerd)
   "$ADB" -s "$1" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | sed -n 's/.*versionCode=\([0-9]\{1,\}\).*/\1/p' | head -1 | tr -d '\r'
 }
+# 598b: BOOTSTRAP zonder dat één telefoon al de nieuwe versie heeft -- ARTEMIS installeert een jarvis.apk die je op de CHROMEBOOK
+# downloadde (de JARVIS-downloadlink in Chrome). Alleen een bestand dat EXACT 'jarvis.apk' heet, uit je eigen downloadmap; we kopiëren
+# het naar de cache ZONDER versionCode (onbekend) en leiden die pas ná een geslaagde install van de telefoon af. VEILIG: Android weigert
+# een neppe JARVIS op de handtekening (het pakket bestaat al, met de echte sleutel), dus een install -r die niet onze JARVIS is faalt.
+# Nooit Downloads afstruinen op willekeurige apk's; nooit een ander pakket. JARVIS_APK_DIR overschrijft de zoekmap (voor de test).
+jarvis_download_bron() {
+  local d bron=''
+  for d in "${JARVIS_APK_DIR:-}" "/mnt/chromeos/MyFiles/Downloads" "$HOME/Downloads" "$HOME/Linux files" "$HOME"; do
+    [ -n "$d" ] && [ -f "$d/jarvis.apk" ] && { bron="$d/jarvis.apk"; break; }
+  done
+  [ -n "$bron" ] || return 0
+  # alleen oppakken als er nog geen cache is, of de download NIEUWER is dan de cache (mtime) -- een stale oude download overschrijft nooit.
+  if [ -s "$REK_MAP/jarvis.apk" ] && [ ! "$bron" -nt "$REK_MAP/jarvis.apk" ]; then return 0; fi
+  cp -f "$bron" "$REK_MAP/jarvis.apk" 2>/dev/null || return 0
+  rm -f "$REK_MAP/jarvis.apk.code" 2>/dev/null || true   # onbekende versionCode: jarvis_bijwerk_een leidt hem na de install af
+  chmod 600 "$REK_MAP/jarvis.apk" 2>/dev/null || true
+  zeg "Een op de Chromebook gedownloade jarvis.apk gevonden; ik zet hem op de rektelefoons met een oudere versie (Android weigert een neppe op de handtekening)."
+}
 jarvis_oogst() {
   command -v "$ADB" >/dev/null 2>&1 || return 0
+  jarvis_download_bron   # 598b: eerst een op de Chromebook gedownloade jarvis.apk oppakken (bootstrap zonder dat een telefoon al de nieuwe versie heeft)
+  # een verse download (apk zonder bekende code) vertrouwen we als de nieuwste: NIET overschrijven met een (mogelijk oudere) telefoon-apk.
+  [ -s "$REK_MAP/jarvis.apk" ] && [ ! -s "$REK_MAP/jarvis.apk.code" ] && return 0
   local s id code pad='' best_code=0 best_s=''
   # de cache telt mee als ondergrens: we oogsten alleen iets dat STRIKT nieuwer is dan wat er al klaarligt.
   [ -s "$REK_MAP/jarvis.apk" ] && [ -s "$REK_MAP/jarvis.apk.code" ] && best_code="$(tr -dc 0-9 < "$REK_MAP/jarvis.apk.code")"
@@ -1086,18 +1107,32 @@ jarvis_oogst() {
 # installeert de klaarliggende/geoogste nieuwste JARVIS op EEN telefoon als die ouder is (NOOIT de F8). 0 = telefoon draait nu de
 # nieuwste (al goed, of net bijgewerkt); 1 = kon niet bijwerken (geen apk, of install faalde). Alleen -r (gegevens blijven), alleen $JARVIS_PKG.
 jarvis_bijwerk_een() {
-  local s="$1" naam="$2" apkcode opcode
+  local s="$1" naam="$2" apkcode='' opcode='' uit='' nieuw=''
   is_f8 "$s" && return 1
-  [ -s "$REK_MAP/jarvis.apk" ] && [ -s "$REK_MAP/jarvis.apk.code" ] || return 1
-  apkcode="$(tr -dc 0-9 < "$REK_MAP/jarvis.apk.code")"
-  case "$apkcode" in ''|*[!0-9]*) return 1 ;; esac
+  [ -s "$REK_MAP/jarvis.apk" ] || return 1
   opcode="$(jarvis_apk_code "$s")"
-  if [ -n "$opcode" ] && [ "$opcode" -ge "$apkcode" ]; then return 0; fi   # al nieuw genoeg
-  if "$ADB" -s "$s" install -r "$REK_MAP/jarvis.apk" >/dev/null 2>&1; then
-    zeg "$naam: JARVIS bijgewerkt naar versionCode $apkcode (was ${opcode:-onbekend})."
+  if [ -s "$REK_MAP/jarvis.apk.code" ]; then
+    apkcode="$(tr -dc 0-9 < "$REK_MAP/jarvis.apk.code")"
+    case "$apkcode" in *[!0-9]*) apkcode='' ;; esac
+  fi
+  # bekende code en de telefoon is al gelijk of nieuwer: niets doen.
+  if [ -n "$apkcode" ] && [ -n "$opcode" ] && [ "$opcode" -ge "$apkcode" ]; then return 0; fi
+  # install -r: gegevens blijven, alleen onze JARVIS (Android weigert een andere handtekening op hetzelfde pakket). 598b: een
+  # gedownloade apk heeft nog geen bekende code -- die leiden we hierna van de telefoon af.
+  uit="$("$ADB" -s "$s" install -r "$REK_MAP/jarvis.apk" 2>&1)"
+  if printf '%s' "$uit" | grep -qi 'Success'; then
+    nieuw="$(jarvis_apk_code "$s")"
+    [ -n "$nieuw" ] && printf '%s\n' "$nieuw" > "$REK_MAP/jarvis.apk.code"   # onbekende code na de install afgeleid
+    zeg "$naam: JARVIS bijgewerkt naar versionCode ${apkcode:-${nieuw:-onbekend}} (was ${opcode:-onbekend})."
     return 0
   fi
-  zeg "$naam: JARVIS bijwerken lukte niet (kijk bij de telefoon)."
+  # downgrade / al aanwezig = de telefoon heeft al een gelijke of nieuwere versie: geen fout. Leg de code van de telefoon vast zodat
+  # een onbekende (gedownloade) apk-cache niet blijft proberen en de oogst weer op versionCode kan vergelijken.
+  if printf '%s' "$uit" | grep -qiE 'VERSION_DOWNGRADE|ALREADY_EXISTS|newer version'; then
+    [ -z "$apkcode" ] && [ -n "$opcode" ] && printf '%s\n' "$opcode" > "$REK_MAP/jarvis.apk.code"
+    return 0
+  fi
+  zeg "$naam: JARVIS bijwerken lukte niet ($(printf '%s' "$uit" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-120))."
   return 1
 }
 # 590 (stap 78 van de lijst): WAAKHOND ZONDER AI -- gewoon adb. Per rektelefoon (NOOIT de F8, NOOIT een niet-toegestane):
