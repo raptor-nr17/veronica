@@ -433,7 +433,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'rek-hotspot'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'rek-hotspot', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -522,6 +522,8 @@ def lus():
                 doe('lokaal-auto')   # 592: lokaal model AANzetten zodra er een lokale server verschijnt ("standaard AAN")
             if RONDE % 180 == 45:
                 doe('beheerder-opslag')   # 609: de lokale beheerder -- elke ~3 uur de opslag van de rektelefoons bewaken + veilig opruimen (nooit de F8)
+            if RONDE % 180 == 120:
+                doe('kennisboek-kopie')   # 165: elke ~3 uur proberen; de kopie zelf gebeurt hoogstens één keer per dag (idempotent)
         except Exception: pass
         time.sleep(60)
 PAGINA = """<!doctype html><html lang=nl><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -533,7 +535,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <pre id=uit>Klaar. Kies een knop.</pre>
@@ -2363,6 +2365,73 @@ cat_ruim() {
   else zeg "Opgeruimd; geen meetbare winst. Veel ruimte zit dan in foto's, documenten of app-gegevens -- die raak ik niet aan."; fi
   zeg "NIET aangeraakt: foto's, documenten, media, de SD-kaart-AI-opslag (modellen/kennisboek), en bank-/kluis-/authenticator-/betaal-/crypto-apps (en hun gegevens)."
 }
+
+# §165: HET KENNISBOEK -- een gewone TEKSTMAP op de Cat-SD (/sdcard/veronica-kennisboek). Delen met dufs (MIT, draait op de
+# Chromebook, alleen op 127.0.0.1 -- zelfde regel als SearXNG), en elke nacht een VERSLEUTELDE kopie. Alleen de eigen kennisboek-map
+# gaat mee (nooit foto's/documenten/bank), alleen de Cat (nooit de F8). De sleutel staat lokaal (chmod 600) en komt nooit in een log.
+KENNIS_DIR_CAT="/sdcard/veronica-kennisboek"            # de tekstmap op de Cat-SD
+KENNIS_LOKAAL="$REK_MAP/kennisboek"                     # de spiegel op de Chromebook (dufs serveert deze)
+KENNIS_BACKUP="$REK_MAP/kennisboek-backup"             # de versleutelde nachtkopieën
+KENNIS_SLEUTEL_F="$REK_MAP/kennisboek-sleutel"         # de sleutel van de versleutelde kopie (één keer bedacht)
+KENNIS_KOPIE_STAND="$REK_MAP/kennisboek-kopie-dag"     # de dag van de laatste kopie (voor "een keer per nacht")
+KENNIS_POORT="${KENNIS_POORT:-5556}"                   # dufs op 127.0.0.1:5556 (de console zit op 8765, ARTEMIS op 8000)
+kennis_sleutel() {   # de sleutel van de versleutelde kopie; één keer bedacht, daarna onthouden, nooit getoond
+  if [ -s "$KENNIS_SLEUTEL_F" ]; then return 0; fi
+  ( umask 077; head -c 24 /dev/urandom 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n' > "$KENNIS_SLEUTEL_F" )
+  chmod 600 "$KENNIS_SLEUTEL_F" 2>/dev/null || true
+}
+kennisboek_kijk() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  local s; s="$(cat_serial)" || { zeg "Geen Cat (S75) onder de aangesloten rektelefoons gevonden. Sluit de Cat aan; de F8 doet nooit mee."; return 1; }
+  "$ADB" -s "$s" shell "mkdir -p $KENNIS_DIR_CAT" >/dev/null 2>&1 || true
+  # een README neerzetten als de map nog leeg is, zodat het duidelijk een tekstmap is
+  if [ -z "$("$ADB" -s "$s" shell "ls -A $KENNIS_DIR_CAT 2>/dev/null" | tr -d '\r')" ]; then
+    "$ADB" -s "$s" shell "printf 'Dit is het kennisboek van Veronica: gewone tekstbestanden (.txt/.md). Deel ze met dufs op de Chromebook; er wordt elke nacht een versleutelde kopie gemaakt.\\n' > $KENNIS_DIR_CAT/LEESMIJ.txt" >/dev/null 2>&1 || true
+  fi
+  zeg "Kennisboek op de Cat ($(toestel_naam "$s")) -- $KENNIS_DIR_CAT:"
+  "$ADB" -s "$s" shell "ls -la $KENNIS_DIR_CAT 2>/dev/null" | tr -d '\r' | while IFS= read -r r; do [ -n "$r" ] && zeg "  $r"; done
+  zeg "Delen in Chrome: druk op 'Kennisboek delen' -> http://$KBHOST:$KENNIS_POORT (dufs, alleen op deze computer)."
+}
+kennisboek_deel() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  local s; s="$(cat_serial)" || { zeg "Geen Cat (S75) gevonden. Sluit de Cat aan; nooit de F8."; return 1; }
+  "$ADB" -s "$s" shell "mkdir -p $KENNIS_DIR_CAT" >/dev/null 2>&1 || true
+  mkdir -p "$KENNIS_LOKAAL" 2>/dev/null || true
+  "$ADB" -s "$s" pull -a "$KENNIS_DIR_CAT/." "$KENNIS_LOKAAL" >/dev/null 2>&1 || true   # alleen de kennisboek-map, niets anders
+  if ! command -v dufs >/dev/null 2>&1; then
+    zeg "dufs (de deel-server) is er nog niet. Installeer hem één keer (MIT): 'cargo install dufs' of een release-binary van github.com/sigoden/dufs in \$PATH. De map staat klaar in $KENNIS_LOKAAL."
+    return 0
+  fi
+  pkill -f "dufs .*$KENNIS_LOKAAL" 2>/dev/null || true
+  setsid dufs --bind 127.0.0.1 --port "$KENNIS_POORT" --allow-upload --allow-delete "$KENNIS_LOKAAL" >>"$REK_MAP/kennisboek-dufs.log" 2>&1 &
+  zeg "Kennisboek gedeeld met dufs: http://$KBHOST:$KENNIS_POORT (alleen op deze computer). Toevoegen/wijzigen mag; druk daarna op 'Kennisboek terugzetten' om het naar de Cat te schrijven."
+}
+kennisboek_terug() {   # de spiegel terug naar de Cat (alleen de kennisboek-map)
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  local s; s="$(cat_serial)" || { zeg "Geen Cat (S75) gevonden; nooit de F8."; return 1; }
+  [ -d "$KENNIS_LOKAAL" ] || { zeg "Er is nog geen lokale spiegel. Druk eerst op 'Kennisboek delen'."; return 1; }
+  "$ADB" -s "$s" push "$KENNIS_LOKAAL/." "$KENNIS_DIR_CAT/" >/dev/null 2>&1 && zeg "Kennisboek teruggezet naar de Cat ($KENNIS_DIR_CAT)." || zeg "Terugzetten lukte niet (staat de Cat aan?)."
+}
+kennisboek_kopie() {   # een VERSLEUTELDE nachtkopie; hoogstens één keer per dag (idempotent), houdt de laatste zeven
+  local vandaag; vandaag="$(date +%Y-%m-%d)"
+  [ "$(cat "$KENNIS_KOPIE_STAND" 2>/dev/null)" = "$vandaag" ] && return 0
+  command -v "$ADB" >/dev/null 2>&1 || return 1
+  command -v openssl >/dev/null 2>&1 || { zeg "openssl ontbreekt -- geen versleutelde kopie."; return 1; }
+  local s; s="$(cat_serial)" || return 1
+  mkdir -p "$KENNIS_LOKAAL" "$KENNIS_BACKUP" 2>/dev/null || true
+  "$ADB" -s "$s" pull -a "$KENNIS_DIR_CAT/." "$KENNIS_LOKAAL" >/dev/null 2>&1 || true
+  kennis_sleutel
+  local uit="$KENNIS_BACKUP/kennisboek-$vandaag.tar.enc"
+  if ( cd "$KENNIS_LOKAAL" && tar -cf - . 2>/dev/null ) | openssl enc -aes-256-cbc -pbkdf2 -salt -pass "file:$KENNIS_SLEUTEL_F" -out "$uit" 2>/dev/null; then
+    chmod 600 "$uit" 2>/dev/null || true
+    printf '%s' "$vandaag" > "$KENNIS_KOPIE_STAND"
+    # houd de laatste zeven kopieën
+    ls -t "$KENNIS_BACKUP"/kennisboek-*.tar.enc 2>/dev/null | tail -n +8 | while IFS= read -r f; do rm -f "$f"; done
+    zeg "Versleutelde nachtkopie van het kennisboek gemaakt: $uit"
+  else
+    zeg "De versleutelde kopie lukte niet."
+  fi
+}
 # 609: DE LOKALE BEHEERDER -- opslag. Kijkt vanzelf (vanuit de console-lus) of een rektelefoon te weinig vrije ruimte heeft en ruimt
 # dan VEILIG op (rek_ruim_veilig). Alleen een stabiel verbonden, toegestane, niet-F8 telefoon; getemperd per telefoon; logt het, en
 # zet een nette LET OP-regel als het na opruimen nog krap blijft (die toont Status/Log, zodat de eigenaar het ziet). NOOIT de F8.
@@ -3125,6 +3194,10 @@ case "${1:-status}" in
   alleen-kijken-uit) alleen_kijken_uit ;;   # 592h: alleen-kijken UIT -- het model mag weer handelen (vangnet blijft)
   cat-kijk) cat_kijk ;;                      # 116b: kijken wat ruimte inneemt op de Cat (niets aangeraakt)
   cat-ruim) cat_ruim ;;                      # 609: veilig opruimen op de Cat (caches, kladmap, oude apk's, mislukte downloads)
+  kennisboek-kijk) kennisboek_kijk ;;        # 165: de tekstmap van het kennisboek op de Cat-SD bekijken (maakt hem aan als hij er niet is)
+  kennisboek-deel) kennisboek_deel ;;        # 165: het kennisboek delen met dufs op 127.0.0.1 (alleen op deze computer)
+  kennisboek-terug) kennisboek_terug ;;      # 165: de lokale spiegel terugzetten naar de Cat
+  kennisboek-kopie) kennisboek_kopie ;;      # 165: een versleutelde nachtkopie (idempotent per dag)
   beheerder-opslag) beheerder_opslag ;;      # 609: de lokale beheerder -- vanzelf de opslag van de rektelefoons bewaken + veilig opruimen
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
