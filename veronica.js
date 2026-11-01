@@ -1110,9 +1110,19 @@
     // prive: 555 -- alleen eigen wifi (geen brief). alg: ook off-wifi via de relay (stapelTelefoons laat brief zonder relay al weg).
     const tels = prive ? stapelTelefoons().filter((t) => !t.brief) : stapelTelefoons();
     if (!tels.length) {
-      stand.textContent = prive
-        ? 'Geen rektelefoon over het eigen wifi. Het onderzoek uit de privé-hoek gaat nooit via de postbus, de relay of de brievenbus.'
-        : (zoekTelefoons().length ? 'Zonder relay doet het onderzoek alleen telefoons over het eigen wifi mee; de brievenbus van ntfy.sh is te klein voor een hele stapel. Zet de relay aan.' : 'Geen telefoon bereikbaar. Veronica haalt zelf niets van internet: alleen de telefoons doen de deelvragen.');
+      if (prive) {
+        // 611: de privé-hoek werkt ALLEEN over je eigen wifi (nooit relay/postbus/brievenbus -- 555). Zeg EERLIJK waarom er 0 telefoons
+        // in de hoek staan en wat je eraan doet. Je eigen wifi telt gewoon mee (welk wifi dan ook, ook een eigen router); het gaat er
+        // alleen om dat Veronica de telefoon RECHTSTREEKS over dat wifi kan bereiken.
+        let z = 'Geen telefoon in de hoek. De privé-hoek werkt alléén rechtstreeks over je eigen wifi (nooit via de relay, de postbus of de brievenbus). Je eigen wifi telt gewoon mee.';
+        if (lnaGeweigerd()) z += ' Chrome mag nu niet op het lokale netwerk: zet het aan via het slotje links van het adres.';
+        else if (LnaV.stand === 'prompt') z += ' Chrome vraagt nog om toestemming voor het lokale netwerk (tik "Toestaan"); daarna ziet Veronica de telefoons.';
+        if (zoekTelefoons().length) z += ' De telefoons zijn wél bereikbaar, maar niet rechtstreeks over dít wifi. Zet ze op hetzelfde wifi als deze Chromebook en koppel elke telefoon één keer aan de hoek (scan de QR met JARVIS).';
+        else z += ' Zet de telefoons op hetzelfde wifi als deze Chromebook en koppel ze één keer aan de hoek (scan de QR met JARVIS).';
+        stand.textContent = z;
+      } else {
+        stand.textContent = (zoekTelefoons().length ? 'Zonder relay doet het onderzoek alleen telefoons over het eigen wifi mee; de brievenbus van ntfy.sh is te klein voor een hele stapel. Zet de relay aan.' : 'Geen telefoon bereikbaar. Veronica haalt zelf niets van internet: alleen de telefoons doen de deelvragen.');
+      }
       return;
     }
     V.bezig = true; V.stop = false;
