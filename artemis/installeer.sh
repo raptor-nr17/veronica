@@ -144,6 +144,7 @@ REDEN_F="$REK_MAP/proxy-reden"                   # 592o: de laatste echte reden 
 F8_GEVONDEN_F="$REK_MAP/f8-gevonden.conf"        # 592p: het teruggevonden LAN-adres van de F8 (na een IP-wissel); Status leest dit
 DRAADLOOS_F="$REK_MAP/draadloos"                 # 596: onthouden draadloze adb-adressen (ip:5555) zodat de minuut-scan ze na een herstart weer verbindt
 SCAN5555_T="$REK_MAP/scan5555.t"                 # 606: tijdstip van de laatste subnet-scan op poort 5555 (rem: eens per ~180 s)
+LAN_SUBNETTEN_F="$REK_MAP/lan-subnetten"         # 608: onthouden /24-prefixen waar ooit een telefoon te vinden was (beide wifi's), zodat de F8/rek na een wifi-wissel vanzelf terugkomt
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
 BRONF="$REK_MAP/bron"
@@ -937,15 +938,9 @@ scan_5555() {
   case "$laatst" in *[!0-9]*|'') laatst=0 ;; esac
   [ "$nu" -ne 0 ] && [ $((nu - laatst)) -lt 180 ] && return 0
   printf '%s\n' "$nu" >"$SCAN5555_T" 2>/dev/null || true
-  # /24-prefixen verzamelen (nooit het eigen Crostini-net).
-  local prefixes="" ip s
-  if [ -s "$DRAADLOOS_F" ]; then
-    while read -r ip; do ip="${ip%%:*}"; case "$ip" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) prefixes="$prefixes ${ip%.*}" ;; esac; done <"$DRAADLOOS_F"
-  fi
-  if [ -s "$F8_GEVONDEN_F" ]; then
-    ip="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$F8_GEVONDEN_F" 2>/dev/null | head -1)"
-    [ -n "$ip" ] && prefixes="$prefixes ${ip%.*}"
-  fi
+  # 608: /24-prefixen uit de bekende LAN-netten (608: beide wifi's), plus een telefoon aan de kabel; NOOIT het eigen Crostini-net.
+  local prefixes="" ip s sp
+  for sp in $(bekende_lan_subnetten); do prefixes="$prefixes ${sp%.}"; done   # trailing dot eraf (192.168.178. -> 192.168.178)
   for s in $("$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}'); do
     case "$s" in
       *:*) ip="${s%%:*}"; case "$ip" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) prefixes="$prefixes ${ip%.*}" ;; esac ;;
@@ -953,7 +948,7 @@ scan_5555() {
          case "$ip" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) prefixes="$prefixes ${ip%.*}" ;; esac ;;
     esac
   done
-  prefixes="$(printf '%s\n' $prefixes | awk 'NF && !seen[$0]++' | head -3)"   # hoogstens 3 /24's
+  prefixes="$(printf '%s\n' $prefixes | awk 'NF && !seen[$0]++' | head -4)"   # hoogstens 4 /24's (eigen net + beide wifi's + kabel)
   [ -n "$prefixes" ] || return 0
   local verbonden_nu open p h
   verbonden_nu="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1}')"
@@ -966,7 +961,7 @@ scan_5555() {
     [ -n "$ip" ] || continue
     printf '%s\n' "$verbonden_nu" | grep -qxF "$ip:5555" && continue
     if "$ADB" connect "$ip:5555" 2>/dev/null | grep -qiE 'connected|already'; then
-      is_f8 "$ip:5555" && "$ADB" disconnect "$ip:5555" >/dev/null 2>&1 || true   # de F8 blijft ALTIJD uitgesloten
+      if is_f8 "$ip:5555"; then "$ADB" disconnect "$ip:5555" >/dev/null 2>&1 || true; else onthoud_lan_subnet "$ip"; fi   # de F8 blijft ALTIJD uitgesloten; een echte rektelefoon = dit /24 onthouden
     fi
   done
   onthoud_wifi_adb   # 599: alleen toegestane, niet-F8 endpoints onthouden
@@ -1004,7 +999,7 @@ kabel_koppel() {
     if "$ADB" -s "$s" shell pm grant "$JARVIS_PKG" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1; then
       zeg "$naam: JARVIS mag nu na een herstart de draadloze foutopsporing zelf weer aanzetten."
     else
-      zeg "$naam: kon JARVIS het recht WRITE_SECURE_SETTINGS niet geven. Meestal heeft JARVIS dan nog een oude versie (zonder dit recht) en was er geen nieuwere APK om over te zetten. Download de JARVIS-apk één keer op de Chromebook (de JARVIS-downloadlink in Chrome -> hij heet 'jarvis.apk' in je downloadmap), of zet 1.9.78 op één andere rektelefoon; druk daarna opnieuw op 'Koppel via de kabel': ik installeer/oogst hem dan en zet hem vanzelf op deze telefoon. Zonder de boot-herinschakeling moet je na een herstart de kabel er één keer weer in doen."
+      zeg "$naam: kon JARVIS het recht WRITE_SECURE_SETTINGS niet geven. Meestal heeft JARVIS dan nog een oude versie (zonder dit recht) en was er geen nieuwere APK om over te zetten. Download de JARVIS-apk één keer op de Chromebook (de JARVIS-downloadlink in Chrome -> hij heet 'jarvis.apk' in je downloadmap), of zet 1.9.79 op één andere rektelefoon; druk daarna opnieuw op 'Koppel via de kabel': ik installeer/oogst hem dan en zet hem vanzelf op deze telefoon. Zonder de boot-herinschakeling moet je na een herstart de kabel er één keer weer in doen."
     fi
     # (b) draadloze foutopsporing AAN. De adb-sleutel van deze computer is al vertrouwd (USB), dus geen koppelcode nodig.
     "$ADB" -s "$s" shell settings put global adb_wifi_enabled 1 >/dev/null 2>&1 || { zeg "$naam: kon de draadloze foutopsporing niet aanzetten (adb_wifi_enabled)."; continue; }
@@ -1108,7 +1103,9 @@ start_proxy() {
   local f8lan=0; case "$base" in http://127.0.0.1:*|http://localhost:*) : ;; http://*) f8lan=1 ;; esac
   if [ "$f8lan" = 1 ] && [ -s "$F8_GEVONDEN_F" ]; then base="$(cat "$F8_GEVONDEN_F")"; fi
   # 592p: de /24-prefixes van de Chromebook meegeven zodat de proxy de F8 op het LAN kan terugvinden -- GEEN vast IP in de code.
-  local subnetten=""; if [ "$f8lan" = 1 ]; then local sip; for sip in $(f8_eigen_ips); do subnetten="$subnetten$(printf '%s' "$sip" | sed 's/\.[0-9]*$/./'),"; done; fi
+  # 608: scan BEIDE wifi's -- het eigen net van de Chromebook PLUS elk net waar ooit een telefoon zat (hoofdwifi en gastnet),
+  # zodat de F8 na een wifi-wissel vanzelf wordt teruggevonden en niet op het oude adres blijft hangen.
+  local subnetten=""; if [ "$f8lan" = 1 ]; then local sp; for sp in $(bekende_lan_subnetten); do subnetten="$subnetten$sp,"; done; fi
   ( env PROXY_POORT="$PROXY_POORT" F8_BASE="$base" F8_TOKEN="${token:-local}" \
       ALLEEN_KIJKEN_FILE="$ALLEEN_KIJKEN_F" PROXY_LOG="$PROXY_LOG" \
       GEMINI_KEY="$gkey" GEMINI_MODELLEN="gemini-3.8-flash,gemini-3.6-flash" \
@@ -2307,6 +2304,35 @@ lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokal
 f8_eigen_ips() {
   { ip -4 addr show 2>/dev/null | sed -n 's#.*inet \([0-9.]*\)/.*#\1#p'; hostname -I 2>/dev/null; } \
     | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | grep -v '^127\.' | sort -u
+}
+# 608: de /24-prefix van een ip (de eerste drie getallen met een punt erachter; leeg voor een niet-ip).
+pref24() { printf '%s' "$1" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.' | head -1; }
+# 608: onthoud een /24-prefix waar ooit een telefoon te vinden was (dedup, 600).
+onthoud_lan_subnet() {
+  local p; p="$(pref24 "$1")"; [ -n "$p" ] || return 0
+  case "$p" in 127.*|100.115.92.) return 0 ;; esac   # niet de loopback of het Crostini-vmnet (de telefoons zitten daar niet)
+  touch "$LAN_SUBNETTEN_F" 2>/dev/null; chmod 600 "$LAN_SUBNETTEN_F" 2>/dev/null || true
+  grep -qxF "$p" "$LAN_SUBNETTEN_F" 2>/dev/null || printf '%s\n' "$p" >>"$LAN_SUBNETTEN_F"
+}
+# 608: ALLE /24-prefixen waar de F8/rek te vinden kan zijn -- het eigen net van de Chromebook PLUS elk net waar ooit een telefoon
+# zat (onthouden, en nu uit de levende bronnen). Zo vindt de F8-scan en de 5555-scan de telefoons op BEIDE wifi's (het hoofdwifi
+# en gastnet) terug na een wissel, ook al staat de Chromebook zelf in Crostini op 100.115.92.x -- een ander net dan de telefoons.
+bekende_lan_subnetten() {
+  local ip base p
+  { # 1) het eigen net van de Chromebook (vangt het geval dat hij WEL op het LAN zit)
+    for ip in $(f8_eigen_ips); do pref24 "$ip"; echo; done
+    # 2) het laatst teruggevonden F8-adres, en het met de hand gezette lokaal-model-adres
+    [ -s "$F8_GEVONDEN_F" ] && { p="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$F8_GEVONDEN_F" 2>/dev/null | head -1)"; pref24 "$p"; echo; }
+    base="$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" 2>/dev/null | head -1)"; [ -n "$base" ] && { p="$(printf '%s' "$base" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"; pref24 "$p"; echo; }
+    # 3) de onthouden draadloze rektelefoon-endpoints (ip:5555) -- echte LAN-adressen
+    [ -s "$DRAADLOOS_F" ] && while read -r ip; do pref24 "${ip%%:*}"; echo; done <"$DRAADLOOS_F"
+    # 4) de persistente lijst (elk net waar ooit een telefoon zat, over meerdere wifi-wissels heen)
+    [ -s "$LAN_SUBNETTEN_F" ] && cat "$LAN_SUBNETTEN_F"
+  } | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.$' | grep -v -e '^127\.' -e '^100\.115\.92\.' | awk '!seen[$0]++'
+  # en onthoud de nieuw-geziene nets voor een volgende keer (zodat beide wifi's blijven staan)
+  [ -s "$F8_GEVONDEN_F" ] && onthoud_lan_subnet "$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$F8_GEVONDEN_F" 2>/dev/null | head -1)"
+  base="$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" 2>/dev/null | head -1)"; [ -n "$base" ] && onthoud_lan_subnet "$(printf '%s' "$base" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  [ -s "$DRAADLOOS_F" ] && while read -r ip; do onthoud_lan_subnet "${ip%%:*}"; done <"$DRAADLOOS_F"
 }
 f8_hosts() {
   # LET OP: onder `set -uo pipefail` is een KALE $F8_SCAN_HOSTS een "unbound variable" zodra de console/knop hem niet
