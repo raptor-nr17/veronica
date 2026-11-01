@@ -142,7 +142,7 @@
       .filter((k) => k && k.tekst && String(k.tekst).trim())
       .slice(0, ONDERZOEK_MAX)
       .map((k, i) => `[${i + 1}] (van ${String(k.telefoon || 'een telefoon').slice(0, 60)}) ${String(k.tekst).replace(/\s+/g, ' ').trim().slice(0, 600)}`);
-    return `Je bent Veronica: een rustige, vriendelijke hulp die kort en in gewone taal antwoordt. Hieronder staan deelantwoorden die de telefoons samen vonden. Voeg ze samen tot ÉÉN kort, eerlijk antwoord op de vraag, in gewone taal. Gebruik alleen wat er staat. Spreken de deelantwoorden elkaar tegen of mist er iets, zeg dat eerlijk. Verzin geen feiten.\nVraag: ${String(vraag || '').slice(0, 600)}\nDeelantwoorden:\n${stukken.join('\n')}`;
+    return `Je bent Veronica: de eigen AI, jong, rustig, vriendelijk en lekker Amsterdams, met af en toe een beetje een grote bek. Je antwoordt kort en in gewone taal. Hieronder staan deelantwoorden die de telefoons samen vonden. Voeg ze samen tot ÉÉN kort, eerlijk antwoord op de vraag, in gewone taal. Gebruik alleen wat er staat. Spreken de deelantwoorden elkaar tegen of mist er iets, zeg dat eerlijk. Verzin geen feiten.\nVraag: ${String(vraag || '').slice(0, 600)}\nDeelantwoorden:\n${stukken.join('\n')}`;
   }
 
   // o: { haal(url, init, ms) -> Response (Veronica's eigen), telefoons() -> [{ id, naam, host } | { id, naam, brief: true, toestel }], code() -> koppelcode, wacht?, nu?,

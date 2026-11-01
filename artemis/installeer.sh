@@ -2292,13 +2292,13 @@ beheerder_opslag() {
     laatstf="$REK_MAP/beheerder-ruim-$id.t"; nu="$(date +%s 2>/dev/null || echo 0)"
     if [ -f "$laatstf" ]; then local l; l="$(cat "$laatstf" 2>/dev/null || echo 0)"; case "$l" in *[!0-9]*|'') l=0 ;; esac; [ $(( nu - l )) -lt 21600 ] && continue; fi
     printf '%s\n' "$nu" >"$laatstf" 2>/dev/null || true
-    logregel "[beheerder] $naam heeft nog ${vrijmb} MB vrij (onder ${BEHEERDER_VRIJ_MB_GRENS}); veilig opruimen..."
+    logregel "[Veronica] Ik kijk even naar $naam: nog ${vrijmb} MB vrij, dat is krap. Ik ruim veilig op -- caches en rommel, jouw spullen laat ik staan."
     mb="$(rek_ruim_veilig "$s")"
     vrijkb="$("$ADB" -s "$s" shell "df -k /data 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null | tr -d '\r')"; case "$vrijkb" in ''|*[!0-9]*) vrijkb=0 ;; esac
     vrijmb=$(( vrijkb / 1024 ))
-    logregel "[beheerder] $naam: ${mb:-0} MB vrijgemaakt, nu ${vrijmb} MB vrij."
+    logregel "[Veronica] Klaar met $naam: ${mb:-0} MB vrijgemaakt, nu ${vrijmb} MB vrij."
     if [ "$vrijmb" -lt "$BEHEERDER_VRIJ_MB_GRENS" ]; then
-      printf '%s LET OP: %s is nog krap (%s MB vrij) na het veilige opruimen. De rest is foto\x27s/documenten/app-gegevens -- die raak ik niet aan. Kijk zelf of er iets weg kan.\n' "$(date '+%H:%M:%S')" "$naam" "$vrijmb" >"$REK_MAP/beheerder-melding.txt" 2>/dev/null || true
+      printf '%s Veronica: %s is nog krap (%s MB vrij), ook na het opruimen. De rest zijn jouw foto\x27s en documenten, die laat ik staan. Kijk jij even of er iets weg kan?\n' "$(date '+%H:%M:%S')" "$naam" "$vrijmb" >"$REK_MAP/beheerder-melding.txt" 2>/dev/null || true
     else
       rm -f "$REK_MAP/beheerder-melding.txt" 2>/dev/null || true
     fi
