@@ -209,6 +209,7 @@ scan() {
     logregel "Nieuwe rektelefoon vanzelf op de lijst: $naam."
   done
   [ "$n" -gt 0 ] && zeg "$n nieuwe telefoon(s) toegevoegd." || zeg "Geen NIEUWE telefoons toegevoegd."
+  onthoud_wifi_adb   # 599: onthoud de huidige draadloze endpoints zodat ze na een drop vanzelf terugkomen
   # 573: altijd tonen WAT adb ziet (ook unauthorized/offline), zodat Claude in de console leest waarom er niets bijkwam.
   overzicht
 }
@@ -764,6 +765,20 @@ verbind_draadloos() {   # verbind de draadloze telefoons opnieuw (stil); de minu
     case "$m" in *:*) printf '%s\n' "$verbonden_nu" | grep -qxF "$m" || "$ADB" connect "$m" >/dev/null 2>&1 || true ;; esac
   done
 }
+# 599: onthoud de HUIDIGE draadloze adb-endpoints (ip:poort) van toegestane rektelefoons, zodat verbind_draadloos ze na een drop
+# weer kan verbinden -- OOK zonder mDNS (op een gastnetwerk werkt mDNS vaak niet, en dan vielen rektelefoons er na een drop uit en
+# kwamen niet terug). We schrijven alleen endpoints van toestellen die al op de lijst staan en niet de F8 zijn.
+onthoud_wifi_adb() {
+  touch "$DRAADLOOS_F" 2>/dev/null; chmod 600 "$DRAADLOOS_F" 2>/dev/null || true
+  local s id
+  for s in $("$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}'); do
+    case "$s" in *:*) ;; *) continue ;; esac   # alleen draadloze endpoints (ip:poort), niet een usb-serienummer
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; [ -n "$id" ] || continue
+    toegestaan "$id" || continue
+    grep -qxF "$s" "$DRAADLOOS_F" 2>/dev/null || printf '%s\n' "$s" >>"$DRAADLOOS_F"
+  done
+}
 draadloos_auto() {
   "$ADB" start-server >/dev/null 2>&1 || true
   [ -s "$TOEG" ] || { zeg "Eerst een rektelefoon toestaan: sluit hem één keer met de kabel aan (USB-foutopsporing aan, in ChromeOS delen met Linux, op de telefoon 'Toestaan'), druk op Zoek telefoons."; return 1; }
@@ -835,6 +850,7 @@ kabel_koppel() {
     zeg "$naam: draadloze foutopsporing aan${ip:+ (wifi $ip)}. De kabel mag eruit; ik vind hem over het wifi (mDNS) en verbind."
   done <<<"$regels"
   verbind_draadloos   # §597: meteen over mDNS verbinden
+  onthoud_wifi_adb    # 599: het draadloze endpoint onthouden, zodat het na een drop zonder mDNS (gastnet) weer terugkomt
   overzicht
   [ "$n" -gt 0 ] && zeg "Klaar: $n telefoon(s) herstart-vast draadloos gekoppeld. Staat de JARVIS-boot-herinschakeling erop, dan komen ze ook na een herstart vanzelf terug; zo niet, dan na een herstart één keer de kabel erin en opnieuw 'Koppel via de kabel'."
 }
@@ -1056,23 +1072,38 @@ artemis_app_dir() {
 jarvis_apk_code() {   # de versionCode van het JARVIS-pakket op EEN telefoon (leeg = onbekend/niet geïnstalleerd)
   "$ADB" -s "$1" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | sed -n 's/.*versionCode=\([0-9]\{1,\}\).*/\1/p' | head -1 | tr -d '\r'
 }
-# 598b: BOOTSTRAP zonder dat één telefoon al de nieuwe versie heeft -- ARTEMIS installeert een jarvis.apk die je op de CHROMEBOOK
-# downloadde (de JARVIS-downloadlink in Chrome). Alleen een bestand dat EXACT 'jarvis.apk' heet, uit je eigen downloadmap; we kopiëren
-# het naar de cache ZONDER versionCode (onbekend) en leiden die pas ná een geslaagde install van de telefoon af. VEILIG: Android weigert
-# een neppe JARVIS op de handtekening (het pakket bestaat al, met de echte sleutel), dus een install -r die niet onze JARVIS is faalt.
-# Nooit Downloads afstruinen op willekeurige apk's; nooit een ander pakket. JARVIS_APK_DIR overschrijft de zoekmap (voor de test).
+# 598b/599: BOOTSTRAP zonder dat één telefoon al de nieuwe versie heeft -- ARTEMIS installeert een jarvis.apk die je op de CHROMEBOOK
+# downloadde (de JARVIS-downloadlink in Chrome). Een bestand dat op 'jarvis' begint en op '.apk' eindigt (dus ook 'jarvis (1).apk',
+# wat Chrome maakt bij een tweede download), uit je eigen downloadmap; we kopiëren de NIEUWSTE naar de cache ZONDER versionCode
+# (onbekend) en leiden die pas ná een geslaagde install van de telefoon af. VEILIG: Android weigert een neppe JARVIS op de handtekening
+# (het pakket bestaat al, met de echte sleutel), dus een install -r die niet onze JARVIS is faalt. Nooit willekeurige *.apk; nooit een
+# ander pakket. 599: toont (als er nog geen cache is) WELKE mappen hij doorzocht en wat hij zag -- ook als een map niet bestaat.
+# JARVIS_APK_DIR overschrijft de zoekmap (voor de test).
 jarvis_download_bron() {
-  local d bron=''
+  local d bron='' nieuwste='' found toon=0
+  [ -s "$REK_MAP/jarvis.apk" ] || toon=1
   for d in "${JARVIS_APK_DIR:-}" "/mnt/chromeos/MyFiles/Downloads" "$HOME/Downloads" "$HOME/Linux files" "$HOME"; do
-    [ -n "$d" ] && [ -f "$d/jarvis.apk" ] && { bron="$d/jarvis.apk"; break; }
+    [ -n "$d" ] || continue
+    if [ ! -d "$d" ]; then [ "$toon" = 1 ] && zeg "  zoek in $d: map bestaat niet (niet gedeeld met Linux?)"; continue; fi
+    nieuwste="$(ls -1t "$d"/jarvis*.apk 2>/dev/null | head -1)"
+    if [ -n "$nieuwste" ]; then
+      found="$(cd "$d" 2>/dev/null && ls -1 jarvis*.apk 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
+      [ "$toon" = 1 ] && zeg "  zoek in $d: gevonden ${found}"
+      [ -z "$bron" ] && bron="$nieuwste"   # eerste map met een treffer (volgorde = voorkeur), nieuwste bestand daarin
+    else
+      [ "$toon" = 1 ] && zeg "  zoek in $d: geen jarvis*.apk"
+    fi
   done
-  [ -n "$bron" ] || return 0
+  if [ -z "$bron" ]; then
+    [ "$toon" = 1 ] && zeg "Geen jarvis.apk in je downloadmap gevonden. Download de JARVIS-apk op de Chromebook (bestand heet jarvis.apk of jarvis (1).apk). Staat Downloads niet hierboven, deel dan de map Downloads met Linux (Bestanden-app > Downloads > rechtsklik > Delen met Linux)."
+    return 0
+  fi
   # alleen oppakken als er nog geen cache is, of de download NIEUWER is dan de cache (mtime) -- een stale oude download overschrijft nooit.
   if [ -s "$REK_MAP/jarvis.apk" ] && [ ! "$bron" -nt "$REK_MAP/jarvis.apk" ]; then return 0; fi
-  cp -f "$bron" "$REK_MAP/jarvis.apk" 2>/dev/null || return 0
+  cp -f "$bron" "$REK_MAP/jarvis.apk" 2>/dev/null || { zeg "Kon $bron niet kopiëren."; return 0; }
   rm -f "$REK_MAP/jarvis.apk.code" 2>/dev/null || true   # onbekende versionCode: jarvis_bijwerk_een leidt hem na de install af
   chmod 600 "$REK_MAP/jarvis.apk" 2>/dev/null || true
-  zeg "Een op de Chromebook gedownloade jarvis.apk gevonden; ik zet hem op de rektelefoons met een oudere versie (Android weigert een neppe op de handtekening)."
+  zeg "Gedownloade JARVIS gevonden: $bron -- ik zet hem op de rektelefoons met een oudere versie (Android weigert een neppe op de handtekening)."
 }
 jarvis_oogst() {
   command -v "$ADB" >/dev/null 2>&1 || return 0

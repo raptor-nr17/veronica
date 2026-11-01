@@ -577,11 +577,12 @@
       : `. Hij hing niet aan de lader; dan kan Android JARVIS laten slapen en haalt hij geen roep op. Wat helpt: ${hoe}.`;
   }
   // 537: het tempo van een telefoon uit zijn hartslag. ECHT werk (de laatste gelukte vertaling) gaat voor (525), dan de proefzin, dan het
-  // laatste antwoord van de motor. 0 = niet gemeten.
+  // laatste antwoord van de motor, dan het MEETUUR (§530: het middelste gemeten tempo). Allemaal GEMETEN waarden; 0 = niet gemeten.
   function tpsVan(h) {
     const m = h && h.motor;
     const gl = h && h.gids && h.gids.laatst && h.gids.laatst.ok && Number(h.gids.laatst.tps) > 0 ? Number(h.gids.laatst.tps) : 0;
-    return gl || (m && ((m.proef && m.proef.ok && Number(m.proef.tps)) || Number(m.tps))) || 0;
+    const mu = h && h.meetuur && !h.meetuur.bezig && Number(h.meetuur.tpsMid) > 0 ? Number(h.meetuur.tpsMid) : 0;
+    return gl || (m && ((m.proef && m.proef.ok && Number(m.proef.tps)) || Number(m.tps))) || mu || 0;
   }
   // 537: WIE DOET WAT, kort, bovenaan Live. Per telefoon: naam, rol, het tempo (tokens per seconde, alleen gemeten) en wat hij mag doen
   // volgens de takenverdeling. Mag hij niets, dan de eerste reden. tempo: { <naam>: tps }.
