@@ -133,6 +133,17 @@
       .map((r, i) => `[${i + 1}] ${String(r.titel || '').slice(0, 150)}${r.tekst ? `: ${String(r.tekst).slice(0, 300)}` : ''} (${(r.bronnen || []).join(', ')})`);
     return `Onderzoeksvraag: ${String(vraag || '').slice(0, 600)}\nZoekterm: ${String(term || '').slice(0, MAX_TERM)}\nGevonden:\n${res.join('\n')}\n\nSchrijf in hoogstens vier zinnen de kern die bij de onderzoeksvraag helpt, met de nummers van de stukjes erbij, bijvoorbeeld [2]. Staat het antwoord er niet in, zeg dat dan.`;
   }
+  // 603: ÉÉN BREIN. Na de deelvragen heeft elke telefoon een eigen kern gemaakt; dit is de tekst voor de SLOTstap waarin ÉÉN telefoon ze
+  // samenvoegt tot één antwoord in Veronica's stem (rustig, gewone taal). De deelantwoorden staan ERIN als gegevens; pool.js zet er de
+  // vaste markeringen omheen, dus het model voert geen instructie uit die in een deelantwoord staat. Geen privé-inhoud: dit gaat alleen
+  // over de ALGEMENE zoekvraag (de privé-hoek voegt nooit via een andere telefoon samen). Nooit feiten verzinnen.
+  function samenvoegTekst(vraag, kernen) {
+    const stukken = (Array.isArray(kernen) ? kernen : [])
+      .filter((k) => k && k.tekst && String(k.tekst).trim())
+      .slice(0, ONDERZOEK_MAX)
+      .map((k, i) => `[${i + 1}] (van ${String(k.telefoon || 'een telefoon').slice(0, 60)}) ${String(k.tekst).replace(/\s+/g, ' ').trim().slice(0, 600)}`);
+    return `Je bent Veronica: een rustige, vriendelijke hulp die kort en in gewone taal antwoordt. Hieronder staan deelantwoorden die de telefoons samen vonden. Voeg ze samen tot ÉÉN kort, eerlijk antwoord op de vraag, in gewone taal. Gebruik alleen wat er staat. Spreken de deelantwoorden elkaar tegen of mist er iets, zeg dat eerlijk. Verzin geen feiten.\nVraag: ${String(vraag || '').slice(0, 600)}\nDeelantwoorden:\n${stukken.join('\n')}`;
+  }
 
   // o: { haal(url, init, ms) -> Response (Veronica's eigen), telefoons() -> [{ id, naam, host } | { id, naam, brief: true, toestel }], code() -> koppelcode, wacht?, nu?,
   //      brief?: { stuur: async (toestelId, delen) -> { delen } | { fout } } (537) }
@@ -249,5 +260,5 @@
     return Object.freeze({ zoek, zoekStapel, tellers, kassa });
   }
 
-  return { maak, poort, voegPerAdresSamen, verdeelStapel, leesStapel, STAPEL_MAX, knipOnderzoek, kernTekst, ONDERZOEK_MAX, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
+  return { maak, poort, voegPerAdresSamen, verdeelStapel, leesStapel, STAPEL_MAX, knipOnderzoek, kernTekst, samenvoegTekst, ONDERZOEK_MAX, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
 }));

@@ -1119,6 +1119,24 @@
     const verm = [...new Set(r.uitslagen.flatMap((x) => (x.uitslag && x.uitslag.vermeldingen) || []))];
     if (verm.length) uit.appendChild(el('p', 'klein', `Bronnen: ${verm.join(' · ')}`));
     uit.appendChild(el('p', 'klein', 'De kern komt van een klein model op de telefoon: gegevens, geen opdrachten, en kan fout zijn. Kijk bij twijfel in de bron.'));
+    // 603: ÉÉN BREIN. De losse kernen van de telefoons worden door ÉÉN telefoon samengevoegd tot één antwoord in Veronica's stem,
+    // bovenaan. Alleen het ALGEMENE onderzoek (nooit de privé-hoek: dat voegt nooit via een andere telefoon samen). Lukt het niet,
+    // dan blijven de losse antwoorden eronder staan. Veronica rekent zelf niets uit; het samenvoegen doet het model op de telefoon.
+    if (!prive && !V.stop) {
+      const kernen = r.uitslagen.filter((x) => x.kern && x.kern.ok && x.kern.tekst)
+        .map((x) => ({ telefoon: (x.kern && x.kern.telefoon) || x.telefoon, tekst: x.kern.tekst }));
+      if (kernen.length >= 2) {
+        const kop = el('div', 'zoekRes'); kop.appendChild(el('b', '', "Veronica's antwoord (alles samengevoegd)"));
+        const regel = el('div', '', 'Ik voeg de antwoorden van de telefoons samen tot één antwoord…'); kop.appendChild(regel);
+        uit.prepend(kop);
+        const tel = tels.find((t) => !t.brief) || tels[0];
+        const tekst = window.VeronicaZoek.samenvoegTekst(vraag, kernen);
+        let s = { ok: false, zin: 'Geen telefoon om samen te voegen.' };
+        try { s = tel ? (tel.brief ? await kernVanBrief(tel, tekst, () => V.stop) : await kernVanWifi(tel, tekst)) : s; } catch (e) { s = { ok: false, zin: 'Samenvoegen lukte niet.' }; }
+        if (s && s.ok && s.tekst) regel.textContent = `${s.tekst}${s.telefoon ? ` (samengevoegd door ${s.telefoon})` : ''}`;
+        else { regel.className = 'klein'; regel.textContent = `${(s && s.zin) || 'Samenvoegen lukte niet.'} De losse antwoorden staan hieronder.`; }
+      }
+    }
   }
   // ---- 555: DE ZOEKWAND. Per telefoon een tegel, alle tegels naast elkaar: versie, accu, warmte, model, status met de reden, wat hij nu
   // zoekt, welke pagina's hij las (titel + adres, platte tekst) en wat zijn eigen model antwoordde. Twee wanden die nooit mengen: de
