@@ -899,6 +899,42 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
+        if p.path == '/relay-zet':
+            # 623c: Veronica geeft het relay-ONDERWERP (jv+30) EN -ADRES in EEN POST door -- met CORS, zoals /lokaal-zet, want
+            # Veronica draait cross-origin in Chrome. Zo hoeft de eigenaar NIETS te plakken: Veronica kent het onderwerp al (met de
+            # code van de rij) en zet het bij het openen van Meer zelf in de console. Het onderwerp is cryptografisch nodig -- de
+            # relay-lijst is NIET te lezen zonder (de topic is sha256(onderwerp) en de inhoud is ermee versleuteld). Elk veld wordt
+            # gevalideerd; een LEEG veld laat de bestaande waarde ongemoeid (niet wissen), zodat een losse push niets kapotmaakt.
+            # Veronica draait op dezelfde computer; het geheim verlaat de machine niet (de console is 127.0.0.1/penguin-only).
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            o = (f.get('onderwerp', [''])[0]).strip()
+            a = (f.get('relay', [''])[0]).strip().rstrip('/')
+            gedaan = []
+            if o:
+                if not re.match(r'^jv[a-z0-9]{30}$', o):
+                    self._cors(400, 'Het relay-onderwerp van Veronica is ongeldig (hoort jv + 30 tekens te zijn).'); return
+                try:
+                    p1 = os.path.join(REK, 'rek-onderwerp.conf')
+                    with open(p1, 'w') as fh: fh.write(o + '\n')
+                    try: os.chmod(p1, 0o600)
+                    except Exception: pass
+                    gedaan.append('onderwerp')
+                except Exception as e:
+                    self._cors(500, 'fout: ' + str(e)); return
+            if a:
+                if not re.match(r'^https://([a-z0-9][a-z0-9-]{0,62}\.)+workers\.dev$', a):
+                    self._cors(400, 'Het relay-adres van Veronica is ongeldig (hoort op .workers.dev te eindigen).'); return
+                try:
+                    p2 = os.path.join(REK, 'rek-relay.conf')
+                    with open(p2, 'w') as fh: fh.write(a + '\n')
+                    try: os.chmod(p2, 0o600)
+                    except Exception: pass
+                    gedaan.append('adres')
+                except Exception as e:
+                    self._cors(500, 'fout: ' + str(e)); return
+            self._cors(200, ('Relay %s ingesteld door Veronica -- ARTEMIS leest de telefoons nu via de relay.' % ' en '.join(gedaan)) if gedaan else 'Niets ingesteld (Veronica gaf geen onderwerp of adres).')
+            return
         cmd = (q.get('cmd', [''])[0]) if p.path == '/doe' else ''
         if cmd in TOEGESTAAN: self._schrijf(200, doe(cmd))
         else: self._schrijf(400, 'onbekende opdracht')
