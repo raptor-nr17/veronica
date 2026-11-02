@@ -887,7 +887,9 @@ class H(BaseHTTPRequestHandler):
                 try: os.remove(pad)
                 except Exception: pass
                 self._schrijf(200, 'Relay-adres gewist. ARTEMIS leest alleen nog ntfy.sh (werkt op het hoofd-wifi; op een gastnetwerk zie je de telefoons dan niet).'); return
-            if not re.match(r'^https://[a-z0-9][a-z0-9-]{0,40}\.workers\.dev$', a):
+            # 623b: EEN of MEER subdomein-labels voor workers.dev -- het echte adres heeft er twee (<naam>-relay.<naam>-<cijfers>.
+            # workers.dev). De eerste versie liet maar EEN label toe en wees het echte adres daarom af (gemeld 2 nov 21:04).
+            if not re.match(r'^https://([a-z0-9][a-z0-9-]{0,62}\.)+workers\.dev$', a):
                 self._schrijf(400, 'Dat lijkt geen relay-adres. Het is een https-adres dat eindigt op ".workers.dev" (de vorm https://...workers.dev). Kopieer het uit Veronica bij Instellingen, Relay.'); return
             try:
                 with open(pad, 'w') as fh: fh.write(a + '\n')
