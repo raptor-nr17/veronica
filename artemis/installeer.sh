@@ -423,6 +423,9 @@ UNIT
 # rektelefoons en houdt ARTEMIS aan zolang de gewenste stand "aan" is. Geen vrije invoer: alleen een vaste lijst opdrachten.
 console() {
   command -v python3 >/dev/null 2>&1 || { zeg "python3 ontbreekt; de console kan niet starten."; return 1; }
+  # 623e: zet cryptography vast op de achtergrond klaar (de relay-reader heeft hem nodig), zodat de eerste "Relay-lijst lezen"
+  # niet op een eenmalige venv-bouw hoeft te wachten. Nooit blokkerend; op de voorgrond heelt de reader zichzelf ook nog.
+  ( rek_zorg_crypto >/dev/null 2>&1 & ) 2>/dev/null || true
   # 583: de poortwissel naar 8765 moet ook werken als een OUDE console nog op 8000 hangt (bv. na een Linux-herstart met de
   # nieuwe code). Deze nieuwe console draait op 8765; als ARTEMIS niet draait en er hangt nog iets van ons op de ARTEMIS-poort
   # (8000), stop dat dan, zodat ARTEMIS die poort kan pakken. Veilig: alleen als ARTEMIS niet al draait.
@@ -2764,17 +2767,35 @@ rek_relay_bases() {   # welke bases ARTEMIS afleest: de relay (als geldig) EN nt
   fi
   printf '%s' "$b"
 }
+REK_PY_VENV="$REK_MAP/pyrelay"                    # 623e: een eigen mini-venv alleen voor de relay-reader (cryptography)
+rek_py() {   # welke python de relay-reader gebruikt: de eigen venv als die cryptography heeft, anders de systeem-python3
+  if [ -x "$REK_PY_VENV/bin/python3" ] && "$REK_PY_VENV/bin/python3" -c 'import cryptography' >/dev/null 2>&1; then
+    printf '%s' "$REK_PY_VENV/bin/python3"; return 0
+  fi
+  printf 'python3'
+}
+rek_zorg_crypto() {   # 623e: zorg dat de relay-reader cryptography heeft -- ZONDER terminal. Geeft een korte uitslag; nooit blokkerend.
+  command -v python3 >/dev/null 2>&1 || { printf 'python3-ontbreekt'; return 0; }
+  python3 -c 'import cryptography' >/dev/null 2>&1 && { printf 'systeem'; return 0; }
+  [ -x "$REK_PY_VENV/bin/python3" ] && "$REK_PY_VENV/bin/python3" -c 'import cryptography' >/dev/null 2>&1 && { printf 'venv'; return 0; }
+  # 1) een eigen venv is het schoonst op een extern-beheerde python (PEP 668 -- precies de fout van 22:45)
+  if python3 -m venv "$REK_PY_VENV" >/dev/null 2>&1; then
+    "$REK_PY_VENV/bin/python3" -m pip install --quiet --disable-pip-version-check cryptography >/dev/null 2>&1 || true
+    "$REK_PY_VENV/bin/python3" -c 'import cryptography' >/dev/null 2>&1 && { printf 'venv-nieuw'; return 0; }
+  fi
+  # 2) terugval: user-install, met --break-system-packages als de python extern beheerd is (geen --user daarbij: dat botst)
+  python3 -m pip install --user --quiet --disable-pip-version-check cryptography >/dev/null 2>&1 || \
+  python3 -m pip install --break-system-packages --quiet --disable-pip-version-check cryptography >/dev/null 2>&1 || true
+  python3 -c 'import cryptography' >/dev/null 2>&1 && { printf 'user'; return 0; }
+  printf 'mislukt'
+}
 rek_lijst_rauw() {   # echoot per VERSE telefoon: IPCSV<TAB>POORT<TAB>ID<TAB>NAAM<TAB>AGESEC. Leeg = geen onderwerp, geen crypto, of niets vers.
   [ -s "$REK_ONDERWERP_F" ] || return 0
   command -v python3 >/dev/null 2>&1 || return 0
   local o; o="$(head -1 "$REK_ONDERWERP_F" 2>/dev/null | tr -d '\r\n ')"
   case "$o" in jv*) : ;; *) return 0 ;; esac
-  # eenmalig proberen cryptography bij te zetten als hij ontbreekt (nooit blokkerend; faalt het, dan valt alles terug op scannen)
-  if ! python3 -c 'import cryptography' >/dev/null 2>&1 && [ ! -f "$REK_MAP/crypto-pip.stamp" ]; then
-    touch "$REK_MAP/crypto-pip.stamp" 2>/dev/null || true
-    python3 -m pip install --user --quiet --disable-pip-version-check cryptography >/dev/null 2>&1 || true
-  fi
-  REK_O="$o" REK_BASES="${REK_BASES:-$(rek_relay_bases)}" REK_VENSTER="${REK_VENSTER:-900}" python3 - <<'PY' 2>/dev/null
+  rek_zorg_crypto >/dev/null 2>&1 || true   # 623e: zet cryptography vanzelf bij (venv of --user/--break-system-packages); nooit blokkerend
+  REK_O="$o" REK_BASES="${REK_BASES:-$(rek_relay_bases)}" REK_VENSTER="${REK_VENSTER:-900}" "$(rek_py)" - <<'PY' 2>/dev/null
 import os, sys, re, json, time, hashlib, urllib.request
 # ARTEMIS draait lokaal op de Chromebook (geen bedrijfsproxy); negeer elke proxy zodat ntfy.sh/relay (en de test) direct gaan.
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -2858,8 +2879,10 @@ PY
 rek_diag() {   # 623d: zegt WAAROM de relay-lijst leeg is (relay onbereikbaar / niets ontsleutelbaar = fout onderwerp / geen adres in de hartslag).
   [ -s "$REK_ONDERWERP_F" ] || { zeg "Nog geen relay-onderwerp -- open Meer in Veronica op deze computer, dan zet Veronica het vanzelf."; return 0; }
   command -v python3 >/dev/null 2>&1 || { zeg "python3 ontbreekt."; return 0; }
+  local c; c="$(rek_zorg_crypto)"   # 623e: zet cryptography vanzelf bij voordat we meten; zeg wat eruit kwam
+  zeg "cryptography: $c$([ "$c" = mislukt ] && printf ' (lukt niet eens met venv of --break-system-packages -- meld dit)' || true)"
   local o; o="$(head -1 "$REK_ONDERWERP_F" 2>/dev/null | tr -d '\r\n ')"
-  local d; d="$(REK_O="$o" REK_BASES="$(rek_relay_bases)" REK_VENSTER="${REK_VENSTER:-900}" REK_DIAG=1 python3 - <<'PY' 2>&1 >/dev/null
+  local d; d="$(REK_O="$o" REK_BASES="$(rek_relay_bases)" REK_VENSTER="${REK_VENSTER:-900}" REK_DIAG=1 "$(rek_py)" - <<'PY' 2>&1 >/dev/null
 import os, sys, re, json, time, hashlib, urllib.request
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 O = os.environ.get('REK_O', '')
