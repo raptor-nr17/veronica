@@ -542,6 +542,9 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <p style="margin-top:14px">Relay-onderwerp (eenmalig): zo leest ARTEMIS zelf welke telefoons op het huis-wifi staan &mdash; geen hotspot meer nodig. Kopieer het uit Veronica bij Instellingen (begint met &quot;jv&quot;).<br>
 <input id=onderwerp type=text autocomplete=off spellcheck=false placeholder="jv..." style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=onderwerpBewaar>Bewaar relay-onderwerp</button></p>
+<p style="margin-top:6px">Relay-adres (eenmalig, alleen op een gastnetwerk nodig): op het gastnetwerk melden de telefoons zich via de relay i.p.v. ntfy.sh. Zonder dit adres blijft de relay-lijst leeg. Kopieer het uit Veronica bij Instellingen, Relay (eindigt op &quot;.workers.dev&quot;).<br>
+<input id=relayAdres type=text autocomplete=off spellcheck=false placeholder="https://...workers.dev" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
+<button id=relayAdresBewaar>Bewaar relay-adres</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <script>
 // 586: elke knop geeft ALTIJD een zichtbaar, getimed antwoord en de pagina hangt nooit (AbortController-timeout). Bijwerken en
@@ -569,6 +572,17 @@ if(obw)obw.addEventListener('click',async()=>{{
   uit.textContent=nu()+' — relay-onderwerp bewaren…';
   try{{
     const r=await fetch('/onderwerp',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'onderwerp='+encodeURIComponent(v)}});
+    uit.textContent=nu()+' — '+(await r.text());
+  }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
+}});
+// 623: het relay-adres bewaren (het TWEEDE vrije veld; strikt gevalideerd op ".workers.dev"). Alleen op een gastnetwerk nodig --
+// dan melden de telefoons zich via de relay i.p.v. ntfy.sh, en zonder dit adres blijft de relay-lijst leeg.
+const rbw=document.getElementById('relayAdresBewaar');
+if(rbw)rbw.addEventListener('click',async()=>{{
+  const v=(document.getElementById('relayAdres').value||'').trim();
+  uit.textContent=nu()+' — relay-adres bewaren…';
+  try{{
+    const r=await fetch('/relay-adres',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'relay='+encodeURIComponent(v)}});
     uit.textContent=nu()+' — '+(await r.text());
   }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
 }});
@@ -855,6 +869,31 @@ class H(BaseHTTPRequestHandler):
                 try: os.chmod(pad, 0o600)
                 except Exception: pass
                 self._schrijf(200, 'Relay-onderwerp opgeslagen. Druk nu op "Relay-lijst lezen" of "Rek opbouwen"; ARTEMIS leest nu zelf welke telefoons op het huis-wifi staan.')
+            except Exception as e:
+                self._schrijf(500, 'fout: ' + str(e))
+            return
+        if p.path == '/relay-adres':
+            # 623: het TWEEDE config-veld van de console (naast het onderwerp), en net zo strikt gevalideerd: het workers.dev-adres
+            # van de relay. OP HET GASTNETWERK posten de telefoons hun hartslag NAAR DE RELAY (de vaste route, §548), niet naar
+            # ntfy.sh -- dus zonder dit adres leest ARTEMIS alleen ntfy.sh en blijft de relay-lijst leeg terwijl Veronica (die het
+            # adres wel kent) de telefoons wél ziet. Dat was de fout van 1 nov. Een config-waarde, geen opdracht; leeg = wissen
+            # (terug naar alleen ntfy.sh). Het adres staat NOOIT in de bron (het gaat naar de openbare Pages-site); de eigenaar
+            # plakt het één keer, zoals het onderwerp. Veronica toont het bij Instellingen, Relay.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            a = (f.get('relay', [''])[0]).strip().rstrip('/')
+            pad = os.path.join(REK, 'rek-relay.conf')
+            if a == '':
+                try: os.remove(pad)
+                except Exception: pass
+                self._schrijf(200, 'Relay-adres gewist. ARTEMIS leest alleen nog ntfy.sh (werkt op het hoofd-wifi; op een gastnetwerk zie je de telefoons dan niet).'); return
+            if not re.match(r'^https://[a-z0-9][a-z0-9-]{0,40}\.workers\.dev$', a):
+                self._schrijf(400, 'Dat lijkt geen relay-adres. Het is een https-adres dat eindigt op ".workers.dev" (de vorm https://...workers.dev). Kopieer het uit Veronica bij Instellingen, Relay.'); return
+            try:
+                with open(pad, 'w') as fh: fh.write(a + '\n')
+                try: os.chmod(pad, 0o600)
+                except Exception: pass
+                self._schrijf(200, 'Relay-adres opgeslagen. Druk nu op "Relay-lijst lezen" of "Rek opbouwen"; op het gastnetwerk leest ARTEMIS de telefoons nu via de relay (zoals Veronica).')
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
@@ -2791,7 +2830,11 @@ rek_lijst() {   # console-knop: toon de relay-lijst en verbind ermee. Leeg = uit
   local rauw n=0
   rauw="$(rek_lijst_rauw)"
   if [ -z "$rauw" ]; then
-    zeg "De relay-lijst is nu leeg (geen verse hartslag van een telefoon, of de telefoons staan nog niet aan). ARTEMIS valt terug op scannen."
+    if [ ! -s "$REK_RELAY_F" ]; then
+      zeg "De relay-lijst is nu leeg. ARTEMIS leest nu alleen ntfy.sh. Op een GASTNETWERK melden de telefoons zich via de relay -- plak dan ook het 'Relay-adres' (eindigt op .workers.dev, uit Veronica bij Instellingen, Relay) in het veld hieronder. ARTEMIS valt zolang terug op scannen."
+    else
+      zeg "De relay-lijst is nu leeg (geen verse hartslag van een telefoon, of de telefoons staan nog niet aan). ARTEMIS valt terug op scannen."
+    fi
     return 0
   fi
   zeg "Telefoons die zichzelf aan de relay melden (huis-wifi, vers):"
