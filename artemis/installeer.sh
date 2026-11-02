@@ -434,7 +434,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'rek-hotspot', 'rek-op', 'rek-lijst', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -536,7 +536,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <p style="margin-top:14px">Relay-onderwerp (eenmalig): zo leest ARTEMIS zelf welke telefoons op het huis-wifi staan &mdash; geen hotspot meer nodig. Kopieer het uit Veronica bij Instellingen (begint met &quot;jv&quot;).<br>
@@ -2794,12 +2794,18 @@ IPRE = re.compile(r'^(10\.\d{1,3}|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d{1,3}\.\d
 IDRE = re.compile(r'^[a-z0-9]{12,40}$')
 nu = time.time()
 best = {}
+# 623d: diagnose-tellers, zodat "de lijst is leeg" een OORZAAK krijgt (relay onbereikbaar vs. niets ontsleutelbaar vs. geen adres).
+DIAG = os.environ.get('REK_DIAG')
+n_raw = 0; n_dec = 0; n_adr = 0; diag_bases = []
 for base in bases:
+    host = base.split('//')[-1].split('/')[0]
     url = base.rstrip('/') + '/' + topic + '/json?poll=1&since=' + str(venster + 120) + 's'
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'artemis'})
         raw = _OPENER.open(req, timeout=6).read().decode('utf-8', 'ignore')
-    except Exception:
+        diag_bases.append(host + ':ok')
+    except Exception as e:
+        diag_bases.append(host + ':ONBEREIKBAAR(' + type(e).__name__ + ')')
         continue
     for line in raw.splitlines():
         line = line.strip()
@@ -2814,6 +2820,7 @@ for base in bases:
         msg = m.get('message')
         if not isinstance(msg, str):
             continue
+        n_raw += 1
         try:
             b = json.loads(msg)
             iv = bytes.fromhex(b['iv']); data = bytes.fromhex(b['data'])
@@ -2822,6 +2829,7 @@ for base in bases:
             continue
         if d.get('v') != 1:
             continue
+        n_dec += 1
         i = str(d.get('id', ''))
         if not IDRE.match(i):
             continue
@@ -2829,6 +2837,8 @@ for base in bases:
         if t and (nu - t) > venster:
             continue
         ips = [a for a in (d.get('adressen') or []) if isinstance(a, str) and IPRE.match(a)]
+        if ips:
+            n_adr += 1
         if not ips:
             continue
         poort = d.get('poort', 8080)
@@ -2841,7 +2851,64 @@ for base in bases:
 for i, (t, ips, poort, naam) in best.items():
     age = int(max(0, nu - t)) if t else -1
     print('\t'.join([','.join(ips[:4]), str(poort), i, naam, str(age)]))
+if DIAG:
+    sys.stderr.write('relay-diagnose: bases=[%s] berichten=%d ontsleuteld=%d met-adres=%d levend=%d\n' % ((' '.join(diag_bases) or 'geen'), n_raw, n_dec, n_adr, len(best)))
 PY
+}
+rek_diag() {   # 623d: zegt WAAROM de relay-lijst leeg is (relay onbereikbaar / niets ontsleutelbaar = fout onderwerp / geen adres in de hartslag).
+  [ -s "$REK_ONDERWERP_F" ] || { zeg "Nog geen relay-onderwerp -- open Meer in Veronica op deze computer, dan zet Veronica het vanzelf."; return 0; }
+  command -v python3 >/dev/null 2>&1 || { zeg "python3 ontbreekt."; return 0; }
+  local o; o="$(head -1 "$REK_ONDERWERP_F" 2>/dev/null | tr -d '\r\n ')"
+  local d; d="$(REK_O="$o" REK_BASES="$(rek_relay_bases)" REK_VENSTER="${REK_VENSTER:-900}" REK_DIAG=1 python3 - <<'PY' 2>&1 >/dev/null
+import os, sys, re, json, time, hashlib, urllib.request
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+O = os.environ.get('REK_O', '')
+if not re.match(r'^jv[a-z0-9]{30}$', O): sys.stderr.write('onderwerp ongeldig in de console\n'); sys.exit(0)
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+except Exception:
+    sys.stderr.write('cryptography ontbreekt (python3 -m pip install --user cryptography)\n'); sys.exit(0)
+bases = [b for b in os.environ.get('REK_BASES', '').split() if b]
+venster = int(os.environ.get('REK_VENSTER', '900') or '900')
+topic = 'vh' + hashlib.sha256(('veronica-hartslag:' + O).encode()).hexdigest()[:30]
+key = hashlib.sha256(('veronica-hartslag-sleutel:' + O).encode()).digest()
+aes = AESGCM(key)
+IPRE = re.compile(r'^(10\.\d{1,3}|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}$')
+nu = time.time(); n_raw = n_dec = n_adr = 0; diag_bases = []
+for base in bases:
+    host = base.split('//')[-1].split('/')[0]
+    url = base.rstrip('/') + '/' + topic + '/json?poll=1&since=' + str(venster + 120) + 's'
+    try:
+        raw = _OPENER.open(urllib.request.Request(url, headers={'User-Agent': 'artemis'}), timeout=6).read().decode('utf-8', 'ignore')
+        diag_bases.append(host + ':ok')
+    except Exception as e:
+        diag_bases.append(host + ':ONBEREIKBAAR(' + type(e).__name__ + ')'); continue
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line: continue
+        try: m = json.loads(line)
+        except Exception: continue
+        if m.get('event') and m.get('event') != 'message': continue
+        msg = m.get('message')
+        if not isinstance(msg, str): continue
+        n_raw += 1
+        try:
+            b = json.loads(msg); d = json.loads(aes.decrypt(bytes.fromhex(b['iv']), bytes.fromhex(b['data']), None).decode('utf-8'))
+        except Exception: continue
+        if d.get('v') != 1: continue
+        n_dec += 1
+        if [a for a in (d.get('adressen') or []) if isinstance(a, str) and IPRE.match(a)]: n_adr += 1
+sys.stderr.write('bases=[%s] berichten=%d ontsleuteld=%d met-adres=%d\n' % ((' '.join(diag_bases) or 'geen'), n_raw, n_dec, n_adr))
+PY
+)"
+  zeg "Relay-diagnose: $d"
+  case "$d" in
+    *ONBEREIKBAAR*) zeg "-> Deze computer (de Linux-VM) bereikt de relay niet, terwijl Chrome dat wel doet. Controleer of de VM internet heeft op dit wifi." ;;
+    *"berichten=0"*) zeg "-> De relay heeft op dit onderwerp niets staan: of het onderwerp in de console wijkt af van dat van Veronica, of er klopt op dit moment geen enkele telefoon." ;;
+    *"ontsleuteld=0"*) zeg "-> Er staan wel berichten, maar ze zijn niet te ontsleutelen: het onderwerp in de console is NIET hetzelfde als dat van de telefoons." ;;
+    *"met-adres=0"*) zeg "-> De hartslag is er en klopt, maar draagt geen bruikbaar wifi-adres (192.168/10.x). De telefoon kent zijn eigen adres op dit net niet; adb kan hem zo niet vinden." ;;
+    *) : ;;
+  esac
 }
 rek_verbind_lijst() {   # adb-connect de telefoons uit de relay-lijst (ip:5555); nooit de F8. Echoot het aantal verbonden adressen.
   "$ADB" start-server >/dev/null 2>&1 || true
@@ -2869,9 +2936,10 @@ rek_lijst() {   # console-knop: toon de relay-lijst en verbind ermee. Leeg = uit
   rauw="$(rek_lijst_rauw)"
   if [ -z "$rauw" ]; then
     if [ ! -s "$REK_RELAY_F" ]; then
-      zeg "De relay-lijst is nu leeg. ARTEMIS leest nu alleen ntfy.sh. Op een GASTNETWERK melden de telefoons zich via de relay -- plak dan ook het 'Relay-adres' (eindigt op .workers.dev, uit Veronica bij Instellingen, Relay) in het veld hieronder. ARTEMIS valt zolang terug op scannen."
+      zeg "De relay-lijst is nu leeg. ARTEMIS leest nu alleen ntfy.sh. Op een GASTNETWERK melden de telefoons zich via de relay -- open Meer in Veronica op deze computer (dan zet Veronica het adres+onderwerp vanzelf), of plak het 'Relay-adres' (eindigt op .workers.dev) hieronder. ARTEMIS valt zolang terug op scannen."
     else
-      zeg "De relay-lijst is nu leeg (geen verse hartslag van een telefoon, of de telefoons staan nog niet aan). ARTEMIS valt terug op scannen."
+      zeg "De relay-lijst is nu leeg. Ik kijk waarom:"
+      rek_diag
     fi
     return 0
   fi
@@ -3470,6 +3538,7 @@ case "${1:-status}" in
   rek-hotspot) rek_hotspot "${2:-}" ;;         # 616: het eigen rek-netwerk opzetten (hotspot-basis + de rest erop), nooit de F8
   rek-op) rek_op "${2:-}" ;;                    # 619/620: in één tik -- scan + relay-lijst (de rektelefoons terug in het rek, op het huis-wifi), nooit de F8
   rek-lijst) rek_lijst ;;                       # 620: lees de relay-lijst (telefoons die zichzelf melden) en verbind adb; scan alleen als de lijst leeg is
+  rek-diag) rek_diag ;;                          # 623d: zeg WAAROM de relay-lijst leeg is (relay onbereikbaar / fout onderwerp / geen adres)
   draadloos-auto) draadloos_auto ;;            # 596: een al toegestane telefoon over het wifi besturen (kabel mag eruit)
   kabel-koppel) kabel_koppel ;;                # (4): herstart-vast draadloos via Android 11+ foutopsporing (geen koppelcode nodig)                         # 592r: alle rektelefoons koppelen aan de reserve-keten (Gemma 4 + andere modellen)
   overzicht) overzicht ;;
