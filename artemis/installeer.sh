@@ -2774,18 +2774,27 @@ rek_py() {   # welke python de relay-reader gebruikt: de eigen venv als die cryp
   fi
   printf 'python3'
 }
-rek_zorg_crypto() {   # 623e: zorg dat de relay-reader cryptography heeft -- ZONDER terminal. Geeft een korte uitslag; nooit blokkerend.
+REK_CRYPTO_LOG="$REK_MAP/crypto-install.log"      # 623f: de ECHTE install-fouten, zodat "mislukt" een oorzaak krijgt
+rek_zorg_crypto() {   # 623e/f: zorg dat de relay-reader cryptography heeft -- ZONDER terminal. Geeft een korte uitslag; nooit blokkerend.
   command -v python3 >/dev/null 2>&1 || { printf 'python3-ontbreekt'; return 0; }
   python3 -c 'import cryptography' >/dev/null 2>&1 && { printf 'systeem'; return 0; }
   [ -x "$REK_PY_VENV/bin/python3" ] && "$REK_PY_VENV/bin/python3" -c 'import cryptography' >/dev/null 2>&1 && { printf 'venv'; return 0; }
-  # 1) een eigen venv is het schoonst op een extern-beheerde python (PEP 668 -- precies de fout van 22:45)
-  if python3 -m venv "$REK_PY_VENV" >/dev/null 2>&1; then
-    "$REK_PY_VENV/bin/python3" -m pip install --quiet --disable-pip-version-check cryptography >/dev/null 2>&1 || true
+  : > "$REK_CRYPTO_LOG" 2>/dev/null || true
+  # 1) HET DEBIAN-PAKKET via wachtwoordloze sudo (Crostini). De systeem-python heeft hier GEEN pip (fout van 22:55), dus dit is de
+  #    betrouwbaarste weg: een klein apt-pakket in de systeem-python, geen pip/ensurepip/wheels nodig. Klein genoeg voor een krappe schijf.
+  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    { echo '== apt-get install python3-cryptography =='; sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-cryptography \
+        || { echo '== apt-get update + opnieuw =='; sudo -n DEBIAN_FRONTEND=noninteractive apt-get update -q && sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-cryptography; }; } >>"$REK_CRYPTO_LOG" 2>&1 || true
+    python3 -c 'import cryptography' >/dev/null 2>&1 && { printf 'apt'; return 0; }
+  fi
+  # 2) een eigen venv (alleen als python3-venv/ensurepip aanwezig is; op deze box vaak niet -- dan faalt dit netjes)
+  if python3 -m venv "$REK_PY_VENV" >>"$REK_CRYPTO_LOG" 2>&1; then
+    "$REK_PY_VENV/bin/python3" -m pip install --quiet --disable-pip-version-check cryptography >>"$REK_CRYPTO_LOG" 2>&1 || true
     "$REK_PY_VENV/bin/python3" -c 'import cryptography' >/dev/null 2>&1 && { printf 'venv-nieuw'; return 0; }
   fi
-  # 2) terugval: user-install, met --break-system-packages als de python extern beheerd is (geen --user daarbij: dat botst)
-  python3 -m pip install --user --quiet --disable-pip-version-check cryptography >/dev/null 2>&1 || \
-  python3 -m pip install --break-system-packages --quiet --disable-pip-version-check cryptography >/dev/null 2>&1 || true
+  # 3) terugval: pip --user, dan --break-system-packages (werkt alleen als er wel een pip is)
+  { echo '== pip --user =='; python3 -m pip install --user --quiet --disable-pip-version-check cryptography \
+      || { echo '== pip --break-system-packages =='; python3 -m pip install --break-system-packages --quiet --disable-pip-version-check cryptography; }; } >>"$REK_CRYPTO_LOG" 2>&1 || true
   python3 -c 'import cryptography' >/dev/null 2>&1 && { printf 'user'; return 0; }
   printf 'mislukt'
 }
@@ -2879,8 +2888,14 @@ PY
 rek_diag() {   # 623d: zegt WAAROM de relay-lijst leeg is (relay onbereikbaar / niets ontsleutelbaar = fout onderwerp / geen adres in de hartslag).
   [ -s "$REK_ONDERWERP_F" ] || { zeg "Nog geen relay-onderwerp -- open Meer in Veronica op deze computer, dan zet Veronica het vanzelf."; return 0; }
   command -v python3 >/dev/null 2>&1 || { zeg "python3 ontbreekt."; return 0; }
-  local c; c="$(rek_zorg_crypto)"   # 623e: zet cryptography vanzelf bij voordat we meten; zeg wat eruit kwam
-  zeg "cryptography: $c$([ "$c" = mislukt ] && printf ' (lukt niet eens met venv of --break-system-packages -- meld dit)' || true)"
+  local c; c="$(rek_zorg_crypto)"   # 623e/f: zet cryptography vanzelf bij voordat we meten; zeg wat eruit kwam
+  if [ "$c" = mislukt ]; then
+    zeg "cryptography: mislukt (apt/venv/pip lukten geen van alle). Laatste install-regels:"
+    tail -n 8 "$REK_CRYPTO_LOG" 2>/dev/null | while IFS= read -r L; do [ -n "$L" ] && zeg "  $L"; done
+    [ -s "$REK_CRYPTO_LOG" ] || zeg "  (geen logregels -- apt/pip ontbreken allebei; dan is python3-cryptography met de hand nodig)"
+  else
+    zeg "cryptography: $c"
+  fi
   local o; o="$(head -1 "$REK_ONDERWERP_F" 2>/dev/null | tr -d '\r\n ')"
   local d; d="$(REK_O="$o" REK_BASES="$(rek_relay_bases)" REK_VENSTER="${REK_VENSTER:-900}" REK_DIAG=1 "$(rek_py)" - <<'PY' 2>&1 >/dev/null
 import os, sys, re, json, time, hashlib, urllib.request
