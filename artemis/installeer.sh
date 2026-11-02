@@ -2960,6 +2960,7 @@ rek_verbind_lijst() {   # adb-connect de telefoons uit de relay-lijst (ip:5555);
       serial="$ip:5555"
       "$ADB" connect "$serial" >/dev/null 2>&1 || continue
       if is_f8 "$serial"; then "$ADB" disconnect "$serial" >/dev/null 2>&1 || true; continue; fi
+      onthoud_lan_subnet "$ip" 2>/dev/null || true   # 623g: onthoud het /24 van een via-de-relay gevonden telefoon, zodat de periodieke 5555-sweep DIT net (bv. een gastnet) voortaan meeneemt -- een rektelefoon zonder hartslag maar met open 5555 komt zo vanzelf binnen
       n=$((n+1))
     done
   done <<< "$rauw"
@@ -3046,6 +3047,15 @@ rek_op() {   # 619/620: in één tik -- scan (nieuwe telefoons op de lijst, ook 
   scan
   zeg "---"
   rek_lijst
+  # 623g: na de relay-lijst OOK een rechtstreekse 5555-sweep over dit wifi. Zodra EEN telefoon (via de relay) adb-verbonden is, kent
+  # adb zijn /24 en neemt scan_5555 dat net mee -- zo komt een rektelefoon die JARVIS draait en 5555 open heeft
+  # er vanzelf bij, OOK zonder hartslag. Nooit de F8 (scan_5555 sluit hem uit). De rem resetten zodat deze tik meteen zoekt.
+  zeg "---"
+  zeg "Ik zoek nu ook rechtstreeks op dit wifi naar telefoons met draadloze adb (poort 5555)..."
+  rm -f "$SCAN5555_T" 2>/dev/null || true
+  scan_5555
+  local na; na="$("$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device"{print $1}' | wc -l | tr -d ' ')"
+  zeg "adb is nu met $na toestel(len) verbonden (nooit de F8). Een rektelefoon die JARVIS draait met poort 5555 open komt hier vanzelf bij -- ook zonder hartslag. Geeft een telefoon nog niets, dan staat 5555 daar nog dicht (open JARVIS op die telefoon en scan de Veronica-QR, dan zet hij draadloze adb aan)."
 }
 rek_zoek() {
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
