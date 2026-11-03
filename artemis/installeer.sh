@@ -1162,11 +1162,17 @@ scan_5555() {
   done
   prefixes="$(printf '%s\n' $prefixes | awk 'NF && !seen[$0]++' | head -4)"   # hoogstens 4 /24's (eigen net + beide wifi's + kabel)
   [ -n "$prefixes" ] || return 0
-  local verbonden_nu open p h
+  local verbonden_nu open p h alreedsip
   verbonden_nu="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1}')"
+  # 623h: de IP's waarmee adb AL verbonden is (zonder :poort). Die mogen we NIET rauw aftasten: een losse TCP-connect naar poort
+  # 5555 van een telefoon waarmee al een echte adb-verbinding loopt, zet adbd's bestaande verbinding soms OFFLINE. Dat was de
+  # tegenstrijdigheid van 05:49 -- de relay-lijst verbond een telefoon, en de sweep daarna tastte datzelfde adres rauw af en gooide hem eruit.
+  alreedsip="$(printf '%s\n' "$verbonden_nu" | sed 's/:.*//')"
   # poort 5555 proberen met /dev/tcp (geen extra tool nodig), parallel, korte time-out per host; de IP gaat als argument mee ($0), nooit in de code.
+  # Een al verbonden IP slaan we over (awk-set), zodat een live adb-verbinding nooit door de rauwe tast sneuvelt.
   open="$(
     for p in $prefixes; do for h in $(seq 1 254); do printf '%s.%s\n' "$p" "$h"; done; done \
+    | awk -v skip="$alreedsip" 'BEGIN{n=split(skip,a,"\n"); for(i=1;i<=n;i++) if(a[i]!="") s[a[i]]=1} !($0 in s)' \
     | xargs -P 48 -I{} bash -c 'timeout 1 bash -c "exec 3<>/dev/tcp/$0/5555" 2>/dev/null && printf "%s\n" "$0"' {} 2>/dev/null
   )"
   for ip in $open; do
