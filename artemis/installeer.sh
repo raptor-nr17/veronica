@@ -437,7 +437,7 @@ import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, u
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken'}
@@ -539,7 +539,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <p style="margin-top:14px">Relay-onderwerp (eenmalig): zo leest ARTEMIS zelf welke telefoons op het huis-wifi staan &mdash; geen hotspot meer nodig. Kopieer het uit Veronica bij Instellingen (begint met &quot;jv&quot;).<br>
@@ -2490,6 +2490,34 @@ cat_ruim() {
   zeg "NIET aangeraakt: foto's, documenten, media, de SD-kaart-AI-opslag (modellen/kennisboek), en bank-/kluis-/authenticator-/betaal-/crypto-apps (en hun gegevens)."
 }
 
+# 628 (deep research 20 nov): DuraSpeed van MediaTek zet achtergrond-apps stil -- op een MediaTek-telefoon kan dat JARVIS doden
+# (de "fabrikant"-oorzaak). Deze knop zet het per TOEGESTANE, verbonden telefoon uit, maar ALLEEN nadat is gecontroleerd dat het
+# pakket er echt is (pm list packages). Niet aanwezig = niets doen, geen fout. NOOIT de F8, nooit een app verwijderen -- alleen deze
+# ene systeemdienst uitschakelen voor de huidige gebruiker (pm disable-user). Het pakket komt terug met pm enable (handmatig).
+DURASPEED_PKG='com.mediatek.duraspeed'
+duraspeed_uit() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  local s naam uit gedaan=0 gezien=0
+  for s in $(verbonden); do
+    is_f8 "$s" && { zeg "$(toestel_naam "$s") = F8, overgeslagen (de dagelijkse telefoon raakt ARTEMIS nooit aan)."; continue; }
+    gezien=$((gezien+1)); naam="$(toestel_naam "$s")"
+    if ! "$ADB" -s "$s" shell pm list packages "$DURASPEED_PKG" 2>/dev/null | grep -q "$DURASPEED_PKG"; then
+      zeg "$naam: geen DuraSpeed gevonden -- niets te doen (waarschijnlijk geen MediaTek-toestel)."
+      continue
+    fi
+    uit="$("$ADB" -s "$s" shell pm disable-user --user 0 "$DURASPEED_PKG" 2>&1 | tr -d '\r')"
+    if printf '%s' "$uit" | grep -qiE 'new state: disabled|disabled-user'; then
+      zeg "$naam: DuraSpeed UIT. JARVIS wordt nu niet meer door DuraSpeed stilgezet (terugzetten kan met: pm enable $DURASPEED_PKG)."
+      gedaan=$((gedaan+1))
+    else
+      zeg "$naam: DuraSpeed uitzetten lukte niet ($(printf '%s' "$uit" | head -c 120)). Op sommige toestellen mag dit alleen met de hand (Instellingen, Apps, DuraSpeed)."
+    fi
+  done
+  [ "$gezien" -eq 0 ] && zeg "Geen verbonden rektelefoon gevonden (en nooit de F8). Koppel er eerst een via de kabel of draadloze adb."
+  [ "$gedaan" -gt 0 ] && zeg "Klaar: op $gedaan telefoon(s) staat DuraSpeed uit."
+  return 0
+}
+
 # §165: HET KENNISBOEK -- een gewone TEKSTMAP op de Cat-SD (/sdcard/veronica-kennisboek). Delen met dufs (MIT, draait op de
 # Chromebook, alleen op 127.0.0.1 -- zelfde regel als SearXNG), en elke nacht een VERSLEUTELDE kopie. Alleen de eigen kennisboek-map
 # gaat mee (nooit foto's/documenten/bank), alleen de Cat (nooit de F8). De sleutel staat lokaal (chmod 600) en komt nooit in een log.
@@ -3595,6 +3623,7 @@ case "${1:-status}" in
   alleen-kijken-uit) alleen_kijken_uit ;;   # 592h: alleen-kijken UIT -- het model mag weer handelen (vangnet blijft)
   cat-kijk) cat_kijk ;;                      # 116b: kijken wat ruimte inneemt op de Cat (niets aangeraakt)
   cat-ruim) cat_ruim ;;                      # 609: veilig opruimen op de Cat (caches, kladmap, oude apk's, mislukte downloads)
+  duraspeed-uit) duraspeed_uit ;;            # 628: MediaTek DuraSpeed per telefoon uitzetten (na controle), nooit de F8
   kennisboek-kijk) kennisboek_kijk ;;        # 165: de tekstmap van het kennisboek op de Cat-SD bekijken (maakt hem aan als hij er niet is)
   kennisboek-deel) kennisboek_deel ;;        # 165: het kennisboek delen met dufs op 127.0.0.1 (alleen op deze computer)
   kennisboek-terug) kennisboek_terug ;;      # 165: de lokale spiegel terugzetten naar de Cat
