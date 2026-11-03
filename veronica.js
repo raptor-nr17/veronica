@@ -3221,13 +3221,21 @@
     for (const h of Object.values(HB.per)) if (h && h.id && await geefRelay(h)) n += 1;
     return { ok: true, zin: a ? `Relay aan. ${n ? `${n} ${n === 1 ? 'telefoon kreeg' : 'telefoons kregen'} het adres` : 'De telefoons krijgen het adres bij hun volgende hartslag'}; een JARVIS van voor 1.9.63 kent de relay nog niet en blijft de brievenbus gebruiken.` : 'Relay uit: alles gaat weer via de brievenbus.' };
   }
+  const POSTBUS_RETRY_MS = 3 * 60 * 1000;   // 627: opnieuw proberen na drie minuten
+  const POSTBUS_MAX = 5;                     // hoogstens vijf keer per adres (de ntfy-rem van 516 beschermt het dagbudget)
   async function geefPostbusViaBrievenbus(h) {
     const a = S.postbusVers;
     if (!h || !h.id || !K.adresVers(a) || !K.nogGeldig(a)) return false;
-    if (VastV.gestuurd[h.id] === a) return false;
+    // 627: NIET één keer en dan nooit meer. Een eerste levering kan stilletjes mislukken (Android zette de telefoon net stil, of de
+    // directe-wifi-roep kwam aan maar JARVIS werd gepauzeerd voor hij hem verwerkte). Daarom bij HETZELFDE adres hoogstens
+    // POSTBUS_MAX keer, met POSTBUS_RETRY_MS ertussen -- zodat de telefoon, zodra hij wakker blíjft, de code vanzelf krijgt zonder
+    // nog een scan. Een nieuw adres begint opnieuw. Twee roepen vlak na elkaar blijven dus één roep (de tijdpoort).
+    const v = VastV.gestuurd[h.id];
+    if (v && v.adres === a && (v.n >= POSTBUS_MAX || (nu() - v.t) < POSTBUS_RETRY_MS)) return false;
     if (!(await roepNaarId(h.id, { soort: 'postbus', adres: a }))) return false;
-    VastV.gestuurd[h.id] = a;
-    logRegel(`${h.naam || 'Een telefoon'} kreeg de verse koppelcode via de brievenbus. Hij kijkt nu zelf of er een nieuwe versie is.`);
+    const n = (v && v.adres === a ? v.n : 0) + 1;
+    VastV.gestuurd[h.id] = { adres: a, t: nu(), n };
+    logRegel(`${h.naam || 'Een telefoon'} kreeg de verse koppelcode via de brievenbus${n > 1 ? ` (poging ${n})` : ''}. Hij kijkt nu zelf of er een nieuwe versie is.`);
     return true;
   }
   // 505: EEN MOTOR DIE VASTLIEP ZELF WEER OP GANG. JARVIS 1.9.47 probeert een mislukte download vanzelf opnieuw, maar een model dat
