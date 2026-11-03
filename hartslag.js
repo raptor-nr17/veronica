@@ -86,8 +86,9 @@
   }
   async function onderwerp(o, soort, c) {
     if (!ONDERWERP_RE.test(String(o || ''))) return null;
-    const voor = soort === 'roep' ? 'veronica-roep:' : 'veronica-hartslag:';
-    return (soort === 'roep' ? 'vr' : 'vh') + naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes(voor + o))).slice(0, 30);
+    const voor = soort === 'roep' ? 'veronica-roep:' : (soort === 'ploeg' ? 'veronica-ploeg:' : 'veronica-hartslag:');
+    const pre = soort === 'roep' ? 'vr' : (soort === 'ploeg' ? 'vp' : 'vh');   // 624: 'ploeg' = het team-ploegbord, eigen topic naast de hartslag
+    return pre + naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes(voor + o))).slice(0, 30);
   }
   // 508: een korte VINGERAFDRUK van het geheime onderwerp (8 tekens van een hash). Een telefoon zet hem open in /jarvis/status, zodat
   // Veronica ziet of hij dezelfde brievenbus gebruikt als zij, zonder dat het onderwerp zelf ooit open op het wifi staat.
@@ -97,7 +98,8 @@
   }
   async function sleutel(o, soort, gebruik, c) {
     const sub = cryptoNu(c).subtle;
-    const raw = await sub.digest('SHA-256', tekstBytes((soort === 'roep' ? 'veronica-roep-sleutel:' : 'veronica-hartslag-sleutel:') + o));
+    const pre = soort === 'roep' ? 'veronica-roep-sleutel:' : (soort === 'ploeg' ? 'veronica-ploeg-sleutel:' : 'veronica-hartslag-sleutel:');
+    const raw = await sub.digest('SHA-256', tekstBytes(pre + o));
     return sub.importKey('raw', raw, { name: 'AES-GCM' }, false, [gebruik]);
   }
   async function sluit(o, soort, d, c) {
@@ -350,6 +352,25 @@
     return JSON.stringify(uit);
   }
 
+  // ---- 624: het ploegbord (team-laag) ----
+  // EEN gebeurtenis (claim/vrij/geef/keur, zie ploegpost.js) op de ploeg-topic, met DEZELFDE versleuteling als de hartslag/roep
+  // (geen tweede crypto). Geen code nodig: de sleutel is afgeleid van het geheime onderwerp, dat is het bewijs -- net als de
+  // hartslag. Alleen de drie besturingen (Veronica/ARTEMIS/Claude) delen dit; de telefoons doen er niets mee.
+  async function ploegVerzoek(o, ev, c, server) {
+    const topic = await onderwerp(o, 'ploeg', c);
+    const url = naarServer(server);
+    if (!topic || !url || !ev || typeof ev.op !== 'string') return null;
+    const tekst = JSON.stringify(ev);
+    if (tekst.length > 2048) return null;
+    return { method: 'POST', url, data: JSON.stringify({ topic, message: await sluit(o, 'ploeg', ev, c) }) };
+  }
+  // Een regel van de relay -> de ploeg-gebeurtenis, of null (rommel/verkeerde sleutel wordt stil overgeslagen).
+  async function leesPloeg(o, regel, c) {
+    const r = await open(o, 'ploeg', regel, c);
+    const d = r && r.d;
+    return (d && typeof d === 'object' && typeof d.op === 'string') ? d : null;
+  }
+
   // Ophalen (de telefoon, eens per minuut) en luisteren (Veronica, een doorlopende verbinding).
   function pollUrl(topic, sinds, server) { return `${naarServer(server) || SERVER}/${topic}/json?poll=1&since=${encodeURIComponent(String(sinds || '15m'))}`; }
 
@@ -410,5 +431,5 @@
     return delen.length ? `lijnen: ${delen.join(' · ')}` : '';
   }
 
-  return { schoonGezond, gezondSleutel, gezondVerzoek, leesGezond, GEZOND_MAX, lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, meetuurUit, meetuurBlok, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, pollUrl, diagnose, motorZin, minutenZin };
+  return { schoonGezond, gezondSleutel, gezondVerzoek, leesGezond, GEZOND_MAX, lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, meetuurUit, meetuurBlok, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, ploegVerzoek, leesPloeg, pollUrl, diagnose, motorZin, minutenZin };
 }));
