@@ -3111,6 +3111,104 @@
       }
     } finally { RelayV.bezig = false; }
   }
+  // ---- 624: HET PLOEGBORD (team-laag) -- Veronica = lid 'lokale-ai' ----
+  // Veronica leest de ploeg-topic van de relay (eigen topic, zelfde versleuteling als de hartslag), vouwt de gebeurtenissen in tot
+  // EEN bord (ploegpost.vouwIn) en toont de openstaande voorstellen met een keur-knop. Veronica kan zelf een deeltaak GEVEN. De
+  // ongevaarlijke soorten keuren zichzelf goed (ploeg.js); alleen 'besturen' wacht op een tik hier. Niets gaat via het wifi of de
+  // brievenbus -- alleen de relay, en alleen als die aanstaat.
+  const PloegV = { bord: null, bezig: false };
+  async function ploegStroom() {
+    const o = S.ntfy && S.ntfy.onderwerp;
+    if (!RelayV.adres || !o || volLokaal() || !window.Hartslag || !window.Ploegpost || PloegV.bezig) return;
+    PloegV.bezig = true;
+    try {
+      const topic = await window.Hartslag.onderwerp(o, 'ploeg');
+      if (!topic) return;
+      let r = null;
+      try { r = await fetch(window.Hartslag.pollUrl(topic, '3h', RelayV.adres), Object.assign({ cache: 'no-store' }, K.lnaOpties ? K.lnaOpties(RelayV.adres) : {})); } catch (e) { r = null; }
+      if (!r || !r.ok) return;
+      const evs = [];
+      for (const regel of (await r.text()).split('\n')) {
+        if (!regel.trim()) continue;
+        const ev = await window.Hartslag.leesPloeg(o, regel);
+        if (ev) evs.push(ev);
+      }
+      PloegV.bord = window.Ploegpost.vouwIn(evs, Date.now());
+      tekenPloeg();
+    } finally { PloegV.bezig = false; }
+  }
+  async function ploegPost(ev) {
+    const o = S.ntfy && S.ntfy.onderwerp;
+    if (!RelayV.adres || !o || !ev || !window.Hartslag) return false;
+    const v = await window.Hartslag.ploegVerzoek(o, ev, undefined, RelayV.adres);
+    if (!v) return false;
+    try { const r = await fetch(v.url, Object.assign({ method: 'POST', body: v.data, headers: { 'Content-Type': 'application/json' } }, K.lnaOpties ? K.lnaOpties(v.url) : {})); return !!(r && r.ok); } catch (e) { return false; }
+  }
+  async function ploegGeef(naar, wat, soort) {
+    if (!window.Ploegpost) return false;
+    const ev = window.Ploegpost.gebeurtenis('geef', { van: 'lokale-ai', naar, wat, soort }, Date.now());
+    const ok = !!ev && await ploegPost(ev);
+    if (ok) setTimeout(() => ploegStroom().catch(() => {}), 900);
+    return ok;
+  }
+  async function ploegKeur(id, besluit) {
+    if (!window.Ploegpost) return false;
+    const ev = window.Ploegpost.gebeurtenis('keur', { id: String(id), besluit: besluit === true }, Date.now());
+    const ok = !!ev && await ploegPost(ev);
+    if (ok) setTimeout(() => ploegStroom().catch(() => {}), 900);
+    return ok;
+  }
+  const PLOEG_NAAM = { 'lokale-ai': 'Veronica', artemis: 'ARTEMIS', claude: 'Claude' };
+  function ploegBlokEl() {
+    let b = $('ploegBlok');
+    if (b) return b;
+    const waar = $('wieRekent'); if (!waar) return null;
+    b = el('div'); b.id = 'ploegBlok'; b.hidden = true;
+    b.appendChild(el('h3', '', 'Wie doet wat (team)'));
+    const vs = el('div'); vs.id = 'ploegVoorstellen'; b.appendChild(vs);
+    const td = el('ul', 'wieRekentLijst'); td.id = 'ploegTeDoen'; b.appendChild(td);
+    waar.appendChild(b);
+    b.addEventListener('click', (e) => {
+      const kn = e.target && e.target.closest ? e.target.closest('button[data-ploegkeur]') : null;
+      if (!kn || kn.disabled) return;
+      const id = kn.dataset.ploegid; const goed = kn.dataset.ploegkeur === 'goed';
+      kn.disabled = true;
+      const regel = kn.closest('[data-vid]') ? kn.closest('[data-vid]').querySelector('.klein') : null;
+      if (regel) regel.textContent = 'Bezig...';
+      ploegKeur(id, goed).then((ok) => { if (regel) regel.textContent = ok ? (goed ? 'Goedgekeurd.' : 'Afgewezen.') : 'Kon niet keuren (relay?).'; if (!ok) kn.disabled = false; });
+    });
+    return b;
+  }
+  function tekenPloeg() {
+    const b = ploegBlokEl(); if (!b) return;
+    const bord = PloegV.bord; const nuT = Date.now();
+    const open = (bord && window.Ploeg) ? window.Ploeg.openVoorstellen(bord, nuT) : [];
+    const status = (bord && window.Ploeg) ? window.Ploeg.status(bord, nuT) : null;
+    const bezig = status ? window.Ploeg.LEDEN.reduce((n, l) => n + (status[l] ? status[l].length : 0), 0) : 0;
+    b.hidden = !bord || (!open.length && !bezig);
+    if (b.hidden) return;
+    // De openstaande voorstellen, elk met een keur-knop (alleen 'besturen'/'voorstel' komen hier -- de rest keurde zichzelf goed).
+    const vak = $('ploegVoorstellen');
+    const ids = new Set(open.map((v) => v.id));
+    for (const k of [...vak.querySelectorAll('[data-vid]')]) if (!ids.has(k.dataset.vid)) k.remove();
+    const er = new Set([...vak.querySelectorAll('[data-vid]')].map((k) => k.dataset.vid));
+    for (const v of open) {
+      if (er.has(v.id)) continue;
+      const kaart = el('div', 'zsPaneel'); kaart.dataset.vid = v.id;
+      kaart.appendChild(el('p', '', `${PLOEG_NAAM[v.van] || v.van} vraagt ${PLOEG_NAAM[v.naar] || v.naar}: ${v.wat || '(zonder omschrijving)'} (${v.soort})`));
+      const ja = el('button', '', 'Goedkeuren'); ja.dataset.ploegkeur = 'goed'; ja.dataset.ploegid = v.id;
+      const nee = el('button', 'tweede', 'Afwijzen'); nee.dataset.ploegkeur = 'af'; nee.dataset.ploegid = v.id;
+      kaart.append(ja, nee, el('p', 'klein'));
+      vak.appendChild(kaart);
+    }
+    // Wat er nu loopt of goedgekeurd klaarstaat, per lid.
+    const regels = [];
+    for (const lid of window.Ploeg.LEDEN) {
+      const td = (window.Ploeg.teDoen(bord, lid, nuT) || []);
+      for (const t of td) regels.push(el('li', 'rekentJa', `${PLOEG_NAAM[lid] || lid}: ${t.wat || t.soort} (van ${PLOEG_NAAM[t.van] || t.van})`));
+    }
+    if (typeof morphKinderen === 'function') morphKinderen($('ploegTeDoen'), regels); else { $('ploegTeDoen').textContent = ''; regels.forEach((r) => $('ploegTeDoen').appendChild(r)); }
+  }
   async function zetRelayAdres(invoer) {
     const ruw = String(invoer || '').trim();
     const a = ruw ? (window.Hartslag && window.Hartslag.relayGeldig(ruw)) : '';
@@ -5794,6 +5892,8 @@
     setInterval(() => { avTik().catch(() => {}); }, 30000);
     setInterval(() => { relayStroom().catch(() => {}); }, 15000);   // 529/548: de relay, elke 15 s (doet niets zonder adres)
     relayStroom().catch(() => {});
+    setInterval(() => { ploegStroom().catch(() => {}); }, 15000);   // 624: het team-ploegbord, zelfde cadans (doet niets zonder relay-adres)
+    ploegStroom().catch(() => {});
     setInterval(schermTik, 1000);
     setInterval(wandTik, 1000);
     setInterval(antwoordTik, 1000);
@@ -6626,7 +6726,7 @@
     window.addEventListener('hashchange', hoekVolgHash);
     hoekVolgHash();
   }
-  window.__veronica = { Proef, zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { Proef, zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, PloegV, ploegStroom, ploegGeef, ploegKeur, tekenPloeg, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
