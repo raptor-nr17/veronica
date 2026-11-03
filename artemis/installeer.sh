@@ -3060,8 +3060,22 @@ rek_op() {   # 619/620: in één tik -- scan (nieuwe telefoons op de lijst, ook 
   zeg "Ik zoek nu ook rechtstreeks op dit wifi naar telefoons met draadloze adb (poort 5555)..."
   rm -f "$SCAN5555_T" 2>/dev/null || true
   scan_5555
-  local na; na="$("$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device"{print $1}' | wc -l | tr -d ' ')"
-  zeg "adb is nu met $na toestel(len) verbonden (nooit de F8). Een rektelefoon die JARVIS draait met poort 5555 open komt hier vanzelf bij -- ook zonder hartslag. Geeft een telefoon nog niets, dan staat 5555 daar nog dicht (open JARVIS op die telefoon en scan de Veronica-QR, dan zet hij draadloze adb aan)."
+  # 625: EERLIJK TELLEN. Een net gelegde tcp-verbinding (de relay-lijst of de sweep) staat in `adb devices` een paar tellen op
+  # 'offline' voordat de adb-handshake rond is. De oude regel telde alleen de 'device'-stand en meldde dan "0 toestel(len)" vlak
+  # na "adb verbonden met 1 adres" -- de tegenstrijdigheid uit de melding. We herstellen eerst de offline transports (adb reconnect),
+  # laten ze even settelen, en melden daarna de ECHTE standen: klaar (device), nog-aan-het-verbinden (offline), en wachtend op
+  # 'toestaan' op de telefoon zelf (unauthorized). "0 toestel(len)" betekent voortaan echt: niets gevonden.
+  "$ADB" reconnect offline >/dev/null 2>&1 || true
+  sleep 2
+  local dev off unauth
+  dev="$("$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device"{c++} END{print c+0}')"
+  off="$("$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="offline"{c++} END{print c+0}')"
+  unauth="$("$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="unauthorized"{c++} END{print c+0}')"
+  zeg "adb is nu met $dev toestel(len) klaar voor besturing (nooit de F8)."
+  [ "$off" -gt 0 ] 2>/dev/null && zeg "$off toestel(len) staan nog op 'offline' -- de verbinding is net gelegd en settelt; Rek opbouwen over een halve minuut nog eens laat ze meestal als 'klaar' zien."
+  [ "$unauth" -gt 0 ] 2>/dev/null && zeg "$unauth toestel(len) wachten op 'Toestaan' op de telefoon zelf -- keur daar eenmalig het usb-/draadloze-foutopsporingsvenster goed (vink 'altijd toestaan' aan)."
+  [ "$dev" -eq 0 ] 2>/dev/null && [ "$off" -eq 0 ] 2>/dev/null && [ "$unauth" -eq 0 ] 2>/dev/null && zeg "Nog geen enkel toestel. Een rektelefoon die JARVIS 1.9.79 draait opent poort 5555 vanzelf (ook op een gastnetwerk, ook na een herstart); staat 5555 nog dicht, open dan JARVIS op die telefoon en scan de Veronica-QR, dan zet hij draadloze adb aan."
+  return 0   # 625: de [ ] && zeg-regels hierboven mogen de exitcode van rek_op niet op 1 zetten
 }
 rek_zoek() {
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
