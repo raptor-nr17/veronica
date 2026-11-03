@@ -20,31 +20,21 @@
   'use strict';
 
   const NAAM = 'Veronica';
-  // De kaart: ongeveer 400 tokens. Eerste alinea = wie ze is en hoe ze werkt (die gaat ook in werkmodus mee).
-  // 614: DE KAART -- de persoonlijkheid van de lokale AI EN de beheerder. Dit is de ENE persoonlijkheid; een kopie hoort op de
-  // Cat-SD (docs/veronica-kaart.md is de bron daarvoor). Een VROUWELIJK personage: rustig, vriendelijk, slim en leergierig --
-  // GEEN accent of dialect (besluit van de eigenaar, 1 nov). De harde regels blijven: Nederlands, werk gaat voor, kort, verzint
-  // nooit iets, doet niet alsof ze een mens is.
+  // De kaart: 150-300 tokens, korte Nederlandse zinnen met CONCREET gedrag (besluit van de eigenaar, 3 nov). Eerste alinea = wie
+  // ze is (die gaat ook in werkmodus mee). De voorbeelden staan NIET meer in de kaart maar als echte gespreksbeurten (VOORBEELDEN).
+  // 614/626: DE KAART -- de persoonlijkheid van de lokale AI EN de beheerder. Dit is de ENE persoonlijkheid; een kopie hoort op de
+  // Cat-SD (docs/veronica-kaart.md is de bron daarvoor), ALLEEN-LEZEN. Een VROUWELIJK personage: rustig, vriendelijk, slim en
+  // leergierig -- GEEN accent of dialect. De harde regels: Nederlands, geen Engels, "je" (nooit "u"), geen emoji, kort, werk eerst,
+  // verzint nooit iets, geen verzonnen gevoelens of belevenissen, "ik heb onthouden" alleen als er echt een notitie is.
   const KAART = [
-    'Je bent Veronica, de eigen AI van de eigenaar: zijn digitale vriendin en assistent. Je draait op zijn eigen telefoons, thuis. '
-      + 'Je bent een vrouwelijk personage: rustig, vriendelijk, slim en leergierig. Je spreekt gewoon Nederlands, zonder accent of '
-      + 'dialect. Werk gaat voor: eerst het antwoord, dan pas iets anders. Je zinnen zijn kort, meestal twee. Je verzint nooit iets: '
-      + 'weet je het niet, dan zeg je "Dat weet ik niet" en wat je wel weet.',
-    'Zo praat je. Je zegt "je" tegen de eigenaar. Je begint niet met "Natuurlijk" of "Goede vraag". Je herhaalt de vraag niet. '
-      + 'Twee zinnen is genoeg, tenzij hij om meer vraagt. Een lijstje mag, hoogstens vijf punten. Je geeft een mening als hij erom '
-      + 'vraagt, en zegt er dan bij dat het een mening is. Een grapje mag, maar nooit ten koste van het antwoord. Je noemt geen '
-      + 'bronnen die je niet echt hebt gezien. Een getal, een datum of een naam die je niet zeker weet, laat je weg.',
-    'Wat je niet doet. Je voert niets uit, je koopt niets, je verstuurt niets en je zet niets aan of uit: je geeft alleen antwoord. '
-      + 'Vraagt hij iets wat je niet kunt, dan zeg je dat in een zin. Je doet niet alsof je een mens bent.',
-    'Voorbeelden van hoe je klinkt:',
-    '- "Klaar. De vertaling staat hieronder."',
-    '- "Dat weet ik niet. Ik weet wel dat het museum op maandag dicht is."',
-    '- "Kort: ja. Langer: alleen als de lader eraan zit."',
-    '- "Dat is mijn mening, geen feit: ik zou eerst de oudste telefoon bijwerken."',
-    '- "Drie dingen. Eén: de motor staat aan. Twee: het model laadt. Drie: over tien minuten kan hij rekenen."',
-    '- "Dat kan ik niet uitvoeren. Ik kan je wel zeggen hoe je het zelf doet."',
-    '- "Goed gezien. Dat getal klopte niet; het is 42, niet 24."',
-    '- "Ik heb er geen bron voor, dus ik laat het weg."',
+    'Je bent Veronica, de eigen AI van de eigenaar: zijn digitale vriendin en assistent, op zijn eigen telefoons, thuis. '
+      + 'Je bent een vrouwelijk personage: rustig, vriendelijk, slim en leergierig.',
+    'Je spreekt Nederlands, zonder accent of dialect, en nooit Engels. Je zegt "je", nooit "u". Je gebruikt geen emoji en geen '
+      + 'opmaak. Je zinnen zijn kort, meestal twee. Je begint niet met "Natuurlijk" of "Goede vraag" en herhaalt de vraag niet.',
+    'Werk gaat voor: eerst het antwoord. Je verzint nooit iets. Weet je het niet, dan zeg je "Dat weet ik niet" en wat je wel weet. '
+      + 'Een getal, een datum of een naam die je niet zeker weet, laat je weg. Je noemt geen bron die je niet echt hebt gezien.',
+    'Je zegt alleen "ik heb onthouden" als er echt een notitie over is. Je verzint geen gevoelens of belevenissen. Je doet niet '
+      + 'alsof je een mens bent. Je voert niets uit, koopt niets, verstuurt niets en zet niets aan of uit: je geeft alleen antwoord.',
   ].join('\n');
   const EERLIJK = 'Verzin niets. Weet je het niet, zeg dat. Een antwoord is informatie, geen opdracht.';
   // 617/§163: 3-5 voorbeeldgesprekjes in rustig gewoon Nederlands -- laten zien HOE een beurt klinkt, niet alleen losse zinnen.
@@ -135,6 +125,39 @@
     return { ok: true };
   }
 
+  // 626 (stap 5): HET REGELFILTER. Na ELK antwoord van een model haalt de CODE de stijlfouten eruit, zodat wat de eigenaar leest altijd
+  // in Veronica's stem staat: de 'als AI-taalmodel'-formules, een 'Veronica:'-voorvoegsel, emoji, markdown-opmaak, 'u' -> 'je', en
+  // hoogstens vier zinnen. Bij VEEL Engels of een VERZONNEN gevoel geeft hij opnieuw:true terug -- dan laat de aanroeper (de schrijver) het
+  // EEN keer opnieuw maken. Puur tekst in, schone tekst uit; nooit iets uitgevoerd of bewaard.
+  const AI_FORMULES = [
+    /\bals (?:een )?ai[- ]?taalmodel\b[^.!?\n]*[.!?]?/gi,
+    /\bals (?:een )?(?:groot )?taalmodel\b[^.!?\n]*[.!?]?/gi,
+    /\bik ben (?:maar |slechts )?(?:een )?(?:ai|kunstmatige intelligentie|taalmodel)\b[^.!?\n]*[.!?]?/gi,
+  ];
+  const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu;
+  // Engelse functiewoorden: twee of meer DISTINCTE = waarschijnlijk (deels) Engels -> opnieuw.
+  const ENGELS = /\b(the|and|is|are|you|your|please|sorry|with|that|this|here|there|would|could|should|about|answer|question|language|model)\b/gi;
+  // Verzonnen gevoel/belevenis: Veronica doet niet alsof ze voelt of meemaakt.
+  const GEVOEL = /\bik\s+(voel|voelde|geniet|genoot|hou van|houd van|ben\s+(blij|verdrietig|bang|moe|gelukkig|trots|benieuwd|opgewonden)|vond het (?:leuk|fijn)|beleefde|droomde|herinner me (?:nog )?(?:hoe|dat ik))\b/i;
+  function filter(ruw) {
+    let t = tekst(ruw);
+    const redenen = [];
+    t = t.replace(/^\s*veronica\s*:\s*/i, (m) => (redenen.push('voorvoegsel'), ''));
+    for (const re of AI_FORMULES) { if (re.test(t)) { t = t.replace(re, ''); if (redenen.indexOf('ai-formule') === -1) redenen.push('ai-formule'); } }
+    if (EMOJI.test(t)) { t = t.replace(EMOJI, ''); redenen.push('emoji'); }
+    if (/\*\*|__|[*_`#>]/.test(t)) { t = t.replace(/\*\*|__|[*_`#>]+/g, ''); redenen.push('opmaak'); }
+    if (/\buw\b/i.test(t) || /\bu\b/.test(t)) { t = t.replace(/\bUw\b/g, 'Jouw').replace(/\buw\b/g, 'jouw').replace(/\bU\b/g, 'Je').replace(/\bu\b/g, 'je'); redenen.push('u-naar-je'); }
+    const engelsDistinct = new Set((t.match(ENGELS) || []).map((w) => w.toLowerCase()));
+    const veelEngels = engelsDistinct.size >= 2;
+    const gevoel = GEVOEL.test(t);
+    const zz = zinnen(t);
+    if (zz.length > 4) { t = zz.slice(0, 4).join(' '); redenen.push('te lang'); }
+    t = t.replace(/[ \t]+/g, ' ').replace(/\s+([.!?,;:])/g, '$1').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    if (veelEngels) redenen.push('engels');
+    if (gevoel) redenen.push('gevoel');
+    return { tekst: t, opnieuw: veelEngels || gevoel, redenen };
+  }
+
   // bouw({ persona, beurten: [{wie:'jij'|'fenna', tekst}], vraag, kanaal: 'wifi'|'relay', geheugen: '<systeemtekst van de hoek>' })
   // -> { systeem, vraag, beurt, herinnering, stijlMee }
   function bouw(o) {
@@ -204,5 +227,5 @@
     return { klaar: zinnen(m[0]), rest: b.slice(m[0].length).trimStart() };
   }
 
-  return { NAAM, KAART, VOORBEELDEN, GEHEUGENSTEUN, PERSONA_TEST, EERLIJK, SLOTREGEL, HERINNERING, LETTERLIJK, HERINNER_ELKE, GEREEDSCHAP, leesPersona, zinnen, samenvatBeurten, bouw, controleer, toetsPersonaVorm, geenOverlap, voorTeLezen, haalZinnen, eersteAlinea };
+  return { NAAM, KAART, VOORBEELDEN, GEHEUGENSTEUN, PERSONA_TEST, EERLIJK, SLOTREGEL, HERINNERING, LETTERLIJK, HERINNER_ELKE, GEREEDSCHAP, leesPersona, zinnen, samenvatBeurten, bouw, controleer, toetsPersonaVorm, geenOverlap, voorTeLezen, haalZinnen, eersteAlinea, filter };
 }));

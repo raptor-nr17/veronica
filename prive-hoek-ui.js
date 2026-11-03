@@ -181,7 +181,7 @@
     const ls = d.lang ? d.lang.stand() : null;
     if (ls) { pe.feiten = ls.geheugen.feiten; pe.stijl = ls.geheugen.stijl; }
     k.append(el('p', 'phKlein', ls ? `${ls.zin}. Feiten, samenvattingen, "onthoud dat" en je stijl staan op de geheugen-telefoon (versleuteld, alleen via je eigen wifi).` : 'Feiten en stijl gaan naar de geheugen-telefoon zodra die er is (versleuteld, alleen via je eigen wifi).'));
-    const kaart = veld('kaart', 'Kaart', 'Leeg = de standaardkaart (ongeveer 400 tokens, acht voorbeeldzinnen).', Fenna ? Fenna.KAART : '');
+    const kaart = veld('kaart', 'Kaart', 'Leeg = de standaardkaart (150-300 tokens, concreet gedrag; de voorbeelden staan apart).', Fenna ? Fenna.KAART : '');
     const feiten = veld('feiten', 'Feiten', 'Wat Veronica als waar mag aannemen.');
     const sam = veld('samenvatting', 'Samenvatting', 'Waar eerdere gesprekken over gingen.');
     const stijl = veld('stijl', 'Stijl (alleen van jou)', 'Gaat NOOIT via de brievenbus of het internet, ook niet via de relay: alleen als Veronica rechtstreeks over je eigen wifi praat.');
