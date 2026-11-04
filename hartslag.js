@@ -25,6 +25,8 @@
   const ONDERWERP_RE = /^jv[a-z0-9]{30}$/;
   const ID_RE = /^[a-z0-9]{12,40}$/;
   const IP_RE = /^(10\.\d{1,3}|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}$/;
+  // 630: Tailscale CGNAT-bereik (100.64 t/m 100.127).
+  const TAILSCALE_RE = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/;
   // 516: ntfy.sh geeft hoogstens 250 berichten per dag voor het HELE huis (een publiek IP). Met 10 minuten / een uur gingen twee
   // telefoons daar in het echte huis overheen (429). Nu: bij een verandering hoogstens eens per half uur, anders eens per anderhalf uur
   // (Veronica rekent een hartslag twee uur vers).
@@ -148,6 +150,10 @@
       versie: /^\d+\.\d+\.\d+$/.test(String(x.versie || '')) ? String(x.versie) : '',
       adressen: (Array.isArray(x.adressen) ? x.adressen : []).map(String).filter((a) => IP_RE.test(a)).filter((a, i, l) => l.indexOf(a) === i).slice(0, 4),
       poort: Number.isInteger(x.poort) && x.poort > 0 && x.poort < 65536 ? x.poort : 8080,
+      // 630 (#8): het Tailscale-adres van deze telefoon (CGNAT het 100.64-bereik). Vast, overal bereikbaar -- ook op een gastnetwerk
+      // waar de telefoons elkaar over het gewone wifi niet zien. ARTEMIS prefereert dit boven een wifi-adres. Alleen een geldig
+      // 100.64-100.127.x-adres telt; leeg = geen Tailscale. Telt mee in hartslagSleutel zodat een nieuw Tailscale-adres snel aankomt.
+      tailscale: TAILSCALE_RE.test(String(x.tailscale || '')) ? String(x.tailscale) : '',
       dagelijks: x.dagelijks === true,
       sparen: x.sparen === true,
       // 544: het geheugen dat Android meldt (GB) en de vrije ruimte (GB), voor de keuze van de leider en de geheugen-telefoon; en of
@@ -249,7 +255,7 @@
     // 524: een nieuw concept of een afkeuring telt WEL (de tellers, niet de tijd): zo ziet Veronica het werk binnen het half uur.
     // Het dagbudget (hartslagNodig) blijft de rem.
     // 507: het geheugengebruik telt NIET mee (dat schommelt; anders een hartslag per kleine verandering), het model wel
-    return [d.versie, d.rol, d.adressen.join(','), d.dagelijks, d.sparen, !!d.pauze, d.laadt, d.batterijVrij, d.relay, d.privePost, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
+    return [d.versie, d.rol, d.adressen.join(','), d.tailscale, d.dagelijks, d.sparen, !!d.pauze, d.laadt, d.batterijVrij, d.relay, d.privePost, m.aan, m.fase, m.klaar, m.proef ? m.proef.t : 0, m.model, m.soort,
       i.bron, i.model, i.gpu, i.draden, i.context, i.temp, i.accuMin, i.tempMax, i.alleenLader, i.geladen, i.dradenToegepast, i.temperatuurToegepast, g.klaar || 0, g.afgekeurd || 0, d.bijwerk ? `${d.bijwerk.nieuw}:${d.bijwerk.code}` : '', d.meetuur ? `${d.meetuur.bezig ? 'b' : 'u'}${d.meetuur.start}` : ''].join('|');
   }
   // 522d: HET DAGBUDGET VERDELEN. ntfy.sh telt berichten per dag; een telefoon heeft er NTFY_DAG_MAX (40) en houdt er een paar
