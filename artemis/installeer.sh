@@ -2855,6 +2855,9 @@ topic = 'vh' + hashlib.sha256(('veronica-hartslag:' + O).encode()).hexdigest()[:
 key = hashlib.sha256(('veronica-hartslag-sleutel:' + O).encode()).digest()
 aes = AESGCM(key)
 IPRE = re.compile(r'^(10\.\d{1,3}|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}$')
+# 630/#8: het Tailscale-CGNAT-bereik (100.64 t/m 100.127). JARVIS zet dit adres sinds 1.9.80 in de hartslag (veld 'tailscale').
+# Op een gastnetwerk zien de telefoons elkaars wifi-adres niet, maar het Tailscale-adres werkt wel: daarom gaat het VOOROP.
+TSRE = re.compile(r'^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$')
 IDRE = re.compile(r'^[a-z0-9]{12,40}$')
 nu = time.time()
 best = {}
@@ -2901,6 +2904,11 @@ for base in bases:
         if t and (nu - t) > venster:
             continue
         ips = [a for a in (d.get('adressen') or []) if isinstance(a, str) and IPRE.match(a)]
+        # #8: het Tailscale-adres (100.64-100.127) als EERSTE route, boven de wifi-adressen -- rek_verbind_lijst probeert de IP's
+        # in deze volgorde, dus op een gastnetwerk komt de telefoon via Tailscale binnen ook als zijn wifi-adres onbruikbaar is.
+        ts = d.get('tailscale')
+        if isinstance(ts, str) and TSRE.match(ts):
+            ips = [ts] + [a for a in ips if a != ts]
         if ips:
             n_adr += 1
         if not ips:
@@ -2982,7 +2990,10 @@ PY
     *) : ;;
   esac
 }
-rek_verbind_lijst() {   # adb-connect de telefoons uit de relay-lijst (ip:5555); nooit de F8. Echoot het aantal verbonden adressen.
+# #4: na een herstart van een telefoon is 5555 pas na ~90 s terug (JARVIS zet de poort zelf weer op, §607). ARTEMIS wacht daar NIET
+# blokkerend op (dat zou de console vasthouden): de autostart-console draait deze verbind-ronde elke minuut, dus een net herstarte
+# telefoon komt binnen een of twee scans (~60-120 s) vanzelf terug zodra zijn verse hartslag met het adres op de relay staat.
+rek_verbind_lijst() {   # adb-connect de telefoons uit de relay-lijst (Tailscale eerst, dan wifi; ip:5555); nooit de F8. Echoot het aantal verbonden adressen.
   "$ADB" start-server >/dev/null 2>&1 || true
   local rauw ipcsv poort id naam age ip n=0 serial
   rauw="$(rek_lijst_rauw)"
