@@ -33,13 +33,13 @@
     const ram = Number(c.ramMb) || 0;
     if (isKlein(ram)) {   // 507
       return { bron: 'standaard', model: 'klein', gpu: false, draden: KLEIN.draden, context: KLEIN.context, temp: 0.4, denk: 0,
-        accuMin: c.dagelijks ? 80 : 50, tempMax: c.dagelijks ? 35 : 38, alleenLader: !!c.dagelijks };
+        accuMin: c.dagelijks ? 80 : 50, tempMax: c.dagelijks ? 35 : 42, alleenLader: !!c.dagelijks };   // 1.9.81 #2: rek-grens 42 (gekoeld), dagelijks blijft 35
     }
     if (c.dagelijks) {
       return { bron: 'standaard', model: ram >= GPU_MIN_RAM_MB ? 'E4B' : 'E2B', gpu: ram >= GPU_MIN_RAM_MB, draden: 4, context: 4096, temp: 0.4, denk: 0,
         accuMin: 80, tempMax: 35, alleenLader: true };
     }
-    return { bron: 'standaard', model: 'E2B', gpu: false, draden: 4, context: 4096, temp: 0.4, denk: 0, accuMin: 50, tempMax: 38, alleenLader: false };
+    return { bron: 'standaard', model: 'E2B', gpu: false, draden: 4, context: 4096, temp: 0.4, denk: 0, accuMin: 50, tempMax: 42, alleenLader: false };   // 1.9.81 #2: rek-grens 42
   }
 
   // Een instelling van Veronica (of uit de opslag) -> alleen geldige waarden; wat ontbreekt komt uit de standaard.

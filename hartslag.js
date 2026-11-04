@@ -180,7 +180,10 @@
       meetuur: meetuurBlok(x.meetuur),
       // 529: WAAROM STOPTE DE APP (Android 11+, ApplicationExitInfo): de laatste vijf keer, tijdstip, de redencode van Android en
       // hoe belangrijk de app toen was. Alleen getallen; Veronica maakt er een zin van.
-      stops: (Array.isArray(x.stops) ? x.stops : []).slice(-5).map((g) => ({ t: Math.floor(Number(g && g.t) || 0), reden: getal(Number(g && g.reden), 0, 99), belang: getal(Number(g && g.belang), 0, 1000) }))
+      // 1.9.81 #1: ook de status (exit-/signaalcode) erbij -- een GETAL, dus binnen de §529-regel "stops alleen getallen" en het
+      // hartslag-budget. De vrije-tekst-beschrijving van Android gaat NIET in de hartslag (die blijft klein); die rijdt in 1.9.82 mee
+      // in het gezondheids-rapport (§535). Veronica maakt de zin uit reden + status.
+      stops: (Array.isArray(x.stops) ? x.stops : []).slice(-5).map((g) => ({ t: Math.floor(Number(g && g.t) || 0), reden: getal(Number(g && g.reden), 0, 99), belang: getal(Number(g && g.belang), 0, 1000), status: getal(Number(g && g.status), 0, 9999999) }))
         .filter((g) => g.t > 0 && g.reden !== null),
       temp: getal(x.temp, -20, 90),
       motor: m ? {

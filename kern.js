@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.80';
+  const JARVIS_NIEUWSTE = '1.9.81';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
@@ -513,7 +513,10 @@
     const g = (h && Array.isArray(h.stops) ? h.stops : []).filter((x) => x && typeof x.t === 'number' && typeof x.reden === 'number' && tijd - x.t <= 24 * 3600 * 1000 && x.reden !== 16);
     if (!g.length) return '';
     const l = g.reduce((a, b) => (b.t > a.t ? b : a));
-    return `stopte het laatst om ${klokZin(l.t).slice(0, 5)}: ${STOP_REDEN[l.reden] || `reden ${l.reden}`}${g.length > 1 ? ` (${g.length} keer in een etmaal)` : ''}`;
+    // 1.9.81 #1: Android geeft bij een stop een statuscode mee (het signaal of de exit-status); die zegt meer dan de kale reden.
+    // Een getal in de hartslag (§529). Oude hartslagen zonder status = niets extra.
+    const extra = l.status ? ` (code ${l.status})` : '';
+    return `stopte het laatst om ${klokZin(l.t).slice(0, 5)}: ${STOP_REDEN[l.reden] || `reden ${l.reden}`}${extra}${g.length > 1 ? ` (${g.length} keer in een etmaal)` : ''}`;
   }
   // 529: HET MEETUUR (meetplan D) in een zin, uit de hartslag.
   const komma = (x) => String(x).replace('.', ',');
