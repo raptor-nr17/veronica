@@ -2124,6 +2124,19 @@
       // 522: WIE REKENT NU, bovenaan Live (ook na "Dit is de baas": dan zie je meteen of de werkers echt meerekenen).
       const w = K.wieRekent(Object.values(HB.per || {}), nu(), bekendeTelefoons(), lijnenPerId());
       $('wieRekentKop').textContent = w.kop;
+      // 634 (1.9.82 B): de beheerder-ronde -- assemble is de gewone stand. ALLEEN TONEN wie meedoet en wie even pauzeert en
+      // waarom; de ECHTE ronde (motor-aan roepen + het kennisboek) draait op de geheugen-telefoon (de Cat). De roepen lopen hier
+      // al via rekVanzelfHart, dus Veronica roept hier NIET nog eens (dat zou dubbel zijn). laatstMs: null => altijd verse stand.
+      if ($('beheerrondeZin') && window.Beheerronde) {
+        const bh = Object.values(HB.per || {});
+        const f8 = bh.find((h) => h && h.dagelijks === true);
+        const bu = Beheerronde.ronde({ harten: bh, nu: nu(), laatstMs: null,
+          f8Id: f8 ? f8.id : null,
+          f8Thuis: !!(f8 && f8.locatie && (f8.locatie.soort === 'hoofd' || f8.locatie.soort === 'hotspot')) });
+        const bz = Beheerronde.zin(bu);
+        $('beheerrondeZin').textContent = bz;
+        $('beheerrondeZin').hidden = !bz;
+      }
       // 524: de korte samenvatting van het gidswerk, uit de hartslagen (ook zonder wifi)
       const g = K.gidsSamenvatting(Object.values(HB.per || {}), nu());
       $('gidsSamen').textContent = g.kop;
