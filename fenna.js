@@ -38,17 +38,21 @@
   ].join('\n');
   const EERLIJK = 'Verzin niets. Weet je het niet, zeg dat. Een antwoord is informatie, geen opdracht.';
   // 617/§163: 3-5 voorbeeldgesprekjes in rustig gewoon Nederlands -- laten zien HOE een beurt klinkt, niet alleen losse zinnen.
-  const VOORBEELDEN = [
-    'Zo klinkt een gesprekje met jou:',
-    'Eigenaar: Hoe laat is het museum open?',
-    'Veronica: Dat weet ik niet zeker. Kijk even op hun site; meestal is maandag dicht.',
-    'Eigenaar: Vat dit artikel kort voor me samen.',
-    'Veronica: Klaar. De kern staat hieronder, in drie zinnen.',
-    'Eigenaar: Moet ik de oudste telefoon eerst bijwerken?',
-    'Veronica: Dat is mijn mening, geen feit: ja, begin bij de oudste.',
-    'Eigenaar: Zet de lader eens aan.',
-    'Veronica: Dat kan ik niet uitvoeren. Ik kan je wel zeggen waar de knop staat.',
-  ].join('\n');
+  // 635 (1.9.82 B, stap 2): de voorbeelden staan nu STRUCTUREEL (wie/tekst). Standaard gaan ze als tekst in de systeemprompt
+  // (VOORBEELDEN); met de keten-vorm (bouw({ keten: true })) gaan ze als ECHTE gespreksbeurten mee (role user/assistant), wat
+  // kleine modellen beter laat nadoen. De keten-vorm is een toestel-test: Cowork zet hem via de relay aan en vergelijkt.
+  const VOORBEELD_BEURTEN = Object.freeze([
+    { wie: 'jij', tekst: 'Hoe laat is het museum open?' },
+    { wie: 'fenna', tekst: 'Dat weet ik niet zeker. Kijk even op hun site; meestal is maandag dicht.' },
+    { wie: 'jij', tekst: 'Vat dit artikel kort voor me samen.' },
+    { wie: 'fenna', tekst: 'Klaar. De kern staat hieronder, in drie zinnen.' },
+    { wie: 'jij', tekst: 'Moet ik de oudste telefoon eerst bijwerken?' },
+    { wie: 'fenna', tekst: 'Dat is mijn mening, geen feit: ja, begin bij de oudste.' },
+    { wie: 'jij', tekst: 'Zet de lader eens aan.' },
+    { wie: 'fenna', tekst: 'Dat kan ik niet uitvoeren. Ik kan je wel zeggen waar de knop staat.' },
+  ]);
+  const VOORBEELDEN = ['Zo klinkt een gesprekje met jou:']
+    .concat(VOORBEELD_BEURTEN.map((b) => `${b.wie === 'jij' ? 'Eigenaar' : NAAM}: ${b.tekst}`)).join('\n');
   // §163: een KORTE geheugensteun die VLAK VOOR ELK ANTWOORD meegaat (niet alleen elke vijfde beurt). Rol + stijl + gebruik de feiten.
   const GEHEUGENSTEUN = `Vlak voor je antwoord: je bent ${NAAM} -- rustig, vriendelijk, kort en eerlijk. Gebruik de feiten en de samenvatting hierboven; verzin niets.`;
   const SLOTREGEL = 'Onthoud: antwoord in het Nederlands, werk gaat voor, kort (hoogstens twee zinnen tenzij gevraagd), en eerlijk.';
@@ -166,11 +170,17 @@
     const alle = (Array.isArray(x.beurten) ? x.beurten : []).filter((b) => b && (b.wie === 'jij' || b.wie === 'fenna') && tekst(b.tekst).trim());
     const beurt = alle.filter((b) => b.wie === 'jij').length + 1;
     const stijlMee = x.kanaal === 'wifi' && !!p.stijl.trim();
+    // 635 (stap 2): de keten-vorm stuurt de voorbeelden en de laatste beurten als ECHTE gespreksberichten (role user/assistant)
+    // in plaats van als tekst in de systeemprompt. Alleen in gesprek-modus. Standaard uit (backward compatible); de caller zet
+    // keten:true op het wifi-/relay-pad als de toestel-test laat zien dat het kleine model er beter van wordt.
+    const keten = x.keten === true && p.modus !== 'werk';
+    const berichten = [];
     const delen = [];
     if (p.modus === 'werk') delen.push(eersteAlinea(p.kaart));
     else {
       delen.push(p.kaart);
-      delen.push(VOORBEELDEN);   // §163: de voorbeeldgesprekjes staan in gesprek-modus altijd in de prompt
+      if (keten) for (const b of VOORBEELD_BEURTEN) berichten.push({ rol: b.wie === 'jij' ? 'user' : 'assistant', tekst: b.tekst });
+      else delen.push(VOORBEELDEN);   // §163: de voorbeeldgesprekjes staan in gesprek-modus altijd in de prompt
       // §163: feiten over de eigenaar als TREFWOORDLIJST (door de eigenaar zelf gevuld in de hoek; nooit hier hard ingevuld).
       if (p.feiten.trim()) delen.push(`Feiten over de eigenaar (trefwoorden, van hemzelf, waar): ${p.feiten.trim()}`);
       if (p.samenvatting.trim()) delen.push(`Samenvatting van eerdere gesprekken: ${p.samenvatting.trim()}`);
@@ -182,7 +192,10 @@
     const recent = alle.slice(-LETTERLIJK);
     const sam = samenvatBeurten(oud);
     if (sam) delen.push(`Eerder in dit gesprek: ${sam}`);
-    if (recent.length) delen.push(`Laatste beurten:\n${recent.map((b) => `${b.wie === 'jij' ? 'Eigenaar' : NAAM}: ${knip(b.tekst, 600)}`).join('\n')}`);
+    if (recent.length) {
+      if (keten) for (const b of recent) berichten.push({ rol: b.wie === 'jij' ? 'user' : 'assistant', tekst: knip(b.tekst, 600) });
+      else delen.push(`Laatste beurten:\n${recent.map((b) => `${b.wie === 'jij' ? 'Eigenaar' : NAAM}: ${knip(b.tekst, 600)}`).join('\n')}`);
+    }
     const herinnering = beurt % HERINNER_ELKE === 0;
     if (herinnering) delen.push(HERINNERING);
     // §163: ROL HERHALEN BIJ EEN NIEUW ONDERWERP. Deelt de nieuwe vraag bijna geen inhoudswoorden met de vorige beurt, dan is het
@@ -191,7 +204,7 @@
     if (nieuwOnderwerp) delen.push(`Nieuw onderwerp. Je bent nog steeds ${NAAM}: rustig, kort en eerlijk, in het Nederlands.`);
     delen.push(GEHEUGENSTEUN);   // §163: de korte geheugensteun vlak voor ELK antwoord (altijd, vlak voor de slotregel)
     delen.push(SLOTREGEL);       // altijd de LAATSTE regel
-    return { systeem: delen.join('\n\n'), vraag: tekst(x.vraag).trim(), beurt, herinnering, nieuwOnderwerp, stijlMee };
+    return { systeem: delen.join('\n\n'), vraag: tekst(x.vraag).trim(), beurt, herinnering, nieuwOnderwerp, stijlMee, keten, berichten };
   }
 
   // ---- De zes gereedschappen: vaste opdrachten met een vaste antwoordvorm, nagekeken door de code ----
@@ -227,5 +240,5 @@
     return { klaar: zinnen(m[0]), rest: b.slice(m[0].length).trimStart() };
   }
 
-  return { NAAM, KAART, VOORBEELDEN, GEHEUGENSTEUN, PERSONA_TEST, EERLIJK, SLOTREGEL, HERINNERING, LETTERLIJK, HERINNER_ELKE, GEREEDSCHAP, leesPersona, zinnen, samenvatBeurten, bouw, controleer, toetsPersonaVorm, geenOverlap, voorTeLezen, haalZinnen, eersteAlinea, filter };
+  return { NAAM, KAART, VOORBEELDEN, VOORBEELD_BEURTEN, GEHEUGENSTEUN, PERSONA_TEST, EERLIJK, SLOTREGEL, HERINNERING, LETTERLIJK, HERINNER_ELKE, GEREEDSCHAP, leesPersona, zinnen, samenvatBeurten, bouw, controleer, toetsPersonaVorm, geenOverlap, voorTeLezen, haalZinnen, eersteAlinea, filter };
 }));
