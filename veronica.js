@@ -4297,19 +4297,12 @@
         if (taak.soort === 'stem') continue;                       // 541: nooit naar de chat van een model; zie stemTik()
         // 469: telefoons die de eigenaar voor deze soort heeft uitgezet (alleen uitsluiten; pool.js beslist de rest).
         for (const a of uitgeslotenDoorKeuze(taak.claude ? 'claude' : 'veronica')) if (!(taak.uitgesloten = taak.uitgesloten || []).includes(a)) taak.uitgesloten.push(a);
-        // 636: een gespreksvraag gaat naar de mond, niet naar de lichte motor (het kleinste model geeft onzin in een gesprek).
-        // Eerst een capabele telefoon die NIET de geheugen-telefoon is, dan de geheugen-telefoon als reserve -- allebei zonder de
-        // lichte motor. Zijn er alleen lichte/ongemeten telefoons (zoals in een test), dan valt het terug op alles, zodat de vraag
-        // nooit vastloopt.
-        let t = null;
-        if (taak.gesprek) {
-          const g = geheugenAdres();
-          const nietLicht = (x) => (staten[x.adres] || {}).klasse !== 'licht';
-          const mond = S.telefoons.filter((x) => x.adres !== g && nietLicht(x));
-          if (mond.length) t = Pool.kiesTelefoon(mond, staten, taak, nu());
-          if (!t) { const reserve = S.telefoons.filter(nietLicht); if (reserve.length) t = Pool.kiesTelefoon(reserve, staten, taak, nu()); }
-        }
-        if (!t) t = Pool.kiesTelefoon(S.telefoons, staten, taak, nu());
+        // 636: een gespreksvraag gaat via Pool.kiesMond naar de mond (een capabele telefoon, nooit de lichte motor; de geheugen-
+        // telefoon als reserve; bezig = wacht liever dan onzin). Een gewone klus (sorteren e.d.) gaat via de normale kiesTelefoon,
+        // dus die mag wél naar de lichte motor.
+        const t = taak.gesprek
+          ? Pool.kiesMond(S.telefoons, staten, taak, nu(), { geheugenAdres: geheugenAdres() })
+          : Pool.kiesTelefoon(S.telefoons, staten, taak, nu());
         if (t) { draai(taak, t); gedaan = true; break; }
       }
       if (gedaan) continue;

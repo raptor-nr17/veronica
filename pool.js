@@ -190,6 +190,21 @@
     return kand[0];
   }
 
+  // 636: DE MOND voor een gespreksvraag. Een gesprek heeft een capabel model nodig; de LICHTE motor (klasse 'licht', het kleinste
+  // model) geeft onzin in een gesprek en doet alleen sorteerklussen. Daarom: eerst een capabele telefoon die NIET de geheugen-
+  // telefoon is (de mond), dan de geheugen-telefoon als reserve. Zijn alle capabele telefoons bezig, dan null -- de vraag WACHT
+  // liever dan onzin te geven. Alleen als er helemaal GEEN capabele telefoon bestaat (alles is de lichte motor) gaat het alsnog
+  // daarheen (iets is beter dan niets). opt.geheugenAdres = het adres van de geheugen-telefoon (de reserve-mond).
+  function kiesMond(telefoons, staten, taak, nu, opt) {
+    const geheugen = opt && opt.geheugenAdres;
+    const st = (t) => (staten || {})[t.adres] || {};
+    const capabel = (telefoons || []).filter((t) => st(t).klasse !== 'licht');
+    const mond = capabel.filter((t) => t.adres !== geheugen);
+    return kiesTelefoon(mond, staten, taak, nu)
+      || kiesTelefoon(capabel, staten, taak, nu)
+      || (capabel.length ? null : kiesTelefoon(telefoons, staten, taak, nu));
+  }
+
   // Geen vrije telefoon voor een klus: mag een lagere klus die nu loopt worden afgebroken? Terug: het adres, of null.
   // lopend = [{ adres, voorrang, sinds, kern }]. Alleen een STRIKT lagere voorrang (hoger getal) wordt verdrongen; de jongste eerst.
   function verdring(taak, lopend, telefoons, staten, nu) {
@@ -257,5 +272,5 @@
     };
   }
 
-  return { wachtrijVolgorde, KLASSEN, GEWICHT_NAAR_KLASSEN, capaciteit, nominaalGb, gewichtVan, tijdslimiet, VOORRANG, SOORTEN, EIGEN_SOORTEN, LET_OP, MAX_TEKST, MAX_TOKENS, KAN_NODIG, STEM_MAX_TEKST, valideer, maakPrompt, rangVan, geschikt, kiesTelefoon, verdring, volgende, maakRem, bijwerkSnelheid, maakResultaat, pantserRegel };
+  return { wachtrijVolgorde, KLASSEN, GEWICHT_NAAR_KLASSEN, capaciteit, nominaalGb, gewichtVan, tijdslimiet, VOORRANG, SOORTEN, EIGEN_SOORTEN, LET_OP, MAX_TEKST, MAX_TOKENS, KAN_NODIG, STEM_MAX_TEKST, valideer, maakPrompt, rangVan, geschikt, kiesTelefoon, kiesMond, verdring, volgende, maakRem, bijwerkSnelheid, maakResultaat, pantserRegel };
 }));
