@@ -366,6 +366,23 @@
     if (typeof self !== 'undefined' && self.GastBrein) return self.GastBrein;
     try { return typeof require === 'function' ? require('./gastbrein.js') : null; } catch (e) { return null; }
   }
+  // 1a (super-jarvis, Veronica offline): is Veronica NU "thuis offline"? Dat is: internet ligt eruit (echte internet-fetches falen,
+  // of navigator.onLine is false) EN er is minstens één rektelefoon op het huis-wifi bereikbaar. Dan hoeft Veronica nergens op
+  // internet (relay/ntfy/Google) te wachten en gaat alles lokaal. Pure functie, los te toetsen.
+  //   bereikbaar: aantal rektelefoons dat NU over het wifi antwoordt.
+  //   internetFoutSinds: tijdstip (ms) sinds wanneer internet-fetches falen (0 = geen fout bekend).
+  //   online: navigator.onLine (false = zeker offline; true zegt weinig op een wifi zonder internet).
+  function thuisModus(o) {
+    const x = o || {};
+    const nuMs = Number(x.nu) || Date.now();
+    const bereikbaar = Number(x.bereikbaar) || 0;
+    if (bereikbaar <= 0) return { offline: false, zin: '' };   // zonder een telefoon op het wifi is "thuis offline" zinloos
+    const foutSinds = Number(x.internetFoutSinds) || 0;
+    const grens = Number(x.grensMs) || 20000;   // internet moet minstens zo lang falen (één hik telt niet)
+    const internetStuk = (x.online === false) || (foutSinds > 0 && nuMs - foutSinds >= grens);
+    if (!internetStuk) return { offline: false, zin: '' };
+    return { offline: true, zin: `Thuis, offline — alles lokaal (${bereikbaar} ${bereikbaar === 1 ? 'telefoon' : 'telefoons'} op het wifi).` };
+  }
   function rolNaam(h) {
     const w = (x) => (x && typeof x === 'object' && 'waarde' in x ? x.waarde : x);   // ook een meting uit /jarvis/status
     if (h && h.gast && typeof h.gast === 'object') return 'gast-brein';   // 546: nooit baas, nooit rektelefoon
@@ -2206,7 +2223,7 @@
     return uit.slice(0, 6);
   }
   return { verwachtElke, wegRedenen, OUDE_RELAY_ELKE_MS, verbinding, VERBINDING_GROEN_MS, VERBINDING_ORANJE_MS, kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, kiesHotspotDownloader, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
-    alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, ontdubbelTelefoons, ruimSpokenOp, SPOOK_MS, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
+    alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, thuisModus, ontdubbelTelefoons, ruimSpokenOp, SPOOK_MS, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,
