@@ -4267,12 +4267,23 @@
       // 541: een STEMKLUS (een verhaal per regel) gaat nooit als vraag naar een model; hij wacht op een telefoon die `kan: ['stem']` meldt.
       const taak = { id: nieuwId(), tekst: r.slice(0, stem ? Pool.STEM_MAX_TEKST : 20000), status: 'wacht', pogingen: 0, sinds: nu(), telefoon: null, uitkomst: null };
       if (stem) taak.soort = 'stem';
+      // 636: een GESPREKSVRAAG aan Veronica (gesprek:true) laat werkTik de mond kiezen: NIET de lichte motor (het kleinste model
+      // geeft onzin in een gesprek en doet alleen sorteerklussen), wel een capabele mond-telefoon, met de geheugen-telefoon als
+      // reserve. Geen hard gewicht: zijn er alleen lichte/ongemeten telefoons, dan gaat de vraag daar wel heen.
+      else taak.gesprek = true;
       S.taken.push(taak);
       await Opslag.taak(taak);
     }
     logRegel(`${regels.length} ${stem ? (regels.length === 1 ? 'stemklus' : 'stemklussen') : (regels.length === 1 ? 'vraag' : 'vragen')} in de wachtrij.`);
     tekenWachtrij();
     werkTik();
+  }
+  // 636: het adres van de geheugen-telefoon uit de hartslagen -- gebruikt om haar als RESERVE-mond te houden (een andere mond eerst).
+  function geheugenAdres() {
+    const h = Object.values(HB.per || {}).find((x) => x && x.geheugen === true);
+    if (!h) return null;
+    const t = S.telefoons.find((x) => x.toestel && String(x.toestel.id) === String(h.id));
+    return t ? t.adres : null;
   }
   function werkTik() {
     if (!S.aan) return;
@@ -4286,7 +4297,19 @@
         if (taak.soort === 'stem') continue;                       // 541: nooit naar de chat van een model; zie stemTik()
         // 469: telefoons die de eigenaar voor deze soort heeft uitgezet (alleen uitsluiten; pool.js beslist de rest).
         for (const a of uitgeslotenDoorKeuze(taak.claude ? 'claude' : 'veronica')) if (!(taak.uitgesloten = taak.uitgesloten || []).includes(a)) taak.uitgesloten.push(a);
-        const t = Pool.kiesTelefoon(S.telefoons, staten, taak, nu());
+        // 636: een gespreksvraag gaat naar de mond, niet naar de lichte motor (het kleinste model geeft onzin in een gesprek).
+        // Eerst een capabele telefoon die NIET de geheugen-telefoon is, dan de geheugen-telefoon als reserve -- allebei zonder de
+        // lichte motor. Zijn er alleen lichte/ongemeten telefoons (zoals in een test), dan valt het terug op alles, zodat de vraag
+        // nooit vastloopt.
+        let t = null;
+        if (taak.gesprek) {
+          const g = geheugenAdres();
+          const nietLicht = (x) => (staten[x.adres] || {}).klasse !== 'licht';
+          const mond = S.telefoons.filter((x) => x.adres !== g && nietLicht(x));
+          if (mond.length) t = Pool.kiesTelefoon(mond, staten, taak, nu());
+          if (!t) { const reserve = S.telefoons.filter(nietLicht); if (reserve.length) t = Pool.kiesTelefoon(reserve, staten, taak, nu()); }
+        }
+        if (!t) t = Pool.kiesTelefoon(S.telefoons, staten, taak, nu());
         if (t) { draai(taak, t); gedaan = true; break; }
       }
       if (gedaan) continue;
@@ -4349,6 +4372,11 @@
       const ms = nu() - t0;
       taak.status = 'klaar';
       taak.uitkomst = K.zonderDenken(lezer.tekst());
+      // 636: FILTER OP ELK ANTWOORDPAD. Een gespreksvraag gaat door Veronica's persona-filter (fenna.js): te lang wordt
+      // ingekort en de vorm genormaliseerd, zodat elk antwoord als Veronica klinkt, op welke telefoon het ook rekende.
+      if (taak.gesprek && window.Fenna && typeof window.Fenna.filter === 'function') {
+        try { const f = window.Fenna.filter(taak.uitkomst); if (f && f.tekst) taak.uitkomst = f.tekst; } catch (e) { /* laat de ruwe tekst staan */ }
+      }
       taak.klaar = nu();
       if (stukjes > 2) S.snelheid[t.adres] = Pool.bijwerkSnelheid(S.snelheid[t.adres], stukjes, ms);
       S.klusMs[t.adres] = ms;
@@ -5724,7 +5752,9 @@
       S.karakter = (await Opslag.lees('karakter')) === 'zakelijk' ? 'zakelijk' : 'hulpdienst';
       S.wilWakker = (await Opslag.lees('wakker')) === true;
       S.bureau = !AlleenL.aan && (await Opslag.lees('bureau')) !== false;   // 550: met Alleen lokaal blijft het bureau dicht, ook na herladen
-      try { S.aan = localStorage.getItem('veronica-pantser') === 'aan'; } catch (e) { S.aan = false; }   // 595/596: pantser overleeft een herlaadbeurt; localStorage (synchroon, betrouwbaar) i.p.v. async IndexedDB
+      // 636: pantser STANDAARD AAN (de eigenaar wil alle telefoons altijd actief en helpend). Alleen een expliciete 'uit' zet
+      // hem uit; onbekend of 'aan' = aan. De keuze overleeft een herlaadbeurt (localStorage, synchroon/betrouwbaar).
+      try { S.aan = localStorage.getItem('veronica-pantser') !== 'uit'; } catch (e) { S.aan = true; }
       S.taken = ((await Opslag.alleTaken()) || []).sort((a, b) => a.sinds - b.sinds);
       // Wat bezig was toen Veronica dichtging, gaat terug in de wachtrij.
       for (const x of S.taken) if (x.status === 'bezig') { x.status = 'wacht'; x.telefoon = null; await Opslag.taak(x); }
@@ -6359,7 +6389,9 @@
     try { await kaartenUitHarten(); } catch (e) { /* de lijst van nu */ }
     AvV.laatste = avVoorschouw();
     tekenAvengers();
-    if (!AvV.actief) $('avNee').focus();
+    // 636: ASSEMBLE IS DE GEWONE STAND. Geen aparte "Ja, roep ze bij elkaar"-tik meer: het paneel roept de rij meteen bij elkaar
+    // (pantser staat standaard aan, dus dit bevestigt alleen). De eigenaar wil alle telefoons altijd actief en helpen.
+    if (!AvV.actief) await avAssemble().catch(() => {});
   }
   async function avAssemble() {
     if (AvV.bezig || !window.Avengers) return null;

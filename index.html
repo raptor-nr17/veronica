@@ -302,7 +302,8 @@
     <p id="avZin" class="groteMelding" aria-live="polite"></p>
     <ul id="avLijst"></ul>
     <ul id="avNieuw"></ul>
-    <div id="avBevestig"><button type="button" id="avNee" class="tweede">Nee, laat staan</button> <button type="button" id="avJa">Ja, roep ze bij elkaar</button></div>
+    <!-- 636: assemble is de gewone stand -- geen "Ja, roep ze bij elkaar"-gate meer; het paneel roept de rij meteen bij elkaar. Sluiten kan met "Sluit dit paneel". -->
+    <div id="avBevestig" hidden><button type="button" id="avNee" class="tweede">Nee, laat staan</button> <button type="button" id="avJa">Ja, roep ze bij elkaar</button></div>
     <div id="avModi" hidden><h3>Wat gaan ze doen?</h3><div id="avModiLijst"></div></div>
     <p id="avStand" aria-live="polite"></p>
     <p class="eerlijk">Niets met effect op de echte wereld zonder jouw goedkeuring: de modi rekenen, zoeken of doen voorstellen. De NOODSTOP bovenaan stopt alles, altijd.
@@ -312,6 +313,8 @@
   <section id="scherm-live">
     <p id="leeg">Nog geen telefoons. Tik op Meer en dan op Koppelen.</p>
     <p id="priveBezig" class="groteMelding" hidden>Privé-klus bezig</p>
+    <!-- 636: de beheerder-ronde op het hoofdscherm -- wie doet mee en wie pauzeert even en waarom (assemble is de gewone stand) -->
+    <p id="beheerrondeZin" class="tBron" hidden></p>
     <div id="tegels"></div>
     <div id="stekkerNieuw"></div>
     <div id="nieuwKoppelBlok" class="zsPaneel" hidden>
