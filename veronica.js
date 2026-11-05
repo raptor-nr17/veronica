@@ -260,6 +260,10 @@
   // ---- 500: DE HARTSLAG EN DE ROEP VIA DE BRIEVENBUS (hartslag.js, byte-gelijk met JARVIS) ----
   // HB: per toestel-id de laatste hartslag. Komt via dezelfde ene verbinding als de ledenbrief (ledenStroom).
   const HB = { per: {}, viaPost: 0 };
+  // 638: een werker die nog een OUDE rij-code gebruikt (codeVinger wijkt af van die van de huidige code) wordt door een andere telefoon telkens
+  // een minuut buitengezet. Veronica herstelt dat vanzelf via word-werker (alleenCode), hoogstens eens per kwartier per telefoon.
+  const CodeHerstelV = { per: {}, vinger: '', vingerCode: '', MIN_MS: 15 * 60 * 1000 };
+  const DagBaasV = {};   // 639: per toestel-id wanneer Veronica de dagelijkse telefoon (F8) voor het laatst uit de beheerder-stand haalde
   const GZ = { per: {} };   // 535: het laatste gezondheidsrapport per telefoon (toestel-id)
   const NtfyGeefV = { per: {}, mijn: null, mijnVan: '' };
   // 529: DE RELAY (tools/relay) als eerste weg. Het adres staat alleen hier (localStorage, geen geheim: wat erdoor gaat is versleuteld
@@ -404,6 +408,24 @@
     const h = (t && t.id && HB.per[t.id]) || (t ? hartslagVoorAdres(t.adres) : null);
     return !!(h && h.t && nu() - h.t <= K.HARTSLAG_VERS_MS);
   }
+  // 638: ZELF DE OUDE RIJ-CODE HERSTELLEN. Een werker meldt in zijn hartslag een eenrichtings-vinger van zijn rij-code (codeVinger).
+  // Wijkt die af van de vinger van de HUIDIGE code, dan heeft hij een oude code: een andere telefoon zet hem telkens een minuut buiten (552). Dan
+  // stuurt Veronica die ENE telefoon een word-werker-roep met alleenCode (527 CODE_OVERNEMEN): de telefoon neemt de huidige code over
+  // zonder dat zijn rol verandert. Alleen een WERKER (nooit de beheerder, die heeft de juiste code), met een geldige, afwijkende, niet-
+  // lege vinger, hoogstens eens per kwartier. Lege vinger = oude JARVIS zonder dit veld: overslaan. Geen code = niets te vergelijken.
+  async function codeHerstel(h) {
+    if (!h || !h.id || !S.code || !window.Hartslag || !window.Hartslag.codeVinger || !S.ntfy || !S.ntfy.onderwerp) return;
+    if (!h.codeVinger || h.voorkeur === 'kern' || h.rol === 'baas') return;   // geen vinger, of het is de beheerder: met rust laten
+    const sleutel = `${S.ntfy.onderwerp}:${S.code}`;
+    if (CodeHerstelV.vingerCode !== sleutel) { CodeHerstelV.vinger = await window.Hartslag.codeVinger(S.ntfy.onderwerp, S.code); CodeHerstelV.vingerCode = sleutel; }
+    if (!CodeHerstelV.vinger || h.codeVinger === CodeHerstelV.vinger) return;   // de code klopt al, of we konden geen vinger maken
+    const vorig = CodeHerstelV.per[h.id] || 0;
+    if (nu() - vorig < CodeHerstelV.MIN_MS) return;
+    CodeHerstelV.per[h.id] = nu();
+    const ok = await roepNaarId(h.id, { soort: 'word-werker', van: 'veronica', codeOvernemen: true, alleenCode: true });
+    logRegel(ok ? `${h.naam || 'Een telefoon'} gebruikte nog een oude rij-code; ik stuur hem de huidige code zodat hij weer meedoet.`
+      : `${h.naam || 'Een telefoon'} heeft een oude rij-code, maar ik kon hem de nieuwe nu niet sturen (de brievenbus was niet te bereiken). Ik probeer het straks weer.`);
+  }
   async function hartslagRegel(o, regel) {
     if (!window.Hartslag) return false;
     const h = await window.Hartslag.leesHartslag(o, regel);
@@ -417,6 +439,7 @@
     geefPostbusViaBrievenbus(h).catch(() => {});   // 504: een telefoon die zich meldt krijgt de verse code (een keer)
     herstelMotor(h).catch(() => {});   // 505: een vastgelopen motor weer op gang
     rekVanzelfHart(h).catch(() => {});   // 522: een werker met de motor uit, ook op het gastnetwerk
+    codeHerstel(h).catch(() => {});   // 638: een werker met een oude rij-code krijgt vanzelf de huidige (word-werker, alleenCode)
     geefRelay(h).catch(() => {});   // 529: het relay-adres (of uit) als zijn hartslag iets anders zegt
     MeetV.boek = K.meetboekBij(MeetV.boek, h, nu()); Opslag.schrijf('meetboek', MeetV.boek).catch(() => {});   // 529: meetplan B en D
     if (WensV.per[h.id]) werkerWensTik(h.id, { rol: h.rol, voorkeur: null, dagelijks: !!h.dagelijks }, null).catch(() => {});   // 525
@@ -3022,9 +3045,26 @@
   // 'dagelijks' -- die zet hem terug op werker -- en Veronica meldt dat in één regel. Een werker stuurt zelf nooit iets naar buiten hiervoor.
   const dagelijksId = () => { try { return localStorage.getItem('veronica-dagelijks-id') || ''; } catch (e) { return ''; } };
   async function dagelijksCorrigeer(h) {
-    if (!h || !h.id || !h.dagelijks) return;   // alleen een telefoon die zegt dat hij dagelijks is
+    if (!h || !h.id) return;
     const mag = dagelijksId();
-    if (mag && String(h.id) === String(mag)) return;   // dit IS de aangewezen dagelijkse telefoon: met rust laten
+    const isAangewezen = mag && String(h.id) === String(mag);
+    // 639: een telefoon doet alleen mee als hij OF zelf zegt dagelijks te zijn, OF door Veronica als dagelijkse telefoon is aangewezen
+    // (die laatste kan nog rol:'baas' melden omdat hij het zelf nog niet weet -- juist dan moet Veronica hem terugzetten).
+    if (!h.dagelijks && !isAangewezen) return;
+    if (isAangewezen) {
+      // 639: dit IS de aangewezen dagelijkse telefoon (de F8). Meldt hij TOCH dat hij beheerder is (voorkeur 'kern' of rol 'baas',
+      // omdat hij ooit de baas was), dan zag Veronica "de F8 is nu de baas". De F8 is NOOIT de baas (546/637). Stuur hem de roep
+      // 'dagelijks' opnieuw: JARVIS 1.9.83+ haalt dan zijn beheerder-stand weg (zelfherstel), zodat een rektelefoon de hoofdtelefoon
+      // wordt. Hoogstens eens per kwartier; een oudere F8 negeert de beheerder-strip (die moet eerst bijgewerkt worden).
+      const beheerder = h.voorkeur === 'kern' || h.rol === 'baas';
+      if (!beheerder) return;
+      const vorig = DagBaasV[h.id] || 0;
+      if (nu() - vorig < 15 * 60 * 1000) return;
+      DagBaasV[h.id] = nu();
+      const ok = await roepNaarId(h.id, { soort: 'dagelijks', van: 'veronica', id: mag });
+      if (ok) { const naam = K.naamVan ? K.naamVan(h) : (h.naam || 'Een telefoon'); logRegel(`${naam} stond nog als beheerder terwijl hij de dagelijkse telefoon is; ik zet hem terug zodat een rektelefoon de hoofdtelefoon wordt.`); }
+      return;
+    }
     const ok = await roepNaarId(h.id, { soort: 'dagelijks', van: 'veronica', id: mag });
     if (ok) { const naam = K.naamVan ? K.naamVan(h) : (h.naam || 'Een telefoon'); meld(`${naam} stond op "dagelijkse telefoon"; teruggezet op werker (de dagelijkse telefoon is de F8).`); logRegel(`${naam}: dagelijks -> werker (maar één dagelijkse telefoon).`); }
   }

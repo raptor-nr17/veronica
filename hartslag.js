@@ -98,6 +98,15 @@
     if (!ONDERWERP_RE.test(String(o || ''))) return null;
     return naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes('brievenbus-vinger:' + o))).slice(0, 8);
   }
+  // 638: een EENRICHTINGS-vingerafdruk van de rij-code (de zes cijfers), gezouten met het onderwerp. Zo kan Veronica zien dat een
+  // werker nog een OUDE rij-code heeft (zijn vinger wijkt af van die van de huidige code) zonder dat de code zelf in de hartslag
+  // staat. De hele hartslag is al versleuteld met het geheime ntfy-onderwerp; alleen wie dat geheim heeft kan dit lezen, en die
+  // heeft al volledige macht over de rij. Veronica herstelt een afwijkende werker daarna via de ENE gesanctioneerde weg: de roep
+  // word-werker met de huidige code (527 CODE_OVERNEMEN). Leeg = geen code of een oude JARVIS.
+  async function codeVinger(o, code, c) {
+    if (!ONDERWERP_RE.test(String(o || '')) || !/^\d{6}$/.test(String(code || ''))) return '';
+    return naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes('rijcode-vinger:' + o + ':' + code))).slice(0, 12);
+  }
   async function sleutel(o, soort, gebruik, c) {
     const sub = cryptoNu(c).subtle;
     const pre = soort === 'roep' ? 'veronica-roep-sleutel:' : (soort === 'ploeg' ? 'veronica-ploeg-sleutel:' : 'veronica-hartslag-sleutel:');
@@ -172,6 +181,10 @@
       relay: x.relay === true,
       elke: getal(x.elke, 0, 6 * 3600 * 1000),   // 552: hoe vaak deze JARVIS zijn hartslag stuurt (ms); leeg = een oude JARVIS
       privePost: x.privePost === true,   // 536: deze telefoon is aan de privé-hoek gekoppeld en leest "Praat met de rij" (alleen ja/nee)
+      // 638: de eenrichtings-vinger van de rij-code (codeVinger). Wijkt hij af van die van de huidige code, dan heeft deze werker
+      // een oude code en zet een andere telefoon hem telkens een minuut buiten; Veronica herstelt dat via word-werker. Telt NIET in hartslagSleutel
+      // (de code verandert zelden; een constante waarde zou toch nooit een extra hartslag uitlokken, en we houden de sleutel krap).
+      codeVinger: /^[a-f0-9]{1,16}$/.test(String(x.codeVinger || '')) ? String(x.codeVinger) : '',
       // 529: DE WAAKHOND. Lag JARVIS stil (geen tik van zijn eigen klok, meestal: Android liet hem slapen), dan meldt hij dat zelf:
       // de laatste vijf keer, begin en duur in minuten, en of hij toen aan de lader hing. Zo is te METEN of de dienst het volhoudt.
       slaap: (Array.isArray(x.slaap) ? x.slaap : []).slice(-5).map((g) => ({ t: Math.floor(Number(g && g.t) || 0), min: getal(Number(g && g.min), 0, 100000), laadt: g && typeof g.laadt === 'boolean' ? g.laadt : null }))
@@ -440,5 +453,5 @@
     return delen.length ? `lijnen: ${delen.join(' · ')}` : '';
   }
 
-  return { schoonGezond, gezondSleutel, gezondVerzoek, leesGezond, GEZOND_MAX, lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, meetuurUit, meetuurBlok, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, ploegVerzoek, leesPloeg, pollUrl, diagnose, motorZin, minutenZin };
+  return { schoonGezond, gezondSleutel, gezondVerzoek, leesGezond, GEZOND_MAX, lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, meetuurUit, meetuurBlok, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, codeVinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, ploegVerzoek, leesPloeg, pollUrl, diagnose, motorZin, minutenZin };
 }));
