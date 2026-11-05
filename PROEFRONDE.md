@@ -47,6 +47,7 @@ Deze acties raken echte dingen (privé-inhoud wissen, een herstel, geld of beric
 | `zoek` | Meer | typ een zoekvraag en klik Zoek | de zoekstapel verschijnt; zonder telefoon een eerlijke zin | **[veilig-alleen-proefstand]** echte zoekopdracht naar de telefoons |
 | `proefronde-tonen` | Meer | klik Proefronde | deze lijst verschijnt in de pagina | |
 | `zelftest-knoppen` | Meer | klik "Veronica checkt zichzelf" | een verslag verschijnt: hoeveel knoppen er zijn, hoeveel zichtbaar, en welke zichtbare knop onder iets anders ligt (stuk) | geen telefoon nodig; klikt niets echt aan |
+| `luistermodel` | Meer | klik "Haal het luistermodel op" (bij Spraak) | de stand gaat naar "wordt opgehaald"; na afloop "staat klaar" en de knop verdwijnt | 641: haalt eenmalig het Whisper-model op (±75 MB); met internet |
 
 ## Nieuwe knop erbij
 

@@ -1554,6 +1554,14 @@
     }
     keus.value = S.spraak.stem;
     $('eigenaarNaam').value = S.eigenaar || '';
+    // 641: het luistermodel (Whisper op deze computer). Toon de stand; de knop verdwijnt als het klaar is of al ophaalt.
+    if ($('luisterModelZin')) $('luisterModelZin').textContent = luisterModelZin();
+    if ($('luisterModelKnop')) {
+      const k = $('luisterModelKnop');
+      const kan = typeof SttModel !== 'undefined' && SttM.stand !== 'klaar' && SttM.stand !== 'laden';
+      k.hidden = !kan;
+      k.textContent = SttM.stand === 'fout' ? 'Opnieuw: haal het luistermodel op' : 'Haal het luistermodel op';
+    }
   }
 
   // ---- SPRAAK IN: luisteren ----
@@ -1565,17 +1573,27 @@
     if (hey) spreek(K.veronicaZin(S.karakter, 'luister'), 'luister');
     const uitK = uitgeslotenDoorKeuze('veronica');
     const t = K.kiesTelefoon(S.telefoons.filter((x) => !uitK.includes(x.adres)), S.staten, nu());
-    if (t && navigator.mediaDevices && window.MediaRecorder) {
-      const tekst = await luisterViaGemma(t);
-      if (tekst !== null) return verwerkSpraak(tekst, 'Gemma');
+    const lokaalKan = SttM.stand === 'klaar';
+    // 1b/641: NEEM EEN KEER OP en route. Eerst een telefoon-verstaander (OlliteRT, snel), anders de lokale Whisper in Veronica
+    // zelf (geen telefoon, geen internet nodig). Zo luistert Veronica thuis-offline helemaal lokaal.
+    if ((t || lokaalKan) && navigator.mediaDevices && window.MediaRecorder) {
+      let samples = null;
+      try { samples = await naarMono16k(await neemOp(8000)); } catch (e) { samples = null; }   // geen microfoon: dan verder naar de thuis-blok of Chrome
+      if (samples) {
+        if (t) { const tekst = await transcribeer(t, K.wavVan(samples, 16000)); if (tekst !== null) return verwerkSpraak(tekst, 'Gemma'); }
+        if (lokaalKan) { const tekst = await transcribeerLokaal(samples); if (tekst !== null) return verwerkSpraak(tekst, 'Whisper'); }
+      }
     }
     // 1b (super-jarvis, Veronica offline): in de thuis-modus (internet eruit, wel het huis-wifi) OF met Vol lokaal aan luistert
-    // Veronica HARD lokaal -- nooit via Google. Lukt het lokale pad niet (geen telefoon met een verstaander vrij), dan zeggen we dat
-    // eerlijk i.p.v. stiekem online te gaan.
+    // Veronica HARD lokaal -- nooit via Google. Lukt het lokale pad niet (geen telefoon vrij en het luistermodel is er nog niet),
+    // dan zeggen we dat eerlijk en halen we het luistermodel vast op, zodat het de volgende keer wel lokaal kan.
     if (volLokaal() || thuisOffline()) {
-      $('spraakZin').textContent = thuisOffline()
-        ? 'Thuis en offline: ik luister alleen lokaal. Er moet even een telefoon met een verstaander (OlliteRT) vrij zijn.'
-        : 'Vol lokaal staat aan: luisteren via Google doe ik niet. Een Gemma op een telefoon moet vrij zijn.';
+      if (SttM.stand === 'geen' || SttM.stand === 'fout') luisterModelLaden().catch(() => {});
+      $('spraakZin').textContent = SttM.stand === 'laden'
+        ? 'Ik haal eenmalig het luistermodel op; daarna versta ik je ook zonder internet. Probeer het zo nog eens.'
+        : (thuisOffline()
+          ? 'Thuis en offline: ik luister alleen lokaal. Even geen telefoon met een verstaander (OlliteRT) vrij en het luistermodel is er nog niet.'
+          : 'Vol lokaal staat aan: luisteren via Google doe ik niet. Een Gemma op een telefoon of het lokale luistermodel moet vrij zijn.');
       return null;
     }
     return luisterViaChrome();
@@ -1598,8 +1616,9 @@
     $('micKnop').setAttribute('aria-pressed', 'false');
     return new Blob(stukken, { type: rec.mimeType || 'audio/webm' });
   }
-  // Opname -> 16 kHz mono -> WAV (kern.js: wavVan).
-  async function naarWav(blob) {
+  // Opname -> 16 kHz mono (Float32). De telefoon-verstaander (OlliteRT) wil een WAV; de lokale Whisper (641) wil juist de
+  // Float32-samples. Daarom één plek die de samples maakt, en naarWav bouwt er de WAV omheen.
+  async function naarMono16k(blob) {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     const ctx = new Ctx();
     const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
@@ -1608,13 +1627,9 @@
     const bron = off.createBufferSource();
     bron.buffer = buf; bron.connect(off.destination); bron.start();
     const uit = await off.startRendering();
-    return K.wavVan(uit.getChannelData(0), 16000);
+    return uit.getChannelData(0);
   }
-  async function luisterViaGemma(t) {
-    let wav;
-    try { wav = await naarWav(await neemOp(8000)); } catch (e) { $('spraakZin').textContent = 'Geen microfoon (of geen toestemming).'; return null; }
-    return transcribeer(t, wav);
-  }
+  async function naarWav(blob) { return K.wavVan(await naarMono16k(blob), 16000); }
   async function transcribeer(t, wav) {
     const fd = new FormData();
     fd.append('file', new Blob([wav], { type: 'audio/wav' }), 'spraak.wav');
@@ -5518,6 +5533,33 @@
     } catch (e) { BetekenisM.stand = volLokaal() ? 'lokaal' : 'fout'; }
     return BetekenisM.stand;
   }
+
+  // 641 (super-jarvis, fase 1b, keuze c): WHISPER IN DE BROWSER (stt-model.js). Zelfde patroon als het betekenismodel: alleen via
+  // de ENE poort ophalen (Vol lokaal houdt het tegen), de browser/het kaartje bewaren het, daarna versta ik ook zonder internet.
+  // Geen telefoon nodig; nooit Google. Zo luistert Veronica thuis-offline helemaal lokaal.
+  const SttM = { verstaander: null, naam: '', stand: 'geen', procent: 0 };
+  const STT_SLEUTEL = 'veronica-luister-model';
+  const STT_CACHE = 'veronica-luister';   // de service worker laat deze cache staan bij een nieuwe versie
+  async function luisterModelLaden() {
+    if (typeof SttModel === 'undefined' || SttM.stand === 'laden' || SttM.stand === 'klaar') return SttM.stand;
+    if (volLokaal()) { SttM.stand = 'lokaal'; return SttM.stand; }
+    SttM.stand = 'laden'; SttM.procent = 0;
+    try {
+      let browser = null;
+      try { browser = typeof caches !== 'undefined' ? await caches.open(STT_CACHE) : null; } catch (e) { browser = null; }
+      const cache = SttModel.kaartjeCache(KaartjeL, browser);
+      const m = await SttModel.laad({ importeer: (pad) => import(pad), opVoortgang: (p) => { SttM.procent = p; }, cache });
+      Object.assign(SttM, { verstaander: m.verstaander, naam: m.naam, stand: 'klaar' });
+      try { localStorage.setItem(STT_SLEUTEL, '1'); } catch (e) { /* dan de volgende keer weer een tik */ }
+    } catch (e) { SttM.stand = volLokaal() ? 'lokaal' : 'fout'; }
+    return SttM.stand;
+  }
+  // De opname (Float32 @16k) lokaal omzetten in tekst. Geen audio of tekst verlaat de pagina.
+  async function transcribeerLokaal(samples) {
+    if (SttM.stand !== 'klaar' || !SttM.verstaander) return null;
+    try { const tekst = await SttM.verstaander(samples); return tekst || null; } catch (e) { return null; }
+  }
+  function luisterModelZin() { return typeof SttModel === 'undefined' ? '' : SttModel.zin(SttM.stand, SttM.stand === 'laden' && SttM.procent ? `${SttM.procent}%` : ''); }
   function priveBetekenisLaag() {
     if (typeof PriveBetekenis === 'undefined') return null;
     let laag = null; let met;
@@ -6649,6 +6691,12 @@
       if (kanSpreken()) try { window.speechSynthesis.cancel(); } catch (e) { /* niets */ }
       spreek('Is goed, ik regel het. De Cat is weer koel.', 'proef');
     });
+    // 641: het luistermodel (Whisper) ophalen op een tik. Daarna versta ik ook zonder internet en zonder telefoon.
+    if ($('luisterModelKnop')) $('luisterModelKnop').addEventListener('click', async () => {
+      tekenSpraak();                                   // meteen "wordt opgehaald" tonen
+      await luisterModelLaden();
+      tekenSpraak();
+    });
     const doe = () => { const v = $('hoofdVraag'); const tk = v.value; v.value = ''; vraagDoe(tk).catch(() => {}); };
     $('vraagKnop').addEventListener('click', doe);
     $('hoofdVraag').addEventListener('keydown', (e) => { if (e.key === 'Enter') doe(); });
@@ -6711,6 +6759,15 @@
     if (!gehaald && !volLokaal() && BetekenisM.stand !== 'klaar' && BetekenisM.stand !== 'laden') {
       try { localStorage.setItem('veronica-betekenis-vanzelf', String(tijd)); } catch (e) { /* alleen voor nu */ }
       betekenisModelLaden().then((st) => { if (st === 'klaar') logRegel('Het betekenismodel is opgehaald: zoeken op betekenis werkt nu.'); }).catch(() => {});
+    }
+    // 5. Het LUISTERMODEL (Whisper, 641) ook EEN keer vanzelf ophalen zolang er internet is -- maar PAS als het betekenismodel niet
+    //    meer aan het downloaden is, zodat een gastnetwerk nooit twee grote downloads tegelijk krijgt (verstandige weg, §113).
+    let sttGehaald = '';
+    try { sttGehaald = localStorage.getItem('veronica-luister-vanzelf') || ''; } catch (e) { /* alleen voor nu */ }
+    if (!sttGehaald && !volLokaal() && typeof SttModel !== 'undefined' && SttM.stand !== 'klaar' && SttM.stand !== 'laden'
+      && (BetekenisM.stand === 'klaar' || BetekenisM.stand === 'fout' || BetekenisM.stand === 'lokaal' || BetekenisM.stand === 'geen' && typeof BetekenisModel === 'undefined')) {
+      try { localStorage.setItem('veronica-luister-vanzelf', String(tijd)); } catch (e) { /* alleen voor nu */ }
+      luisterModelLaden().then((st) => { if (st === 'klaar') logRegel('Het luistermodel is opgehaald: ik versta je nu ook zonder internet.'); }).catch(() => {});
     }
   }
   // ===================================================================
@@ -6851,7 +6908,7 @@
     window.addEventListener('hashchange', hoekVolgHash);
     hoekVolgHash();
   }
-  window.__veronica = { Proef, zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, PloegV, ploegStroom, ploegGeef, ploegKeur, tekenPloeg, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, thuisOffline, ThuisV, NetStand, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { Proef, zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, PloegV, ploegStroom, ploegGeef, ploegKeur, tekenPloeg, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, naarMono16k, SttM, luisterModelLaden, luisterModelZin, transcribeerLokaal, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, thuisOffline, ThuisV, NetStand, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

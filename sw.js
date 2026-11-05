@@ -3,8 +3,8 @@
 // DE VERSIE IS EEN VINGERAFDRUK VAN DE BESTANDEN (sha256, eerste 12 tekens). Verandert er iets,
 // dan verandert deze naam, en laadt elke Chromebook vanzelf de nieuwe versie. Een test in de
 // privé-repo eist dat hij klopt (check_veronica.js zegt welke waarde hij moet hebben).
-const VERSIE = 'veronica-cdae90b22120';
-const BESTANDEN = ['./index.html', './pool.js', './rekenpostbus.js', './privepost.js', './prive-zoek.js', './zoekkassa.js', './zoekmulti.js', './zoeken.js', './zoekgeheugen.js', './verslag.js', './stemproef.js', './hoek.js', './searxbron.js', './takenverdeling.js', './nulmeting.js', './nachtlog.js', './locatie.js', './controller.js', './gastbudget.js', './beheerronde.js', './hartslag.js', './geheugentel.js', './gastbrein.js', './avengers.js', './slimheid.js', './trap.js', './zoekwand.js', './fenna.js', './fenna-geheugen.js', './fenna-kluis.js', './ontmoet.js', './ploeg.js', './ploegpost.js', './motorinstel.js', './afnemers.js', './kaartje.js', './zelftest.js', './kern.js', './qrcode.js', './jsQR.js', './meters.js', './betekenis-model.js', './prive-betekenis.js', './prive-hoek.js', './prive-model.js', './prive-hoek-ui.js', './veronica.js', './besturen.html', './besturen.js', './besturen-adb.js', './telefoonsite.js', './scrcpy-server.bin', './manifest.webmanifest', './icoon-192.png', './icoon-512.png'];
+const VERSIE = 'veronica-52e1bb298a4c';
+const BESTANDEN = ['./index.html', './pool.js', './rekenpostbus.js', './privepost.js', './prive-zoek.js', './zoekkassa.js', './zoekmulti.js', './zoeken.js', './zoekgeheugen.js', './verslag.js', './stemproef.js', './hoek.js', './searxbron.js', './takenverdeling.js', './nulmeting.js', './nachtlog.js', './locatie.js', './controller.js', './gastbudget.js', './beheerronde.js', './hartslag.js', './geheugentel.js', './gastbrein.js', './avengers.js', './slimheid.js', './trap.js', './zoekwand.js', './fenna.js', './fenna-geheugen.js', './fenna-kluis.js', './ontmoet.js', './ploeg.js', './ploegpost.js', './motorinstel.js', './afnemers.js', './kaartje.js', './zelftest.js', './kern.js', './qrcode.js', './jsQR.js', './meters.js', './betekenis-model.js', './stt-model.js', './prive-betekenis.js', './prive-hoek.js', './prive-model.js', './prive-hoek-ui.js', './veronica.js', './besturen.html', './besturen.js', './besturen-adb.js', './telefoonsite.js', './scrcpy-server.bin', './manifest.webmanifest', './icoon-192.png', './icoon-512.png'];
 self.addEventListener('install', (e) => {
   // cache: 'reload' = echt van de server, niet uit de browsercache (anders kan een nieuwe versie
   // met oude bestanden starten).
@@ -13,9 +13,9 @@ self.addEventListener('install', (e) => {
     .then(() => fetch('./').then((r) => (r.ok ? c.put('./', r) : null)).catch(() => null)))
     .then(() => self.skipWaiting()));
 });
-// 523c: de cache van het betekenismodel (veronica-betekenis, ±200 MB) blijft staan bij een nieuwe versie.
+// 523c: de cache van het betekenismodel (veronica-betekenis, ±200 MB) en 641: het luistermodel (veronica-luister, ±75 MB) blijven staan bij een nieuwe versie.
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((k) => Promise.all(k.filter((x) => x !== VERSIE && x !== 'veronica-betekenis').map((x) => caches.delete(x)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then((k) => Promise.all(k.filter((x) => x !== VERSIE && x !== 'veronica-betekenis' && x !== 'veronica-luister').map((x) => caches.delete(x)))).then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
