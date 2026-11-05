@@ -1569,7 +1569,15 @@
       const tekst = await luisterViaGemma(t);
       if (tekst !== null) return verwerkSpraak(tekst, 'Gemma');
     }
-    if (volLokaal()) { $('spraakZin').textContent = 'Vol lokaal staat aan: luisteren via Google doe ik niet. Een Gemma op een telefoon moet vrij zijn.'; return null; }
+    // 1b (super-jarvis, Veronica offline): in de thuis-modus (internet eruit, wel het huis-wifi) OF met Vol lokaal aan luistert
+    // Veronica HARD lokaal -- nooit via Google. Lukt het lokale pad niet (geen telefoon met een verstaander vrij), dan zeggen we dat
+    // eerlijk i.p.v. stiekem online te gaan.
+    if (volLokaal() || thuisOffline()) {
+      $('spraakZin').textContent = thuisOffline()
+        ? 'Thuis en offline: ik luister alleen lokaal. Er moet even een telefoon met een verstaander (OlliteRT) vrij zijn.'
+        : 'Vol lokaal staat aan: luisteren via Google doe ik niet. Een Gemma op een telefoon moet vrij zijn.';
+      return null;
+    }
     return luisterViaChrome();
   }
   async function neemOp(maxMs) {
