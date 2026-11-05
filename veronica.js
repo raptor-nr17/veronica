@@ -4190,7 +4190,7 @@
   }
   async function schermWissel(t) {
     const sch = S.scherm[t.adres] = S.scherm[t.adres] || {};
-    if (sch.aan) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; tekenLive(); return; }
+    if (sch.aan) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; if (sch.vorigUrl) URL.revokeObjectURL(sch.vorigUrl); sch.vorigUrl = null; tekenLive(); return; }
     if (!magScherm(t)) { meld('De F8 (dagelijkse telefoon) kijken we nooit mee; alleen de rektelefoons.'); return; }
     if (!sch.code) {
       const c = await vraagTekst(`De code van ${t.naam} (staat op die telefoon bij Apparaten, Veronica):`, { inputMode: 'numeric' });
@@ -4206,7 +4206,7 @@
       if (!magScherm(t)) continue;
       const sch = S.scherm[t.adres] = S.scherm[t.adres] || {};
       if (aan && !sch.aan) { if (sch.code) sch.aan = true; else await schermWissel(t); }
-      else if (!aan && sch.aan) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; }
+      else if (!aan && sch.aan) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; if (sch.vorigUrl) URL.revokeObjectURL(sch.vorigUrl); sch.vorigUrl = null; }
     }
     tekenLive();
   }
@@ -4214,13 +4214,18 @@
     for (const t of S.telefoons) {
       const sch = S.scherm[t.adres];
       if (!sch || !sch.aan) continue;
-      if (!magScherm(t)) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; continue; }   // (#150) nooit de F8
+      if (!magScherm(t)) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; if (sch.vorigUrl) URL.revokeObjectURL(sch.vorigUrl); sch.vorigUrl = null; continue; }   // (#150) nooit de F8
       try {
         const r = await haal(`${t.jarvis}/jarvis/scherm.jpg`, { headers: { 'X-Koppelcode': sch.code } }, 2000);
         if (r.status === 401) { sch.aan = false; sch.code = null; logRegel(`De code van ${t.naam} klopt niet.`); continue; }
         if (!r.ok) { sch.zin = 'Scherm meekijken staat uit op de telefoon (of geen nieuw beeld).'; continue; }
         const blob = await r.blob();
-        if (sch.url) URL.revokeObjectURL(sch.url);
+        // 640: NIET de huidige objectURL meteen intrekken -- het live <img> in de wand wijst er nog naar, en elke extra tekenLive
+        // (een tik doet er meerdere) tussen intrekken en het volgende beeld maakte de tegel ZWART ("valt bij een tik weg naar zwart").
+        // Trek daarom één beurt achter: de url van twee beurten terug staat niet meer in beeld en mag weg; de huidige en de vorige
+        // blijven geldig. Mislukt een beurt (geen nieuw beeld), dan houden we het laatste goede beeld (sch.url blijft staan).
+        if (sch.vorigUrl) URL.revokeObjectURL(sch.vorigUrl);
+        sch.vorigUrl = sch.url;
         sch.url = URL.createObjectURL(blob);
         sch.zin = `JARVIS /jarvis/scherm.jpg · ${K.klokZin(nu())}`;
       } catch (e) { sch.zin = 'Geen beeld (telefoon niet bereikbaar).'; }
