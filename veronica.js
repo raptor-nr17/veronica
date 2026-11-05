@@ -343,7 +343,7 @@
   }
   async function roepViaBrievenbus(url, lijf) {
     const o = S.ntfy && S.ntfy.onderwerp;
-    if (!o || !S.code || !window.Hartslag || volLokaal()) return null;
+    if (!o || !S.code || !window.Hartslag || volLokaal() || thuisOffline()) return null;   // 1d: in de thuis-modus nooit via relay/brievenbus -- die hebben internet nodig en de telefoons zijn hier over het wifi te bereiken
     let d;
     try { d = JSON.parse(String(lijf || '{}')); } catch (e) { return null; }
     const h = hartslagVoorAdres(url);
@@ -4570,7 +4570,7 @@
   }
   // Kan het? Een geheim (het ntfy-onderwerp), de code, en minstens een telefoon die zich via de brievenbus meldt.
   function postbusKan() {
-    if (!window.RekenPostbus || !S.ntfy || !S.ntfy.onderwerp || S.ntfy.aan === false || volLokaal()) return false;
+    if (!window.RekenPostbus || !S.ntfy || !S.ntfy.onderwerp || S.ntfy.aan === false || volLokaal() || thuisOffline()) return false;   // 1d: thuis-modus rekent alleen over direct wifi, nooit via de brievenbus
     return Object.values(HB.per).some((h) => h && h.t && nu() - h.t <= K.HARTSLAG_VERS_MS);
   }
   async function postbusDraai(taak) {
@@ -6666,7 +6666,11 @@
   // (1) Is er een rektelefoon (werker) gekoppeld? Een verse hartslag die zich NIET als beheerder meldt.
   function erIsRektelefoon() {
     const t = nu();
-    return Object.values(HB.per || {}).some((h) => h && h.t && t - h.t <= K.HARTSLAG_VERS_MS && K.rolNaam(h) !== 'beheerder');
+    // Een rektelefoon is een WERKER (ook eentje die de rij even leidt). Nooit een beheerder, de dagelijkse telefoon of het
+    // gast-brein (de F8): die horen niet vanzelf het pantser aan te zetten. 639: rolNaam noemt de F8 nu "dagelijkse telefoon"
+    // i.p.v. "beheerder" -- zonder deze positieve lijst telde die ten onrechte als rektelefoon.
+    const isRek = (h) => { const r = K.rolNaam(h); return r === 'werker' || r === 'werker, leidt de rij even'; };
+    return Object.values(HB.per || {}).some((h) => h && h.t && t - h.t <= K.HARTSLAG_VERS_MS && isRek(h));
   }
   // De bewaarde keuze: 'aan' / 'uit' (een mens of de noodstop) / null (nooit beslist -> pantser mag vanzelf aan).
   function pantserKeuze() { try { return localStorage.getItem('veronica-pantser'); } catch (e) { return null; } }
