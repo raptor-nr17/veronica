@@ -1564,10 +1564,11 @@
     }
   }
 
-  // ---- SPRAAK IN: luisteren ----
-  // Eerst OFFLINE via de Gemma op een telefoon (OlliteRT /v1/audio/transcriptions, 16 kHz WAV,
-  // language=nl). Lukt dat niet (geen telefoon vrij, of OlliteRT kent het niet), dan de spraak-
-  // herkenning van Chrome. Die gaat ONLINE via Google: dat staat er dan ook bij.
+  // ---- SPRAAK IN: luisteren (641: LOKAAL-EERST) ----
+  // Eerst via de Gemma op een telefoon (OlliteRT /v1/audio/transcriptions, 16 kHz WAV, language=nl). Geen telefoon vrij?
+  // Dan het LOKALE Whisper-model in Veronica zelf (stt-model.js) -- en als dat nog laadt of er nog niet is, halen/await we het
+  // en tonen we de stand; we gaan NIET stiekem online via Google. Google (luisterViaChrome) komt alleen in beeld als de lokale
+  // bibliotheek er helemaal niet is. Zo versta ik je ook zonder internet en zonder telefoon.
   async function luister(hey) {
     if (Spr.luistert) { if (Spr.opname) Spr.opname.stop(); return; }   // tweede tik = klaar met praten
     if (hey) spreek(K.veronicaZin(S.karakter, 'luister'), 'luister');
@@ -1576,26 +1577,27 @@
     const lokaalKan = SttM.stand === 'klaar';
     // 1b/641: NEEM EEN KEER OP en route. Eerst een telefoon-verstaander (OlliteRT, snel), anders de lokale Whisper in Veronica
     // zelf (geen telefoon, geen internet nodig). Zo luistert Veronica thuis-offline helemaal lokaal.
-    if ((t || lokaalKan) && navigator.mediaDevices && window.MediaRecorder) {
+    const lokaalBeschikbaar = typeof SttModel !== 'undefined';
+    // Is er NU iets om mee te verstaan -- een telefoon-verstaander of een KLAAR lokaal model? Neem dan op en route.
+    if (t || lokaalKan) {
+      if (!(navigator.mediaDevices && window.MediaRecorder)) return luisterViaChrome();
       let samples = null;
-      try { samples = await naarMono16k(await neemOp(8000)); } catch (e) { samples = null; }   // geen microfoon: dan verder naar de thuis-blok of Chrome
-      if (samples) {
-        if (t) { const tekst = await transcribeer(t, K.wavVan(samples, 16000)); if (tekst !== null) return verwerkSpraak(tekst, 'Gemma'); }
-        if (lokaalKan) { const tekst = await transcribeerLokaal(samples); if (tekst !== null) return verwerkSpraak(tekst, 'Whisper'); }
-      }
+      try { SttM.wacht = false; samples = await naarMono16k(await neemOp(8000)); } catch (e) { samples = null; }
+      if (samples === null) { $('spraakZin').textContent = 'Geen microfoon (of geen toestemming).'; return null; }
+      if (t) { const tekst = await transcribeer(t, K.wavVan(samples, 16000)); if (tekst !== null) return verwerkSpraak(tekst, 'Gemma'); }
+      if (lokaalKan) { const tekst = await transcribeerLokaal(samples); if (tekst !== null) return verwerkSpraak(tekst, 'Whisper'); }
+      // Opgenomen, maar telefoon/model gaf niets terug: val door naar de lokaal-eerst-melding hieronder.
     }
-    // 1b (super-jarvis, Veronica offline): in de thuis-modus (internet eruit, wel het huis-wifi) OF met Vol lokaal aan luistert
-    // Veronica HARD lokaal -- nooit via Google. Lukt het lokale pad niet (geen telefoon vrij en het luistermodel is er nog niet),
-    // dan zeggen we dat eerlijk en halen we het luistermodel vast op, zodat het de volgende keer wel lokaal kan.
-    if (volLokaal() || thuisOffline()) {
+    // 641 (op verzoek van de eigenaar): GEEN telefoon vrij (en het model nog niet klaar)? De microfoon valt terug op het LOKALE Whisper-model,
+    // NOOIT stiekem op Google. Is het model klaar, dan hadden we hierboven al lokaal verstaan; is het er nog niet of laadt het,
+    // dan halen/await we het en tonen we DUIDELIJK de stand (klaar / laden X% / ophalen). Google (luisterViaChrome) komt alleen
+    // in beeld als de lokale bibliotheek er helemaal niet is.
+    if (lokaalBeschikbaar) {
       if (SttM.stand === 'geen' || SttM.stand === 'fout') luisterModelLaden().catch(() => {});
-      $('spraakZin').textContent = SttM.stand === 'laden'
-        ? 'Ik haal eenmalig het luistermodel op; daarna versta ik je ook zonder internet. Probeer het zo nog eens.'
-        : (thuisOffline()
-          ? 'Thuis en offline: ik luister alleen lokaal. Even geen telefoon met een verstaander (OlliteRT) vrij en het luistermodel is er nog niet.'
-          : 'Vol lokaal staat aan: luisteren via Google doe ik niet. Een Gemma op een telefoon of het lokale luistermodel moet vrij zijn.');
+      toonLuisterModelStand();
       return null;
     }
+    if (volLokaal() || thuisOffline()) { $('spraakZin').textContent = 'Ik luister alleen lokaal, maar er is geen telefoon vrij en geen luistermodel op deze computer.'; return null; }
     return luisterViaChrome();
   }
   async function neemOp(maxMs) {
@@ -5537,21 +5539,22 @@
   // 641 (super-jarvis, fase 1b, keuze c): WHISPER IN DE BROWSER (stt-model.js). Zelfde patroon als het betekenismodel: alleen via
   // de ENE poort ophalen (Vol lokaal houdt het tegen), de browser/het kaartje bewaren het, daarna versta ik ook zonder internet.
   // Geen telefoon nodig; nooit Google. Zo luistert Veronica thuis-offline helemaal lokaal.
-  const SttM = { verstaander: null, naam: '', stand: 'geen', procent: 0 };
+  const SttM = { verstaander: null, naam: '', stand: 'geen', procent: 0, wacht: false };
   const STT_SLEUTEL = 'veronica-luister-model';
   const STT_CACHE = 'veronica-luister';   // de service worker laat deze cache staan bij een nieuwe versie
   async function luisterModelLaden() {
     if (typeof SttModel === 'undefined' || SttM.stand === 'laden' || SttM.stand === 'klaar') return SttM.stand;
-    if (volLokaal()) { SttM.stand = 'lokaal'; return SttM.stand; }
-    SttM.stand = 'laden'; SttM.procent = 0;
+    if (volLokaal()) { SttM.stand = 'lokaal'; luisterModelUiVernieuw(); return SttM.stand; }
+    SttM.stand = 'laden'; SttM.procent = 0; luisterModelUiVernieuw();
     try {
       let browser = null;
       try { browser = typeof caches !== 'undefined' ? await caches.open(STT_CACHE) : null; } catch (e) { browser = null; }
       const cache = SttModel.kaartjeCache(KaartjeL, browser);
-      const m = await SttModel.laad({ importeer: (pad) => import(pad), opVoortgang: (p) => { SttM.procent = p; }, cache });
+      const m = await SttModel.laad({ importeer: (pad) => import(pad), opVoortgang: (p) => { SttM.procent = p; luisterModelUiVernieuw(); }, cache });
       Object.assign(SttM, { verstaander: m.verstaander, naam: m.naam, stand: 'klaar' });
       try { localStorage.setItem(STT_SLEUTEL, '1'); } catch (e) { /* dan de volgende keer weer een tik */ }
     } catch (e) { SttM.stand = volLokaal() ? 'lokaal' : 'fout'; }
+    luisterModelUiVernieuw();
     return SttM.stand;
   }
   // De opname (Float32 @16k) lokaal omzetten in tekst. Geen audio of tekst verlaat de pagina.
@@ -5560,6 +5563,26 @@
     try { const tekst = await SttM.verstaander(samples); return tekst || null; } catch (e) { return null; }
   }
   function luisterModelZin() { return typeof SttModel === 'undefined' ? '' : SttModel.zin(SttM.stand, SttM.stand === 'laden' && SttM.procent ? `${SttM.procent}%` : ''); }
+  // 641: de stand van het luistermodel LIVE tonen -- in Meer (#luisterModelZin) altijd, en op de microfoon-regel (#spraakZin)
+  // alleen als iemand op de microfoon wacht (SttM.wacht), zodat het percentage meeloopt zonder iets anders te overschrijven.
+  function luisterModelUiVernieuw() {
+    try {
+      if ($('luisterModelZin')) $('luisterModelZin').textContent = luisterModelZin();
+      if ($('luisterModelKnop')) { const k = $('luisterModelKnop'); k.hidden = !(typeof SttModel !== 'undefined' && SttM.stand !== 'klaar' && SttM.stand !== 'laden'); }
+      if (SttM.wacht && $('spraakZin')) $('spraakZin').textContent = `🎤 ${luisterModelStandZin()}`;
+    } catch (e) { /* alleen een scherm */ }
+  }
+  // De zin bij een microfoon-tik als er (nog) niet lokaal verstaan kan worden. Nooit "via Google": lokaal-eerst (641, op verzoek van de eigenaar).
+  function luisterModelStandZin() {
+    const s = SttM.stand;
+    const pct = s === 'laden' && SttM.procent ? ` (${SttM.procent}%)` : '';
+    if (s === 'klaar') return 'Ik verstond je niet goed — zeg het nog eens, ik luister lokaal.';
+    if (s === 'laden') return `Ik haal het luistermodel op${pct}. Zodra het klaar is versta ik je lokaal, ook zonder internet. Probeer het zo nog eens.`;
+    if (s === 'lokaal') return 'Vol lokaal staat aan: ik luister niet via Google. Wacht tot het luistermodel klaar is, of zet Vol lokaal uit.';
+    if (s === 'fout') return 'Het luistermodel kon niet worden opgehaald. Ik probeer het opnieuw; kijk anders even of er internet is.';
+    return 'Ik heb geen telefoon vrij en nog geen luistermodel. Ik haal het luistermodel eenmalig op; probeer het zo nog eens.';
+  }
+  function toonLuisterModelStand() { SttM.wacht = true; luisterModelUiVernieuw(); }
   function priveBetekenisLaag() {
     if (typeof PriveBetekenis === 'undefined') return null;
     let laag = null; let met;
