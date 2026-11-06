@@ -28,9 +28,11 @@
   // gewone rektelefoon in Veronica). "F8" mag in Veronica-bestanden; een merknaam niet.
   function isF8Naam(naam) { return /(^|[^a-z])f8([^a-z]|$)/i.test(String(naam || '')); }
   // Een telefoon is "alleen kijken" als zijn vingerafdruk in de nooit-lijst staat (door de eigenaar gemarkeerd als dagelijkse
-  // telefoon) OF als zijn naam hem als de F8 aanwijst. Dan tonen we hem wel, maar sturen we er NOOIT iets heen.
-  function kijkAlleen(vinger, nooitLijst, naam) {
+  // telefoon) OF als zijn naam hem als de F8 aanwijst OF (657) als hij op de bank-/kluis-lijst staat (ING, Revolut, Bybit,
+  // Bitwarden, App-kluis: nooit besturen). Dan tonen we hem wel, maar sturen we er NOOIT iets heen.
+  function kijkAlleen(vinger, nooitLijst, naam, bankKluisLijst) {
     if (isF8Naam(naam)) return true;
+    if (!!vinger && Array.isArray(bankKluisLijst) && bankKluisLijst.includes(vinger)) return true;
     return !!vinger && Array.isArray(nooitLijst) && nooitLijst.includes(vinger);
   }
 
@@ -82,6 +84,9 @@
   if (typeof document !== 'undefined') {
     const NOOIT = 'veronica-besturen-nooit';
     const nooitLijst = () => { try { return JSON.parse(localStorage.getItem(NOOIT) || '[]'); } catch (e) { return []; } };
+    // 657: telefoons met een bank- of kluis-app (ING, Revolut, Bybit, Bitwarden, App-kluis) -- NOOIT besturen, ook niet na een ja.
+    const BANKKLUIS = 'veronica-besturen-bankkluis';
+    const bankKluisLijst = () => { try { return JSON.parse(localStorage.getItem(BANKKLUIS) || '[]'); } catch (e) { return []; } };
     const $ = (id) => document.getElementById(id);
 
     const S = { tegels: [], noodstop: false, waak: 0 };
@@ -160,7 +165,7 @@
       if (S.tegels.some((x) => x.toestel && x.toestel.raw === toestel.raw)) { melding('Die telefoon staat er al. Kies een andere.', true); return; }
       if (S.tegels.length >= MAX_TEGELS) { melding('Er staan er al genoeg naast elkaar. Stop er eerst een.', true); return; }
       const v = await vinger(toestel.serial || '');
-      const kijk = kijkAlleen(v, nooitLijst());
+      const kijk = kijkAlleen(v, nooitLijst(), '', bankKluisLijst());
       const t = nieuweTegel('Verbinden...', kijk);
       t.toestel = toestel; t.vinger = v;
       try {
@@ -169,7 +174,7 @@
         t.naam = m.naam || m.model || 'Een telefoon';
         // 651: nu de naam bekend is, nog eens beoordelen -- een F8 is ALTIJD alleen-kijken, ook als zijn vingerafdruk niet in de
         // nooit-lijst staat. De naam komt van de telefoon zelf (adb-model), niet van Veronica's rij.
-        if (!t.kijkAlleen && kijkAlleen(t.vinger, nooitLijst(), t.naam)) { t.kijkAlleen = true; werkTegelStand(t); }
+        if (!t.kijkAlleen && kijkAlleen(t.vinger, nooitLijst(), t.naam, bankKluisLijst())) { t.kijkAlleen = true; werkTegelStand(t); }
         vind(t, '.swNaam').textContent = t.kijkAlleen ? `${t.naam} (alleen kijken)` : t.naam;
         await startBeeld(t);
       } catch (e) { melding(foutZin(e), true); await stopTegel(t); }

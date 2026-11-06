@@ -118,5 +118,52 @@
     return k && k.bezig ? `${k.naam} is nu bezig. Toch het model wisselen? De klus die nu loopt stopt dan en gaat naar een andere telefoon.` : null;
   }
 
-  return { ZONES, STANDEN, BRONNEN_ALGEMEEN, FOTO_BRON, BRON_NAAM, kaart, kaarten, kaartRegel, statusZin, allesUitVraag, bronStatus, bronnenLijst, gekozenBronnen, modelRegels, modelWisselVraag };
+  // ---- 657: AI HELPT ----
+  // Een schakelaar in de privé-hoek (standaard UIT). Staat die aan, dan kiest de lokale AI zelf per telefoon de zoekbron, zet de
+  // zoekbalk aan het werk en laat de F8 samenvatten -- alles ZICHTBAAR op het scherm, en de eigenaar kan altijd overnemen. Dit bestand
+  // zegt alleen WAT de AI kiest en WAT hij nooit mag; veronica.js voert het uit met de bestaande zoekstapel en samenvoeging (656).
+  // De gekozen bronnen, GEEN DuckDuckGo (§462): Wikipedia, Marginalia, Mojeek, SearXNG. Een bron die niet beschikbaar is slaat de AI over.
+  const AI_BRONNEN = Object.freeze(['wikipedia', 'marginalia', 'mojeek', 'searxng']);
+  const AI_BRON_NAAM = Object.freeze({ wikipedia: 'Wikipedia', marginalia: 'Marginalia', mojeek: 'Mojeek', searxng: 'SearXNG' });
+  // DE HARDE GRENS VOOR BESTUREN. Een telefoon besturen mag ALLEEN na een uitdrukkelijke ja van de eigenaar, NOOIT de F8 (de dagelijkse
+  // telefoon) en NOOIT een telefoon met een bank- of kluis-app. De merkers staan hier zodat een telefoon die zo'n app draagt herkend
+  // wordt aan wat hij meldt (apps-lijst) -- geen telefoonnaam en geen merknaam in de code. Markeren kan de eigenaar ook met de hand.
+  const BANK_KLUIS_MERKERS = Object.freeze(['ing', 'revolut', 'bybit', 'bitwarden', 'kluis', 'bank', 'crypto', 'wallet', 'authenticator', 'authy']);
+  function heeftBankKluis(telefoon) {
+    const t = telefoon || {};
+    if (t.bankKluis === true) return true;
+    const apps = Array.isArray(t.apps) ? t.apps : [];
+    return apps.some((a) => { const s = String(a || '').toLowerCase(); return BANK_KLUIS_MERKERS.some((m) => s.includes(m)); });
+  }
+  // true = de AI/de wand mag deze telefoon besturen (nog steeds alleen na een ja); false = NOOIT besturen (alleen kijken).
+  function aiMagBesturen(telefoon) {
+    const t = telefoon || {};
+    if (t.f8 === true || t.dagelijks === true) return false;   // de F8 / dagelijkse telefoon: nooit besturen (546/637)
+    if (heeftBankKluis(t)) return false;                        // bank- of kluis-app aan boord: nooit besturen
+    return true;
+  }
+  // De AI verdeelt de bronnen om de beurt over de telefoons (elke telefoon een andere zoekmachine). beschikbaar(bron) -> bool laat een
+  // bron weg die nu niet kan (Mojeek zonder sleutel, SearXNG zonder adres). Zuiver en los te testen; de echte zoekstapel doet het werk.
+  function aiBronnenBeschikbaar(beschikbaar) {
+    const kan = typeof beschikbaar === 'function' ? beschikbaar : () => true;
+    const lijst = AI_BRONNEN.filter((b) => kan(b));
+    return lijst.length ? lijst : ['wikipedia'];   // Wikipedia is de vaste terugval; de AI valt nooit stil
+  }
+  function aiPlan(telefoons, beschikbaar) {
+    const tels = (Array.isArray(telefoons) ? telefoons : []).filter((t) => t && (t.id || t.toestel));
+    const bronnen = aiBronnenBeschikbaar(beschikbaar);
+    return tels.map((t, i) => ({
+      telefoon: t.id || t.toestel, naam: t.naam || t.id || 'een telefoon',
+      bron: bronnen[i % bronnen.length], bronNaam: AI_BRON_NAAM[bronnen[i % bronnen.length]] || bronnen[i % bronnen.length],
+      model: t.model || null, magBesturen: aiMagBesturen(t),
+    }));
+  }
+  function aiPlanZin(plan) {
+    const p = Array.isArray(plan) ? plan : [];
+    if (!p.length) return 'Geen telefoon in de hoek om mee te zoeken.';
+    return p.map((x) => `${x.naam}: ${x.bronNaam}${x.model ? ` · ${x.model}` : ''}`).join(' · ');
+  }
+
+  return { ZONES, STANDEN, BRONNEN_ALGEMEEN, FOTO_BRON, BRON_NAAM, kaart, kaarten, kaartRegel, statusZin, allesUitVraag, bronStatus, bronnenLijst, gekozenBronnen, modelRegels, modelWisselVraag,
+    AI_BRONNEN, AI_BRON_NAAM, BANK_KLUIS_MERKERS, heeftBankKluis, aiMagBesturen, aiBronnenBeschikbaar, aiPlan, aiPlanZin };
 }));

@@ -6895,7 +6895,22 @@
   // Vol lokaal, het zoeken van de zoekstapel (alleen de aangevinkte bronnen) en de motorinstellingen (model wisselen op een bezige
   // telefoon vraagt eerst bevestiging). Geen nieuwe weg naar buiten, niets in het logboek dat uit de hoek komt.
   // ===================================================================
-  const HoekV = { open: false, vinkjes: null, tik: null };
+  const HoekV = { open: false, vinkjes: null, tik: null, aiHelpt: null };
+  // 657: AI HELPT (standaard UIT). Aan = de lokale AI kiest zelf per telefoon de zoekbron (Hoek.aiPlan), zet de zoekbalk aan het werk
+  // en laat de F8 samenvatten -- alles zichtbaar; de eigenaar kan altijd overnemen (zet de schakelaar uit = de eigen vinkjes terug).
+  function hoekAiHelpt() {
+    if (HoekV.aiHelpt === null) { try { HoekV.aiHelpt = localStorage.getItem('veronica-hoek-ai-helpt') === 'aan'; } catch (e) { HoekV.aiHelpt = false; } }
+    return HoekV.aiHelpt;
+  }
+  function zetHoekAiHelpt(aan) {
+    HoekV.aiHelpt = !!aan;
+    try { localStorage.setItem('veronica-hoek-ai-helpt', aan ? 'aan' : 'uit'); } catch (e) { /* alleen voor nu */ }
+  }
+  // De bronnen die de AI nu echt kan kiezen: een bron zonder bereik valt af (Mojeek zonder sleutel, SearXNG zonder adres).
+  function hoekAiBeschikbaar(bron) {
+    try { if (zoeker && zoeker.kassa) return zoeker.kassa.stand(bron).stand !== 'uit'; } catch (e) { /* onbekend = toegestaan */ }
+    return true;
+  }
   function hoekVinkjes() {
     if (HoekV.vinkjes) return HoekV.vinkjes;
     let v = null;
@@ -6933,11 +6948,21 @@
     const soort = $('hoekZoekSoort').value;
     const tels = zoekTelefoons().length;
     const vink = hoekVinkjes();
+    // 657: de AI-helpt-schakelaar en, als die aan staat, het plan (welke telefoon welke zoekmachine krijgt). De eigen vinkjes gaan dan op
+    // slot -- de AI kiest. Zet de schakelaar uit om zelf te kiezen.
+    const aiAan = hoekAiHelpt();
+    if ($('hoekAiHelpt')) { $('hoekAiHelpt').textContent = `AI helpt: ${aiAan ? 'AAN' : 'UIT'}`; $('hoekAiHelpt').setAttribute('aria-pressed', String(aiAan)); }
+    if ($('hoekAiPlan')) {
+      if (aiAan) {
+        const plan = H.aiPlan(stapelTelefoons(), hoekAiBeschikbaar);
+        $('hoekAiPlan').textContent = plan.length ? `De AI kiest: ${H.aiPlanZin(plan)}. De F8 (als die er is) schrijft het antwoord. Je kunt altijd overnemen.` : 'AI helpt staat aan, maar er is nog geen telefoon in de hoek om mee te zoeken.';
+      } else { $('hoekAiPlan').textContent = ''; }
+    }
     morphKinderen($('hoekBronnen'), H.bronnenLijst((b) => { try { return zoeker && zoeker.kassa ? zoeker.kassa.stand(b).stand : 'ok'; } catch (e) { return 'ok'; } }, tels, soort).map((b) => {
       const l = el('label', 'hoekBron');
       l.dataset.sleutel = b.bron;
       const c = document.createElement('input'); c.type = 'checkbox'; c.dataset.hoekBron = b.bron;
-      c.checked = soort === 'fotos' ? true : vink.includes(b.bron); c.disabled = soort === 'fotos';
+      c.checked = soort === 'fotos' ? true : vink.includes(b.bron); c.disabled = soort === 'fotos' || aiAan;
       l.append(c, document.createTextNode(` ${b.naam} · ${b.teken} ${b.woord}`));
       return l;
     }));
@@ -6970,7 +6995,8 @@
     if (!zoeker) return;
     const vraag = $('hoekZoekVraag').value.trim();
     const soort = $('hoekZoekSoort').value;
-    const bronnen = window.Hoek.gekozenBronnen(hoekVinkjes(), soort);
+    // 657: AI helpt aan = de AI kiest de bronnen zelf (de vier vaste, geen DDG, een bron zonder bereik valt af); uit = de eigen vinkjes.
+    const bronnen = (hoekAiHelpt() && soort !== 'fotos') ? window.Hoek.aiBronnenBeschikbaar(hoekAiBeschikbaar) : window.Hoek.gekozenBronnen(hoekVinkjes(), soort);
     const stand = $('hoekZoekStand'); const uit = $('hoekZoekUitslag');
     if (!vraag) { stand.textContent = 'Typ eerst een zoekvraag.'; return; }
     if (volLokaal()) { stand.textContent = 'Vol lokaal staat aan: zoeken op internet doe ik nu niet.'; return; }
@@ -7020,6 +7046,7 @@
     $('hoekVolLokaal').addEventListener('click', () => { zetVolLokaal(!volLokaal()); tekenHoek(); });
     $('hoekTerug').addEventListener('click', () => { location.hash = ''; });
     $('hoekZoekKnop').addEventListener('click', () => { hoekZoek(); });
+    if ($('hoekAiHelpt')) $('hoekAiHelpt').addEventListener('click', () => { zetHoekAiHelpt(!hoekAiHelpt()); tekenHoek(); });
     $('hoekZoekSoort').addEventListener('change', tekenHoek);
     $('hoekBronnen').addEventListener('change', (e) => {
       const b = e.target && e.target.dataset && e.target.dataset.hoekBron;

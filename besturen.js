@@ -5,6 +5,7 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const NOOIT = 'veronica-besturen-nooit';   // vingerafdrukken van telefoons die "dagelijks" zijn
+  const BANKKLUIS = 'veronica-besturen-bankkluis';   // 657: telefoons met een bank-/kluis-app -- NOOIT besturen
 
   function zeg(t, slecht) { const m = $('bMelding'); m.textContent = t || ''; m.classList.toggle('slecht', !!slecht); }
 
@@ -14,6 +15,7 @@
     return Array.from(new Uint8Array(b).slice(0, 8), (x) => x.toString(16).padStart(2, '0')).join('');
   }
   function nooitLijst() { try { return JSON.parse(localStorage.getItem(NOOIT) || '[]'); } catch (e) { return []; } }
+  function bankKluisLijst() { try { return JSON.parse(localStorage.getItem(BANKKLUIS) || '[]'); } catch (e) { return []; } }
   function zetNooit(l) { try { localStorage.setItem(NOOIT, JSON.stringify(l.slice(-20))); } catch (e) { /* geen opslag: dan vraagt hij het opnieuw */ } }
 
   // De foutzin is altijd een gewone zin met wat je kunt doen, nooit een foutcode.
@@ -69,6 +71,7 @@
     if (S.sessies.some((x) => x.toestel && x.toestel.raw === t.raw)) { zeg('Die telefoon staat er al naast. Kies een andere.', true); return; }
     const v = await vinger(t.serial || '');
     if (nooitLijst().includes(v)) { zeg('Dit is de dagelijkse telefoon. Die bestuur ik niet. Kies een rektelefoon.', true); return; }
+    if (bankKluisLijst().includes(v)) { zeg('Op deze telefoon staan bank- of kluis-apps. Die bestuur ik nooit. Kies een andere rektelefoon.', true); return; }
     const sx = nieuwPaneel('Verbinden...');
     sx.toestel = t; sx.vinger = v;
     zegIn(sx, 'Kijk op deze telefoon en tik Toestaan als hij erom vraagt.');
