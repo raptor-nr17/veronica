@@ -200,8 +200,14 @@
     const st = (t) => (staten || {})[t.adres] || {};
     const capabel = (telefoons || []).filter((t) => st(t).klasse !== 'licht');
     const mond = capabel.filter((t) => t.adres !== geheugen);
-    return kiesTelefoon(mond, staten, taak, nu)
-      || kiesTelefoon(capabel, staten, taak, nu)
+    // 654: een gespreksvraag wil het SLIMSTE model dat NU vrij is -- eerst ZWAAR (bv. de F8 met Gemma-4-E4B), dan MIDDEN (de
+    // rektelefoons), dan de rest. Zo gaan moeilijke vragen en plannen naar het slimme brein zodra dat bereikbaar is, en doet het
+    // rek het overige werk; is het slimme brein bezig, dan valt het vanzelf terug op een rektelefoon. (De lichte motor blijft uit.)
+    const perKlasse = (lijst) => kiesTelefoon(lijst.filter((t) => st(t).klasse === 'zwaar'), staten, taak, nu)
+      || kiesTelefoon(lijst.filter((t) => st(t).klasse === 'midden'), staten, taak, nu)
+      || kiesTelefoon(lijst, staten, taak, nu);
+    return perKlasse(mond)
+      || perKlasse(capabel)
       || (capabel.length ? null : kiesTelefoon(telefoons, staten, taak, nu));
   }
 
