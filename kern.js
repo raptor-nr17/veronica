@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.83';
+  const JARVIS_NIEUWSTE = '1.9.86';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
@@ -382,6 +382,29 @@
     const internetStuk = (x.online === false) || (foutSinds > 0 && nuMs - foutSinds >= grens);
     if (!internetStuk) return { offline: false, zin: '' };
     return { offline: true, zin: `Thuis, offline — alles lokaal (${bereikbaar} ${bereikbaar === 1 ? 'telefoon' : 'telefoons'} op het wifi).` };
+  }
+  // 643: waarom pakt geen telefoon de vraag op? Een EERLIJKE zin uit een korte samenvatting van de pool, zodat Veronica
+  // altijd zichtbaar zegt wat er met een vraag gebeurt (ook als het antwoord uitblijft). s = { telefoons, bereikbaar,
+  // capabel (niet-lichte, bereikbare), vrij (capabel en niet bezig/rust), bezig, rust, uitgesloten: [namen], lichtAlleen }.
+  function vraagWachtReden(s) {
+    const x = s || {};
+    const n = (v) => Number(v) || 0;
+    if (n(x.telefoons) === 0) return 'Er zijn nog geen telefoons gekoppeld. Tik op Meer en dan op Koppelen.';
+    if (n(x.bereikbaar) === 0) return 'Geen telefoon is nu bereikbaar; ik pak je vraag op zodra er een terugkomt.';
+    if (Array.isArray(x.uitgesloten) && x.uitgesloten.length && n(x.vrij) === 0 && n(x.bezig) === 0) {
+      return `Je hebt 'vragen van Veronica' uitgezet voor ${x.uitgesloten.slice(0, 3).join(', ')}. Zet dat aan bij 'Wie doet wat', of koppel een andere telefoon.`;
+    }
+    if (n(x.capabel) === 0 && x.lichtAlleen) return 'Alleen lichte telefoons; die sorteren wel, maar doen geen gesprek. Koppel een sterkere telefoon.';
+    if (n(x.bezig) > 0 && n(x.vrij) === 0) return 'Alle telefoons zijn nu bezig. Ik pak je vraag op zodra er een vrij is.';
+    if (n(x.rust) > 0 && n(x.vrij) === 0) return 'De telefoons rusten (accu of sparen). Ik pak je vraag op zodra er een wakker is.';
+    return 'Ik zoek een vrije telefoon…';
+  }
+  // 645 (fase 1g, handenvrije spreek-lus): een STOPWOORD beeindigt het handenvrij luisteren. Alleen de HELE zin telt (geen
+  // deelmatch), zodat "is het al klaar?" de lus niet per ongeluk stopt maar "klaar" of "stop" wel.
+  function isStopwoord(tekst) {
+    const t = String(tekst == null ? '' : tekst).toLowerCase().replace(/[.!?,;:]/g, '').trim().replace(/\s+/g, ' ');
+    const stop = ['stop', 'stop maar', 'stop maar veronica', 'veronica stop', 'klaar', 'genoeg', 'bedankt', 'dank je', 'dank je wel', 'dankjewel', 'dank u', 'dank u wel', 'hou op', 'houd op', 'niet meer luisteren', 'stop met luisteren', 'handen vrij uit', 'handenvrij uit', 'luisteren uit'].map((x) => x.toLowerCase());
+    return stop.includes(t);
   }
   function rolNaam(h) {
     const w = (x) => (x && typeof x === 'object' && 'waarde' in x ? x.waarde : x);   // ook een meting uit /jarvis/status
@@ -1205,7 +1228,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.112';
+  const VERONICA_VERSIE = '1.9.121';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -2223,7 +2246,7 @@
     return uit.slice(0, 6);
   }
   return { verwachtElke, wegRedenen, OUDE_RELAY_ELKE_MS, verbinding, VERBINDING_GROEN_MS, VERBINDING_ORANJE_MS, kaartenUitHarten, hartVoorTelefoon, volgHart, hartMeting, leesLedenIds, MOTOR_POORT, meetuurZin, meetboekBij, meetSamenvatting, stopZin, slaapZin, gezienZin, STOP_REDEN, rekBesluit, rekBesluitHart, kiesHotspotDownloader, wieRekent, tpsVan, wieDoetWat, gidsSamenvatting, werkerWensStap, wifiUitleg, WERKER_WENS_MS, WERKER_WIFI_MS, WERKER_BUS_MS, rekWerker, rekWerkerKnop, proefPerTelefoon, REK_KIJK_MS, REK_MOTOR_MS, rijBriefOnderwerp, rijBriefVerzoek,
-    alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, thuisModus, ontdubbelTelefoons, ruimSpokenOp, SPOOK_MS, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
+    alternatieveAdressen, toestelZin, leesMotor, motorZin, motorAdres, MOTOR_FASEN, leesAikern, kernZin, begrijp, magSpreken, wavVan, dagdeel, statusFeiten, leesEigenaar, PLEK_NAAM, rolZin, jongsteMeting, oudZin, Ntfy, leesNtfy, KARAKTERS, veronicaZin, baasUitStatus, lnaUitleg, herstelKernAdres, wisselKern, JARVIS_NIEUWSTE, rolNaam, thuisModus, vraagWachtReden, isStopwoord, ontdubbelTelefoons, ruimSpokenOp, SPOOK_MS, vergelijkVersie, nieuwsteVersie, versieZin, leesLeden, rondvraagLijst, voegBekendToe, vindUitleg, MAX_BEKEND, herstelPlan, herstelZin, GANGBARE_NETTEN,
     gezondSamenvatting, GEZOND_VERS_MS, leesZonStroom, stekkerSleutels, stekkerSleutel, dubbeleStekkerNamen, leesPakket, koppelQrTekst, leesUpdateSleutel,
     SLEUTEL_RE, VERONICA_QR_MS, veronicaQrTekst, BRIEF_SERVER, briefOnderwerp, ledenOnderwerp, leesLedenBrief, metLedenBrief, metHartslagen, hartslagVers, HARTSLAG_VERS_MS, ledenBriefVers, LEDEN_VERS_MS, briefPollUrl, briefStroomUrl, netVan, leesBrief, eigenAdresUitKandidaat, subnetAdressen, nieuweSleutel, veronicaBewijs, veronicaOpen,
     MAX_LEEFTIJD_MS, JARVIS_POORT, OLLITERT_POORT, HITTE,

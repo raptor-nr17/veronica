@@ -78,6 +78,13 @@
       const naam = m.naam || m.model || 'Een telefoon';
       vind(sx.paneel, '.bNaam').textContent = naam;
       zegIn(sx, '');
+      // 651: een F8 besturen we NOOIT -- ook niet als de eigenaar per ongeluk "Ja" zou tikken. De naam (van de telefoon zelf)
+      // wijst hem aan; dezelfde vaste regel als magScherm. We zetten hem meteen op de nooit-lijst en stoppen.
+      if (/(^|[^a-z])f8([^a-z]|$)/i.test(naam)) {
+        if (sx.vinger) { const l = nooitLijst(); if (!l.includes(sx.vinger)) l.push(sx.vinger); zetNooit(l); }
+        zeg('Dit is de dagelijkse telefoon (de F8). Die bestuur ik nooit. Trek de kabel eruit en kies een rektelefoon.', true);
+        await stopSessie(sx); return;
+      }
       vind(sx.paneel, '.bVraagZin').textContent = `${naam} (Android ${m.android || '?'}). Is dit een rektelefoon?`;
       vind(sx.paneel, '.bVraag').hidden = false;
     } catch (e) { zeg(foutZin(e), true); await stopSessie(sx); }

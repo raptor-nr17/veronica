@@ -57,6 +57,8 @@
     tavily: { naam: 'Tavily', toegestaan: false, remMs: 0, perUur: 0, seriele: true,
       regel: 'Alleen met een eigen sleutel van de eigenaar (gratis tegoed, geen kaart). Wij maken geen account en vullen geen sleutel in: staat uit tot de eigenaar er zelf een zet.' },
     brave: { naam: 'Brave Search API', toegestaan: false, remMs: 0, perUur: 0, seriele: true, regel: 'Niet meer gratis (onderzoek van Cowork).' },
+    mojeek: { naam: 'Mojeek (eigen onafhankelijke index, VK)', toegestaan: false, remMs: 0, perUur: 0, seriele: true,
+      regel: 'Eigen crawler/index (geen Google/Bing), maar programmatisch alleen via een BETAALDE API (Personal ~1 pond CPM, 2000/dag); gratis gebruik vraagt contact/een proefsleutel. De voorwaarden staan scrapen van de resultatenpagina niet duidelijk toe, en de bouwomgeving kan mojeek.com niet bereiken (403) om robots.txt na te lezen. Pas AAN nadat de eigenaar een API-sleutel zet of de voorwaarden goedkeurt -- zelfde lijn als Tavily.' },
     googlecse: { naam: 'Google Programmable Search (CSE)', toegestaan: false, remMs: 0, perUur: 0, seriele: true, regel: 'Sluit op 1 januari 2027 en staat niet in de lijst met toegestane bronnen.' },
     commoncrawl: { naam: 'Common Crawl (CDX-index)', toegestaan: false, remMs: 0, perUur: 0, seriele: true,
       regel: 'NIET opgenomen: de index-server is bedoeld voor onderzoek en vraagt om een eigen User-Agent en een lage frequentie; voor een gewone zoekvraag ongeschikt (traag, geen tekst). Alleen als de eigenaar er om vraagt.' },

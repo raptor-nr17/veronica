@@ -430,6 +430,13 @@
     wandLink.id = 'phSchermenwand'; wandLink.href = 'http://penguin.linux.test:8765/wand'; wandLink.target = '_blank'; wandLink.rel = 'noopener';
     k.append(wandLink);
     k.append(el('p', 'phKlein', 'Dit werkt als de ARTEMIS-console op deze Chromebook draait. Nooit de F8, en nooit een telefoon met een bank-, kluis- of betaalapp op de voorgrond — dan laat ARTEMIS geen beeld en geen tik toe.'));
+    // 642: de Chrome-kant van de schermenwand over de USB-KABEL (Tango/WebCodecs, per serienummer). Werkt altijd, ook
+    // zonder ARTEMIS en zonder wifi -- de link doet niets tot je hem klikt en opent een eigen tabblad. De F8 (op de
+    // nooit-lijst van besturen.html) komt er wel op te staan maar is alleen kijken: scrcpy maakt voor hem geen controller aan.
+    const kabelLink = el('a', 'phBesturenKnop', '📱 Schermenwand via de kabel (Chrome, werkt altijd)');
+    kabelLink.id = 'phSchermwandKabel'; kabelLink.href = 'schermwand.html'; kabelLink.target = '_blank'; kabelLink.rel = 'noopener';
+    k.append(kabelLink);
+    k.append(el('p', 'phKlein', 'Sluit de rektelefoons met een USB-kabel (of hub) aan en tik "Telefoon toevoegen" per telefoon. De F8 kun je wel zien maar nooit besturen; een beveiligd scherm toont zwart; loopt één beeld vast, dan start alleen dat scherm opnieuw op. Er is een NOODSTOP voor alle besturen tegelijk (kijken mag dan nog).'));
     return k;
   }
   function veiligBlok() {

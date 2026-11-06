@@ -255,20 +255,25 @@
   // De ene regel van "Pantser aan". klaar = bereikbaar + model geladen + niet in rust/heet/onder reserve.
   function klaar(t, s) { return !!(s && s.bereikbaar === true && s.klasse !== 'te-oud' && s.modelGeladen !== false && s.rust !== true && s.magRekenen !== false && s.hitteStand !== 'oranje' && s.hitteStand !== 'rood' && !s.vervangen); }
   function pantserRegel(telefoons, staten, aan) {
-    const lijst = telefoons || [];
-    if (!aan) return { regel: 'Pantser uit: alle telefoons rusten.', klaar: 0, totaal: lijst.length, tokensPerS: null, tegelijk: 0, helpen: [] };
-    const k = lijst.filter((t) => klaar(t, (staten || {})[t.adres]));
-    const tps = k.map((t) => (staten[t.adres] || {}).tps).filter((x) => typeof x === 'number');
+    const alle = telefoons || [];
+    const st = staten || {};
+    if (!aan) return { regel: 'Pantser uit: alle telefoons rusten.', klaar: 0, totaal: alle.length, tokensPerS: null, tegelijk: 0, helpen: [] };
+    // 649: de DAGELIJKSE TELEFOON (de F8) telt niet in de noemer. Die draait per ontwerp nooit een motor (§564), dus "N van M
+    // klaar" meetellen maakte de teller altijd te laag -- het veld gaf "0 van 4" terwijl 4 de drie rektelefoons + de F8 was.
+    // Een te-oude telefoon BLIJFT in de noemer (eerlijk zichtbaar met "te oud voor model"); alleen de F8 valt eruit.
+    const lijst = alle.filter((t) => !(st[t.adres] || {}).dagelijks);
+    const k = lijst.filter((t) => klaar(t, st[t.adres]));
+    const tps = k.map((t) => (st[t.adres] || {}).tps).filter((x) => typeof x === 'number');
     const som = tps.length ? Math.round(tps.reduce((a, b) => a + b, 0)) : null;
     const helpen = lijst.filter((t) => !k.includes(t)).map((t) => {
-      const s = (staten || {})[t.adres] || {};
+      const s = st[t.adres] || {};
       const reden = s.klasse === 'te-oud' ? 'te oud voor model' : s.bereikbaar !== true ? 'geen antwoord' : s.modelGeladen === false ? 'tik hier op Start' : s.rust === true ? 'rust' : s.magRekenen === false ? 'onder de accu-reserve' : (s.hitteStand === 'oranje' || s.hitteStand === 'rood') ? 'te warm' : 'wacht';
       return { naam: t.naam, adres: t.adres, reden, zin: s.modelGeladen === false && s.bereikbaar === true ? `${t.naam}: tik hier op Start` : `${t.naam}: ${reden}` };
     });
     return {
       regel: `Pantser aan: ${k.length} van ${lijst.length} klaar · samen ${som == null ? 'nog niet gemeten' : `±${som} tokens/s`} · ${k.length} ${k.length === 1 ? 'klus' : 'klussen'} tegelijk`,
       klaar: k.length, totaal: lijst.length, tokensPerS: som, tegelijk: k.length, helpen,
-      klassen: ['zwaar', 'midden', 'licht', 'te-oud'].reduce((o, c) => { o[c] = lijst.filter((t) => ((staten || {})[t.adres] || {}).klasse === c).length; return o; }, {}),
+      klassen: ['zwaar', 'midden', 'licht', 'te-oud'].reduce((o, c) => { o[c] = alle.filter((t) => (st[t.adres] || {}).klasse === c).length; return o; }, {}),
     };
   }
 

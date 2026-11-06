@@ -1505,6 +1505,12 @@
   // Chrome laat een pagina pas praten na de eerste tik; wat daarvoor komt (de begroeting) wacht
   // tot dan. In de stille uren (dezelfde als ntfy) alleen een noodstop of ROOD.
   const Spr = { wacht: [], vraagId: null, noodstopT: 0, luistert: false, opname: null };
+  // 645 (fase 1g): HANDENVRIJ LUISTEREN. Standaard UIT. Staat hij aan, dan luistert Veronica na haar antwoord vanzelf
+  // opnieuw (luister -> antwoord -> spreek -> luister), tot een stopwoord ("stop", "klaar", ...), de knop, of de noodstop.
+  // De lus hervat ALLEEN na een echt uitgesproken antwoord (hervatNa), nooit spontaan; de live-timing (barge-in) is bewust
+  // niet gebouwd en wacht op de microfoonproef. Default uit = geen risico voor het huidige gedrag.
+  const Hv = { aan: false, hervatNa: 0 };
+  try { Hv.aan = localStorage.getItem('veronica-handenvrij') === 'aan'; } catch (e) { /* geen opslag */ }
   const kanSpreken = () => !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
   function stemmen() { return kanSpreken() ? window.speechSynthesis.getVoices().filter((v) => /^nl/i.test(v.lang)) : []; }
   function spreek(zin, soort) {
@@ -1670,6 +1676,8 @@
     const b = K.begrijp(tekst);
     $('spraakZin').textContent = `🎤 ${via ? `(${via}) ` : ''}Ik hoorde: "${String(tekst || '').slice(0, 120)}"`;
     const zeg = (wat, d, soort) => spreek(K.veronicaZin(S.karakter, wat, Object.assign({ naam: S.eigenaar }, d || {})), soort || wat);
+    // 645: handenvrij -- een stopwoord ("stop", "klaar", ...) zet het handenvrij luisteren uit en hervat niet.
+    if (Hv.aan && K.isStopwoord(tekst)) { zetHandenvrij(false, true); spreek('Goed, ik stop met luisteren.', 'luister'); return 'handenvrij-uit'; }
     // Een noodstop wacht op ja (vijftien seconden).
     if (Spr.noodstopT && nu() - Spr.noodstopT < 15000 && (b.soort === 'ja' || b.soort === 'nee')) {
       Spr.noodstopT = 0; $('noodstopBevestig').hidden = true;
@@ -1704,6 +1712,26 @@
     if (!taak || (taak.status !== 'klaar' && taak.status !== 'fout')) return;
     Spr.vraagId = null;
     if (taak.status === 'klaar' && taak.uitkomst) spreek(String(taak.uitkomst).replace(/[#*_`>]+/g, ' ').slice(0, 600), 'antwoord');
+    // 645: handenvrij -- na dit antwoord weer luisteren (zodra de stem vrij is). Alleen hier gezet, dus nooit spontaan.
+    if (Hv.aan && !(Spr.noodstopT && nu() - Spr.noodstopT < 15000)) Hv.hervatNa = nu() + 900;
+  }
+  // 645: zet handenvrij aan/uit (bewaard), toon het, en start de lus met een luisterbeurt als hij AAN gaat.
+  function zetHandenvrij(aan, stil) {
+    Hv.aan = !!aan; Hv.hervatNa = 0;
+    try { localStorage.setItem('veronica-handenvrij', Hv.aan ? 'aan' : 'uit'); } catch (e) { /* geen opslag */ }
+    const k = $('handenvrijKnop'); if (k) { k.textContent = `Handenvrij luisteren: ${Hv.aan ? 'aan' : 'uit'}`; k.setAttribute('aria-pressed', String(Hv.aan)); }
+    const z = $('handenvrijZin'); if (z) z.textContent = Hv.aan ? 'Ik luister na elk antwoord vanzelf opnieuw. Zeg "stop" of "klaar" om te stoppen.' : '';
+    if (Hv.aan && !stil) luister().catch(() => {});   // de knop-tik is het gebaar waarmee de microfoon mag
+  }
+  // 645: de lus hervat zodra het antwoord echt is uitgesproken (stem vrij) en er niet al geluisterd wordt.
+  function handenvrijTik() {
+    if (!Hv.aan || !Hv.hervatNa || Spr.luistert) return;
+    if (Spr.noodstopT && nu() - Spr.noodstopT < 15000) return;   // een noodstop-vraag loopt: niet hervatten
+    const ss = window.speechSynthesis;
+    if (ss && (ss.speaking || ss.pending)) return;               // het antwoord wordt nog uitgesproken
+    if (nu() < Hv.hervatNa) return;
+    Hv.hervatNa = 0;
+    luister().catch(() => {});
   }
 
   // ---- Wat Veronica zegt (kern.js: veronicaZin) ----
@@ -4066,7 +4094,7 @@
       const hm = brief && h.motor ? h.motor : null;
       return { naam: t.naam, adres: t.adres, kern: !!t.kern, rol: rol || (brief ? h.rol : null), klasse: ps.klasse, klasseReden: ps.klasseReden, modelGeladen: ps.modelGeladen, motorKlaar: !!((mo && mo.klaar) || (hm && hm.klaar)), bereikbaar: brief ? false : ps.bereikbaar, viaBrievenbus: brief, vervangen: ps.vervangen, hitteStand: ps.hitteStand, rust: ps.rust, magRekenen: ps.magRekenen,
         vraagViaBrief: !!(brief && h.versie && K.vergelijkVersie(h.versie, '1.9.64') >= 0),   // 534
-        gespaard: schuifNu(t) || !!(brief && h.sparen), dagelijks: dagelijksRustNu(t) || !!(brief && h.dagelijks), geheugenKlaar: !!(mo && mo.geheugen && mo.geheugen.klaar), sdk: cp && typeof cp.sdk === 'number' ? cp.sdk : null };   // 481
+        gespaard: schuifNu(t) || !!(h && h.sparen), dagelijks: dagelijksRustNu(t) || !!(h && h.dagelijks), geheugenKlaar: !!(mo && mo.geheugen && mo.geheugen.klaar), sdk: cp && typeof cp.sdk === 'number' ? cp.sdk : null };   // 481 / 652: dagelijks+gespaard uit de VERSE hartslag, niet alleen via de brievenbus -- een F8 op wifi meldde dagelijks in de hartslag maar werd toch in de pantser-noemer geteld ("1 van 4")
     });
   }
   // 481: gespaard = de schuif Sparen op de telefoon zelf (alleen een verse melding telt). Veronica geeft hem dan niets.
@@ -4355,6 +4383,7 @@
   async function voegTakenToe(tekst, soort) {
     const regels = String(tekst || '').split('\n').map((r) => r.trim()).filter(Boolean).slice(0, 100);
     const stem = soort === 'stem';
+    const gemaakt = [];
     for (const r of regels) {
       // 541: een STEMKLUS (een verhaal per regel) gaat nooit als vraag naar een model; hij wacht op een telefoon die `kan: ['stem']` meldt.
       const taak = { id: nieuwId(), tekst: r.slice(0, stem ? Pool.STEM_MAX_TEKST : 20000), status: 'wacht', pogingen: 0, sinds: nu(), telefoon: null, uitkomst: null };
@@ -4364,11 +4393,13 @@
       // reserve. Geen hard gewicht: zijn er alleen lichte/ongemeten telefoons, dan gaat de vraag daar wel heen.
       else taak.gesprek = true;
       S.taken.push(taak);
+      gemaakt.push(taak);
       await Opslag.taak(taak);
     }
     logRegel(`${regels.length} ${stem ? (regels.length === 1 ? 'stemklus' : 'stemklussen') : (regels.length === 1 ? 'vraag' : 'vragen')} in de wachtrij.`);
     tekenWachtrij();
     werkTik();
+    return gemaakt;
   }
   // 636: het adres van de geheugen-telefoon uit de hartslagen -- gebruikt om haar als RESERVE-mond te houden (een andere mond eerst).
   function geheugenAdres() {
@@ -6080,7 +6111,8 @@
     ploegStroom().catch(() => {});
     setInterval(schermTik, 1000);
     setInterval(wandTik, 1000);
-    setInterval(antwoordTik, 1000);
+    setInterval(() => { antwoordTik(); handenvrijTik(); }, 1000);
+    if ($('handenvrijKnop')) { zetHandenvrij(Hv.aan, true); $('handenvrijKnop').addEventListener('click', () => zetHandenvrij(!Hv.aan)); }
     // De begroeting: kort, met de stand (na de eerste meting).
     setTimeout(() => { const st = statusNu(); spreek(K.veronicaZin(S.karakter, 'begroeting', Object.assign({ naam: S.eigenaar, uur: new Date().getHours() }, st)), 'begroeting'); }, 4000);
     // VANZELF WEER VERBINDEN na een slaapstand of als het wifi terug is: alles staat in de opslag
@@ -6600,7 +6632,7 @@
   // De knoppenregel: een knop bestaat alleen als een mens iets moet beslissen dat de machine niet zelf kan. De rest gaat vanzelf of
   // staat achter Meer; er is niets weggegooid (de oude knoppen staan op het scherm Meer).
   // ===================================================================
-  const HoofdV = { meldH: null, wakkerVanzelf: false };
+  const HoofdV = { meldH: null, wakkerVanzelf: false, vraagId: null, gesproken: false, sinds: 0 };
   // Meldingen: EEN regel bovenin die na acht seconden vanzelf weggaat. Nooit een pop-up.
   function meld(zin) {
     const m = $('meldRegel');
@@ -6685,16 +6717,54 @@
     if (!t) { meld('Typ of zeg eerst wat je wilt.'); return 'leeg'; }
     const b = K.begrijp(t);
     if (b && b.soort && b.soort !== 'taak' && !['leeg', 'ja', 'nee'].includes(b.soort) && b.soort !== 'vraag') return verwerkSpraak(t, 'vraagveld');
-    const T = window.Trap;
-    const groen = T ? trapKaartjesTeken().some((x) => x.kaart.status === 'groen') : false;
-    if (S.aan && groen && !TrapV.bezig) {
-      meld(`Veronica pakt het op als: ${(T.SOORTEN[T.raadSoort(t)] || {}).titel || 'algemene vraag'}.`);
-      await trapDoe({ doel: t });
-      return 'trap';
-    }
-    await voegTakenToe(t);
-    meld(S.aan ? 'In de wachtrij: de eerste vrije telefoon pakt het op.' : 'In de wachtrij. Tik op Start, dan gaan de telefoons aan het werk.');
+    // 653 (HOOGSTE PRIO, veldwerk Cowork): een VRAAG in het hoofdveld gaat ALTIJD naar het gewone antwoordpad. Vroeger werd elke
+    // vraag naar de trap ("klein-naar-groot") gestuurd zodra het pantser aan stond én een trap-kaartje groen was -- maar de trap
+    // toont niets in het hoofdveld, dus "Hoeveel is 12 keer 7?" gaf geen antwoord en niets in beeld. De trap blijft bestaan, maar
+    // alleen via zijn EIGEN veld (#trapDoel) en knop (#trapKnop); het hoofdveld antwoordt gewoon (één telefoon) met zichtbare stand.
+    const gemaakt = await voegTakenToe(t);
+    // 643: volg deze getypte vraag als een gesproken vraag -- Veronica spreekt straks het antwoord uit, laat het zien, en
+    // zegt onderweg ZICHTBAAR wat er gebeurt (bezig op welke telefoon, of een eerlijke reden als geen telefoon hem oppakt).
+    const eerste = (gemaakt && gemaakt[0]) || null;
+    if (eerste) { HoofdV.vraagId = eerste.id; HoofdV.gesproken = false; HoofdV.sinds = nu(); }
+    vraagStatusTik();
     return 'wachtrij';
+  }
+  // 643: de zichtbare levensloop van de getypte vraag: bezig -> antwoord (ook uitgesproken) -> of een eerlijke reden.
+  function vraagStatusReden() {
+    const staten = poolStaten();
+    const uit = uitgeslotenDoorKeuze('veronica');
+    let bereikbaar = 0, capabel = 0, vrij = 0, bezig = 0, rust = 0, licht = 0; const uitgeslotenNamen = [];
+    for (const t of S.telefoons) {
+      const s = staten[t.adres] || {};
+      if (s.bereikbaar === true) bereikbaar += 1; else continue;
+      if (s.klasse === 'licht') { licht += 1; continue; }
+      if (s.klasse === 'te-oud') continue;
+      capabel += 1;
+      if (uit.includes(t.adres)) { uitgeslotenNamen.push(t.naam); continue; }
+      if (s.rust === true || s.magRekenen === false) { rust += 1; continue; }
+      if (s.bezig) { bezig += 1; continue; }
+      if (s.hitteStand === 'oranje' || s.hitteStand === 'rood' || s.vervangen) continue;
+      vrij += 1;
+    }
+    return K.vraagWachtReden({ telefoons: S.telefoons.length, bereikbaar, capabel, vrij, bezig, rust, uitgesloten: uitgeslotenNamen, lichtAlleen: capabel === 0 && licht > 0 });
+  }
+  function vraagStatusTik() {
+    const p = $('vraagStatus');
+    if (!p) return;
+    if (!HoofdV.vraagId) { if (!p.hidden) { p.hidden = true; p.className = ''; } return; }
+    const taak = S.taken.find((x) => x.id === HoofdV.vraagId);
+    const zet = (zin, soort) => { if (p.textContent !== zin) p.textContent = zin; p.className = soort || ''; p.hidden = false; };
+    if (!taak) { HoofdV.vraagId = null; p.hidden = true; return; }
+    if (taak.status === 'klaar') {
+      const a = String(taak.uitkomst || '').trim();
+      zet(a ? `Antwoord (${taak.telefoon || 'een telefoon'}): ${a}` : 'Klaar, maar er kwam geen tekst terug.', 'klaar');
+      if (!HoofdV.gesproken && a) { HoofdV.gesproken = true; spreek(a.replace(/[#*_`>]+/g, ' ').slice(0, 600), 'antwoord'); }
+      return;
+    }
+    if (taak.status === 'fout') { zet(`Dat lukte niet: ${String(taak.uitkomst || 'onbekende reden')}`, 'fout'); return; }
+    if (taak.status === 'bezig') { zet(`Ik denk na over je vraag… (${taak.telefoon || 'een telefoon'})`, 'bezig'); return; }
+    // nog in de wachtrij: na een korte tijd zeggen WAAROM als niemand hem oppakt
+    zet(nu() - HoofdV.sinds < 3500 ? 'Je vraag staat klaar; ik zoek een telefoon…' : vraagStatusReden(), 'bezig');
   }
   function hoofdschermStart() {
     $('meerKnop').addEventListener('click', () => { toonScherm($('scherm-meer').hidden ? 'meer' : 'live'); if (!$('scherm-meer').hidden) { artemisKijk().then((d) => { if (d) { lokaalZet().catch(() => {}); relayZet().catch(() => {}); } }).catch(() => {}); searxKijk().catch(() => {}); } });
@@ -6720,7 +6790,7 @@
       await luisterModelLaden();
       tekenSpraak();
     });
-    const doe = () => { const v = $('hoofdVraag'); const tk = v.value; v.value = ''; vraagDoe(tk).catch(() => {}); };
+    const doe = () => { const v = $('hoofdVraag'); const tk = v.value; v.value = ''; vraagDoe(tk).catch((e) => { meld('Er ging iets mis met je vraag. Probeer het nog eens.'); try { console.error(e); } catch (x) {} }); };
     $('vraagKnop').addEventListener('click', doe);
     $('hoofdVraag').addEventListener('keydown', (e) => { if (e.key === 'Enter') doe(); });
     for (const b of document.querySelectorAll('#lokaalKeus [data-lokaal]')) b.addEventListener('click', () => zetLokaalStand(b.dataset.lokaal));
@@ -6729,7 +6799,7 @@
     tekenRekKnop();
     tekenLokaalKeus();
     tekenStatusRegel();
-    setInterval(tekenStatusRegel, 1000);
+    setInterval(() => { tekenStatusRegel(); vraagStatusTik(); }, 1000);
     setInterval(() => { vanzelfTik().catch(() => {}); }, 60 * 1000);   // wat vanzelf gaat, elke minuut
     setTimeout(() => { vanzelfTik().catch(() => {}); }, 20 * 1000);
   }
@@ -6931,7 +7001,7 @@
     window.addEventListener('hashchange', hoekVolgHash);
     hoekVolgHash();
   }
-  window.__veronica = { Proef, zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, PloegV, ploegStroom, ploegGeef, ploegKeur, tekenPloeg, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, naarMono16k, SttM, luisterModelLaden, luisterModelZin, transcribeerLokaal, statusNu, antwoordTik, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, thuisOffline, ThuisV, NetStand, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { Proef, zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, vraagStatusTik, vraagStatusReden, HoofdVraag: HoofdV, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, zetRelayAdres, PloegV, ploegStroom, ploegGeef, ploegKeur, tekenPloeg, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, naarMono16k, SttM, luisterModelLaden, luisterModelZin, transcribeerLokaal, statusNu, antwoordTik, handenvrijTik, zetHandenvrij, Hv, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, thuisOffline, ThuisV, NetStand, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

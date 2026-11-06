@@ -95,6 +95,11 @@
   .verborgen { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   #vraagRij { display: flex; gap: 8px; align-items: center; flex: 1 1 30em; }
   #hoofdVraag { flex: 1; font: inherit; font-size: 20px; padding: 10px 12px; min-height: 52px; color: var(--tekst); background: var(--paneel); border: 1px solid var(--lijn); border-radius: 12px; }
+  #vraagStatus { font-size: 19px; font-weight: 600; margin: 8px 0 0; padding: 10px 12px; background: var(--paneel); border: 1px solid var(--lijn); border-radius: 12px; }
+  #vraagStatus.bezig { border-color: #45d8ff; }
+  #vraagStatus.klaar { border-color: #4caf50; }
+  #vraagStatus.fout { border-color: #e5a24a; }
+  #vraagStatus[hidden] { display: none; }
   #startStopKnop { font-size: 20px; font-weight: 800; padding: 12px 22px; border: 3px solid #b8860b; }
   #startStopKnop[aria-pressed="true"] { border-color: var(--rood); }
   #lokaalKeus { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 4px; }
@@ -291,6 +296,7 @@
     </button>
     <p id="veronicaZin" aria-live="polite"></p>
     <div id="vraagRij"><label for="hoofdVraag" class="verborgen">Vraag of opdracht</label><input id="hoofdVraag" type="text" autocomplete="off" maxlength="12000" placeholder="Vraag iets, of geef een opdracht"> <button id="micKnop" data-proef="mic" aria-pressed="false" aria-label="Spreek een opdracht in">🎤</button> <button type="button" id="vraagKnop" data-proef="vraag">Vraag</button></div>
+    <p id="vraagStatus" role="status" aria-live="polite" hidden></p>
     <span id="spraakZin" aria-live="polite"></span>
     <button type="button" id="startStopKnop" data-proef="start-stop" class="startGroot" aria-pressed="false">Start</button>
     <span hidden><button id="avengersKnop" class="avengersGroot" title="Alle telefoons bij elkaar roepen; eerst zie je wie meedoet">🛡 Avengers assemble</button> <button id="alleenLokaalKnop" aria-pressed="false" title="Niets naar Claude of een ander model buiten huis; alleen de Gemma's op de telefoons">Alleen lokaal: uit</button></span>
@@ -582,6 +588,9 @@
     <!-- 641: het luistermodel (Whisper) op deze computer. Een keer ophalen (±75 MB), daarna versta ik je ook zonder internet en zonder telefoon. -->
     <button type="button" id="luisterModelKnop" data-proef="luistermodel">Haal het luistermodel op</button>
     <p id="luisterModelZin" class="eerlijk" aria-live="polite"></p>
+    <!-- 645 (fase 1g): handenvrij luisteren. Standaard uit. Aan = na elk antwoord luistert Veronica vanzelf opnieuw, tot "stop"/"klaar" of deze knop. -->
+    <button type="button" id="handenvrijKnop" aria-pressed="false">Handenvrij luisteren: uit</button>
+    <p id="handenvrijZin" class="eerlijk" aria-live="polite"></p>
     <button id="wandAutoKnop" aria-pressed="true">Wandstand vanzelf: aan</button>
     <p class="eerlijk">De wandstand laat alleen de kaarten zien, groot. Vanzelf na twee minuten zonder muis of toetsen. Echt volledig scherm komt na de eerste tik (zo wil de browser het).</p>
     <p id="ntfyStand"></p>

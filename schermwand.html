@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#04070c">
+<meta name="referrer" content="no-referrer">
+<title>Schermenwand</title>
+<link rel="icon" href="icoon-192.png">
+<style>
+  :root { --nacht: #04070c; --paneel: #0b121c; --lijn: #17304a; --tekst: #e8f3ff; --zacht: #8fa8bf; --rood: #e5484d; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--nacht); color: var(--tekst); font: 18px/1.45 system-ui, sans-serif; }
+  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--lijn); flex-wrap: wrap; }
+  header h1 { font-size: 24px; margin: 0; }
+  a { color: #45d8ff; }
+  main { padding: 8px 16px 32px; }
+  button { font: inherit; color: var(--tekst); background: var(--paneel); border: 1px solid var(--lijn); border-radius: 12px; padding: 10px 14px; cursor: pointer; min-height: 48px; }
+  button.groot { font-size: 22px; font-weight: 700; padding: 14px 20px; border-color: #45d8ff; }
+  button.noodstop { border-color: var(--rood); color: #ffb4b6; font-weight: 700; }
+  .eerlijk { color: var(--zacht); font-size: 16px; }
+  .melding { font-size: 20px; font-weight: 700; min-height: 1.4em; margin: 10px 0; }
+  .melding.slecht { color: #ffb4b6; }
+  .knoprij { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+  /* 642: de wand -- een tegel per telefoon, per serienummer. */
+  #swRaster { display: grid; grid-template-columns: repeat(var(--kolommen, 2), 1fr); gap: 14px; align-items: start; margin-top: 10px; }
+  .swTegel { background: #060b12; border: 1px solid var(--lijn); border-radius: 14px; padding: 10px; }
+  .swTegel.groot { grid-column: 1 / -1; }
+  .swTegel.kijk { border-color: #2a4a6a; }
+  .swKop { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .swNaam { font-size: 18px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .swBadge { font-size: 14px; color: #ffd27a; border: 1px solid #5a4a1a; border-radius: 10px; padding: 2px 8px; flex: none; }
+  .swScherm { width: 100%; max-height: 72vh; object-fit: contain; background: #000; border-radius: 12px; touch-action: none; cursor: pointer; display: block; }
+  .swTegel.kijk .swScherm { cursor: default; }
+  .swKnoppen { display: flex; gap: 8px; margin-top: 8px; }
+  .swKnoppen button { flex: 1; padding: 8px 6px; }
+  .swOnder { display: flex; gap: 8px; margin-top: 8px; }
+  .swOnder button { flex: 1; padding: 8px 6px; font-size: 16px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header><h1>📱 Schermenwand</h1><a href="./">Terug naar Veronica</a></header>
+<main>
+  <p class="eerlijk">De schermen van je rektelefoons live naast elkaar, via de USB-kabel (een kabel of een USB-hub).
+    Alles blijft tussen deze computer en de telefoons — geen internet, geen andere site. Klik op een scherm om te tikken;
+    "Groot" zet een scherm groot. <b>De dagelijkse telefoon (de F8) kun je hier wel zien maar nooit besturen.</b>
+    Typen kan hier met opzet niet: wachtwoorden en inloggen doe je altijd op de telefoon zelf.
+    Een beveiligd scherm (bijvoorbeeld bij bankieren) toont zwart — dat hoort zo.</p>
+
+  <p id="swKanNiet" class="melding slecht" hidden></p>
+  <div class="knoprij">
+    <button class="groot" id="swToevoegen">Telefoon toevoegen</button>
+    <button class="noodstop" id="swNoodstop" hidden>⏹ NOODSTOP (stop alle besturen)</button>
+    <button id="swNoodstopUit" hidden>Weer besturen</button>
+  </div>
+  <p class="eerlijk">Voeg elke telefoon één keer toe (voor elke telefoon kies je hem uit het lijstje van Chrome).
+    Loopt een beeld vast, dan start alleen dat ene scherm vanzelf opnieuw op.</p>
+  <p id="swMelding" class="melding" role="status" aria-live="polite"></p>
+
+  <div id="swRaster" aria-label="De schermen van de telefoons"></div>
+  <template id="swTegelSjabloon">
+    <div class="swTegel">
+      <div class="swKop"><span class="swNaam">Telefoon</span><span class="swBadge" hidden>alleen kijken</span></div>
+      <canvas class="swScherm" aria-label="Scherm van de telefoon" hidden></canvas>
+      <div class="swKnoppen" hidden><button class="swTerug">◀ Terug</button><button class="swThuis">● Thuis</button><button class="swApps">■ Apps</button></div>
+      <div class="swOnder"><button class="swGroot">Groot</button><button class="swHerstart">Herstart</button><button class="swLos">Stop</button></div>
+    </div>
+  </template>
+</main>
+<script src="besturen-adb.js"></script>
+<script src="telefoonsite.js"></script>
+<script src="schermwand.js"></script>
+</body>
+</html>
