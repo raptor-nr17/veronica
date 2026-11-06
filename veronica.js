@@ -1135,6 +1135,22 @@
       return tel.brief ? kernVanBrief(tel, tekst, stopFn) : kernVanWifi(tel, tekst);
     };
   }
+  // 656: HET SLIMME BREIN (de F8) schrijft het samengevoegde antwoord als die bereikbaar is. De F8 is de dagelijkse telefoon (dagelijks in de
+  // hartslag) en wordt NOOIT bestuurd -- dit is alleen een rekenklus (tekst schrijven), geen schermbesturing. We hergebruiken de BESTAANDE
+  // wegen (kernVanWifi over het eigen wifi, kernVanBrief via de relay); geen nieuwe transportweg. Geen bereikbare F8 = null, en dan schrijft
+  // het sterkste rek-model (kiesSamenvoeger valt terug op een telefoon over het wifi). Markering f8:true zodat kiesSamenvoeger hem voortrekt.
+  function f8Schrijver() {
+    const h = Object.values(HB.per || {}).find((x) => x && x.id && x.dagelijks === true && typeof x.t === 'number'
+      && nu() - x.t <= K.HARTSLAG_VERS_MS && x.motor && x.motor.aan && x.motor.klaar === true);
+    if (!h) return null;
+    const t = S.telefoons.find((x) => x.id === h.id && x.jarvis && staat(x.adres).bereikbaar && !staat(x.adres).bezig);
+    if (t) return { id: t.adres, naam: t.naam || h.naam || 'de F8', brief: false, f8: true };
+    if (postbusBasis() !== 'https://ntfy.sh') return { id: `brief:${h.id}`, toestel: h.id, naam: h.naam || 'de F8', brief: true, f8: true };
+    return null;
+  }
+  function schrijfSamenvoeging(tel, tekst, stopFn) {
+    return tel.brief ? kernVanBrief(tel, tekst, stopFn) : kernVanWifi({ id: tel.id, naam: tel.naam }, tekst);
+  }
   // 541 (privé-hoek) + 579 (algemeen): een onderzoeksvraag -> zoekdeelvragen (knipOnderzoek), verdeeld over de telefoons; elke telefoon
   // zoekt zijn deel en haalt met ZIJN EIGEN model de kern eruit; Veronica voegt het samen met de bronnen. prive=true: alleen eigen wifi
   // (555), de privé-hoek-UI en de privé-zoekwand. prive=false: ALLE groene telefoons, ook off-wifi VIA DE RELAY -- dit zijn publieke
@@ -1206,10 +1222,20 @@
         const kop = el('div', 'zoekRes'); kop.appendChild(el('b', '', "Veronica's antwoord (alles samengevoegd)"));
         const regel = el('div', '', 'Ik voeg de antwoorden van de telefoons samen tot één antwoord…'); kop.appendChild(regel);
         uit.prepend(kop);
-        const tel = tels.find((t) => !t.brief) || tels[0];
+        // 656: het slimme brein (de F8) schrijft het samengevoegde antwoord als die er is; anders het sterkste rek-model. De F8 wordt nooit
+        // bestuurd -- dit is alleen een rekenklus. Lukt het via de F8 niet, dan valt het terug op een telefoon over het eigen wifi.
+        const f8 = f8Schrijver();
+        const kandidaten = f8 ? [f8].concat(tels) : tels;
+        const terugval = tels.find((t) => !t.brief) || tels[0] || null;
+        let tel = window.VeronicaZoek.kiesSamenvoeger(kandidaten) || terugval;
         const tekst = window.VeronicaZoek.samenvoegTekst(vraag, kernen);
         let s = { ok: false, zin: 'Geen telefoon om samen te voegen.' };
-        try { s = tel ? (tel.brief ? await kernVanBrief(tel, tekst, () => V.stop) : await kernVanWifi(tel, tekst)) : s; } catch (e) { s = { ok: false, zin: 'Samenvoegen lukte niet.' }; }
+        try { s = tel ? await schrijfSamenvoeging(tel, tekst, () => V.stop) : s; } catch (e) { s = { ok: false, zin: 'Samenvoegen lukte niet.' }; }
+        // Schreef de F8 niet mee (bezig/onbereikbaar), dan laat het sterkste rek-model het schrijven in plaats van de losse antwoorden te tonen.
+        if ((!s || !s.ok || !s.tekst) && tel && tel.f8 && terugval && !V.stop) {
+          tel = terugval;
+          try { s = await schrijfSamenvoeging(tel, tekst, () => V.stop); } catch (e) { s = { ok: false, zin: 'Samenvoegen lukte niet.' }; }
+        }
         if (s && s.ok && s.tekst) regel.textContent = `${s.tekst}${s.telefoon ? ` (samengevoegd door ${s.telefoon})` : ''}`;
         else { regel.className = 'klein'; regel.textContent = `${(s && s.zin) || 'Samenvoegen lukte niet.'} De losse antwoorden staan hieronder.`; }
       }
@@ -6953,16 +6979,37 @@
     if (!tels.length) { stand.textContent = 'Geen telefoon bereikbaar. Veronica haalt zelf niets van internet: alleen de telefoons zoeken.'; return; }
     stand.textContent = 'Bezig...';
     let r = null;
-    try { r = await zoeker.zoekStapel(vraag, { soort, bronnen, telefoons: tels, opStap: (x) => zoekwandStap('gewoon', x) }); } catch (e) { r = null; }
+    // 656: de gezamenlijke zoekbalk VOEGT SAMEN -- elke telefoon doet een deelvraag (RRF per adres, §655) en haalt met zijn eigen model de
+    // kern eruit; daarna schrijft de F8 (als die er is) één antwoord met bronnummers. naUitslag laat elke telefoon zijn kern maken.
+    try { r = await zoeker.zoekStapel(vraag, { soort, bronnen, telefoons: tels, naUitslag: onderzoekKern(vraag, () => false), opStap: (x) => zoekwandStap('gewoon', x) }); } catch (e) { r = null; }
     uit.replaceChildren();
     if (!r || !r.ok) { stand.textContent = (r && r.zin) || 'Zoeken lukte niet.'; return; }
     stand.textContent = `${r.uitslagen.length} ${r.uitslagen.length === 1 ? 'vraag' : 'vragen'} klaar.`;
     for (const x of r.uitslagen) {
-      const u = x.uitslag || {};
+      const u = x.uitslag || {}; const k2 = x.kern || null;
       const k = el('div', 'zoekRes');
       k.appendChild(el('b', '', `${x.term}: ${u.ok ? `${u.aantal} ${u.aantal === 1 ? 'resultaat' : 'resultaten'}` : (u.zin || 'niet gelukt')} · door ${x.telefoon}`));
-      for (const res of (u.samengevoegd || []).slice(0, 5)) k.appendChild(el('div', 'klein', `${res.titel} · ${res.bronnen.join(', ')} · ${res.url}`));   // platte tekst
+      if (k2 && k2.ok && k2.tekst) k.appendChild(el('div', '', `Kern${k2.telefoon ? ` (model op ${k2.telefoon})` : ''}: ${k2.tekst}`));
+      (u.samengevoegd || []).slice(0, 5).forEach((res, i) => k.appendChild(el('div', 'klein', `[${i + 1}] ${res.titel} · ${res.bronnen.join(', ')} · ${res.url}`)));   // platte tekst, genummerd
       uit.appendChild(k);
+    }
+    // 656: ÉÉN antwoord bovenaan, met bronnummers, geschreven door de F8 als die bereikbaar is (anders het sterkste rek-model). De F8
+    // SCHRIJFT alleen (rekenklus) -- hij wordt nooit bestuurd. Lukt de F8 niet, dan valt het terug op een telefoon over het eigen wifi.
+    const kernen = r.uitslagen.filter((x) => x.kern && x.kern.ok && x.kern.tekst).map((x) => ({ telefoon: (x.kern && x.kern.telefoon) || x.telefoon, tekst: x.kern.tekst }));
+    if (kernen.length >= 2) {
+      const kop = el('div', 'zoekRes'); kop.appendChild(el('b', '', "Veronica's antwoord (alles samengevoegd, met bronnummers)"));
+      const regel = el('div', '', 'Ik laat het slimme brein de antwoorden samenvoegen tot één antwoord…'); kop.appendChild(regel);
+      uit.prepend(kop);
+      const f8 = f8Schrijver();
+      const kandidaten = f8 ? [f8].concat(tels) : tels;
+      const terugval = tels.find((t) => !t.brief) || tels[0] || null;
+      let tel = window.VeronicaZoek.kiesSamenvoeger(kandidaten) || terugval;
+      const tekst = window.VeronicaZoek.samenvoegTekst(vraag, kernen);
+      let s = { ok: false, zin: 'Geen telefoon om samen te voegen.' };
+      try { s = tel ? await schrijfSamenvoeging(tel, tekst, () => false) : s; } catch (e) { s = { ok: false, zin: 'Samenvoegen lukte niet.' }; }
+      if ((!s || !s.ok || !s.tekst) && tel && tel.f8 && terugval) { tel = terugval; try { s = await schrijfSamenvoeging(tel, tekst, () => false); } catch (e) { s = { ok: false, zin: 'Samenvoegen lukte niet.' }; } }
+      if (s && s.ok && s.tekst) regel.textContent = `${s.tekst}${s.telefoon ? ` (samengevoegd door ${s.telefoon})` : ''}`;
+      else { regel.className = 'klein'; regel.textContent = `${(s && s.zin) || 'Samenvoegen lukte niet.'} De losse antwoorden staan hieronder.`; }
     }
   }
   function hoekAansluiten() {

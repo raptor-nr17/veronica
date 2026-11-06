@@ -170,6 +170,14 @@
       .map((k, i) => `[${i + 1}] (van ${String(k.telefoon || 'een telefoon').slice(0, 60)}) ${String(k.tekst).replace(/\s+/g, ' ').trim().slice(0, 600)}`);
     return `Je bent Veronica: de eigen AI, een vrouwelijk personage dat rustig, vriendelijk, slim en leergierig is. Je antwoordt kort en in gewone taal, zonder accent of dialect. Hieronder staan deelantwoorden die de telefoons samen vonden. Voeg ze samen tot ÉÉN kort, eerlijk antwoord op de vraag, in gewone taal. Gebruik alleen wat er staat. Spreken de deelantwoorden elkaar tegen of mist er iets, zeg dat eerlijk. Verzin geen feiten.\nVraag: ${String(vraag || '').slice(0, 600)}\nDeelantwoorden:\n${stukken.join('\n')}`;
   }
+  // 656: WIE SCHRIJFT HET SAMENGEVOEGDE ANTWOORD. Het slimme brein (de F8) voegt de losse kernen tot één antwoord samen zodra die
+  // bereikbaar is -- anders schrijft het sterkste rek-model het. Zuiver en los te testen: een kandidaat gemarkeerd f8:true wint; daarna een
+  // telefoon over het eigen wifi (geen brief, want de brievenbus is trager en kan missen); anders de eerste. De F8 SCHRIJFT alleen een tekst
+  // (een rekenklus), hij wordt nooit bestuurd -- dat is de schermenwand, en daar blijft de F8 alleen-kijken.
+  function kiesSamenvoeger(kandidaten) {
+    const lijst = (Array.isArray(kandidaten) ? kandidaten : []).filter((k) => k && (k.id || k.toestel || k.brief));
+    return lijst.find((k) => k && k.f8 === true) || lijst.find((k) => k && !k.brief) || lijst[0] || null;
+  }
 
   // o: { haal(url, init, ms) -> Response (Veronica's eigen), telefoons() -> [{ id, naam, host } | { id, naam, brief: true, toestel }], code() -> koppelcode, wacht?, nu?,
   //      brief?: { stuur: async (toestelId, delen) -> { delen } | { fout } } (537) }
@@ -286,5 +294,5 @@
     return Object.freeze({ zoek, zoekStapel, tellers, kassa });
   }
 
-  return { maak, poort, voegPerAdresSamen, herschikOpBetekenis, RRF_K, verdeelStapel, leesStapel, STAPEL_MAX, knipOnderzoek, kernTekst, samenvoegTekst, ONDERZOEK_MAX, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
+  return { maak, poort, voegPerAdresSamen, herschikOpBetekenis, RRF_K, verdeelStapel, leesStapel, STAPEL_MAX, knipOnderzoek, kernTekst, samenvoegTekst, kiesSamenvoeger, ONDERZOEK_MAX, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
 }));
