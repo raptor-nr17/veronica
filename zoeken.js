@@ -68,20 +68,46 @@
     beoordeelResultaat: (x) => ({ toegestaan: !!(x && /^https:\/\//i.test(String(x.url || '')) && String(x.titel || '').length < 400) }),
   };
 
-  // Per adres samenvoegen: een pagina die twee bronnen noemen is een resultaat met twee bronnen.
+  // 655: Per adres samenvoegen met RECIPROCAL RANK FUSION (RRF). Dubbelen (zelfde adres) worden één resultaat; de volgorde is niet
+  // "het vaakst genoemd" maar de RRF-score: een pagina die in meerdere bronnen HOOG staat wint van een pagina die overal laag
+  // staat. Score = som over de bronnen van 1 / (k + rang), rang vanaf 1, k dempt de staart (60 = de standaardwaarde uit de
+  // literatuur). Zuiver en los te testen. De semantische herschikking met EmbeddingGemma is een losse stap (herschikOpBetekenis).
+  const RRF_K = 60;
   function voegPerAdresSamen(bronnen) {
     const per = new Map(); const volgorde = [];
     for (const b of bronnen || []) {
-      for (const r of b.resultaten || []) {
+      const lijst = b.resultaten || [];
+      for (let i = 0; i < lijst.length; i += 1) {
+        const r = lijst[i];
         const sleutel = ZoekKassa.normaalAdres(r.url) || `${b.bron}|${r.titel}`;
         let e = per.get(sleutel);
-        if (!e) { e = { titel: String(r.titel || '').slice(0, 200), tekst: String(r.tekst || '').slice(0, 200), url: String(r.url || ''), bronnen: [], telefonen: [] }; per.set(sleutel, e); volgorde.push(sleutel); }
+        if (!e) { e = { titel: String(r.titel || '').slice(0, 200), tekst: String(r.tekst || '').slice(0, 200), url: String(r.url || ''), bronnen: [], telefonen: [], rrf: 0, seq: volgorde.length }; per.set(sleutel, e); volgorde.push(sleutel); }
+        e.rrf += 1 / (RRF_K + i + 1);   // RRF: de rang binnen DEZE bron (vanaf 1)
         if (!e.bronnen.includes(b.bron)) e.bronnen.push(b.bron);
         if (b.telefoon && !e.telefonen.includes(b.telefoon)) e.telefonen.push(b.telefoon);
         if (!e.tekst && r.tekst) e.tekst = String(r.tekst).slice(0, 200);
       }
     }
-    return volgorde.map((k) => per.get(k)).sort((a, b) => b.bronnen.length - a.bronnen.length);
+    return volgorde.map((k) => per.get(k)).sort((a, b) => (b.rrf - a.rrf) || (b.bronnen.length - a.bronnen.length) || (a.seq - b.seq));
+  }
+  // 655: optionele semantische herschikking (EmbeddingGemma, §523b). embedder.vectorVoor(tekst) -> getallen; is er geen embedder,
+  // dan ongewijzigd (de RRF-volgorde blijft). We mengen de RRF-rang met de cosinus-gelijkenis tot de vraag, zodat een pagina die
+  // ER WEL op lijkt stijgt en een toevallige dubbele treffer die niet past zakt. Pure functie, geen netwerk, geen opslag.
+  async function herschikOpBetekenis(lijst, vraag, embedder) {
+    const rij = Array.isArray(lijst) ? lijst.slice() : [];
+    if (!embedder || typeof embedder.vectorVoor !== 'function' || rij.length < 2 || !String(vraag || '').trim()) return rij;
+    const cos = (a, b) => { let p = 0, na = 0, nb = 0; const n = Math.min(a.length, b.length); for (let i = 0; i < n; i += 1) { p += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; } return (na && nb) ? p / (Math.sqrt(na) * Math.sqrt(nb)) : 0; };
+    let qv; try { qv = await embedder.vectorVoor(String(vraag).slice(0, 400)); } catch (e) { return rij; }
+    if (!Array.isArray(qv) || !qv.length) return rij;
+    for (let i = 0; i < rij.length; i += 1) {
+      const r = rij[i];
+      try { const v = await embedder.vectorVoor(`${r.titel || ''} ${r.tekst || ''}`.slice(0, 400)); r._sem = (Array.isArray(v) && v.length) ? cos(qv, v) : 0; }
+      catch (e) { r._sem = 0; }
+      r._rang = i;   // de RRF-plek (0 = beste)
+    }
+    // meng: een lage RRF-rang (hoog in de RRF) EN een hoge gelijkenis winnen. We tellen de genormaliseerde gelijkenis op bij een
+    // aflopende rang-score, zodat de RRF leidend blijft en de betekenis bijstuurt.
+    return rij.sort((a, b) => ((b._sem || 0) - (a._sem || 0)) || (a._rang - b._rang)).slice();
   }
 
   const STAPEL_MAX = 30;
@@ -260,5 +286,5 @@
     return Object.freeze({ zoek, zoekStapel, tellers, kassa });
   }
 
-  return { maak, poort, voegPerAdresSamen, verdeelStapel, leesStapel, STAPEL_MAX, knipOnderzoek, kernTekst, samenvoegTekst, ONDERZOEK_MAX, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
+  return { maak, poort, voegPerAdresSamen, herschikOpBetekenis, RRF_K, verdeelStapel, leesStapel, STAPEL_MAX, knipOnderzoek, kernTekst, samenvoegTekst, ONDERZOEK_MAX, STANDAARD_BRONNEN, SOORTEN, VERMELDING, LET_OP, REDEN };
 }));
