@@ -88,8 +88,8 @@
   }
   async function onderwerp(o, soort, c) {
     if (!ONDERWERP_RE.test(String(o || ''))) return null;
-    const voor = soort === 'roep' ? 'veronica-roep:' : (soort === 'ploeg' ? 'veronica-ploeg:' : 'veronica-hartslag:');
-    const pre = soort === 'roep' ? 'vr' : (soort === 'ploeg' ? 'vp' : 'vh');   // 624: 'ploeg' = het team-ploegbord, eigen topic naast de hartslag
+    const voor = soort === 'roep' ? 'veronica-roep:' : (soort === 'ploeg' ? 'veronica-ploeg:' : (soort === 'melding' ? 'veronica-melding:' : 'veronica-hartslag:'));
+    const pre = soort === 'roep' ? 'vr' : (soort === 'ploeg' ? 'vp' : (soort === 'melding' ? 'vm' : 'vh'));   // 624: 'ploeg' = team-ploegbord; 667e: 'melding' = ARTEMIS-uitkomst naar Veronica (eigen topic)
     return pre + naarHex(await cryptoNu(c).subtle.digest('SHA-256', tekstBytes(voor + o))).slice(0, 30);
   }
   // 508: een korte VINGERAFDRUK van het geheime onderwerp (8 tekens van een hash). Een telefoon zet hem open in /jarvis/status, zodat
@@ -109,7 +109,7 @@
   }
   async function sleutel(o, soort, gebruik, c) {
     const sub = cryptoNu(c).subtle;
-    const pre = soort === 'roep' ? 'veronica-roep-sleutel:' : (soort === 'ploeg' ? 'veronica-ploeg-sleutel:' : 'veronica-hartslag-sleutel:');
+    const pre = soort === 'roep' ? 'veronica-roep-sleutel:' : (soort === 'ploeg' ? 'veronica-ploeg-sleutel:' : (soort === 'melding' ? 'veronica-melding-sleutel:' : 'veronica-hartslag-sleutel:'));
     const raw = await sub.digest('SHA-256', tekstBytes(pre + o));
     return sub.importKey('raw', raw, { name: 'AES-GCM' }, false, [gebruik]);
   }
@@ -391,6 +391,13 @@
     const r = await open(o, 'ploeg', regel, c);
     const d = r && r.d;
     return (d && typeof d === 'object' && typeof d.op === 'string') ? d : null;
+  }
+  // 667e: een MELDING van ARTEMIS (de klaarzet-uitkomst) -> { bron, tekst, t }, of null. Zelfde crypto (soort 'melding'); zo kan
+  // Veronica de ARTEMIS-stand tonen zonder de console (die van buiten de Chromebook niet bereikbaar is).
+  async function leesMelding(o, regel, c) {
+    const r = await open(o, 'melding', regel, c);
+    const d = r && r.d;
+    return (d && typeof d === 'object' && d.v === 1 && typeof d.tekst === 'string') ? { bron: String(d.bron || 'artemis').slice(0, 20), tekst: d.tekst.slice(0, 400), t: Number(d.t) || 0 } : null;
   }
 
   // Ophalen (de telefoon, eens per minuut) en luisteren (Veronica, een doorlopende verbinding).

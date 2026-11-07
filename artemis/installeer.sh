@@ -144,6 +144,8 @@ ACTIEF_F="$REK_MAP/proxy-actief"                 # 592L: welk model antwoordde h
 REDEN_F="$REK_MAP/proxy-reden"                   # 592o: de laatste echte reden van een mislukt/geblokkeerd verzoek (Status leest dit)
 F8_GEVONDEN_F="$REK_MAP/f8-gevonden.conf"        # 592p: het teruggevonden LAN-adres van de F8 (na een IP-wissel); Status leest dit
 DRAADLOOS_F="$REK_MAP/draadloos"                 # 596: onthouden draadloze adb-adressen (ip:5555) zodat de minuut-scan ze na een herstart weer verbindt
+KLAAR_F="$REK_MAP/klaargezet"                    # 667d: toestel-id's die al VOLLEDIG zijn klaargezet (telefoon_klaarzetten), zodat de auto-lus ze niet opnieuw doet
+KLAAR_LOCK="$REK_MAP/klaarzetten.lock"           # 667d: lock zodat de auto-klaarzet-lus niet twee keer tegelijk draait
 SCAN5555_T="$REK_MAP/scan5555.t"                 # 606: tijdstip van de laatste subnet-scan op poort 5555 (rem: eens per ~180 s)
 LAN_SUBNETTEN_F="$REK_MAP/lan-subnetten"         # 608: onthouden /24-prefixen waar ooit een telefoon te vinden was (beide wifi's), zodat de F8/rek na een wifi-wissel vanzelf terugkomt
 PIDA="$REK_MAP/artemis.pid"
@@ -441,7 +443,7 @@ MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodi
 TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten'}   # 578b: ook Rek opbouwen en Koppel via de kabel op de achtergrond -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
+LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto'}   # 578b: ook Rek opbouwen en Koppel via de kabel op de achtergrond -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -520,6 +522,7 @@ def lus():
             herstart_als_nieuwer()
             schijfwacht()
             doe('scan')
+            doe('klaarzetten-auto')   # 667d: een nieuwe rektelefoon aan de kabel vanzelf volledig klaarzetten (nooit de F8), geen knop nodig
             doe('start-stil')
             if RONDE % 3 == 0:
                 doe('jarvis-waak')   # 590: elke ~3 min JARVIS nakijken op de rektelefoons (nooit de F8)
@@ -1276,19 +1279,41 @@ kabel_koppel() {
 # verhuis-stilte op: stond het wifi soms als 'niet gevalideerd' (Privé-DNS strikt), sprong de telefoon naar mobiele data, en stopte
 # HyperOS de hartslag in de WebView. Eén knop zet alles recht. Fysieke toestemming = de kabel + 'Toestaan' op de telefoon; NOOIT
 # de F8. Elke stap wordt gemeld. Herbruikbaar: elke rektelefoon aan de kabel krijgt dit.
+# 667d: argument "auto" = de minuut-lus roept dit aan. Dan slaat hij telefoons over die AL klaargezet zijn (KLAAR_F, per toestel-id),
+# en zwijgt hij als er niets NIEUWS aan de kabel hangt -- zo hoeft niemand ooit op de knop te drukken (de eigenaar doet niets). Een lock
+# voorkomt dat twee lussen tegelijk draaien. De knop (zonder "auto") doet altijd alles, ook een telefoon die al klaar is.
 telefoon_klaarzetten() {
+  local auto=''; [ "${1:-}" = "auto" ] && auto=1
   "$ADB" start-server >/dev/null 2>&1 || true
   local regels s staat id naam ip rel relmaj n=0
   regels="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1" "$2}')"
-  [ -n "$regels" ] || { zeg "Geen telefoon via de kabel te zien. Sluit de telefoon met USB aan, deel hem in ChromeOS met Linux, en zet USB-foutopsporing aan (op sommige telefoons ook 'USB-foutopsporing (beveiligingsinstellingen)')."; return 1; }
+  if [ -z "$regels" ]; then [ -n "$auto" ] || zeg "Geen telefoon via de kabel te zien. Sluit de telefoon met USB aan, deel hem in ChromeOS met Linux, en zet USB-foutopsporing aan (op sommige telefoons ook 'USB-foutopsporing (beveiligingsinstellingen)')."; return 1; fi
+  # 667d (auto): is er wel een NIEUWE, niet-F8, toegestane telefoon in 'device'-stand die nog niet klaargezet is? Zo niet: stil weg.
+  if [ -n "$auto" ]; then
+    local nieuw='' did
+    while read -r s staat; do
+      [ -n "$s" ] || continue; case "$s" in *:*) continue ;; esac
+      [ "$staat" = "device" ] || continue; is_f8 "$s" && continue
+      did="$(toestel_id "$s")"
+      [ -s "$KLAAR_F" ] && grep -qxF "$did" "$KLAAR_F" 2>/dev/null && continue
+      nieuw=1; break
+    done <<<"$regels"
+    [ -n "$nieuw" ] || return 0
+    # een lock, zodat twee minuut-lussen niet tegelijk dezelfde telefoon klaarzetten
+    if [ -f "$KLAAR_LOCK" ] && [ "$(( $(date +%s) - $(stat -c %Y "$KLAAR_LOCK" 2>/dev/null || echo 0) ))" -lt 600 ]; then return 0; fi
+    touch "$KLAAR_LOCK" 2>/dev/null || true
+    zeg "Nieuwe telefoon aan de kabel gezien -- ik zet hem vanzelf klaar (geen knop nodig)."
+  fi
   jarvis_oogst   # de nieuwste JARVIS van een telefoon die hem al heeft, om een oude eerst bij te werken (nooit de F8)
   touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
   while read -r s staat; do
     [ -n "$s" ] || continue
     case "$s" in *:*) continue ;; esac                 # alleen de kabel (usb-serienummer), geen draadloos adres
-    is_f8 "$s" && { zeg "F8 overgeslagen (de dagelijkse telefoon zetten we NOOIT klaar)."; continue; }
-    if [ "$staat" != "device" ]; then zeg "$s: nog niet toegestaan over de kabel. Zet USB-foutopsporing aan en tik 'Toestaan' op de telefoon (op sommige telefoons ook 'USB-foutopsporing (beveiligingsinstellingen)')."; continue; fi
+    is_f8 "$s" && { [ -n "$auto" ] || zeg "F8 overgeslagen (de dagelijkse telefoon zetten we NOOIT klaar)."; continue; }
+    if [ "$staat" != "device" ]; then [ -n "$auto" ] || zeg "$s: nog niet toegestaan over de kabel. Zet USB-foutopsporing aan en tik 'Toestaan' op de telefoon (op sommige telefoons ook 'USB-foutopsporing (beveiligingsinstellingen)')."; continue; fi
     id="$(toestel_id "$s")"; naam="$(toestel_naam "$s")"
+    # in de auto-lus: alleen wat nog niet klaar is (de knop doet alles opnieuw)
+    if [ -n "$auto" ] && [ -s "$KLAAR_F" ] && grep -qxF "$id" "$KLAAR_F" 2>/dev/null; then continue; fi
     # fysieke toestemming (kabel + Toestaan) = op de lijst, zodat de draadloze stappen hem later herkennen.
     toegestaan "$id" || { printf '%s\n' "$id" >>"$TOEG"; logregel "Klaarzetten: $naam op de lijst."; }
     zeg "== $naam klaarzetten =="
@@ -1322,10 +1347,15 @@ telefoon_klaarzetten() {
     "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 && zeg "  - JARVIS gestart." || zeg "  - JARVIS starten lukte niet (open hem één keer met de hand)."
     # 9. Nakijken: zit hij op wifi (niet mobiele data)?
     if [ -n "$ip" ]; then zeg "  - staat op wifi ($ip); hij hoort zich nu bij de relay te melden."; else zeg "  - LET OP: geen wifi-adres. Zet hem op het thuis-wifi; Privé-DNS staat nu automatisch, dus de wifi-validatie zou nu moeten lukken (geen terugval naar mobiele data meer)."; fi
+    # 667d: onthoud dat deze telefoon VOLLEDIG is klaargezet, zodat de auto-lus hem niet opnieuw doet.
+    touch "$KLAAR_F" 2>/dev/null; chmod 600 "$KLAAR_F" 2>/dev/null || true
+    grep -qxF "$id" "$KLAAR_F" 2>/dev/null || printf '%s\n' "$id" >>"$KLAAR_F"
+    relay_meld "Telefoon klaargezet: $naam${ip:+ op wifi $ip} (JARVIS gestart; hoort zich nu bij de relay te melden)." || true   # 667e: uitkomst naar de relay, zodat het in Veronica te lezen is
     n=$((n+1))
   done <<<"$regels"
+  rm -f "$KLAAR_LOCK" 2>/dev/null || true
   verbind_draadloos; onthoud_wifi_adb; overzicht
-  [ "$n" -gt 0 ] && zeg "Klaar: $n telefoon(s) volledig klaargezet. De kabel mag eruit; ik vind ze terug via 5555 en JARVIS meldt zich bij de relay." || zeg "Geen telefoon klaargezet (alleen de F8, of niets toegestaan aan de kabel)."
+  if [ "$n" -gt 0 ]; then zeg "Klaar: $n telefoon(s) volledig klaargezet. De kabel mag eruit; ik vind ze terug via 5555 en JARVIS meldt zich bij de relay."; else [ -n "$auto" ] || zeg "Geen telefoon klaargezet (alleen de F8, of niets toegestaan aan de kabel)."; fi
 }
 
 # 561: Android Remote Control MCP (danielealbano, GPL-3.0) als RESERVE naast ARTEMIS: besturen zonder kabel, maar ALLEEN binnen het
@@ -2880,6 +2910,46 @@ rek_relay_bases() {   # welke bases ARTEMIS afleest: de relay (als geldig) EN nt
   fi
   printf '%s' "$b"
 }
+# 667e: EEN melding naar de relay, zodat Cowork/Veronica de ARTEMIS-uitkomst (bv. "telefoon klaargezet") kan lezen ZONDER de console
+# (die is van buiten de Chromebook niet te bereiken). Versleuteld met EXACT de hartslag-crypto (geen tweede waarheid), op een eigen
+# 'melding'-topic (soort 'melding' in hartslag.js: vm + sha256('veronica-melding:'+O)[:30], sleutel sha256('veronica-melding-sleutel:'+O)).
+# Best-effort en stil: geen onderwerp/crypto/relay = niets doen, nooit een fout. Ook lokaal bewaard, zodat Status/Log het altijd toont.
+MELD_F="$REK_MAP/meldingen.log"
+relay_meld() {
+  local tekst="$1"; [ -n "$tekst" ] || return 0
+  printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$tekst" >>"$MELD_F" 2>/dev/null || true; chmod 600 "$MELD_F" 2>/dev/null || true
+  [ -s "$REK_ONDERWERP_F" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local o; o="$(head -1 "$REK_ONDERWERP_F" 2>/dev/null | tr -d '\r\n ')"
+  case "$o" in jv*) : ;; *) return 0 ;; esac
+  rek_zorg_crypto >/dev/null 2>&1 || true
+  REK_O="$o" REK_BASES="${REK_BASES:-$(rek_relay_bases)}" REK_TEKST="$tekst" "$(rek_py)" - <<'PY' 2>/dev/null || true
+import os, re, json, time, hashlib, secrets, urllib.request
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+O = os.environ.get('REK_O', '')
+if not re.match(r'^jv[a-z0-9]{30}$', O): raise SystemExit(0)
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+except Exception:
+    raise SystemExit(0)
+bases = [b for b in os.environ.get('REK_BASES', '').split() if b]
+if not bases: raise SystemExit(0)
+tekst = os.environ.get('REK_TEKST', '')[:400]
+topic = 'vm' + hashlib.sha256(('veronica-melding:' + O).encode()).hexdigest()[:30]
+key = hashlib.sha256(('veronica-melding-sleutel:' + O).encode()).digest()
+iv = secrets.token_bytes(12)
+d = json.dumps({'v': 1, 'bron': 'artemis', 'tekst': tekst, 't': int(time.time() * 1000)}).encode()
+msg = json.dumps({'iv': iv.hex(), 'data': AESGCM(key).encrypt(iv, d, None).hex()})
+body = json.dumps({'topic': topic, 'message': msg}).encode()
+for base in bases:
+    try:
+        req = urllib.request.Request(base.rstrip('/') + '/', data=body, headers={'User-Agent': 'artemis', 'Content-Type': 'application/json'})
+        _OPENER.open(req, timeout=6).read()
+        break
+    except Exception:
+        continue
+PY
+}
 REK_PY_VENV="$REK_MAP/pyrelay"                    # 623e: een eigen mini-venv alleen voor de relay-reader (cryptography)
 rek_py() {   # welke python de relay-reader gebruikt: de eigen venv als die cryptography heeft, anders de systeem-python3
   if [ -x "$REK_PY_VENV/bin/python3" ] && "$REK_PY_VENV/bin/python3" -c 'import cryptography' >/dev/null 2>&1; then
@@ -3728,6 +3798,7 @@ case "${1:-status}" in
   rek-diag) rek_diag ;;                          # 623d: zeg WAAROM de relay-lijst leeg is (relay onbereikbaar / fout onderwerp / geen adres)
   draadloos-auto) draadloos_auto ;;            # 596: een al toegestane telefoon over het wifi besturen (kabel mag eruit)
   kabel-koppel) kabel_koppel ;;                # (4): herstart-vast draadloos via Android 11+ foutopsporing (geen koppelcode nodig)                         # 592r: alle rektelefoons koppelen aan de reserve-keten (Gemma 4 + andere modellen)
+  klaarzetten-auto) telefoon_klaarzetten auto ;;   # 667d: de minuut-lus -- alleen een NIEUWE, nog niet klaargezette telefoon aan de kabel
   klaarzetten) telefoon_klaarzetten ;;         # 667c: een rektelefoon aan de kabel volledig klaarzetten (wifi/DNS/batterij/5555/JARVIS), nooit de F8
   overzicht) overzicht ;;
   schermenwand) schermenwand ;;                # 602: JSON van de telefoons op de wand (serial, naam, reden als er nu niets mag)
