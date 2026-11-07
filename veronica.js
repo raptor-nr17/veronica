@@ -7097,29 +7097,60 @@
   function priveRekTeken() {
     if (!$('priveRek') || !window.Hoek) return;
     const H = window.Hoek;
-    const kaarten = hoekKaarten();                       // uit de hartslag -> telefoons komen vanzelf in de hoek
     const aiAan = hoekAiHelpt();
-    const bereikbaar = kaarten.filter((k) => k.vers).length;
-    if ($('priveRekStatus')) $('priveRekStatus').textContent = kaarten.length
-      ? `${bereikbaar} van ${kaarten.length} ${kaarten.length === 1 ? 'telefoon' : 'telefoons'} in de hoek · AI helpt ${aiAan ? 'AAN' : 'UIT'}`
-      : 'Nog geen telefoon met een hartslag. Zodra een rektelefoon een hartslag stuurt, staat hij hier vanzelf.';
+    // 659b (Cowork-fix): de hoek leest de telefoons NET ALS Live -- uit S.telefoons ∪ HB.per, met de ECHTE verbindingsstatus
+    // (staat(adres).bereikbaar over het eigen wifi) EN de hartslag. Zo telt een F8 die rechtstreeks over wifi verbonden is óók als
+    // "in de hoek", precies zoals op Live (eerder las de hoek alleen de hartslag en zei dan "geen hartslag").
+    const tijd = nu();
+    // ÉÉN telefoon = één regel: dedupe op toestel-id. Een telefoon in S.telefoons (die Veronica over het wifi kent) en dezelfde in de
+    // hartslag (HB.per) is dezelfde telefoon -- nooit dubbel.
+    const perId = new Map();
+    for (const t of S.telefoons) {
+      const hv = (t.id && HB.per[t.id]) || hartslagVoorAdres(t.adres) || null;
+      perId.set(t.id || t.adres, { naam: t.naam, adres: t.adres, hv, t });
+    }
+    for (const h of Object.values(HB.per || {})) {
+      if (h && h.id && !perId.has(h.id) && !S.telefoons.some((t) => t.id === h.id)) perId.set(h.id, { naam: h.naam || 'Een telefoon', adres: null, hv: h, t: null });
+    }
+    const lijst = [...perId.values()];
     const bron = priveRekBron();
-    morphKinderen($('priveRekWand'), kaarten.length ? kaarten.map((k) => {
-      const mag = H.aiMagBesturen({ id: k.id, naam: k.naam, dagelijks: k.stand === 'rust' && /f8/i.test(k.naam) });
-      const f8 = /(^|[^a-z])f8([^a-z]|$)/i.test(String(k.naam || ''));
-      const d = el('div', `hoekKaart stand-${k.stand}`); d.dataset.sleutel = k.id;
-      d.append(el('h3', '', `${k.naam}${(f8 || !mag) ? ' · alleen kijken' : ''}`), el('p', 'hoekWoord', `${k.teken} ${k.woord}`), el('p', 'klein', H.kaartRegel(k)));
-      // per telefoon: de zoekbron (de vier vaste, geen DDG) en het model (klik = instellen). Op slot als AI helpt aan staat.
+    let live = 0;
+    const tegels = lijst.map((x) => {
+      const sleutel = (x.hv && x.hv.id) || x.adres || x.naam;
+      const hv = x.hv;
+      const direct = x.adres ? staat(x.adres).bereikbaar === true : false;
+      const bezigNu = x.adres ? staat(x.adres).bezig === true : false;
+      const versHart = !!(hv && typeof hv.t === 'number' && tijd - hv.t <= K.HARTSLAG_VERS_MS);
+      const aan = direct || versHart;
+      if (aan) live += 1;
+      const m = hv && hv.motor && typeof hv.motor === 'object' ? hv.motor : null;
+      const model = (m && m.model) || null;
+      const woord = direct ? (bezigNu ? '⚙️ rekent nu' : '✅ verbonden over wifi')
+        : versHart ? (m && m.aan ? (m.klaar ? '✅ klaar' : '⏳ laadt model') : '⏻ motor uit')
+          : '❓ geen hartslag';
+      const naam = x.naam || (hv && hv.naam) || 'Een telefoon';
+      const f8 = /(^|[^a-z])f8([^a-z]|$)/i.test(String(naam));
+      const mag = H.aiMagBesturen({ id: sleutel, naam, dagelijks: !!(hv && hv.dagelijks) });
+      const regel = [
+        hv && typeof hv.accu === 'number' ? `accu ${hv.accu}%${hv.laadt ? ' (laadt)' : ''}` : 'accu onbekend',
+        hv && typeof hv.temp === 'number' ? `${String(hv.temp).replace('.', ',')} °C` : 'warmte onbekend',
+      ].join(' · ');
+      const d = el('div', `hoekKaart stand-${aan ? 'klaar' : 'stil'}`); d.dataset.sleutel = sleutel;
+      d.append(el('h3', '', `${naam}${(f8 || !mag) ? ' · alleen kijken' : ''}`), el('p', 'hoekWoord', woord), el('p', 'klein', regel));
       const kb = el('div', 'klein');
-      const sel = document.createElement('select'); sel.dataset.rekBron = k.id; sel.disabled = aiAan;
-      for (const b of H.AI_BRONNEN) { const o = document.createElement('option'); o.value = b; o.textContent = H.AI_BRON_NAAM[b] || b; if ((bron[k.id] || 'wikipedia') === b) o.selected = true; sel.appendChild(o); }
+      const sel = document.createElement('select'); sel.dataset.rekBron = sleutel; sel.disabled = aiAan;
+      for (const b of H.AI_BRONNEN) { const o = document.createElement('option'); o.value = b; o.textContent = H.AI_BRON_NAAM[b] || b; if ((bron[sleutel] || 'wikipedia') === b) o.selected = true; sel.appendChild(o); }
       kb.append(document.createTextNode('Zoekbron: '), sel);
       d.appendChild(kb);
-      const mdl = el('p', 'klein', `Model: ${k.model || 'onbekend'}`);
-      if (!f8) { const mb = document.createElement('button'); mb.type = 'button'; mb.textContent = 'Model wisselen'; mb.dataset.rekModel = k.id; mdl.append(' ', mb); }
+      const mdl = el('p', 'klein', `Model: ${model || 'onbekend'}`);
+      if (!f8 && x.adres) { const mb = document.createElement('button'); mb.type = 'button'; mb.textContent = 'Model wisselen'; mb.dataset.rekModel = x.adres; mdl.append(' ', mb); }
       d.appendChild(mdl);
       return d;
-    }) : [el('p', 'eerlijk', 'Nog geen telefoon met een hartslag.')]);
+    });
+    if ($('priveRekStatus')) $('priveRekStatus').textContent = lijst.length
+      ? `${live} van ${lijst.length} ${lijst.length === 1 ? 'telefoon' : 'telefoons'} in de hoek · AI helpt ${aiAan ? 'AAN' : 'UIT'}`
+      : 'Nog geen telefoon in beeld. Zodra een rektelefoon verschijnt (wifi of hartslag), staat hij hier vanzelf.';
+    morphKinderen($('priveRekWand'), tegels.length ? tegels : [el('p', 'eerlijk', 'Nog geen telefoon in beeld.')]);
     if ($('priveRekAiHelpt')) { $('priveRekAiHelpt').textContent = `AI helpt: ${aiAan ? 'AAN' : 'UIT'}`; $('priveRekAiHelpt').setAttribute('aria-pressed', String(aiAan)); }
     if ($('priveRekAiPlan')) {
       const plan = aiAan ? H.aiPlan(stapelTelefoons(), hoekAiBeschikbaar) : [];
@@ -7136,7 +7167,7 @@
     if (!tels.length) { stand.textContent = 'Geen telefoon in de hoek bereikbaar om te zoeken. Alleen de telefoons zoeken; Veronica haalt zelf niets van internet.'; return; }
     // AI helpt aan = de AI kiest de bronnen (de vier vaste, geen DDG); uit = de per-telefoon gekozen zoekbronnen, anders alles.
     const bronMap = priveRekBron();
-    const gekozen = [...new Set(tels.map((t) => bronMap[t.id]).filter(Boolean))];
+    const gekozen = [...new Set(Object.values(bronMap).filter(Boolean))];   // de gekozen zoekmachines; de stapel verdeelt ze over de telefoons
     const bronnen = hoekAiHelpt() ? window.Hoek.aiBronnenBeschikbaar(hoekAiBeschikbaar) : (gekozen.length ? gekozen : window.Hoek.AI_BRONNEN.filter(hoekAiBeschikbaar));
     stand.textContent = 'Bezig...';
     let r = null;
@@ -7174,8 +7205,8 @@
     $('priveRekAiHelpt').addEventListener('click', () => { zetHoekAiHelpt(!hoekAiHelpt()); priveRekTeken(); });
     $('priveRekWand').addEventListener('change', (e) => { const id = e.target && e.target.dataset && e.target.dataset.rekBron; if (id) zetPriveRekBron(id, e.target.value); });
     $('priveRekWand').addEventListener('click', (e) => {
-      const id = e.target && e.target.dataset && e.target.dataset.rekModel; if (!id) return;
-      const t = S.telefoons.find((x) => x.id === id); openInstel(id, t ? t.adres : '');
+      const adres = e.target && e.target.dataset && e.target.dataset.rekModel; if (!adres) return;
+      const t = S.telefoons.find((x) => x.adres === adres); openInstel(t ? t.id : adres, adres);
     });
     if ($('priveRekSchermKnop')) $('priveRekSchermKnop').addEventListener('click', () => {
       const f = $('priveRekWandFrame'); if (!f) return;
