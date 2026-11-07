@@ -218,6 +218,16 @@
     return `Voeg deze deelantwoorden samen tot een antwoord op het doel. Verzin niets wat niet in de delen staat. Het doel: ${tekst(doel).slice(0, 300)}\n${d}\nAntwoord in het Nederlands.${soort === 'json' ? ' Geef een JSON-object.' : ''}`;
   }
 
+  // 661 (stap 9): OPSCHALEN MAG ALLEEN OP EEN NAKIJKBAAR SIGNAAL -- de controle faalde (controle() hierboven, pure code) of een GEMETEN
+  // score onder de drempel. NOOIT op wat het model over zichzelf zegt ("ik weet het beter", "vraag een groter model"): dat is geen bewijs.
+  // Zuiver en los te testen. signaal: { controleOk, score, drempel, modelVraagtGroter }. Terug: { op, reden }.
+  function magOpschalen(signaal) {
+    const s = signaal || {};
+    if (s.controleOk === false) return { op: true, reden: 'controle-faalde' };
+    if (typeof s.score === 'number' && typeof s.drempel === 'number' && s.score < s.drempel) return { op: true, reden: 'lage-score' };
+    return { op: false, reden: s.modelVraagtGroter ? 'model-zegt-het-zelf-telt-niet' : 'geen-nakijkbaar-signaal' };
+  }
+
   // 556: FENNA BEPAALT ZELF DE SOORT KLUS (het keuzevak is weg). Gewone code op de woorden van de vraag; twijfel = algemeen.
   function raadSoort(tekst) {
     const t = String(tekst || '').toLowerCase();
@@ -227,5 +237,5 @@
     if (/^(wat|wie|wanneer|waar|hoeveel|welk|welke|hoe laat|in welk)\b.{0,160}\?\s*$/.test(t.trim()) && t.length < 200) return 'feit';
     return 'algemeen';
   }
-  return { raadSoort, TRAP, SOORTEN, DREMPEL, MAX_STUKKEN, MAX_RIJ, F8_REDEN, volgende, trede, score, kaartje, kaartjeZin, beginTrede, knip, kies, plan, samenvoeger, controle, opdracht, samenvoegOpdracht };
+  return { raadSoort, TRAP, SOORTEN, DREMPEL, MAX_STUKKEN, MAX_RIJ, F8_REDEN, magOpschalen, volgende, trede, score, kaartje, kaartjeZin, beginTrede, knip, kies, plan, samenvoeger, controle, opdracht, samenvoegOpdracht };
 }));
