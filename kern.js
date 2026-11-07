@@ -358,7 +358,7 @@
   // 1.9.21 (452): WELKE JARVIS DRAAIT ER? Elke telefoon meldt zijn versie in /jarvis/status. Veronica zet hem bij de
   // telefoon en zegt in EEN zin of hij achterloopt, en dat het vanzelf gaat. De nieuwste versie is de hoogste die ze
   // ziet, of JARVIS_NIEUWSTE (de versie waarmee deze Veronica is gemaakt) -- nooit een versie die nergens genoemd wordt.
-  const JARVIS_NIEUWSTE = '1.9.91';
+  const JARVIS_NIEUWSTE = '1.9.92';
   // 533: de rol in gewone woorden. Een rektelefoon met de rol 'baas' leidt de rij even (op het gastnetwerk zien de telefoons elkaar
   // niet); dat is geen beheerder. Zonder voorkeur in de hartslag (JARVIS van voor 1.9.64) herken je een rektelefoon aan zijn naam.
   // 546: gastbrein.js (in de browser een globale, in een test een require); zonder: alleen de code.
@@ -1228,7 +1228,7 @@
   const GEEN_LNA_ZIN = 'Chrome laat Veronica de telefoon niet bereiken: toegang tot het lokale netwerk staat uit. Klik links van het adres op het slotje, dan Site-instellingen, en zet "Lokaal netwerk" op Toestaan. Laad de pagina daarna opnieuw.';
   const BRIEF_WACHT_MS = 15000, ZOEK_LANG_MS = 30000, BRIEF_FOUTEN = 3;
   // 449: het versienummer van Veronica, zichtbaar op Koppelen (zo is te zien dat de nieuwe er is).
-  const VERONICA_VERSIE = '1.9.139';
+  const VERONICA_VERSIE = '1.9.140';
   // 460: de ENE officiele plek waar OlliteRT vandaan komt (gratis, Apache 2.0). Veronica toont er een QR van; er wordt niets gedownload.
   const OLLITERT_PAGINA = 'https://github.com/NightMean/OlliteRT/releases/latest';
   const WACHT_ZIN = 'Scan deze QR met JARVIS (de knop Koppel met Veronica). De telefoon geeft daarna zelf zijn adres door; ik wacht daarop en raad niets.';
@@ -1900,6 +1900,16 @@
       const watZin = h.motor.fase === 'download' ? 'haalt het model nog op' : h.motor.fase === 'wacht' ? 'wacht om het model te laden' : 'laadt het model nog';
       const pct = typeof h.motor.procent === 'number' && h.motor.procent > 0 && h.motor.procent < 100 ? ` (${Math.round(h.motor.procent)}%)` : '';
       uit.push({ code: 'model-laadt', zin: `De eigen motor staat aan, maar ${watZin}${pct}: hij neemt nog geen werk aan tot het model klaar is.` });
+    }
+    // 669 (punt 4): de eigen toestand uit de hartslag -- waarom de telefoon stil of onbereikbaar is, in gewone taal. Alleen wat
+    // Android echt meldt; niets geraden.
+    const t = h.toestand;
+    if (t && typeof t === 'object') {
+      if (t.net === 'mobiel') uit.push({ code: 'mobiel', zin: 'Deze telefoon zit op mobiele data, niet op het wifi: de andere telefoons en Veronica bereiken hem dan niet rechtstreeks (alleen via de brievenbus of de relay). Zet hem op het wifi.' });
+      else if (t.net === 'geen') uit.push({ code: 'geen-net', zin: 'Deze telefoon heeft geen netwerk (geen wifi en geen mobiele data).' });
+      else if (t.net === 'wifi' && t.internet === false) uit.push({ code: 'geen-internet', zin: 'Op wifi zonder internet (vaak een inlogpagina van het netwerk): de hartslag en de relay komen er niet door. Open het wifi een keer in de browser.' });
+      if (t.meldingen === false) uit.push({ code: 'meldingen', zin: 'De meldingen van JARVIS staan uit: hij kan dan niet porren om bij te werken (een tik op Installeren vragen). Zet de meldingen aan in Android.' });
+      if (t.dataSaver === true) uit.push({ code: 'databesparing', zin: 'Databesparing staat aan: Android knijpt dan het achtergrondverkeer van JARVIS af. Geef JARVIS onbeperkt data of zet Databesparing uit.' });
     }
     return uit;
   }

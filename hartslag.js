@@ -177,6 +177,11 @@
       laadt: x.laadt === true,
       // 527: mag Android JARVIS stilzetten? false = de batterij van JARVIS staat niet op Onbeperkt; zonder lader slaapt hij dan.
       batterijVrij: typeof x.batterijVrij === 'boolean' ? x.batterijVrij : null,
+      // 669 (punt 4): de eigen toestand -- op welk soort net de telefoon zit, of dat net internet heeft, of de meldingen aan staan
+      // en of Databesparing aan staat. Alleen wat Android via een publieke API echt laat lezen; Veronica maakt er in wegRedenen een
+      // zin van. net 'mobiel' telt mee in hartslagSleutel (een wissel wifi<->mobiel is belangrijk); de rest niet (die flappert).
+      toestand: x.toestand && typeof x.toestand === 'object' && ['wifi', 'mobiel', 'ethernet', 'anders', 'geen'].includes(x.toestand.net)
+        ? { net: x.toestand.net, internet: x.toestand.internet === true, meldingen: x.toestand.meldingen !== false, dataSaver: x.toestand.dataSaver === true } : null,
       // 529: gaat deze hartslag via de relay (true) of via ntfy.sh (false)?
       relay: x.relay === true,
       elke: getal(x.elke, 0, 6 * 3600 * 1000),   // 552: hoe vaak deze JARVIS zijn hartslag stuurt (ms); leeg = een oude JARVIS
@@ -423,7 +428,11 @@
     let waarom = '';
     if (oud > 3 * VERS_MS) waarom = 'Al lang geen hartslag: staat de telefoon uit, of is JARVIS dicht? Open JARVIS een keer.';
     // 503: een gastnetwerk houdt toestellen uit elkaar; dat is GEEN fout. De brievenbus is de hoofdweg, het wifi een bonus.
-    else if (w.antwoordt === false) waarom = 'Geen directe wifi-verbinding (op een gastnetwerk zien toestellen elkaar niet; dat is goed zo). Opdrachten en de hartslag gaan via de brievenbus.';
+    // 669 (punt 10): is de plek GEMETEN een gastnet (locatie.soort 'gast', §570 -- JARVIS leest de SSID/het subnet), zeg dat dan
+    // met zoveel woorden in plaats van het alleen uit de onbereikbaarheid af te leiden.
+    else if (w.antwoordt === false) waarom = (h.locatie && h.locatie.soort === 'gast')
+      ? 'Gemeten een gastnetwerk: de telefoons zien elkaar daar niet rechtstreeks -- dat is goed zo. Opdrachten en de hartslag gaan via de relay en de brievenbus.'
+      : 'Geen directe wifi-verbinding (op een gastnetwerk zien toestellen elkaar niet; dat is goed zo). Opdrachten en de hartslag gaan via de brievenbus.';
     return `${delen.join(' · ')}.${waarom ? ` ${waarom}` : ''}`;
   }
   // Motor en model in een regel (Veronica): "motor aan · model binnen · 4,2 tokens/s · 31 °C".
