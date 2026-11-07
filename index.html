@@ -439,6 +439,29 @@
     </section>
   </section>
   <section id="scherm-prive" hidden>
+    <!-- 659: HET REK OP HET TABBLAD ZELF. Bovenaan de privé-hoek: de rektelefoons met hun live scherm (de dagelijkse telefoon alleen
+         kijken), daaronder per telefoon de zoekbron + het model, de gezamenlijke zoekbalk en de schakelaar "AI helpt". De telefoons komen
+         VANZELF in de hoek uit de hartslag -- geen aparte pagina, niet ingeklapt. De live video is de schermenwand (USB, op de Chromebook). -->
+    <section id="priveRek" aria-labelledby="priveRekKop">
+      <h2 id="priveRekKop">📱 De telefoons in de hoek</h2>
+      <p id="priveRekStatus" class="klein" aria-live="polite"></p>
+      <div id="priveRekWand" class="hoekWand"></div>
+      <div id="priveRekSchermen">
+        <button type="button" id="priveRekSchermKnop">Toon de live schermen</button>
+        <p class="klein">De live schermen komen via de USB-kabel op de Chromebook. De dagelijkse telefoon kijk je alleen; bank- en kluis-apps bestuur ik nooit.</p>
+        <iframe id="priveRekWandFrame" title="Live schermen van het rek" hidden style="width:100%;height:0;border:0"></iframe>
+      </div>
+      <div id="priveRekZoek" class="hoekVak algemeen">
+        <p class="hoekVakWoord">🔎 Gezamenlijke zoekbalk</p>
+        <button type="button" id="priveRekAiHelpt" aria-pressed="false">AI helpt: UIT</button>
+        <p id="priveRekAiPlan" class="klein" aria-live="polite"></p>
+        <label for="priveRekZoekVraag">Zoek over alle telefoons</label>
+        <input id="priveRekZoekVraag" autocomplete="off" spellcheck="false" maxlength="200">
+        <button type="button" id="priveRekZoekKnop">Zoek</button>
+        <p id="priveRekZoekStand" aria-live="polite"></p>
+        <div id="priveRekZoekUitslag"></div>
+      </div>
+    </section>
     <div id="priveHoek"></div>
     <p class="klein"><a href="#hoek" id="hoekLink">De hoek als hele pagina: veiligheid, rek, zoeken en modellen naast elkaar</a></p>
     <!-- 556: back-up en onderzoek staan achter Meer; de twee losse lokaal-schakelaars zijn vervangen door de driestandenkeuze op Meer -->
@@ -861,6 +884,7 @@
 <script src="controller.js"></script>
 <script src="avengers.js"></script>
 <script src="slimheid.js"></script>
+<script src="slimmeet.js"></script>
 <script src="trap.js"></script>
 <script src="zoekwand.js"></script>
 <script src="fenna-kluis.js"></script>
