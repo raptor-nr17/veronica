@@ -96,5 +96,16 @@
     return `Instellingen: ${delen.join(' · ')} (${i.bron === 'veronica' ? 'gekozen in Veronica' : 'standaard voor deze telefoon'}).`;
   }
 
-  return { MODELLEN, GRENS, GPU_MIN_RAM_MB, GROOT_MIN_RAM_MB, KLEIN, standaard, schoon, grensReden, voorMotor, zin };
+  // 661 (stap 5): DENKEN UIT op de rektelefoons; op de F8 ALLEEN bij een plan-taak, met een tokenlimiet en lusdetectie. Zuiver en los te
+  // testen. telefoon: { f8|dagelijks, model } (de F8 draait E4B). taaksoort: 'plan' krijgt denkruimte; al het andere denkt niet.
+  // Terug: { denk (tokenbudget, 0 = uit), lusdetectie }. Dit is de REGEL; de motor zet het denkbudget pas als de bibliotheek het aanneemt.
+  const DENK_PLAN = 1024;   // begrensd denkbudget voor een plan op de F8
+  function denkVoorTaak(telefoon, taaksoort) {
+    const t = telefoon || {};
+    const isF8 = t.f8 === true || t.dagelijks === true || t.model === 'E4B';
+    if (isF8 && taaksoort === 'plan') return { denk: DENK_PLAN, lusdetectie: true };
+    return { denk: 0, lusdetectie: false };   // rektelefoons altijd uit; de F8 buiten een plan ook uit
+  }
+
+  return { MODELLEN, GRENS, GPU_MIN_RAM_MB, GROOT_MIN_RAM_MB, KLEIN, DENK_PLAN, standaard, schoon, grensReden, voorMotor, zin, denkVoorTaak };
 }));
