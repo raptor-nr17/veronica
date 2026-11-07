@@ -7259,13 +7259,19 @@
     const D = window.VerbindingsDokter;
     const nieuwste = K.JARVIS_NIEUWSTE;
     const wifiGewisseld = nu() < DokterV.netwisselTot;   // 665: net gewisseld -> zelf opnieuw zoeken, geen kabel vragen
-    const perTelefoon = dokterInputs().map((inp) => {
+    const inputs = dokterInputs();
+    const perTelefoon = inputs.map((inp) => {
       let problemen = D.diagnose(inp, { nieuwste, wifiGewisseld });
       // een mensregel (tik/kabel) alleen voor een GEKOPPELDE telefoon die recent nog leefde -- anders geen gezeur
       if (!inp.gekoppeld || !inp.recentLevend) problemen = problemen.filter((p) => p.ernst !== 'mens');
       return { naam: inp.naam, id: inp.id, direct: inp.direct, problemen };
     });
-    return { perTelefoon, regel: D.eenRegelVoorEigenaar(perTelefoon) };
+    // 666: fleet-stand voor de ene regel. gekoppeld = telefoons die bij de rij horen; bereikbaar = nu direct of met een verse
+    // hartslag. Alles gekoppeld maar niets bereikbaar (typisch vlak na een verhuizing) -> de dokter geeft tóch een regel.
+    const gekoppeld = inputs.filter((i) => i.gekoppeld).length;
+    const bereikbaar = inputs.filter((i) => i.direct || i.versHart).length;
+    const nietsBereikbaar = gekoppeld > 0 && bereikbaar === 0;
+    return { perTelefoon, nietsBereikbaar, regel: D.eenRegelVoorEigenaar(perTelefoon, { gekoppeld, bereikbaar, wifiGewisseld }) };
   }
   function dokterKennis(regel) {
     try { const l = JSON.parse(localStorage.getItem('veronica-kennisboek') || '[]'); l.push(regel); localStorage.setItem('veronica-kennisboek', JSON.stringify(l.slice(-60))); } catch (e) { /* een gemak */ }
@@ -7290,6 +7296,9 @@
         if (d.fix === 'postbus-opnieuw' || d.code === 'wifi-gewisseld' || d.code === 'mobiel-adres') herstelNodig = true;
       }
     }
+    // 666: zolang er NIETS bereikbaar is (bv. vlak na een verhuizing, ook als het 5-minuten-venster van de wifi-wissel al dicht is),
+    // blijft de dokter de telefoons zelf opnieuw zoeken op de gangbare thuisnetten -- zo vindt hij ze zodra ze op het nieuwe wifi komen.
+    if (stand.nietsBereikbaar) herstelNodig = true;
     if (herstelNodig && nu() - dokterZoekT > 180000) { dokterZoekT = nu(); try { herstelZoek(); } catch (e) { /* app doet dit toch al */ } }
     DokterV.regel = stand.regel;
     const el2 = $('dokterRegel');

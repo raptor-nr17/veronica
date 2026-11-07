@@ -85,13 +85,23 @@
     return { tijd: tijd || null, telefoon: naam || 'een telefoon', fix, zin: `${naam || 'Een telefoon'}: ${wat}.` };
   }
 
-  // EEN regel voor de eigenaar: alleen als er een mensregel is. Meerdere -> de eerste (de dringendste), met het aantal erbij. Geen
-  // mensregel -> lege string (de dokter heeft alles zelf gedaan). De 'uitleg'-regels komen apart (van het model), niet hier.
-  function eenRegelVoorEigenaar(perTelefoon) {
+  // EEN regel voor de eigenaar. Volgorde:
+  //  1. Is er een mensregel (een telefoon die ECHT een tik/kabel vraagt): die, de dringendste eerst, met het aantal erbij.
+  //  2. Geen mensregel, maar NIETS is bereikbaar terwijl er wél telefoons gekoppeld zijn (context.gekoppeld>0 && context.bereikbaar===0):
+  //     dan zwijgt de dokter NIET -- anders staat de eigenaar na een verhuizing naar een leeg scherm te kijken zonder te weten wat
+  //     er aan de hand is (de per-telefoon-mensregels zijn er niet, want een telefoon die al lang weg is telt niet als "recent
+  //     levend" en nagt dus niet apart). Net gewisseld van wifi -> geruststellend "ik zoek ze opnieuw"; anders -> "staan ze aan?".
+  //  3. Anders leeg (de dokter heeft alles zelf gedaan). De 'uitleg'-regels komen apart (van het model), niet hier.
+  function eenRegelVoorEigenaar(perTelefoon, context) {
+    const c = context || {};
     const mens = [];
     for (const p of (Array.isArray(perTelefoon) ? perTelefoon : [])) for (const d of (p.problemen || [])) if (d.ernst === 'mens' && d.mensRegel) mens.push(d.mensRegel);
-    if (!mens.length) return '';
-    return mens.length === 1 ? mens[0] : `${mens[0]} (en nog ${mens.length - 1} ${mens.length - 1 === 1 ? 'telefoon' : 'telefoons'} die aandacht vragen)`;
+    if (mens.length) return mens.length === 1 ? mens[0] : `${mens[0]} (en nog ${mens.length - 1} ${mens.length - 1 === 1 ? 'telefoon' : 'telefoons'} die aandacht vragen)`;
+    if ((c.gekoppeld || 0) > 0 && (c.bereikbaar || 0) === 0) {
+      if (c.wifiGewisseld) return 'Je zit op een nieuw wifi. Ik zoek de telefoons nu zelf opnieuw -- zet ze aan op dit wifi en open JARVIS; binnen een paar minuten verschijnen ze hier.';
+      return 'Geen van de telefoons geeft nu teken van leven. Kijk of ze aan staan en op dit wifi zitten en open JARVIS; ik blijf ze zelf opnieuw zoeken.';
+    }
+    return '';
   }
 
   return { FIXES, mobielAdres, ouderDan, diagnose, kennisregel, eenRegelVoorEigenaar };
