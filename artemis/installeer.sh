@@ -432,10 +432,11 @@ console() {
   if declare -f artemis_draait >/dev/null 2>&1 && ! artemis_draait; then
     local q; for q in $(pids_op_poort "$ARTEMIS_POORT" 2>/dev/null); do kill "$q" 2>/dev/null || true; done
   fi
-  AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" ARTEMIS_POORT="$ARTEMIS_POORT" REK_MAP="$REK_MAP" MIN_MB="$ARTEMIS_MIN_MB" python3 - <<'PY'
+  AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" ARTEMIS_POORT="$ARTEMIS_POORT" REK_MAP="$REK_MAP" MIN_MB="$ARTEMIS_MIN_MB" KB_HOST="$KBHOST" python3 - <<'PY'
 import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
+KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
 TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
@@ -541,6 +542,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
 <button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
+<p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
 <p style="margin-top:14px">Relay-onderwerp (eenmalig): zo leest ARTEMIS zelf welke telefoons op het huis-wifi staan &mdash; geen hotspot meer nodig. Kopieer het uit Veronica bij Instellingen (begint met &quot;jv&quot;).<br>
 <input id=onderwerp type=text autocomplete=off spellcheck=false placeholder="jv..." style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
@@ -740,6 +742,27 @@ class H(BaseHTTPRequestHandler):
         elif p.path == '/status.json':
             aan = os.path.exists(os.path.join(REK, 'artemis.pid'))
             self._schrijf(200, '{"console":true,"artemis":%s}' % ('true' if aan else 'false'), 'application/json')
+        elif p.path == '/gezond':
+            # 665: EEN-SHOT leesbare status in PLATTE TEKST (geen polling, geen stroom), zodat de Claude-extensie en een mens
+            # de staat in een keer kunnen LEZEN. De /wand-pagina ververst zichzelf en laat zich daardoor slecht uitlezen; deze
+            # pagina niet. Belangrijkste eerst: de JUISTE host (618: penguin.linux.test, NIET localhost).
+            ap = os.environ.get('ARTEMIS_POORT', '8000')
+            aan = os.path.exists(os.path.join(REK, 'artemis.pid'))
+            wandjson = doe_args(['schermenwand'])
+            try:
+                wl = json.loads(wandjson) if wandjson.strip().startswith('[') else []
+            except Exception:
+                wl = []
+            namen = ', '.join([str((t.get('naam') or t.get('serial') or '?')) for t in wl]) if wl else '(geen)'
+            regels = [
+                'ARTEMIS-rek console: DRAAIT (je leest dit, dus de console antwoordt).',
+                'Open in Chrome op ChromeOS via http://%s:%d/ -- NIET via localhost (618: de Linux-VM is daar geen localhost).' % (KB, POORT),
+                'ARTEMIS zelf: %s; gok-poort %s -> http://%s:%s/ (de echte poort kan afwijken; druk op Status).' % (('gestart' if aan else 'NIET gestart -- druk op Start'), ap, KB, ap),
+                'Schermenwand: %d rektelefoon(s) klaar: %s. (De F8 en bank-/kluis-apps staan er nooit bij.)' % (len(wl), namen),
+                'Wand openen: http://%s:%d/wand -- kijken mag altijd, tikken pas na de aan-knop.' % (KB, POORT),
+                'Logboek: ~/.artemis-rek/console.log en artemis.log; de knop Log toont de laatste regels.',
+            ]
+            self._schrijf(200, '\n'.join(regels) + '\n')
         elif p.path == '/wand':
             self._schrijf(200, WAND_PAGINA, 'text/html; charset=utf-8')
         elif p.path == '/wand-lijst':

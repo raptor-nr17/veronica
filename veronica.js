@@ -6151,7 +6151,7 @@
       laatst = nu(); meetRonde(); vraagWakker();
       RelayV.wachtTot = 0; relayStroom().catch(() => {});   // 548: meteen meten, ook langs de relay
     };
-    window.addEventListener('online', () => { roepT = 0; weerWakker(); });
+    window.addEventListener('online', () => { roepT = 0; try { merkNetwissel(); } catch (e) { /* 665 */ } weerWakker(); });
     window.addEventListener('pageshow', weerWakker);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') weerWakker(); });
     if ('serviceWorker' in navigator) zelfBijwerken();
@@ -7221,7 +7221,23 @@
   // zelf op met de BESTAANDE veilige functies (herstelZoek, bijwerkNuVoor -- dezelfde die de app toch al gebruikt), schrijft elke oplossing
   // in het kennisboek, en toont ÉÉN regel op Live als er echt een tik of kabel van de eigenaar nodig is. verbindingsdokter.js is het brein.
   // ===================================================================
-  const DokterV = { gefixt: {}, regel: '' };
+  // 665: netwisselTot = tot wanneer we een wifi-wissel als "vers" behandelen (dan zoekt de dokter de telefoons VANZELF opnieuw en
+  // vraagt hij NOOIT om een kabel). laatsteNet = de /24('s) van ons eigen wifi de vorige ronde, om een wissel te merken.
+  const DokterV = { gefixt: {}, regel: '', netwisselTot: 0, laatsteNet: null };
+  const NETWISSEL_VENSTER_MS = 300000;   // vijf minuten na een wissel "net nieuw"
+  // Merkt een wifi-wissel aan de /24 van ons eigen wifi (VQ.eigen). De vorige /24 staat in localStorage, zodat een wissel die
+  // samenvalt met een herlaadbeurt (Chromebook dichtklappen -> verhuizen -> openen) OOK gemerkt wordt: na het openen is de /24
+  // anders dan die van de vorige plek. Alleen een ECHT andere, niet-lege /24 opent het venster; geen /24 bekend = niets doen
+  // (geen vals venster bij het opstarten of in een test zonder thuisadres).
+  function merkNetwissel() {
+    let fp = '';
+    try { fp = (VQ.eigen || []).map(K.netVan).filter(Boolean).sort().join(','); } catch (e) { fp = ''; }
+    if (!fp) return;
+    if (DokterV.laatsteNet === null) { try { DokterV.laatsteNet = localStorage.getItem('veronica-laatste-net'); } catch (e) { /* geen opslag */ } }
+    if (DokterV.laatsteNet && fp !== DokterV.laatsteNet) DokterV.netwisselTot = nu() + NETWISSEL_VENSTER_MS;
+    DokterV.laatsteNet = fp;
+    try { localStorage.setItem('veronica-laatste-net', fp); } catch (e) { /* geen opslag */ }
+  }
   function dokterInputs() {
     const tijd = nu();
     const perId = new Map();
@@ -7242,8 +7258,9 @@
     if (!window.VerbindingsDokter) return { perTelefoon: [], regel: '' };
     const D = window.VerbindingsDokter;
     const nieuwste = K.JARVIS_NIEUWSTE;
+    const wifiGewisseld = nu() < DokterV.netwisselTot;   // 665: net gewisseld -> zelf opnieuw zoeken, geen kabel vragen
     const perTelefoon = dokterInputs().map((inp) => {
-      let problemen = D.diagnose(inp, { nieuwste });
+      let problemen = D.diagnose(inp, { nieuwste, wifiGewisseld });
       // een mensregel (tik/kabel) alleen voor een GEKOPPELDE telefoon die recent nog leefde -- anders geen gezeur
       if (!inp.gekoppeld || !inp.recentLevend) problemen = problemen.filter((p) => p.ernst !== 'mens');
       return { naam: inp.naam, id: inp.id, direct: inp.direct, problemen };
@@ -7258,6 +7275,7 @@
   function verbindingsdokterTik() {
     if (!window.VerbindingsDokter || !$('dokterRegel')) return;
     const D = window.VerbindingsDokter;
+    merkNetwissel();   // 665: een ander eigen /24 dan vorige ronde opent het wifi-wissel-venster (zelf zoeken, geen kabel vragen)
     const stand = dokterStand();
     // de bekende, VEILIGE fixes zelf aanzetten (dezelfde die de app toch al doet) + in het kennisboek schrijven, één keer per telefoon+code
     let herstelNodig = false;
