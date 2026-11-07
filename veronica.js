@@ -7275,7 +7275,7 @@
     // wifi. Geen onderwerp -> op geen enkel netwerk te horen; "Vol lokaal" aan -> ik mag niet naar buiten. Dat moet de regel eerlijk zeggen.
     let luisterReden = '';
     try { if (volLokaal()) luisterReden = 'vol-lokaal'; else if (!(S.ntfy && S.ntfy.onderwerp)) luisterReden = 'geen-onderwerp'; } catch (e) { luisterReden = ''; }
-    return { perTelefoon, nietsBereikbaar, regel: D.eenRegelVoorEigenaar(perTelefoon, { gekoppeld, bereikbaar, wifiGewisseld, luisterReden }) };
+    return { perTelefoon, nietsBereikbaar, gekoppeld, bereikbaar, regel: D.eenRegelVoorEigenaar(perTelefoon, { gekoppeld, bereikbaar, wifiGewisseld, luisterReden }) };
   }
   function dokterKennis(regel) {
     try { const l = JSON.parse(localStorage.getItem('veronica-kennisboek') || '[]'); l.push(regel); localStorage.setItem('veronica-kennisboek', JSON.stringify(l.slice(-60))); } catch (e) { /* een gemak */ }
@@ -7303,7 +7303,13 @@
     // 666: zolang er NIETS bereikbaar is (bv. vlak na een verhuizing, ook als het 5-minuten-venster van de wifi-wissel al dicht is),
     // blijft de dokter de telefoons zelf opnieuw zoeken op de gangbare thuisnetten -- zo vindt hij ze zodra ze op het nieuwe wifi komen.
     if (stand.nietsBereikbaar) herstelNodig = true;
-    if (herstelNodig && nu() - dokterZoekT > 180000) { dokterZoekT = nu(); try { herstelZoek(); } catch (e) { /* app doet dit toch al */ } }
+    // 667: net van wifi gewisseld EN nog niet alles terug -> VAKER zoeken (elke 45 s i.p.v. 3 min). Zo vindt Veronica een telefoon
+    // die net op het nieuwe wifi komt binnen een minuut rechtstreeks op haar eigen /24 (het directe pad, los van de JARVIS-versie
+    // of de relay), in plaats van er tot drie minuten op te wachten. Alleen tijdens het wissel-venster, dus geen onnodig geroffel.
+    const netGewisseld = nu() < DokterV.netwisselTot;
+    if (netGewisseld && stand.bereikbaar < stand.gekoppeld) herstelNodig = true;
+    const zoekInterval = (netGewisseld && stand.bereikbaar < stand.gekoppeld) ? 45000 : 180000;
+    if (herstelNodig && nu() - dokterZoekT > zoekInterval) { dokterZoekT = nu(); try { herstelZoek(); } catch (e) { /* app doet dit toch al */ } }
     DokterV.regel = stand.regel;
     const el2 = $('dokterRegel');
     el2.hidden = !stand.regel;
