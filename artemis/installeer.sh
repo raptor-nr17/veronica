@@ -438,10 +438,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel'}   # 578b: ook Rek opbouwen en Koppel via de kabel op de achtergrond -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
+LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten'}   # 578b: ook Rek opbouwen en Koppel via de kabel op de achtergrond -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -540,7 +540,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -563,7 +563,7 @@ async function doe(c){{
     const r=await fetch('/doe?cmd='+encodeURIComponent(c),{{method:'POST',signal:ac.signal}});
     clearTimeout(t);
     uit.textContent=nu()+' — '+c+':\\n'+(await r.text());
-    if(c==='bijwerken'||c==='start'||c==='rek-op'||c==='kabel-koppel'){{setTimeout(()=>doe('log'),7000);setTimeout(()=>doe('status'),20000);}}
+    if(c==='bijwerken'||c==='start'||c==='rek-op'||c==='kabel-koppel'||c==='klaarzetten'){{setTimeout(()=>doe('log'),7000);setTimeout(()=>doe('status'),20000);}}
   }}catch(e){{
     clearTimeout(t);
     uit.textContent=nu()+' — '+c+': de console antwoordt nog niet (hij start soms heel even opnieuw na Bijwerken). Druk zo op Log of Status. ('+e+')';
@@ -1270,6 +1270,62 @@ kabel_koppel() {
   onthoud_wifi_adb    # 599: het draadloze endpoint onthouden, zodat het na een drop zonder mDNS (gastnet) weer terugkomt
   overzicht
   [ "$n" -gt 0 ] && zeg "Klaar: $n telefoon(s) herstart-vast draadloos gekoppeld. Staat de JARVIS-boot-herinschakeling erop, dan komen ze ook na een herstart vanzelf terug; zo niet, dan na een herstart één keer de kabel erin en opnieuw 'Koppel via de kabel'."
+}
+
+# 667c: TELEFOON KLAARZETTEN -- ARTEMIS configureert een rektelefoon aan de KABEL volledig zelf (de eigenaar doet niets). Dit lost de
+# verhuis-stilte op: stond het wifi soms als 'niet gevalideerd' (Privé-DNS strikt), sprong de telefoon naar mobiele data, en stopte
+# HyperOS de hartslag in de WebView. Eén knop zet alles recht. Fysieke toestemming = de kabel + 'Toestaan' op de telefoon; NOOIT
+# de F8. Elke stap wordt gemeld. Herbruikbaar: elke rektelefoon aan de kabel krijgt dit.
+telefoon_klaarzetten() {
+  "$ADB" start-server >/dev/null 2>&1 || true
+  local regels s staat id naam ip rel relmaj n=0
+  regels="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1" "$2}')"
+  [ -n "$regels" ] || { zeg "Geen telefoon via de kabel te zien. Sluit de telefoon met USB aan, deel hem in ChromeOS met Linux, en zet USB-foutopsporing aan (op sommige telefoons ook 'USB-foutopsporing (beveiligingsinstellingen)')."; return 1; }
+  jarvis_oogst   # de nieuwste JARVIS van een telefoon die hem al heeft, om een oude eerst bij te werken (nooit de F8)
+  touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
+  while read -r s staat; do
+    [ -n "$s" ] || continue
+    case "$s" in *:*) continue ;; esac                 # alleen de kabel (usb-serienummer), geen draadloos adres
+    is_f8 "$s" && { zeg "F8 overgeslagen (de dagelijkse telefoon zetten we NOOIT klaar)."; continue; }
+    if [ "$staat" != "device" ]; then zeg "$s: nog niet toegestaan over de kabel. Zet USB-foutopsporing aan en tik 'Toestaan' op de telefoon (op sommige telefoons ook 'USB-foutopsporing (beveiligingsinstellingen)')."; continue; fi
+    id="$(toestel_id "$s")"; naam="$(toestel_naam "$s")"
+    # fysieke toestemming (kabel + Toestaan) = op de lijst, zodat de draadloze stappen hem later herkennen.
+    toegestaan "$id" || { printf '%s\n' "$id" >>"$TOEG"; logregel "Klaarzetten: $naam op de lijst."; }
+    zeg "== $naam klaarzetten =="
+    rel="$("$ADB" -s "$s" shell getprop ro.build.version.release 2>/dev/null | tr -d '\r\n ')"; relmaj="$(printf '%s' "$rel" | cut -d. -f1)"; case "$relmaj" in *[!0-9]*|'') relmaj=0 ;; esac
+    # 1. Nieuwste JARVIS EERST (zijn manifest heeft WRITE_SECURE_SETTINGS; een oude niet, dan faalt de grant).
+    jarvis_bijwerk_een "$s" "$naam" || true
+    # 2. JARVIS mag na een herstart de draadloze foutopsporing zelf aanzetten.
+    if "$ADB" -s "$s" shell pm grant "$JARVIS_PKG" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1; then zeg "  - WRITE_SECURE_SETTINGS: gelukt (5555 komt na een herstart vanzelf terug)."; else zeg "  - WRITE_SECURE_SETTINGS: niet gelukt (JARVIS te oud en geen nieuwere apk om te oogsten). Na een herstart één keer de kabel."; fi
+    # 3. Meldingen aan (hartslag/status).
+    if [ "$relmaj" -ge 13 ]; then "$ADB" -s "$s" shell pm grant "$JARVIS_PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 && zeg "  - meldingen: aan." || zeg "  - meldingen: kon POST_NOTIFICATIONS niet zetten."; else zeg "  - meldingen: standaard aan (Android ${rel:-?})."; fi
+    # 4. Batterijoptimalisatie-uitzondering + achtergrond toestaan (anders stopt HyperOS de hartslag in de WebView).
+    "$ADB" -s "$s" shell dumpsys deviceidle whitelist +"$JARVIS_PKG" >/dev/null 2>&1 || true
+    "$ADB" -s "$s" shell cmd appops set "$JARVIS_PKG" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || true
+    zeg "  - batterij: JARVIS mag op de achtergrond blijven draaien."
+    # 5. Privé-DNS automatisch. STRIKT brak op sommige telefoons de wifi-validatie -> wifi gold als 'niet gevalideerd' en Android koos mobiele data.
+    "$ADB" -s "$s" shell settings put global private_dns_mode opportunistic >/dev/null 2>&1 && zeg "  - Privé-DNS: automatisch (niet strikt) -- dit was de hoofdoorzaak van de stilte na de verhuizing." || zeg "  - Privé-DNS: kon niet gezet."
+    # 6. Scherm aan bij laden, zodat hij tijdens het klaarzetten niet in diepe slaap gaat.
+    "$ADB" -s "$s" shell settings put global stay_on_while_plugged_in 7 >/dev/null 2>&1 || true
+    # 7. Draadloze foutopsporing + vaste poort 5555, endpoint onthouden (zelfde als Koppel via de kabel).
+    "$ADB" -s "$s" shell settings put global adb_wifi_enabled 1 >/dev/null 2>&1 || true
+    ip="$("$ADB" -s "$s" shell ip -f inet addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
+    touch "$DRAADLOOS_F" 2>/dev/null; chmod 600 "$DRAADLOOS_F" 2>/dev/null || true
+    if [ -n "$ip" ] && "$ADB" -s "$s" tcpip 5555 >/dev/null 2>&1; then
+      sleep 2; "$ADB" connect "$ip:5555" >/dev/null 2>&1 || true
+      grep -qxF "$ip:5555" "$DRAADLOOS_F" 2>/dev/null || printf '%s\n' "$ip:5555" >>"$DRAADLOOS_F"
+      zeg "  - draadloze foutopsporing vast op $ip:5555 (de kabel mag straks eruit)."
+    else
+      zeg "  - draadloze foutopsporing aan${ip:+ (wifi $ip)}."
+    fi
+    # 8. JARVIS starten.
+    "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 && zeg "  - JARVIS gestart." || zeg "  - JARVIS starten lukte niet (open hem één keer met de hand)."
+    # 9. Nakijken: zit hij op wifi (niet mobiele data)?
+    if [ -n "$ip" ]; then zeg "  - staat op wifi ($ip); hij hoort zich nu bij de relay te melden."; else zeg "  - LET OP: geen wifi-adres. Zet hem op het thuis-wifi; Privé-DNS staat nu automatisch, dus de wifi-validatie zou nu moeten lukken (geen terugval naar mobiele data meer)."; fi
+    n=$((n+1))
+  done <<<"$regels"
+  verbind_draadloos; onthoud_wifi_adb; overzicht
+  [ "$n" -gt 0 ] && zeg "Klaar: $n telefoon(s) volledig klaargezet. De kabel mag eruit; ik vind ze terug via 5555 en JARVIS meldt zich bij de relay." || zeg "Geen telefoon klaargezet (alleen de F8, of niets toegestaan aan de kabel)."
 }
 
 # 561: Android Remote Control MCP (danielealbano, GPL-3.0) als RESERVE naast ARTEMIS: besturen zonder kabel, maar ALLEEN binnen het
@@ -3672,6 +3728,7 @@ case "${1:-status}" in
   rek-diag) rek_diag ;;                          # 623d: zeg WAAROM de relay-lijst leeg is (relay onbereikbaar / fout onderwerp / geen adres)
   draadloos-auto) draadloos_auto ;;            # 596: een al toegestane telefoon over het wifi besturen (kabel mag eruit)
   kabel-koppel) kabel_koppel ;;                # (4): herstart-vast draadloos via Android 11+ foutopsporing (geen koppelcode nodig)                         # 592r: alle rektelefoons koppelen aan de reserve-keten (Gemma 4 + andere modellen)
+  klaarzetten) telefoon_klaarzetten ;;         # 667c: een rektelefoon aan de kabel volledig klaarzetten (wifi/DNS/batterij/5555/JARVIS), nooit de F8
   overzicht) overzicht ;;
   schermenwand) schermenwand ;;                # 602: JSON van de telefoons op de wand (serial, naam, reden als er nu niets mag)
   schermfoto) schermfoto "${2:-}" ;;           # 602: één schermfoto (pad), of GEWEIGERD met reden (§565-zeef, nooit de F8)
