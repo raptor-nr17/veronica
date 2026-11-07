@@ -7275,7 +7275,10 @@
     // wifi. Geen onderwerp -> op geen enkel netwerk te horen; "Vol lokaal" aan -> ik mag niet naar buiten. Dat moet de regel eerlijk zeggen.
     let luisterReden = '';
     try { if (volLokaal()) luisterReden = 'vol-lokaal'; else if (!(S.ntfy && S.ntfy.onderwerp)) luisterReden = 'geen-onderwerp'; } catch (e) { luisterReden = ''; }
-    return { perTelefoon, nietsBereikbaar, gekoppeld, bereikbaar, regel: D.eenRegelVoorEigenaar(perTelefoon, { gekoppeld, bereikbaar, wifiGewisseld, luisterReden }) };
+    // 667: welke GEKOPPELDE telefoons ontbreken nu (geen directe verbinding en geen verse hartslag)? Zo kan de dokter ze bij naam
+    // noemen als een deel wel terug is -- precies het geval na een verhuizing waar één telefoon zich al meldt en de rest nog niet.
+    const ontbrekend = inputs.filter((i) => i.gekoppeld && !(i.direct || i.versHart)).map((i) => i.naam).filter(Boolean);
+    return { perTelefoon, nietsBereikbaar, gekoppeld, bereikbaar, ontbrekend, regel: D.eenRegelVoorEigenaar(perTelefoon, { gekoppeld, bereikbaar, wifiGewisseld, luisterReden, ontbrekend }) };
   }
   function dokterKennis(regel) {
     try { const l = JSON.parse(localStorage.getItem('veronica-kennisboek') || '[]'); l.push(regel); localStorage.setItem('veronica-kennisboek', JSON.stringify(l.slice(-60))); } catch (e) { /* een gemak */ }

@@ -106,6 +106,18 @@
       if (c.wifiGewisseld) return 'Je zit op een nieuw wifi. Ik zoek de telefoons nu zelf opnieuw -- zet ze aan op dit wifi en open JARVIS; binnen een paar minuten verschijnen ze hier.';
       return 'Geen van de telefoons geeft nu teken van leven. Kijk of ze aan staan en op dit wifi zitten en open JARVIS; ik blijf ze zelf opnieuw zoeken (ook via de relay en de brievenbus).';
     }
+    // 4. (667) Een DEEL is terug, maar met name genoemde gekoppelde telefoons ontbreken nog (bv. één telefoon is na de verhuizing
+    //    terug, de andere drie niet). De dokter zwijgt dan NIET: hij noemt ze bij naam en geeft één concrete stap per telefoon.
+    const ontbrekend = Array.isArray(c.ontbrekend) ? c.ontbrekend.filter(Boolean) : [];
+    if (ontbrekend.length) {
+      const namen = ontbrekend.length === 1 ? ontbrekend[0]
+        : `${ontbrekend.slice(0, -1).join(', ')} en ${ontbrekend[ontbrekend.length - 1]}`;
+      const ww = ontbrekend.length === 1 ? 'geeft' : 'geven';
+      // Concrete stap: open JARVIS, op dit wifi, en werk bij -- de nieuwste JARVIS stuurt vanzelf een hartslag via de relay (zodat
+      // een telefoon met een oude versie of een oude rij-code zich na het bijwerken weer meldt). Dit is de meest voorkomende oorzaak
+      // dat een telefoon na een wifi-wissel toch stil blijft.
+      return `${namen} ${ww} nog geen teken sinds de verhuizing. Open op ${ontbrekend.length === 1 ? 'die telefoon' : 'elk'} JARVIS, controleer dat hij op dit wifi zit, en werk hem bij (de nieuwste JARVIS meldt zich vanzelf via de relay).`;
+    }
     return '';
   }
 
