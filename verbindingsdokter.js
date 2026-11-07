@@ -98,8 +98,13 @@
     for (const p of (Array.isArray(perTelefoon) ? perTelefoon : [])) for (const d of (p.problemen || [])) if (d.ernst === 'mens' && d.mensRegel) mens.push(d.mensRegel);
     if (mens.length) return mens.length === 1 ? mens[0] : `${mens[0]} (en nog ${mens.length - 1} ${mens.length - 1 === 1 ? 'telefoon' : 'telefoons'} die aandacht vragen)`;
     if ((c.gekoppeld || 0) > 0 && (c.bereikbaar || 0) === 0) {
+      // Eerst eerlijk zijn als IK zelf niet kan horen: de brievenbus en de relay lopen allebei over het geheime ntfy-onderwerp, los
+      // van het wifi. Mist dat onderwerp, of staat "Vol lokaal" aan, dan hoor ik de telefoons op GEEN enkel netwerk -- dan helpt
+      // "open JARVIS" niet en moet de eigenaar dát eerst rechtzetten.
+      if (c.luisterReden === 'vol-lokaal') return '"Vol lokaal" staat aan, dus ik mag niet naar buiten en hoor de telefoons niet (ook niet via de relay). Zet "Vol lokaal" uit.';
+      if (c.luisterReden === 'geen-onderwerp') return 'Ik ben nog niet aan de rij gekoppeld (geen brievenbus), dus ik hoor de telefoons op geen enkel netwerk. Scan de koppelcode opnieuw met de baas-telefoon.';
       if (c.wifiGewisseld) return 'Je zit op een nieuw wifi. Ik zoek de telefoons nu zelf opnieuw -- zet ze aan op dit wifi en open JARVIS; binnen een paar minuten verschijnen ze hier.';
-      return 'Geen van de telefoons geeft nu teken van leven. Kijk of ze aan staan en op dit wifi zitten en open JARVIS; ik blijf ze zelf opnieuw zoeken.';
+      return 'Geen van de telefoons geeft nu teken van leven. Kijk of ze aan staan en op dit wifi zitten en open JARVIS; ik blijf ze zelf opnieuw zoeken (ook via de relay en de brievenbus).';
     }
     return '';
   }

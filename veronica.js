@@ -7271,7 +7271,11 @@
     const gekoppeld = inputs.filter((i) => i.gekoppeld).length;
     const bereikbaar = inputs.filter((i) => i.direct || i.versHart).length;
     const nietsBereikbaar = gekoppeld > 0 && bereikbaar === 0;
-    return { perTelefoon, nietsBereikbaar, regel: D.eenRegelVoorEigenaar(perTelefoon, { gekoppeld, bereikbaar, wifiGewisseld }) };
+    // 666: kan Veronica de telefoons überhaupt HOREN? De brievenbus én de relay lopen over het geheime ntfy-onderwerp, los van het
+    // wifi. Geen onderwerp -> op geen enkel netwerk te horen; "Vol lokaal" aan -> ik mag niet naar buiten. Dat moet de regel eerlijk zeggen.
+    let luisterReden = '';
+    try { if (volLokaal()) luisterReden = 'vol-lokaal'; else if (!(S.ntfy && S.ntfy.onderwerp)) luisterReden = 'geen-onderwerp'; } catch (e) { luisterReden = ''; }
+    return { perTelefoon, nietsBereikbaar, regel: D.eenRegelVoorEigenaar(perTelefoon, { gekoppeld, bereikbaar, wifiGewisseld, luisterReden }) };
   }
   function dokterKennis(regel) {
     try { const l = JSON.parse(localStorage.getItem('veronica-kennisboek') || '[]'); l.push(regel); localStorage.setItem('veronica-kennisboek', JSON.stringify(l.slice(-60))); } catch (e) { /* een gemak */ }
