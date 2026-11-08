@@ -130,15 +130,43 @@ set -uo pipefail
 ARTEMIS_MAP="${ARTEMIS_MAP:-$HOME/artemis}"
 REK_MAP="${REK_MAP:-$HOME/.artemis-rek}"
 ADB="${ADB:-adb}"
-# 678c: de SD-kaart van de Chromebook (UNTITLED, 'Gedeeld met Linux') voor GROTE, opnieuw op te halen downloads (de JARVIS-apk, de
-# Tailscale-apk), zodat de kleine Crostini-schijf niet volloopt. SLEUTELS/TOKENS gaan hier NOOIT heen -- een kaartje kun je eruit
-# halen -- die blijven in $REK_MAP op de interne schijf. Geen kaart of niet schrijfbaar = terugval op de interne schijf; alles blijft werken.
-ARTEMIS_KAART="${ARTEMIS_KAART:-/mnt/chromeos/removable/UNTITLED}"
+# 678c/678d: de SD-kaart van de Chromebook voor GROTE, verplaatsbare dingen (apk-downloads, uv/pip/npm-caches, ARTEMIS-traces/logs,
+# modelbestanden, de kennisboek-kopie), zodat de kleine Crostini-schijf ("het hokje", vaak maar 10 GB) niet volloopt en ARTEMIS wel
+# start. ChromeOS mount een met Linux gedeeld kaartje onder /mnt/chromeos/removable/<label>; het label is niet altijd UNTITLED, dus
+# we VINDEN de kaart zelf. Het kaartje is exFAT/FAT: GEEN symlinks of rechten erop -- daarom blijven de venv en node_modules ALTIJD in
+# het hokje (symlinks/+x); alleen gewone grote bestanden gaan naar de kaart. SLEUTELS/TOKENS gaan NOOIT naar de kaart (je kunt hem eruit halen).
+kaart_vinden() {   # het pad van een met Linux gedeelde, schrijfbare verwijderbare kaart (ARTEMIS_KAART wint); leeg als er geen is.
+  if [ -n "${ARTEMIS_KAART:-}" ] && [ -d "$ARTEMIS_KAART" ] && [ -w "$ARTEMIS_KAART" ]; then printf '%s' "${ARTEMIS_KAART%/}"; return 0; fi
+  local d; for d in /mnt/chromeos/removable/*/ /media/removable/*/; do
+    [ -d "$d" ] && [ -w "$d" ] || continue; printf '%s' "${d%/}"; return 0
+  done; return 1
+}
+ARTEMIS_KAART="$(kaart_vinden 2>/dev/null || true)"
 op_kaart() { [ -n "$ARTEMIS_KAART" ] && [ -d "$ARTEMIS_KAART" ] && [ -w "$ARTEMIS_KAART" ]; }
-groot_plek() {   # een schrijfbare map voor grote downloads: de kaart als die er is, anders intern. Maakt de map aan en echoot het pad.
+groot_plek() {   # een schrijfbare map voor grote bestanden: de kaart als die er is, anders intern. Maakt de map aan en echoot het pad.
   local p; if op_kaart; then p="$ARTEMIS_KAART/artemis-opslag"; else p="$REK_MAP/opslag"; fi
   mkdir -p "$p" 2>/dev/null || { p="$REK_MAP/opslag"; mkdir -p "$p" 2>/dev/null || true; }
   printf '%s' "$p"
+}
+# De env die de grote caches naar de kaart stuurt (alleen als de kaart er is). Cross-device: uv/pip/npm KOPIEREN dan i.p.v. hardlinken.
+kaart_cache_env() {
+  op_kaart || return 0
+  local c; c="$(groot_plek)/cache"; mkdir -p "$c/uv" "$c/pip" "$c/npm" "$c/xdg" 2>/dev/null || true
+  printf 'UV_CACHE_DIR=%s/uv PIP_CACHE_DIR=%s/pip npm_config_cache=%s/npm XDG_CACHE_HOME=%s/xdg' "$c" "$c" "$c" "$c"
+}
+# Verhuis bestaande GROTE, verplaatsbare mappen naar de kaart en vervang ze door een symlink IN HET HOKJE (een symlink op ext4 mag naar
+# de kaart wijzen; andersom niet). NOOIT de venv of node_modules (symlinks/rechten passen niet op exFAT). Alleen als de kaart er is;
+# de vrijgemaakte ruimte in het hokje is meteen bruikbaar (de kopie gaat naar de kaart, dan pas wordt het hokje leeggemaakt).
+kaart_verhuis() {
+  op_kaart || return 0
+  local doel; doel="$(groot_plek)"; local app; app="$(artemis_app_dir)"; local paar
+  for paar in "$HOME/.cache/uv:cache/uv" "$HOME/.cache/pip:cache/pip" "$HOME/.npm:cache/npm" "$app:artemis-app"; do
+    local src="${paar%%:*}" sub="${paar#*:}" dst="$doel/$sub"
+    case "$src" in *.venv*|*node_modules*) continue ;; esac   # nooit de venv of node_modules
+    [ -e "$src" ] && [ ! -L "$src" ] || continue              # bestaat echt en is nog geen symlink
+    mkdir -p "$(dirname "$dst")" 2>/dev/null || continue
+    if cp -r "$src/." "$dst/" 2>/dev/null && rm -rf "$src" 2>/dev/null; then ln -s "$dst" "$src" 2>/dev/null || true; zeg "  - naar de kaart verplaatst (hokje vrijgemaakt): $src"; fi
+  done
 }
 JAPK_PLEK="$(groot_plek)"
 TOEG="$REK_MAP/toegestaan"
@@ -334,8 +362,8 @@ zorg_venv() {
     if command -v uv >/dev/null 2>&1; then
       rm -rf "$ARTEMIS_MAP/.venv"
       # (1) de venv ZELF op 3.12 zetten, zodat latere uv-aanroepen hem hergebruiken i.p.v. 3.15 te kiezen.
-      ( cd "$ARTEMIS_MAP" && uv python install 3.12 >>"$REK_MAP/artemis.log" 2>&1; UV_PYTHON=3.12 uv venv --python 3.12 .venv >>"$REK_MAP/artemis.log" 2>&1 )
-      if ! ( cd "$ARTEMIS_MAP" && UV_PYTHON=3.12 uv sync >>"$REK_MAP/artemis.log" 2>&1 ); then
+      ( cd "$ARTEMIS_MAP" && export $(kaart_cache_env); uv python install 3.12 >>"$REK_MAP/artemis.log" 2>&1; UV_PYTHON=3.12 uv venv --python 3.12 .venv >>"$REK_MAP/artemis.log" 2>&1 )
+      if ! ( cd "$ARTEMIS_MAP" && export $(kaart_cache_env); UV_PYTHON=3.12 uv sync >>"$REK_MAP/artemis.log" 2>&1 ); then
         # (2) vangnet: een compiler erbij en nog een keer (laat uv nu zelf de Python kiezen -- met een compiler bouwt elke versie).
         venv_vangnet && ( cd "$ARTEMIS_MAP" && uv sync >>"$REK_MAP/artemis.log" 2>&1 ) \
           && zeg "venv opgebouwd na het installeren van de compiler." \
@@ -1493,6 +1521,7 @@ start_kern() {
     fi
   fi
   waak_ronde || return 1
+  kaart_verhuis   # 678d: is er een kaart, verplaats dan eerst de grote caches/traces erheen (maakt het hokje vrij; venv/node blijven intern)
   ruim_als_krap   # 588: zelfherstel -- eerst opruimen als de schijf te krap is voor Node/venv (de blokkade van 580)
   zorg_venv   # 576: zorg dat de venv op Python 3.12 staat (anders faalt grpcio en start ARTEMIS nooit)
   # 581: ARTEMIS HOUDT zijn eigen 8000 (onze console staat op 8765). UV_PYTHON=3.12: ook ARTEMIS' eigen start.sh pakt 3.12.
@@ -1530,7 +1559,7 @@ start_kern() {
   # 592fix: via `env` -- een VARIABELE ($lok_env) in prefix-positie wordt door bash als het COMMANDO gelezen (niet als
   # toewijzing), waardoor 'PORT=8000: command not found' kwam. `env` neemt alle KEY=VAL (ook de lege/gevulde $lok_env)
   # gewoon als argumenten, dus het werkt met en zonder lokaal model.
-  ( cd "$ARTEMIS_MAP" && env PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 $lok_env PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
+  ( cd "$ARTEMIS_MAP" && env PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 $(kaart_cache_env) $lok_env PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
   ( setsid "$0" waakhond </dev/null >>"$LOG" 2>&1 & echo $! >"$PIDW" )
   zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://$KBHOST:$ARTEMIS_POORT"
@@ -3608,9 +3637,15 @@ status() {
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
   zeg "Console (knoppen): http://$KBHOST:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
-  # 678c: waar de grote downloads (de JARVIS-apk, de Tailscale-apk) heen gaan -- de SD-kaart als die er is, anders de interne schijf.
-  if op_kaart; then zeg "Grote downloads: op de SD-kaart ($JAPK_PLEK) -- de kleine interne schijf blijft vrij. Sleutels blijven intern."
-  else zeg "Grote downloads: op de interne schijf ($JAPK_PLEK). Deel de SD-kaart met Linux (Bestanden > SD-kaart > Delen met Linux) en ik gebruik die vanzelf."; fi
+  # 678c/678d: vrije ruimte in het hokje (interne Linux-schijf) en op de kaart, of de kaart gedeeld is, en hoe je het hokje groter maakt.
+  local vrij_hok; vrij_hok="$(df -Pm "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
+  zeg "Vrije ruimte in het hokje (interne Linux-schijf): ${vrij_hok:-?} MB. Te klein voor ARTEMIS? Maak het hokje groter in Instellingen > Over ChromeOS > Linux > Schijfgrootte."
+  if op_kaart; then
+    local vrij_kaart; vrij_kaart="$(df -Pm "$ARTEMIS_KAART" 2>/dev/null | awk 'NR==2{print $4}')"
+    zeg "SD-kaart gedeeld met Linux ($ARTEMIS_KAART): ${vrij_kaart:-?} MB vrij -- grote downloads, caches, traces en modellen gaan hierheen (sleutels blijven intern)."
+  else
+    zeg "SD-kaart: NIET gedeeld met Linux. Deel hem eenmalig (Bestanden > SD-kaart > rechtsklik > Delen met Linux) -- dan gebruik ik hem vanzelf voor grote bestanden en blijft het hokje vrij."
+  fi
   # 609: de lokale beheerder zet een melding als een telefoon na het veilige opruimen nog krap is (dan kan alleen een mens helpen).
   [ -s "$REK_MAP/beheerder-melding.txt" ] && zeg "$(cat "$REK_MAP/beheerder-melding.txt")"
   sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
