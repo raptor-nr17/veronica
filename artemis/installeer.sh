@@ -505,7 +505,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
@@ -610,7 +610,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -1683,14 +1683,14 @@ jarvis_serverlink_bron() {
   [ -s "$stampf" ] && stamp="$(tr -dc 0-9 < "$stampf" 2>/dev/null || echo 0)"
   [ "$stamp" -gt 0 ] && [ $((nu - stamp)) -lt 21600 ] && return 0   # hoogstens eens per 6 uur
   printf '%s\n' "$nu" > "$stampf" 2>/dev/null || true
-  local tmp="$JAPK_PLEK/jarvis.apk.srv"
+  local tmp="$REK_MAP/jarvis.apk.srv"   # 678h: de temp in het HOKJE (ext4) -- op de kaart (9p) faalt mv/rename, waardoor de serverlink-apk nooit landde
   # conditioneel tegen een eerdere serverlink-download, zodat een ongewijzigde apk een 304 geeft (geen bytes)
   if [ -s "$tmp" ]; then curl -fsSL --max-time 600 -z "$tmp" -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }
   else curl -fsSL --max-time 600 -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }; fi
   [ -s "$tmp.new" ] || return 0   # 304 (niet gewijzigd) of leeg: niets te doen
   # een echte apk? (ZIP begint met PK\x03\x04) en minstens ~1 MB
   if [ "$(head -c2 "$tmp.new" 2>/dev/null)" != "PK" ] || [ "$(wc -c < "$tmp.new" 2>/dev/null || echo 0)" -lt 1000000 ]; then rm -f "$tmp.new" 2>/dev/null; zeg "Serverlink gaf geen geldige apk; genegeerd."; return 0; fi
-  mv -f "$tmp.new" "$tmp" 2>/dev/null || return 0
+  mv -f "$tmp.new" "$tmp" 2>/dev/null || return 0   # in het hokje: rename mag
   # alleen oppakken als er nog geen cache is, of de serverlink-apk nieuwer is dan de cache
   if [ -s "$JAPK_PLEK/jarvis.apk" ] && [ ! "$tmp" -nt "$JAPK_PLEK/jarvis.apk" ]; then return 0; fi
   cp -f "$tmp" "$JAPK_PLEK/jarvis.apk" 2>/dev/null || return 0
@@ -1698,9 +1698,44 @@ jarvis_serverlink_bron() {
   chmod 600 "$JAPK_PLEK/jarvis.apk" 2>/dev/null || true
   zeg "Nieuwste JARVIS via de serverlink opgehaald -- ik zet hem op de rektelefoons met een oudere versie (Android weigert een neppe op de handtekening)."
 }
+# 678h: terugval als de serverlink NIET is ingesteld -- de nieuwste jarvis.apk uit de jarvis-updates-RELEASE via de GitHub-API.
+# De release-repo is PRIVÉ (de bouw-workflow weigert een openbare), dus een EIGEN lees-token is nodig (fine-grained, Contents read;
+# precies zoals de telefoons in §497). NOOIT in de code of op Pages: token uit ARTEMIS_UPDATE_TOKEN of ~/.artemis-rek/update-token,
+# repo uit ARTEMIS_UPDATE_REPO of ~/.artemis-rek/update-repo. De apk wordt op de sha256 uit versie.json gecontroleerd; via het hokje
+# (mv) en dan met cp naar de (kaart-)plek -- nooit mv op de kaart (9p).
+jarvis_release_bron() {
+  command -v curl >/dev/null 2>&1 || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  [ -s "$JAPK_PLEK/jarvis.apk" ] && [ ! -s "$JAPK_PLEK/jarvis.apk.code" ] && return 0   # er ligt al een verse apk
+  local tok repo
+  tok="${ARTEMIS_UPDATE_TOKEN:-}"; [ -n "$tok" ] || tok="$(head -1 "$REK_MAP/update-token" 2>/dev/null | tr -d '[:space:]')"
+  repo="${ARTEMIS_UPDATE_REPO:-}"; [ -n "$repo" ] || repo="$(head -1 "$REK_MAP/update-repo" 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$tok" ] && [ -n "$repo" ] || return 0
+  printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$' || return 0
+  local js; js="$(curl -fsSL --max-time 60 -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$repo/releases/latest" 2>>"$REK_MAP/artemis.log")" || return 0
+  local aurl sha
+  aurl="$(printf '%s' "$js" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(next((a["url"] for a in d.get("assets",[]) if a.get("name")=="jarvis.apk"),""))' 2>/dev/null)"
+  sha="$(printf '%s' "$js" | python3 -c 'import sys,json;d=json.load(sys.stdin)
+try: print(json.loads(d.get("body","{}")).get("sha256",""))
+except Exception: print("")' 2>/dev/null)"
+  [ -n "$aurl" ] || return 0
+  local tmp="$REK_MAP/jarvis.apk.rel"
+  curl -fsSL --max-time 600 -H "Authorization: Bearer $tok" -H "Accept: application/octet-stream" -o "$tmp.new" "$aurl" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }
+  { [ -s "$tmp.new" ] && [ "$(head -c2 "$tmp.new" 2>/dev/null)" = "PK" ]; } || { rm -f "$tmp.new" 2>/dev/null; return 0; }
+  if [ -n "$sha" ] && command -v sha256sum >/dev/null 2>&1; then
+    local echt; echt="$(sha256sum "$tmp.new" 2>/dev/null | cut -d' ' -f1)"
+    [ "$echt" = "$sha" ] || { rm -f "$tmp.new" 2>/dev/null; zeg "Release-apk klopt niet met de controlesom (sha256); genegeerd."; return 0; }
+  fi
+  mv -f "$tmp.new" "$tmp" 2>/dev/null || return 0   # in het hokje: rename mag
+  cp -f "$tmp" "$JAPK_PLEK/jarvis.apk" 2>/dev/null || return 0   # cp naar de (kaart-)plek; NOOIT mv (9p)
+  rm -f "$JAPK_PLEK/jarvis.apk.code" 2>/dev/null || true
+  chmod 600 "$JAPK_PLEK/jarvis.apk" 2>/dev/null || true
+  zeg "Nieuwste JARVIS uit de release opgehaald (controlesom klopt) -- ik zet hem via de kabel op de rektelefoons met een oudere versie."
+}
 jarvis_download_bron() {
   local d bron='' nieuwste='' found toon=0
   jarvis_serverlink_bron   # 673: eerst de vaste serverlink proberen (geen handmatige download nodig)
+  [ -s "$JAPK_PLEK/jarvis.apk" ] || jarvis_release_bron   # 678h: geen serverlink/apk? probeer de privé release via een lees-token
   [ -s "$JAPK_PLEK/jarvis.apk" ] || toon=1
   for d in "${JARVIS_APK_DIR:-}" "/mnt/chromeos/MyFiles/Downloads" "$HOME/Downloads" "$HOME/Linux files" "$HOME"; do
     [ -n "$d" ] || continue
@@ -1715,7 +1750,12 @@ jarvis_download_bron() {
     fi
   done
   if [ -z "$bron" ]; then
-    [ "$toon" = 1 ] && zeg "Geen jarvis.apk in je downloadmap gevonden. Download de JARVIS-apk op de Chromebook (bestand heet jarvis.apk of jarvis (1).apk). Staat Downloads niet hierboven, deel dan de map Downloads met Linux (Bestanden-app > Downloads > rechtsklik > Delen met Linux)."
+    if [ "$toon" = 1 ]; then
+      zeg "Geen nieuwere JARVIS-apk te vinden. Snelste weg, kies er één:"
+      zeg "  1) De vaste downloadlink (§499) in ~/.artemis-rek/apk-link zetten (of in Veronica plakken) -- dan haalt ARTEMIS de nieuwste apk vanzelf van de server."
+      zeg "  2) Een lees-token (fine-grained, Contents read op de updateplek-repo) in ~/.artemis-rek/update-token en de repo-naam in ~/.artemis-rek/update-repo -- dan haalt ARTEMIS hem rechtstreeks uit de release."
+      zeg "  3) De JARVIS-apk met de hand op de Chromebook downloaden naar Downloads (deel die map met Linux)."
+    fi
     return 0
   fi
   # alleen oppakken als er nog geen cache is, of de download NIEUWER is dan de cache (mtime) -- een stale oude download overschrijft nooit.
@@ -3084,7 +3124,15 @@ f8_zoek() {
     [ -n "$gevonden" ] && break
   done
   if [ -z "$gevonden" ]; then
-    zeg "Geen F8 op het lokale netwerk gevonden (poorten ${F8_ZOEK_POORTEN:-8000 8081}). Staat OlliteRT of de JARVIS-motor aan op de F8, en hangt hij op dit wifi?"
+    # 678i: geen MODELSERVER gevonden. Draait JARVIS zelf wel ergens (poort 8080, /jarvis/status)? Zo ja, dan hangt de F8 WEL op dit
+    # wifi maar staat zijn modelserver uit; zo nee, dan lijkt de F8 niet op dit net te zitten. Dat scheelt zoeken.
+    local jarvis_ip; jarvis_ip="$(f8_hosts | xargs -P 50 -I{} sh -c 'curl -fsS -m 1 "http://{}:8080/jarvis/status" 2>/dev/null | grep -q "versie\|rol\|motor" && echo {}' 2>/dev/null | head -1)"
+    if [ -n "$jarvis_ip" ]; then
+      zeg "Geen MODELSERVER gevonden, maar JARVIS draait wel op $jarvis_ip. De F8 hangt dus op dit wifi -- alleen zijn modelserver staat UIT."
+      zeg "Zet op de F8 OlliteRT's 'Start Server' aan (dat kan NIET op afstand -- iemand moet het op de F8 tikken), of zet de eigen JARVIS-motor aan (in Veronica: Motor aan). Druk daarna opnieuw op 'F8 terugvinden'."
+    else
+      zeg "Geen F8 op het lokale netwerk gevonden (poorten ${F8_ZOEK_POORTEN:-8000 8081}, en geen JARVIS op 8080). Controleer of de F8 echt op dit wifi (192.168.178.x) hangt, en of OlliteRT of de JARVIS-motor aan staat."
+    fi
     return 1
   fi
   # Had deze primaire de rij-code nodig (de JARVIS-motor op 8081)? Dan onthouden we die voor de proxy en de conf.
@@ -3102,6 +3150,45 @@ f8_zoek() {
   printf '%s' "$rj" >"$REK_MAP/reserve-modellen.json"; chmod 600 "$REK_MAP/reserve-modellen.json" 2>/dev/null || true
   local rn; rn="$(printf '%s' "$rj" | grep -oE '"base"' | wc -l | tr -d ' ')"
   [ "${rn:-0}" -gt 0 ] && zeg "$rn extra rektelefoon(s) gekoppeld aan de reserve-keten."
+  if proxy_draait; then start_proxy "$gevonden" "local" >/dev/null 2>&1 && zeg "De vangnet-proxy gebruikt nu dit adres (geen Gemini zolang de F8 antwoordt)." || true; fi
+  return 0
+}
+# 678j: de F8 zit AAN DE KABEL -- lees ALLEEN zijn eigen wifi-adres uit (ip addr/route) en zet hem als denker. De F8 wordt NOOIT
+# bestuurd: geen input, am, monkey, screencap, uiautomator of pm -- alleen zijn netwerkgegevens LEZEN, en daarna zijn modelserver
+# over het netwerk controleren. Zo vindt ARTEMIS na een wifi-verhuizing meteen het nieuwe adres zonder het hele /24 af te tasten.
+f8_kabel_adres() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
+  "$ADB" start-server >/dev/null 2>&1 || true
+  local s f8=""
+  for s in $(verbonden); do case "$s" in *:*) continue ;; esac; is_f8 "$s" && { f8="$s"; break; }; done
+  [ -n "$f8" ] || { zeg "Geen F8 aan de kabel gezien. Sluit de F8 met USB aan (USB-foutopsporing aan, op de F8 'Toestaan'). De F8 wordt ALLEEN UITGELEZEN, nooit bestuurd."; return 1; }
+  local naam; naam="$(toestel_naam "$f8")"
+  # ALLEEN LEZEN: zijn wifi-adres (een thuis/gastnet-adres), nooit 127.* of het Crostini-vmnet 100.115.92.*
+  local ip=""
+  ip="$("$ADB" -s "$f8" shell 'ip -o -4 addr show scope global 2>/dev/null' 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}' | grep -vE '^127\.|^100\.115\.92\.' | head -1)"
+  [ -n "$ip" ] || ip="$("$ADB" -s "$f8" shell 'ip route 2>/dev/null' 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}' | grep -vE '^127\.|^100\.115\.92\.' | head -1)"
+  [ -n "$ip" ] || { zeg "Kon het wifi-adres van de F8 niet lezen. Hangt de F8 op het wifi (niet alleen aan de kabel)?"; return 1; }
+  zeg "F8 ($naam) heeft wifi-adres $ip. Ik controleer zijn modelserver over het netwerk (alleen lezen, nooit besturen)..."
+  onthoud_lan_subnet "$ip"
+  local tok="" poort gevonden="" used=""
+  [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
+  for poort in ${F8_ZOEK_POORTEN:-8000 8081}; do
+    if curl -fsS -m 2 "http://$ip:$poort/v1/models" 2>/dev/null | grep -q '"id"'; then gevonden="http://$ip:$poort/v1"; break; fi
+    if [ -n "$tok" ] && curl -fsS -m 2 -H "Authorization: Bearer $tok" "http://$ip:$poort/v1/models" 2>/dev/null | grep -q '"id"'; then gevonden="http://$ip:$poort/v1"; used="$tok"; break; fi
+  done
+  if [ -z "$gevonden" ]; then
+    zeg "F8 op $ip, maar zijn modelserver antwoordt niet (poorten ${F8_ZOEK_POORTEN:-8000 8081}). Zet OlliteRT's 'Start Server' aan op de F8, of de eigen motor (Veronica: Motor aan), en druk opnieuw. Het adres $ip is onthouden."
+    return 1
+  fi
+  printf '%s' "$gevonden" >"$F8_GEVONDEN_F"; chmod 600 "$F8_GEVONDEN_F" 2>/dev/null || true
+  if [ -s "$REK_MAP/lokaal-model.conf" ]; then
+    sed -i "s#^BASE_URL=.*#BASE_URL=$gevonden#" "$REK_MAP/lokaal-model.conf" 2>/dev/null || true
+    if grep -q '^TOKEN=' "$REK_MAP/lokaal-model.conf" 2>/dev/null; then sed -i "s#^TOKEN=.*#TOKEN=${used:-local}#" "$REK_MAP/lokaal-model.conf" 2>/dev/null || true
+    else printf 'TOKEN=%s\n' "${used:-local}" >>"$REK_MAP/lokaal-model.conf" 2>/dev/null || true; fi
+  fi
+  local model; model="$(curl -fsS -m 3 ${used:+-H "Authorization: Bearer $used"} "$gevonden/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
+  zeg "F8 als denker ingesteld op $gevonden (model: ${model:-?}${used:+, via de rij-code op poort 8081}). ARTEMIS gebruikt hem nu weer. De kabel mag eruit -- het adres staat onthouden."
   if proxy_draait; then start_proxy "$gevonden" "local" >/dev/null 2>&1 && zeg "De vangnet-proxy gebruikt nu dit adres (geen Gemini zolang de F8 antwoordt)." || true; fi
   return 0
 }
@@ -4186,6 +4273,7 @@ case "${1:-status}" in
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-meet) motor_meet ;;                   # 678 stap 1b: echte modelsnelheid meten (llama-bench, CPU, grote kernen), nooit de F8
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
+  f8-kabel) f8_kabel_adres ;;                   # 678j: de F8 aan de kabel -- lees ALLEEN zijn wifi-adres uit en zet hem als denker (nooit besturen)
   rek-zoek) rek_zoek ;;
   rek-hotspot) rek_hotspot "${2:-}" ;;         # 616: het eigen rek-netwerk opzetten (hotspot-basis + de rest erop), nooit de F8
   rek-op) rek_op "${2:-}" ;;                    # 619/620: in één tik -- scan + relay-lijst (de rektelefoons terug in het rek, op het huis-wifi), nooit de F8
