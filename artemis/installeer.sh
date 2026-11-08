@@ -620,6 +620,9 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <p style="margin-top:6px">Relay-adres (eenmalig, alleen op een gastnetwerk nodig): op het gastnetwerk melden de telefoons zich via de relay i.p.v. ntfy.sh. Zonder dit adres blijft de relay-lijst leeg. Kopieer het uit Veronica bij Instellingen, Relay (eindigt op &quot;.workers.dev&quot;).<br>
 <input id=relayAdres type=text autocomplete=off spellcheck=false placeholder="https://...workers.dev" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=relayAdresBewaar>Bewaar relay-adres</button></p>
+<p style="margin-top:6px">APK-link (eenmalig, voor een telefoon met een oude JARVIS): zo haalt ARTEMIS de nieuwste JARVIS-apk zelf van de server &mdash; geen token, geen handmatige download. Plak de downloadlink uit de bijwerk-mail (de link naar &quot;jarvis.apk&quot;) of de vaste serverlink (.../jarvis-app/&lt;code&gt;). Een Gmail-verpakking (www.google.com/url?q=...) mag; die haal ik er zelf af.<br>
+<input id=apkLink type=text autocomplete=off spellcheck=false placeholder="https://.../jarvis-app/..." style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
+<button id=apkLinkBewaar>Bewaar APK-link</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <p style="margin:8px 0 2px;color:#8aa">Live (Log/Status vernieuwen hier, zonder je knop-uitkomst te overschrijven):</p>
 <pre id=live style="opacity:.85"></pre>
@@ -664,6 +667,17 @@ if(rbw)rbw.addEventListener('click',async()=>{{
   uit.textContent=nu()+' — relay-adres bewaren…';
   try{{
     const r=await fetch('/relay-adres',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'relay='+encodeURIComponent(v)}});
+    uit.textContent=nu()+' — '+(await r.text());
+  }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
+}});
+// 678k: de §499 APK-link bewaren (derde vrije veld; strikt gevalideerd op .../jarvis-app/<code>). Zo haalt ARTEMIS de nieuwste
+// JARVIS-apk zelf van de server -- geen token nodig -- zodat een telefoon met een oude JARVIS kan worden bijgewerkt zonder de eigenaar.
+const abw=document.getElementById('apkLinkBewaar');
+if(abw)abw.addEventListener('click',async()=>{{
+  const v=(document.getElementById('apkLink').value||'').trim();
+  uit.textContent=nu()+' — APK-link bewaren…';
+  try{{
+    const r=await fetch('/apk-link',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'link='+encodeURIComponent(v)}});
     uit.textContent=nu()+' — '+(await r.text());
   }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
 }});
@@ -998,6 +1012,40 @@ class H(BaseHTTPRequestHandler):
                 try: os.chmod(pad, 0o600)
                 except Exception: pass
                 self._schrijf(200, 'Relay-adres opgeslagen. Druk nu op "Relay-lijst lezen" of "Rek opbouwen"; op het gastnetwerk leest ARTEMIS de telefoons nu via de relay (zoals Veronica).')
+            except Exception as e:
+                self._schrijf(500, 'fout: ' + str(e))
+            return
+        if p.path == '/apk-link':
+            # 678k: het DERDE config-veld van de console, en net zo strikt gevalideerd: de vaste §499-downloadlink van de nieuwste
+            # JARVIS-apk (https://.../jarvis-app/<10 tekens>). Zonder dit kon ARTEMIS een telefoon met een oude JARVIS NIET
+            # bijwerken (de updateplek-repo is privé, dus de release-terugval vraagt een token). Met deze link haalt ARTEMIS de
+            # apk TOKENLOOS van de server (de server stuurt een 302 naar een presigned leesadres, §499). Veronica kent de link al
+            # (Koppelen, "JARVIS bijwerken"); de eigenaar/Cowork plakt hem hier één keer. Een config-waarde, geen opdracht; de link
+            # staat NOOIT in de bron (het gaat naar de openbare Pages-site). Leeg = wissen (terug naar oogsten van een telefoon).
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            a = (f.get('link', [''])[0]).strip()
+            pad = os.path.join(REK, 'apk-link')
+            if a == '':
+                try: os.remove(pad)
+                except Exception: pass
+                self._schrijf(200, 'APK-link gewist. ARTEMIS oogst de nieuwste JARVIS weer van een telefoon die hem al heeft.'); return
+            # 678k: haal een Gmail-verpakking eraf (www.google.com/url?q=<geëncodeerde url>&source=...), net als Veronica's leesMail (§504).
+            m = re.match(r'^https://www\.google\.com/url\?q=([^&]+)', a)
+            if m:
+                a = urllib.parse.unquote(m.group(1))
+            # twee geldige vormen: de vaste §499-serverlink, OF een directe presigned bucket-link naar jarvis.apk (zoals in de mail).
+            ok499 = re.match(r'^https://[a-z0-9.-]{3,253}/jarvis-app/[a-z2-9]{10}$', a)
+            okapk = re.match(r'^https://[a-z0-9.-]{3,253}/[A-Za-z0-9._~/%=&?-]*jarvis\.apk(\?\S+)?$', a)
+            if not (ok499 or okapk):
+                self._schrijf(400, 'Dat lijkt geen downloadlink. Het is een https-adres dat eindigt op jarvis.apk (met een ?... eraan) OF de vorm https://.../jarvis-app/<code>. Kopieer de link uit de bijwerk-mail of uit Veronica.'); return
+            try:
+                with open(pad, 'w') as fh: fh.write(a + '\n')
+                try: os.chmod(pad, 0o600)
+                except Exception: pass
+                try: os.remove(os.path.join(REK, 'apk-link.gecheckt'))   # de 6-uur-rem resetten zodat de volgende poging meteen ophaalt
+                except Exception: pass
+                self._schrijf(200, 'APK-link opgeslagen. Druk nu op "Telefoon klaarzetten" (telefoon aan de kabel); ARTEMIS haalt de nieuwste JARVIS van de server en zet hem erop.')
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
@@ -1387,7 +1435,7 @@ telefoon_klaarzetten() {
     touch "$KLAAR_LOCK" 2>/dev/null || true
     zeg "Nieuwe telefoon aan de kabel gezien -- ik zet hem vanzelf klaar (geen knop nodig)."
   fi
-  jarvis_oogst   # de nieuwste JARVIS van een telefoon die hem al heeft, om een oude eerst bij te werken (nooit de F8)
+  jarvis_oogst "$([ -n "$auto" ] && echo 0 || echo 1)"   # de nieuwste JARVIS oogsten (knopdruk: toon=1 => per bron uitleggen wat faalt EN de serverlink NU ophalen); nooit de F8
   touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
   while read -r s staat; do
     [ -n "$s" ] || continue
@@ -1404,7 +1452,7 @@ telefoon_klaarzetten() {
     # 1. Nieuwste JARVIS EERST (zijn manifest heeft WRITE_SECURE_SETTINGS; een oude niet, dan faalt de grant).
     jarvis_bijwerk_een "$s" "$naam" || true
     # 2. JARVIS mag na een herstart de draadloze foutopsporing zelf aanzetten.
-    if "$ADB" -s "$s" shell pm grant "$JARVIS_PKG" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1; then zeg "  - WRITE_SECURE_SETTINGS: gelukt (5555 komt na een herstart vanzelf terug)."; else zeg "  - WRITE_SECURE_SETTINGS: niet gelukt (JARVIS te oud en geen nieuwere apk om te oogsten). Na een herstart één keer de kabel."; fi
+    if "$ADB" -s "$s" shell pm grant "$JARVIS_PKG" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1; then zeg "  - WRITE_SECURE_SETTINGS: gelukt (5555 komt na een herstart vanzelf terug)."; elif [ -s "$JAPK_PLEK/jarvis.apk" ]; then zeg "  - WRITE_SECURE_SETTINGS: nog niet (JARVIS is zojuist bijgewerkt maar het recht zit pas in de nieuwe versie -- druk na de herstart nog een keer op Telefoon klaarzetten)."; else zeg "  - WRITE_SECURE_SETTINGS: niet gelukt -- JARVIS is te oud en er is GEEN nieuwere apk om op te zetten. Zie de regels hierboven (serverlink/release/download-map) voor welke bron faalde; zet de §499-apk-link in de console bij \"APK-link\", dan werkt het vanzelf."; fi
     # 3. Meldingen aan (hartslag/status).
     if [ "$relmaj" -ge 13 ]; then "$ADB" -s "$s" shell pm grant "$JARVIS_PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 && zeg "  - meldingen: aan." || zeg "  - meldingen: kon POST_NOTIFICATIONS niet zetten."; else zeg "  - meldingen: standaard aan (Android ${rel:-?})."; fi
     # 4. Batterijoptimalisatie-uitzondering + achtergrond toestaan (anders stopt HyperOS de hartslag in de WebView).
@@ -1674,22 +1722,36 @@ jarvis_apk_code() {   # de versionCode van het JARVIS-pakket op EEN telefoon (le
 # vervangen bestand komt er niet op. Rate-limit: hoogstens eens per 6 uur, en met curl -z (conditioneel) zodat een ongewijzigd
 # bestand niet opnieuw ~50 MB kost. Een niet-apk (geen PK-zip-magie) of een piepklein antwoord wordt weggegooid.
 jarvis_serverlink_bron() {
-  command -v curl >/dev/null 2>&1 || return 0
-  [ -s "$REK_MAP/apk-link" ] || return 0
+  # 678k: $1 == 1 => leg in het log/console UIT waarom deze bron faalt (zodat een mens ziet wat eraan scheelt),
+  # EN sla de 6-uur-rem over (een knopdruk haalt NU op). Zonder toon: stil en met de rem (de minuut-lus).
+  local toon="${1:-0}"
+  command -v curl >/dev/null 2>&1 || { [ "$toon" = 1 ] && zeg "  serverlink: curl ontbreekt op deze Chromebook."; return 0; }
+  if [ ! -s "$REK_MAP/apk-link" ]; then
+    [ "$toon" = 1 ] && zeg "  serverlink: geen apk-link ingesteld (~/.artemis-rek/apk-link is leeg). Plak de §499-downloadlink (https://.../jarvis-app/<code>) in de console bij \"APK-link\" -- dan haalt ARTEMIS de nieuwste apk vanzelf van de server."
+    return 0
+  fi
   local link; link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '[:space:]')"
-  printf '%s' "$link" | grep -Eq '^https://[a-z0-9.-]{3,253}/jarvis-app/[a-z2-9]{10}$' || return 0
+  # 678k: twee geldige vormen -- (a) de vaste §499-serverlink (.../jarvis-app/<10 tekens>; server stuurt een 302 naar een presigned
+  # leesadres) EN (b) een DIRECTE presigned bucket-link (.../jarvis.apk?X-Amz-...), precies zoals in de bijwerk-mail (§504). Beide
+  # worden door curl -fsSL afgehandeld (een redirect volgen, of direct downloaden). Een neppe apk wordt sowieso door Android op de
+  # handtekening geweigerd (§497), dus een bredere vorm is veilig.
+  if ! { printf '%s' "$link" | grep -Eq '^https://[a-z0-9.-]{3,253}/jarvis-app/[a-z2-9]{10}$' \
+      || printf '%s' "$link" | grep -Eq '^https://[a-z0-9.-]{3,253}/[A-Za-z0-9._~/%=&?-]*jarvis\.apk(\?[^ ]*)?$'; }; then
+    [ "$toon" = 1 ] && zeg "  serverlink: de ingestelde apk-link heeft niet de vorm https://.../jarvis-app/<code> of https://.../jarvis.apk?... . Plak hem opnieuw in de console bij \"APK-link\"."
+    return 0
+  fi
   local nu stamp=0 stampf="$REK_MAP/apk-link.gecheckt"
   nu="$(date +%s 2>/dev/null || echo 0)"
   [ -s "$stampf" ] && stamp="$(tr -dc 0-9 < "$stampf" 2>/dev/null || echo 0)"
-  [ "$stamp" -gt 0 ] && [ $((nu - stamp)) -lt 21600 ] && return 0   # hoogstens eens per 6 uur
+  if [ "$toon" != 1 ] && [ "$stamp" -gt 0 ] && [ $((nu - stamp)) -lt 21600 ]; then return 0; fi   # de minuut-lus: hoogstens eens per 6 uur; een knopdruk (toon=1) haalt altijd op
   printf '%s\n' "$nu" > "$stampf" 2>/dev/null || true
   local tmp="$REK_MAP/jarvis.apk.srv"   # 678h: de temp in het HOKJE (ext4) -- op de kaart (9p) faalt mv/rename, waardoor de serverlink-apk nooit landde
   # conditioneel tegen een eerdere serverlink-download, zodat een ongewijzigde apk een 304 geeft (geen bytes)
-  if [ -s "$tmp" ]; then curl -fsSL --max-time 600 -z "$tmp" -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }
-  else curl -fsSL --max-time 600 -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }; fi
-  [ -s "$tmp.new" ] || return 0   # 304 (niet gewijzigd) of leeg: niets te doen
+  if [ -s "$tmp" ]; then curl -fsSL --max-time 600 -z "$tmp" -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; [ "$toon" = 1 ] && zeg "  serverlink: de server antwoordde niet (netwerk, of de link is verlopen/ongeldig -- een §499-link blijft geldig zolang de serversleutel niet wisselt)."; return 0; }
+  else curl -fsSL --max-time 600 -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; [ "$toon" = 1 ] && zeg "  serverlink: de server antwoordde niet (netwerk, of de link is verlopen/ongeldig -- een §499-link blijft geldig zolang de serversleutel niet wisselt)."; return 0; }; fi
+  if [ ! -s "$tmp.new" ]; then [ "$toon" = 1 ] && [ -s "$tmp" ] && zeg "  serverlink: de server heeft dezelfde apk als eerder (niets nieuws op te halen)."; return 0; fi   # 304 (niet gewijzigd) of leeg: niets te doen
   # een echte apk? (ZIP begint met PK\x03\x04) en minstens ~1 MB
-  if [ "$(head -c2 "$tmp.new" 2>/dev/null)" != "PK" ] || [ "$(wc -c < "$tmp.new" 2>/dev/null || echo 0)" -lt 1000000 ]; then rm -f "$tmp.new" 2>/dev/null; zeg "Serverlink gaf geen geldige apk; genegeerd."; return 0; fi
+  if [ "$(head -c2 "$tmp.new" 2>/dev/null)" != "PK" ] || [ "$(wc -c < "$tmp.new" 2>/dev/null || echo 0)" -lt 1000000 ]; then rm -f "$tmp.new" 2>/dev/null; zeg "  serverlink: gaf geen geldige apk (geen ZIP of te klein); genegeerd. Klopt de §499-link?"; return 0; fi
   mv -f "$tmp.new" "$tmp" 2>/dev/null || return 0   # in het hokje: rename mag
   # alleen oppakken als er nog geen cache is, of de serverlink-apk nieuwer is dan de cache
   if [ -s "$JAPK_PLEK/jarvis.apk" ] && [ ! "$tmp" -nt "$JAPK_PLEK/jarvis.apk" ]; then return 0; fi
@@ -1704,27 +1766,32 @@ jarvis_serverlink_bron() {
 # repo uit ARTEMIS_UPDATE_REPO of ~/.artemis-rek/update-repo. De apk wordt op de sha256 uit versie.json gecontroleerd; via het hokje
 # (mv) en dan met cp naar de (kaart-)plek -- nooit mv op de kaart (9p).
 jarvis_release_bron() {
-  command -v curl >/dev/null 2>&1 || return 0
-  command -v python3 >/dev/null 2>&1 || return 0
+  # 678k: $1 == 1 => leg per stap uit waarom de release-bron niets oplevert (token/repo/404/sha).
+  local toon="${1:-0}"
+  command -v curl >/dev/null 2>&1 || { [ "$toon" = 1 ] && zeg "  release: curl ontbreekt op deze Chromebook."; return 0; }
+  command -v python3 >/dev/null 2>&1 || { [ "$toon" = 1 ] && zeg "  release: python3 ontbreekt op deze Chromebook."; return 0; }
   [ -s "$JAPK_PLEK/jarvis.apk" ] && [ ! -s "$JAPK_PLEK/jarvis.apk.code" ] && return 0   # er ligt al een verse apk
   local tok repo
   tok="${ARTEMIS_UPDATE_TOKEN:-}"; [ -n "$tok" ] || tok="$(head -1 "$REK_MAP/update-token" 2>/dev/null | tr -d '[:space:]')"
   repo="${ARTEMIS_UPDATE_REPO:-}"; [ -n "$repo" ] || repo="$(head -1 "$REK_MAP/update-repo" 2>/dev/null | tr -d '[:space:]')"
-  [ -n "$tok" ] && [ -n "$repo" ] || return 0
-  printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$' || return 0
-  local js; js="$(curl -fsSL --max-time 60 -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$repo/releases/latest" 2>>"$REK_MAP/artemis.log")" || return 0
+  if [ -z "$tok" ] || [ -z "$repo" ]; then
+    [ "$toon" = 1 ] && zeg "  release: geen lees-token/repo gezet (de updateplek-repo is PRIVÉ; zonder token kan de apk er niet uit). Zet ~/.artemis-rek/update-token (fine-grained, Contents read) en ~/.artemis-rek/update-repo -- OF gebruik liever de serverlink hierboven (die heeft geen token nodig)."
+    return 0
+  fi
+  printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$' || { [ "$toon" = 1 ] && zeg "  release: de repo-naam in ~/.artemis-rek/update-repo is niet de vorm eigenaar/repo."; return 0; }
+  local js; js="$(curl -fsSL --max-time 60 -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$repo/releases/latest" 2>>"$REK_MAP/artemis.log")" || { [ "$toon" = 1 ] && zeg "  release: GitHub antwoordde niet (token verlopen/geen toegang, of geen netwerk)."; return 0; }
   local aurl sha
   aurl="$(printf '%s' "$js" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(next((a["url"] for a in d.get("assets",[]) if a.get("name")=="jarvis.apk"),""))' 2>/dev/null)"
   sha="$(printf '%s' "$js" | python3 -c 'import sys,json;d=json.load(sys.stdin)
 try: print(json.loads(d.get("body","{}")).get("sha256",""))
 except Exception: print("")' 2>/dev/null)"
-  [ -n "$aurl" ] || return 0
+  [ -n "$aurl" ] || { [ "$toon" = 1 ] && zeg "  release: de nieuwste release heeft geen bijlage jarvis.apk."; return 0; }
   local tmp="$REK_MAP/jarvis.apk.rel"
-  curl -fsSL --max-time 600 -H "Authorization: Bearer $tok" -H "Accept: application/octet-stream" -o "$tmp.new" "$aurl" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }
-  { [ -s "$tmp.new" ] && [ "$(head -c2 "$tmp.new" 2>/dev/null)" = "PK" ]; } || { rm -f "$tmp.new" 2>/dev/null; return 0; }
+  curl -fsSL --max-time 600 -H "Authorization: Bearer $tok" -H "Accept: application/octet-stream" -o "$tmp.new" "$aurl" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; [ "$toon" = 1 ] && zeg "  release: het downloaden van de apk mislukte (token/netwerk)."; return 0; }
+  { [ -s "$tmp.new" ] && [ "$(head -c2 "$tmp.new" 2>/dev/null)" = "PK" ]; } || { rm -f "$tmp.new" 2>/dev/null; [ "$toon" = 1 ] && zeg "  release: wat binnenkwam was geen geldige apk."; return 0; }
   if [ -n "$sha" ] && command -v sha256sum >/dev/null 2>&1; then
     local echt; echt="$(sha256sum "$tmp.new" 2>/dev/null | cut -d' ' -f1)"
-    [ "$echt" = "$sha" ] || { rm -f "$tmp.new" 2>/dev/null; zeg "Release-apk klopt niet met de controlesom (sha256); genegeerd."; return 0; }
+    [ "$echt" = "$sha" ] || { rm -f "$tmp.new" 2>/dev/null; zeg "  release: apk klopt niet met de controlesom (sha256); genegeerd."; return 0; }
   fi
   mv -f "$tmp.new" "$tmp" 2>/dev/null || return 0   # in het hokje: rename mag
   cp -f "$tmp" "$JAPK_PLEK/jarvis.apk" 2>/dev/null || return 0   # cp naar de (kaart-)plek; NOOIT mv (9p)
@@ -1733,10 +1800,12 @@ except Exception: print("")' 2>/dev/null)"
   zeg "Nieuwste JARVIS uit de release opgehaald (controlesom klopt) -- ik zet hem via de kabel op de rektelefoons met een oudere versie."
 }
 jarvis_download_bron() {
-  local d bron='' nieuwste='' found toon=0
-  jarvis_serverlink_bron   # 673: eerst de vaste serverlink proberen (geen handmatige download nodig)
-  [ -s "$JAPK_PLEK/jarvis.apk" ] || jarvis_release_bron   # 678h: geen serverlink/apk? probeer de privé release via een lees-token
-  [ -s "$JAPK_PLEK/jarvis.apk" ] || toon=1
+  # 678k: $1 == 1 => een mens drukte op een knop; leg per bron (serverlink/release/download-map) uit waarom hij niets oplevert.
+  # Zonder toon (de minuut-lus) blijft het stil, maar als er GEEN apk is zetten we toon alsnog op 1 zodat het log de reden toont.
+  local d bron='' nieuwste='' found toon="${1:-0}"
+  [ -s "$JAPK_PLEK/jarvis.apk" ] || toon=1   # geen apk klaar: altijd de reden tonen (ook in de lus -- precies de klacht van de eigenaar: welke bron faalde en waarom)
+  jarvis_serverlink_bron "$toon"   # 673: eerst de vaste serverlink proberen (geen handmatige download nodig)
+  [ -s "$JAPK_PLEK/jarvis.apk" ] || jarvis_release_bron "$toon"   # 678h: geen serverlink/apk? probeer de privé release via een lees-token
   for d in "${JARVIS_APK_DIR:-}" "/mnt/chromeos/MyFiles/Downloads" "$HOME/Downloads" "$HOME/Linux files" "$HOME"; do
     [ -n "$d" ] || continue
     if [ ! -d "$d" ]; then [ "$toon" = 1 ] && zeg "  zoek in $d: map bestaat niet (niet gedeeld met Linux?)"; continue; fi
@@ -1767,7 +1836,7 @@ jarvis_download_bron() {
 }
 jarvis_oogst() {
   command -v "$ADB" >/dev/null 2>&1 || return 0
-  jarvis_download_bron   # 598b: eerst een op de Chromebook gedownloade jarvis.apk oppakken (bootstrap zonder dat een telefoon al de nieuwe versie heeft)
+  jarvis_download_bron "${1:-0}"   # 598b: eerst een op de Chromebook gedownloade jarvis.apk oppakken (bootstrap zonder dat een telefoon al de nieuwe versie heeft); 678k: toon door naar de bronnen
   # een verse download (apk zonder bekende code) vertrouwen we als de nieuwste: NIET overschrijven met een (mogelijk oudere) telefoon-apk.
   [ -s "$JAPK_PLEK/jarvis.apk" ] && [ ! -s "$JAPK_PLEK/jarvis.apk.code" ] && return 0
   local s id code pad='' best_code=0 best_s=''
