@@ -161,7 +161,8 @@ kaart_verhuis() {
   op_kaart || return 0
   local doel; doel="$(groot_plek)"; local app; app="$(artemis_app_dir)"; local paar
   for paar in "$HOME/.cache/uv:cache/uv" "$HOME/.cache/pip:cache/pip" "$HOME/.npm:cache/npm" "$app:artemis-app"; do
-    local src="${paar%%:*}" sub="${paar#*:}" dst="$doel/$sub"
+    local src="${paar%%:*}" sub="${paar#*:}"
+    local dst="$doel/$sub"   # 678e: NOOIT $sub op dezelfde local-regel waar sub net gezet wordt -- onder set -u zijn alle rechterkanten geexpandeerd voordat de locals bestaan (sub: unbound variable).
     case "$src" in *.venv*|*node_modules*) continue ;; esac   # nooit de venv of node_modules
     [ -e "$src" ] && [ ! -L "$src" ] || continue              # bestaat echt en is nog geen symlink
     mkdir -p "$(dirname "$dst")" 2>/dev/null || continue
