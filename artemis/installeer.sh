@@ -445,10 +445,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto'}   # 578b: ook Rek opbouwen en Koppel via de kabel op de achtergrond -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
+LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -550,7 +550,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -579,7 +579,7 @@ async function doe(c,naar){{
     const r=await fetch('/doe?cmd='+encodeURIComponent(c),{{method:'POST',signal:ac.signal}});
     clearTimeout(t);
     vak.textContent=nu()+' — '+c+':\\n'+(await r.text());
-    if(c==='bijwerken'||c==='start'||c==='rek-op'||c==='kabel-koppel'||c==='klaarzetten'||c==='beheerder'){{setTimeout(()=>doe('log','live'),7000);setTimeout(()=>doe('status','live'),20000);}}
+    if(c==='bijwerken'||c==='start'||c==='rek-op'||c==='kabel-koppel'||c==='klaarzetten'||c==='beheerder'||c==='tailscale-telefoon'||c==='tailscale'){{setTimeout(()=>doe('log','live'),7000);setTimeout(()=>doe('status','live'),20000);}}
   }}catch(e){{
     clearTimeout(t);
     vak.textContent=nu()+' — '+c+': de console antwoordt nog niet (hij start soms heel even opnieuw na Bijwerken). Druk zo op Log of Status. ('+e+')';
@@ -3536,8 +3536,12 @@ log() {
       [ -s "$tr$tl" ] && { zeg "== laatste taak $tl (laatste 15) =="; tail -n 15 "$tr$tl"; } || true
     done
   fi
-  for f in console-start console-bijwerken waakhond; do
-    [ -s "$REK_MAP/$f.log" ] && { zeg "== $f (laatste 10) =="; tail -n 10 "$REK_MAP/$f.log"; } || true
+  # 677: TOON ELKE achtergrond-opdracht (LOPEND schrijft naar console-<cmd>.log). Vroeger alleen start/bijwerken/waakhond, dus
+  # 'Telefoon klaarzetten', 'Koppel via de kabel', 'Beheerder' en 'Tailscale' gaven in Log "geen uitkomst". Nu: de nieuwste eerst.
+  zeg "== waakhond (laatste 10) =="; [ -s "$REK_MAP/waakhond.log" ] && tail -n 10 "$REK_MAP/waakhond.log" || zeg "(nog niets)"
+  local cl
+  for cl in $(ls -1t "$REK_MAP"/console-*.log 2>/dev/null); do
+    [ -s "$cl" ] && { zeg "== $(basename "$cl" .log) (laatste 12) =="; tail -n 12 "$cl"; } || true
   done
 }
 
@@ -3680,16 +3684,96 @@ YML
   zeg "Wil je dat de telefoons hem via Tailscale bereiken, zet dan het adres in Veronica (Meer > Zoekmachine)."
 }
 
-# 562: TAILSCALE (gratis Personal-plan) zodat je van buitenaf bij Veronica, de rektelefoons en de MCP-reserve kunt, ZONDER
+# 562/676: TAILSCALE (gratis Personal-plan) zodat je van buitenaf bij Veronica, de rektelefoons en de MCP-reserve kunt, ZONDER
 # openbare tunnel. Dit script installeert alleen de Linux-kant op de Chromebook en logt in; het ACCOUNT maak je zelf aan.
+# 676: BELANGRIJK voor ChromeOS/Crostini -- een kernel-TUN (tailscale0) laat cros-garcon crashen en kan de hele Linux-VM
+# onherstelbaar maken. Daarom DWINGEN we userspace-networking af (FLAGS="--tun=userspace-networking" in /etc/default/tailscaled).
+# Gevolg (eerlijk): vanuit Crostini is een telefoon op zijn 100.x NIET transparant te bereiken (geen kernel-route) -- dat gaat via
+# de SOCKS5-proxy of `tailscale nc`. De WINST van Tailscale zit bij de TELEFOONS onderling en de relay: die hebben wel kernel-TUN
+# en bereiken elkaar op de vaste 100.x over elk wifi. ARTEMIS blijft de telefoons voor de SETUP via de kabel/wifi doen.
 tailscale_op() {
   if ! command -v tailscale >/dev/null 2>&1; then
     zeg "Tailscale installeren (officieel script van tailscale.com)..."
     curl -fsSL https://tailscale.com/install.sh | sh || { zeg "Installeren lukte niet."; return 1; }
   fi
+  # userspace-networking afdwingen VOORDAT we 'up' doen (anders kan een kernel-TUN de Crostini-VM laten crashen).
+  if [ -w /etc/default/tailscaled ] || sudo -n test -e /etc/default/tailscaled 2>/dev/null; then
+    if ! grep -q 'tun=userspace-networking' /etc/default/tailscaled 2>/dev/null; then
+      printf 'FLAGS="--tun=userspace-networking"\n' | sudo -n tee -a /etc/default/tailscaled >/dev/null 2>&1 \
+        && { sudo -n systemctl restart tailscaled 2>/dev/null || true; zeg "  - userspace-networking aangezet (veilig voor ChromeOS/Crostini)."; } \
+        || zeg "  - LET OP: kon userspace-networking niet zetten; typ EENMALIG: echo 'FLAGS=\"--tun=userspace-networking\"' | sudo tee -a /etc/default/tailscaled && sudo systemctl restart tailscaled"
+    fi
+  else
+    zeg "  - LET OP: zet eenmalig userspace-networking (anders kan Crostini crashen): echo 'FLAGS=\"--tun=userspace-networking\"' | sudo tee -a /etc/default/tailscaled && sudo systemctl restart tailscaled"
+  fi
   zeg "Nu inloggen. Er komt een adres; open dat in Chrome en log in met je Tailscale-account (dat maak je zelf aan op tailscale.com)."
   sudo tailscale up || { zeg "Inloggen lukte niet."; return 1; }
-  zeg "Klaar. Dit toestel heet in Tailscale: $(tailscale ip -4 2>/dev/null | head -1). Zet de rektelefoons en de F8 met de Tailscale-app erbij."
+  zeg "Klaar. Dit toestel heet in Tailscale: $(tailscale ip -4 2>/dev/null | head -1). De telefoons zet ik zelf erbij met 'Tailscale op de telefoons'."
+}
+
+# 676: TAILSCALE OP ELKE REKTELEFOON, via de kabel, zonder dat de eigenaar op de telefoon hoeft te tikken. Nooit de F8.
+# Stappen (alle via adb, shell-uid, geen root): (1) de OFFICIELE apk van pkgs.tailscale.com installeren (com.tailscale.ipn);
+# (2) de VPN-toestemming vooraf geven met appops ACTIVATE_VPN allow (anders komt het systeem-"Verbindingsverzoek"-venster);
+# (3) always-on VPN zetten (settings secure always_on_vpn_app + lockdown) ZODAT hij vanzelf opkomt en terugkomt na een herstart;
+# (4) de app starten; (5) de inloglink (https://login.tailscale.com/...) uit logcat vissen en NAAR VERONICA sturen, zodat de
+# eigenaar hem EEN keer in de browser op de Chromebook goedkeurt -- geen tik op de telefoon. (Een auth-key kan de officiele
+# Android-app alleen via MDM/Device-Owner op een fabrieksverse telefoon; dat is te zwaar voor telefoons die al in gebruik zijn.)
+TS_APK_URL="${TS_APK_URL:-https://pkgs.tailscale.com/stable/tailscale-latest.apk}"   # officiele stabiele apk; de index staat op pkgs.tailscale.com/stable/#android
+tailscale_telefoon() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 0; }
+  "$ADB" start-server >/dev/null 2>&1 || true
+  # de officiele apk EEN keer ophalen (naar de ARTEMIS-map), daarna hergebruiken
+  local apk="$REK_MAP/tailscale.apk"
+  if [ ! -s "$apk" ]; then
+    zeg "Tailscale-apk ophalen van pkgs.tailscale.com (officieel)..."
+    if ! curl -fsSL --max-time 300 -o "$apk.deel" "$TS_APK_URL" || [ ! -s "$apk.deel" ] || [ "$(head -c2 "$apk.deel" 2>/dev/null)" != "PK" ]; then
+      rm -f "$apk.deel" 2>/dev/null
+      zeg "Kon de Tailscale-apk niet officieel ophalen. Open eenmalig https://pkgs.tailscale.com/stable/#android op de Chromebook, download de Android-apk naar Downloads, en noem hem tailscale.apk; of zet Tailscale via de Play Store op de telefoon."
+      return 1
+    fi
+    mv -f "$apk.deel" "$apk"; chmod 600 "$apk" 2>/dev/null || true
+  fi
+  local regels s staat id naam n=0
+  regels="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1" "$2}')"
+  [ -n "$regels" ] || { zeg "Geen telefoon via de kabel te zien. Sluit de telefoon met USB aan en zet USB-foutopsporing aan."; return 1; }
+  while read -r s staat; do
+    [ -n "$s" ] || continue
+    case "$s" in *:*) continue ;; esac                 # alleen de kabel (usb-serienummer)
+    naam="$(toestel_naam "$s")"; [ -z "$naam" ] && continue
+    is_f8 "$s" && { zeg "F8 overgeslagen (de dagelijkse telefoon krijgt NOOIT Tailscale van ons)."; continue; }
+    [ "$staat" = "device" ] || { zeg "$naam: nog niet toegestaan over de kabel (tik 'Toestaan' op de telefoon)."; continue; }
+    id="$(toestel_id "$s")"; toegestaan "$id" || { zeg "$naam staat niet op de lijst; overgeslagen (druk eerst op Zoek telefoons)."; continue; }
+    zeg "== Tailscale op $naam =="
+    # 1. apk installeren (bestaat hij al, dan -r = bijwerken; een andere handtekening wordt door Android geweigerd)
+    if "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1; then zeg "  - Tailscale stond er al."; else
+      if "$ADB" -s "$s" install -r "$apk" >/dev/null 2>&1; then zeg "  - Tailscale geinstalleerd."; else zeg "  - installeren lukte niet (ruimte? handtekening?); overgeslagen."; continue; fi
+    fi
+    # 2. VPN-toestemming vooraf (geen systeemvenster). appops via shell-uid, geen root.
+    "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 && zeg "  - VPN-toestemming vooraf gegeven (geen venster)." || zeg "  - LET OP: VPN-toestemming vooraf lukte niet; mogelijk tikt de telefoon één keer een venster weg."
+    # 3. always-on VPN (komt vanzelf op + terug na herstart). LET OP: na de appop, anders blijft hij 'disconnected'.
+    "$ADB" -s "$s" shell settings put secure always_on_vpn_app com.tailscale.ipn >/dev/null 2>&1 || true
+    "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 1 >/dev/null 2>&1 || true
+    zeg "  - always-on VPN gezet."
+    # 4. de app starten en de inloglink uit logcat vissen (de eigenaar keurt hem in de browser goed; geen tik op de telefoon)
+    "$ADB" -s "$s" logcat -c >/dev/null 2>&1 || true
+    "$ADB" -s "$s" shell am start -n com.tailscale.ipn/.MainActivity >/dev/null 2>&1 || true
+    local link="" i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 2
+      link="$("$ADB" -s "$s" logcat -d 2>/dev/null | grep -Eo 'https://login\.tailscale\.com/[A-Za-z0-9/._?=-]+' | head -1)"
+      [ -n "$link" ] && break
+    done
+    if [ -n "$link" ]; then
+      zeg "  - inloglink: $link"
+      relay_meld "Tailscale op $naam: keur hem goed in de browser op de Chromebook -> $link (één klik; op de telefoon hoef je niets te tikken). Daarna krijgt $naam een vast 100.x-adres." || true
+    else
+      zeg "  - geen inloglink gevonden in logcat. Open Tailscale één keer op $naam en tik 'Sign in', of log in via de admin console met een pre-approved auth key."
+      relay_meld "Tailscale op $naam staat klaar (apk + VPN-toestemming + always-on), maar ik vond geen inloglink. Open Tailscale één keer op de telefoon en tik 'Sign in', of gebruik een pre-approved auth key in de admin console." || true
+    fi
+    n=$((n+1))
+  done <<<"$regels"
+  if [ "$n" -gt 0 ]; then zeg "Klaar: Tailscale op $n telefoon(s) gezet. Keur de inlogkoppeling(en) in de browser goed; daarna bereiken de telefoons elkaar op hun vaste 100.x over elk wifi."; else zeg "Geen telefoon met Tailscale ingericht (alleen de F8, of niets toegestaan aan de kabel)."; fi
 }
 
 # 580: hoeveel ruimte is er, en is dat genoeg voor ARTEMIS? ARTEMIS heeft Node.js 22 (~150 MB), een Python-venv (~300-500 MB)
@@ -3944,6 +4028,7 @@ case "${1:-status}" in
   mcp) mcp ;;
   searxng) searxng ;;
   tailscale) tailscale_op ;;
+  tailscale-telefoon) tailscale_telefoon ;;   # 676: Tailscale op elke rektelefoon via de kabel (nooit de F8); inloglink naar Veronica
   status) status ;;
   log) log ;;
   schijf) schijf ;;
