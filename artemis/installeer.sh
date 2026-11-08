@@ -445,7 +445,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto'}   # 578b: ook Rek opbouwen en Koppel via de kabel op de achtergrond -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
@@ -531,6 +531,8 @@ def lus():
             doe('start-stil')
             if RONDE % 3 == 0:
                 doe('jarvis-waak')   # 590: elke ~3 min JARVIS nakijken op de rektelefoons (nooit de F8)
+            if RONDE % 2 == 1:
+                doe('beheerder')   # 675: de lokale beheerder -- elke ~2 min kijken of alle rektelefoons verbonden zijn, een weggevallene zelf terughalen, anders de eigenaar vragen
             if RONDE % 15 == 7:
                 doe('lokaal-auto')   # 592: lokaal model AANzetten zodra er een lokale server verschijnt ("standaard AAN")
             if RONDE % 180 == 45:
@@ -548,7 +550,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -559,22 +561,28 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <input id=relayAdres type=text autocomplete=off spellcheck=false placeholder="https://...workers.dev" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=relayAdresBewaar>Bewaar relay-adres</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
+<p style="margin:8px 0 2px;color:#8aa">Live (Log/Status vernieuwen hier, zonder je knop-uitkomst te overschrijven):</p>
+<pre id=live style="opacity:.85"></pre>
 <script>
 // 586: elke knop geeft ALTIJD een zichtbaar, getimed antwoord en de pagina hangt nooit (AbortController-timeout). Bijwerken en
 // Start draaien op de achtergrond; daarna halen we vanzelf Log en Status op zodat je de voortgang ziet zonder nog een klik.
+// 675: de UITKOMST van een knop blijft in #uit staan; de automatische Log/Status-opvolging schrijft naar #live, zodat hij de
+// knop-uitkomst NIET meer binnen seconden overschrijft (klacht van vanochtend). Een mens-klik op Log/Status schrijft wel naar #uit.
 const uit=document.getElementById('uit');
+const live=document.getElementById('live');
 function nu(){{return new Date().toLocaleTimeString();}}
-async function doe(c){{
-  uit.textContent=nu()+' — bezig: '+c+'…';
+async function doe(c,naar){{
+  const vak=(naar==='live')?live:uit;
+  vak.textContent=nu()+' — bezig: '+c+'…';
   const ac=new AbortController();const t=setTimeout(()=>ac.abort(),25000);
   try{{
     const r=await fetch('/doe?cmd='+encodeURIComponent(c),{{method:'POST',signal:ac.signal}});
     clearTimeout(t);
-    uit.textContent=nu()+' — '+c+':\\n'+(await r.text());
-    if(c==='bijwerken'||c==='start'||c==='rek-op'||c==='kabel-koppel'||c==='klaarzetten'){{setTimeout(()=>doe('log'),7000);setTimeout(()=>doe('status'),20000);}}
+    vak.textContent=nu()+' — '+c+':\\n'+(await r.text());
+    if(c==='bijwerken'||c==='start'||c==='rek-op'||c==='kabel-koppel'||c==='klaarzetten'||c==='beheerder'){{setTimeout(()=>doe('log','live'),7000);setTimeout(()=>doe('status','live'),20000);}}
   }}catch(e){{
     clearTimeout(t);
-    uit.textContent=nu()+' — '+c+': de console antwoordt nog niet (hij start soms heel even opnieuw na Bijwerken). Druk zo op Log of Status. ('+e+')';
+    vak.textContent=nu()+' — '+c+': de console antwoordt nog niet (hij start soms heel even opnieuw na Bijwerken). Druk zo op Log of Status. ('+e+')';
   }}
 }}
 for(const b of document.querySelectorAll('button[data-cmd]'))b.addEventListener('click',()=>doe(b.dataset.cmd));
@@ -1019,7 +1027,17 @@ stop_artemis() {
 # Een ronde van de waakhond. Geeft 0 terug als ARTEMIS mag blijven draaien.
 waak_ronde() {
   local s id pkg soort
+  local naam
   for s in $(verbonden); do
+    naam="$(toestel_naam "$s")"
+    # 675: een toestel dat GEEN modelnaam teruggeeft is half-verbonden/offline (de adb-shell antwoordt niet). Dat is GEEN
+    # veiligheidsrisico (niet te besturen, geen schermfoto) en dus GEEN reden om ARTEMIS te stoppen -- precies de valse STOP
+    # "een toestel dat niet op de lijst staat ()" met een lege naam (gezien 05:18 en 10:03). Ruim een dood draadloos adres op en ga door.
+    if [ -z "$naam" ]; then
+      case "$s" in *:*) "$ADB" disconnect "$s" >/dev/null 2>&1 || true ;; esac
+      logregel "Overgeslagen: $s antwoordt niet (geen modelnaam) -- geen STOP."
+      continue
+    fi
     id="$(toestel_id "$s")"
     if is_f8 "$s"; then
       logregel "STOP: de F8 blijft uitgesloten (de dagelijkse telefoon). ARTEMIS is uitgezet."
@@ -1028,7 +1046,7 @@ waak_ronde() {
       return 1
     fi
     if ! toegestaan "$id"; then
-      logregel "STOP: een toestel dat niet op de lijst staat ($(toestel_naam "$s")). ARTEMIS is uitgezet."
+      logregel "STOP: een toestel dat niet op de lijst staat ($naam). ARTEMIS is uitgezet."
       case "$s" in *:*) "$ADB" disconnect "$s" >/dev/null 2>&1 || true ;; esac
       stop_artemis
       return 1
@@ -2769,6 +2787,66 @@ beheerder_opslag() {
     fi
   done
 }
+
+# 675: DE LOKALE BEHEERDER. Elke paar minuten kijkt ARTEMIS of elke VERWACHTE rektelefoon (op de lijst, nooit de F8) nog verbonden
+# is, en haalt een weggevallen telefoon ZELF draadloos terug (opnieuw verbinden via 5555 en de relay-lijst, daarna JARVIS draaiend
+# houden via jarvis_waak). Lukt dat meerdere rondes niet, dan is er een KABEL of een TIK nodig -- en pas dan vraagt hij het aan
+# de eigenaar via Veronica (relay_meld), hoogstens eens per uur per telefoon. Het "denken" is met opzet GEWONE REGELS (geen model):
+# dat is robuust en faalt niet als een Gemma even niet bereikbaar is; de beslissing is simpel (verbonden ja/nee -> herstel -> escaleer).
+# NOOIT de F8 (is_f8 + de lijst bevat hem niet). Geen schermfoto, geen besturing: alleen opnieuw-verbinden en JARVIS starten.
+BEHEERDER_GEMIST_F="$REK_MAP/beheerder-gemist"
+BEHEERDER_ESC_F="$REK_MAP/beheerder-escalatie"
+_bh_get() { awk -v k="$1" '$1==k{print $2; exit}' "$2" 2>/dev/null; }
+_bh_set() { local k="$1" f="$2" v="$3"; touch "$f" 2>/dev/null; chmod 600 "$f" 2>/dev/null || true; awk -v k="$k" '$1!=k' "$f" 2>/dev/null >"$f.t" || true; printf '%s %s\n' "$k" "$v" >>"$f.t"; mv -f "$f.t" "$f" 2>/dev/null || true; }
+# de id's die NU draadloos/kabel verbonden zijn (nooit de F8, nooit een leeg/half-verbonden toestel)
+_bh_verbonden_ids() {
+  local s id naam
+  for s in $(verbonden); do
+    naam="$(toestel_naam "$s")"; [ -z "$naam" ] && continue
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; [ -n "$id" ] && printf '%s\n' "$id"
+  done
+}
+beheerder_ronde() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  "$ADB" start-server >/dev/null 2>&1 || true
+  if [ ! -s "$TOEG" ]; then zeg "Beheerder: nog geen rektelefoons op de lijst (druk op 'Zoek telefoons' of zet er een klaar aan de kabel)."; return 0; fi
+  local verwacht hersteld=0 weg=0 nodig="" id nu_ids nu_ids2
+  verwacht="$(grep -cvE '^\s*$' "$TOEG" 2>/dev/null | tr -d ' ')"; case "$verwacht" in ''|*[!0-9]*) verwacht=0 ;; esac
+  nu_ids="$(_bh_verbonden_ids | tr '\n' ' ')"
+  while read -r id; do
+    [ -n "$id" ] || continue
+    case " $nu_ids " in *" $id "*) _bh_set "$id" "$BEHEERDER_GEMIST_F" 0; continue ;; esac   # gezond: teller terug op 0
+    # weg -> zelf draadloos terughalen (nooit de F8; dit raakt alleen 5555/relay-adressen)
+    zeg "Beheerder: $id is weg -- ik haal hem draadloos terug."
+    verbind_draadloos >/dev/null 2>&1 || true
+    rek_verbind_lijst >/dev/null 2>&1 || true
+    nu_ids2="$(_bh_verbonden_ids | tr '\n' ' ')"
+    if case " $nu_ids2 " in *" $id "*) true ;; *) false ;; esac; then
+      hersteld=$((hersteld+1)); _bh_set "$id" "$BEHEERDER_GEMIST_F" 0
+      zeg "Beheerder: $id is weer verbonden."
+    else
+      weg=$((weg+1)); nodig="$nodig $id"
+      local g; g="$(_bh_get "$id" "$BEHEERDER_GEMIST_F")"; case "$g" in ''|*[!0-9]*) g=0 ;; esac
+      _bh_set "$id" "$BEHEERDER_GEMIST_F" $((g+1))
+    fi
+  done < "$TOEG"
+  # JARVIS draaiend houden + batterij Onbeperkt op de (weer) verbonden rektelefoons (slaat de F8 zelf over)
+  jarvis_waak >/dev/null 2>&1 || true
+  # escaleren naar Veronica ALLEEN als een telefoon al meerdere rondes weg is (kabel/tik nodig), hoogstens eens per uur per telefoon
+  local now esc g
+  now="$(date +%s 2>/dev/null || echo 0)"
+  for id in $nodig; do
+    g="$(_bh_get "$id" "$BEHEERDER_GEMIST_F")"; case "$g" in ''|*[!0-9]*) g=0 ;; esac
+    [ "$g" -ge "${BEHEERDER_ESCALATIE_RONDES:-3}" ] || continue
+    esc="$(_bh_get "$id" "$BEHEERDER_ESC_F")"; case "$esc" in ''|*[!0-9]*) esc=0 ;; esac
+    [ "$esc" -gt 0 ] && [ $((now - esc)) -lt "${BEHEERDER_ESC_RUST:-3600}" ] && continue
+    _bh_set "$id" "$BEHEERDER_ESC_F" "$now"
+    relay_meld "Beheerder: ik krijg telefoon $id al $g keer niet draadloos terug. Sluit hem even met de USB-kabel aan de Chromebook aan (dan zet ik hem vanzelf klaar), of tik hem één keer aan. De andere telefoons draaien door." || true
+    zeg "Beheerder: $id al $g rondes weg -- aan de eigenaar gevraagd via Veronica (kabel of tik nodig)."
+  done
+  zeg "Beheerder-ronde klaar: $verwacht verwacht, $hersteld hersteld, $weg nog weg."
+}
 # 594: HAALBAARHEID -- kan een oude rektelefoon de F8 vervangen voor het zware model (Gemma-4-E4B, 3,7 GB, met beeld)?
 # Meet per aangesloten rektelefoon het RAM, de chip en de vrije opslag (adb getprop/meminfo/df) en geef een oordeel. EERST
 # METEN: dit draait de echte adb-opvraag zodra de telefoons aan de Chromebook hangen. De F8 blijft ALTIJD uitgesloten.
@@ -2859,8 +2937,17 @@ f8_hosts() {
   # exporteert (alleen de test zet hem). Dat liet f8-terugvinden EN rektelefoons-koppelen op het echte wifi crashen op
   # "F8_SCAN_HOSTS: unbound variable". Daarom hier met een lege standaard (${...:-}); leeg = het eigen subnet aftasten.
   if [ -n "${F8_SCAN_HOSTS:-}" ]; then printf '%s\n' ${F8_SCAN_HOSTS:-}; return; fi
-  local ip pre
-  for ip in $(f8_eigen_ips); do pre="$(printf '%s' "$ip" | sed 's/\.[0-9]*$/./')"; seq 1 254 | sed "s#^#$pre#"; done
+  local ip pre p
+  # 675: NIET alleen het eigen /24. In Crostini zit de VM vaak op 100.115.92.x (het vmnet), terwijl de telefoons op het thuis-
+  # of gastnet zitten (bv. 192.168.178.x) -- dan vond "F8 terugvinden" de F8 nooit (klacht van vanochtend). Scan daarom ook de
+  # ONTHOUDEN LAN-subnetten (waar ooit een telefoon te vinden was) en de gangbare thuisnetten. Dubbele prefixes vallen weg.
+  {
+    for ip in $(f8_eigen_ips); do pref24 "$ip"; done
+    [ -s "$LAN_SUBNETTEN_F" ] && cat "$LAN_SUBNETTEN_F" 2>/dev/null
+    printf '%s\n' 192.168.178. 192.168.1. 192.168.0. 192.168.68. 192.168.2.
+  } | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.$' | grep -v '^127\.' | grep -v '^100\.115\.92\.' | sort -u | while read -r pre; do
+    seq 1 254 | sed "s#^#$pre#"
+  done
 }
 f8_zoek() {
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
@@ -3825,6 +3912,7 @@ case "${1:-status}" in
   kennisboek-terug) kennisboek_terug ;;      # 165: de lokale spiegel terugzetten naar de Cat
   kennisboek-kopie) kennisboek_kopie ;;      # 165: een versleutelde nachtkopie (idempotent per dag)
   beheerder-opslag) beheerder_opslag ;;      # 609: de lokale beheerder -- vanzelf de opslag van de rektelefoons bewaken + veilig opruimen
+  beheerder) beheerder_ronde ;;              # 675: de lokale beheerder -- weggevallen rektelefoon zelf draadloos terughalen, anders de eigenaar via Veronica (kabel/tik)
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   rek-zoek) rek_zoek ;;
