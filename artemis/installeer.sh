@@ -130,6 +130,17 @@ set -uo pipefail
 ARTEMIS_MAP="${ARTEMIS_MAP:-$HOME/artemis}"
 REK_MAP="${REK_MAP:-$HOME/.artemis-rek}"
 ADB="${ADB:-adb}"
+# 678c: de SD-kaart van de Chromebook (UNTITLED, 'Gedeeld met Linux') voor GROTE, opnieuw op te halen downloads (de JARVIS-apk, de
+# Tailscale-apk), zodat de kleine Crostini-schijf niet volloopt. SLEUTELS/TOKENS gaan hier NOOIT heen -- een kaartje kun je eruit
+# halen -- die blijven in $REK_MAP op de interne schijf. Geen kaart of niet schrijfbaar = terugval op de interne schijf; alles blijft werken.
+ARTEMIS_KAART="${ARTEMIS_KAART:-/mnt/chromeos/removable/UNTITLED}"
+op_kaart() { [ -n "$ARTEMIS_KAART" ] && [ -d "$ARTEMIS_KAART" ] && [ -w "$ARTEMIS_KAART" ]; }
+groot_plek() {   # een schrijfbare map voor grote downloads: de kaart als die er is, anders intern. Maakt de map aan en echoot het pad.
+  local p; if op_kaart; then p="$ARTEMIS_KAART/artemis-opslag"; else p="$REK_MAP/opslag"; fi
+  mkdir -p "$p" 2>/dev/null || { p="$REK_MAP/opslag"; mkdir -p "$p" 2>/dev/null || true; }
+  printf '%s' "$p"
+}
+JAPK_PLEK="$(groot_plek)"
 TOEG="$REK_MAP/toegestaan"
 VERB="$REK_MAP/verboden-apps.txt"
 LOG="$REK_MAP/waakhond.log"
@@ -1594,7 +1605,7 @@ artemis_app_dir() {
 # Een rektelefoon met een oude JARVIS (zonder het recht in zijn manifest) kon de kabel-koppeling niet afmaken: 'pm grant WRITE_SECURE_SETTINGS'
 # mislukt omdat die oude versie het recht niet in zijn manifest heeft, en hij kan zichzelf niet bijwerken. Oplossing: ARTEMIS leest
 # de base.apk van de telefoon die AL de nieuwste JARVIS draait (via 'pm path' + 'adb pull') en de versionCode uit dumpsys, cachet
-# die in $REK_MAP/jarvis.apk(+.code), en zet hem met 'adb install -r' (gegevens blijven, zelfde vaste sleutel) op de rektelefoons
+# die in $JAPK_PLEK/jarvis.apk(+.code), en zet hem met 'adb install -r' (gegevens blijven, zelfde vaste sleutel) op de rektelefoons
 # met een oudere versie. NOOIT de F8. Zo hoeft maar EEN telefoon ooit de nieuwe versie te krijgen; de rest volgt vanzelf, zonder dat
 # iemand iets in de terminal doet. (Niet op echte toestellen geprobeerd vanuit de bouwomgeving; best-effort met eerlijke meldingen.)
 jarvis_apk_code() {   # de versionCode van het JARVIS-pakket op EEN telefoon (leeg = onbekend/niet geïnstalleerd)
@@ -1622,7 +1633,7 @@ jarvis_serverlink_bron() {
   [ -s "$stampf" ] && stamp="$(tr -dc 0-9 < "$stampf" 2>/dev/null || echo 0)"
   [ "$stamp" -gt 0 ] && [ $((nu - stamp)) -lt 21600 ] && return 0   # hoogstens eens per 6 uur
   printf '%s\n' "$nu" > "$stampf" 2>/dev/null || true
-  local tmp="$REK_MAP/jarvis.apk.srv"
+  local tmp="$JAPK_PLEK/jarvis.apk.srv"
   # conditioneel tegen een eerdere serverlink-download, zodat een ongewijzigde apk een 304 geeft (geen bytes)
   if [ -s "$tmp" ]; then curl -fsSL --max-time 600 -z "$tmp" -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }
   else curl -fsSL --max-time 600 -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }; fi
@@ -1631,16 +1642,16 @@ jarvis_serverlink_bron() {
   if [ "$(head -c2 "$tmp.new" 2>/dev/null)" != "PK" ] || [ "$(wc -c < "$tmp.new" 2>/dev/null || echo 0)" -lt 1000000 ]; then rm -f "$tmp.new" 2>/dev/null; zeg "Serverlink gaf geen geldige apk; genegeerd."; return 0; fi
   mv -f "$tmp.new" "$tmp" 2>/dev/null || return 0
   # alleen oppakken als er nog geen cache is, of de serverlink-apk nieuwer is dan de cache
-  if [ -s "$REK_MAP/jarvis.apk" ] && [ ! "$tmp" -nt "$REK_MAP/jarvis.apk" ]; then return 0; fi
-  cp -f "$tmp" "$REK_MAP/jarvis.apk" 2>/dev/null || return 0
-  rm -f "$REK_MAP/jarvis.apk.code" 2>/dev/null || true   # onbekende versionCode: na de install afgeleid
-  chmod 600 "$REK_MAP/jarvis.apk" 2>/dev/null || true
+  if [ -s "$JAPK_PLEK/jarvis.apk" ] && [ ! "$tmp" -nt "$JAPK_PLEK/jarvis.apk" ]; then return 0; fi
+  cp -f "$tmp" "$JAPK_PLEK/jarvis.apk" 2>/dev/null || return 0
+  rm -f "$JAPK_PLEK/jarvis.apk.code" 2>/dev/null || true   # onbekende versionCode: na de install afgeleid
+  chmod 600 "$JAPK_PLEK/jarvis.apk" 2>/dev/null || true
   zeg "Nieuwste JARVIS via de serverlink opgehaald -- ik zet hem op de rektelefoons met een oudere versie (Android weigert een neppe op de handtekening)."
 }
 jarvis_download_bron() {
   local d bron='' nieuwste='' found toon=0
   jarvis_serverlink_bron   # 673: eerst de vaste serverlink proberen (geen handmatige download nodig)
-  [ -s "$REK_MAP/jarvis.apk" ] || toon=1
+  [ -s "$JAPK_PLEK/jarvis.apk" ] || toon=1
   for d in "${JARVIS_APK_DIR:-}" "/mnt/chromeos/MyFiles/Downloads" "$HOME/Downloads" "$HOME/Linux files" "$HOME"; do
     [ -n "$d" ] || continue
     if [ ! -d "$d" ]; then [ "$toon" = 1 ] && zeg "  zoek in $d: map bestaat niet (niet gedeeld met Linux?)"; continue; fi
@@ -1658,20 +1669,20 @@ jarvis_download_bron() {
     return 0
   fi
   # alleen oppakken als er nog geen cache is, of de download NIEUWER is dan de cache (mtime) -- een stale oude download overschrijft nooit.
-  if [ -s "$REK_MAP/jarvis.apk" ] && [ ! "$bron" -nt "$REK_MAP/jarvis.apk" ]; then return 0; fi
-  cp -f "$bron" "$REK_MAP/jarvis.apk" 2>/dev/null || { zeg "Kon $bron niet kopiëren."; return 0; }
-  rm -f "$REK_MAP/jarvis.apk.code" 2>/dev/null || true   # onbekende versionCode: jarvis_bijwerk_een leidt hem na de install af
-  chmod 600 "$REK_MAP/jarvis.apk" 2>/dev/null || true
+  if [ -s "$JAPK_PLEK/jarvis.apk" ] && [ ! "$bron" -nt "$JAPK_PLEK/jarvis.apk" ]; then return 0; fi
+  cp -f "$bron" "$JAPK_PLEK/jarvis.apk" 2>/dev/null || { zeg "Kon $bron niet kopiëren."; return 0; }
+  rm -f "$JAPK_PLEK/jarvis.apk.code" 2>/dev/null || true   # onbekende versionCode: jarvis_bijwerk_een leidt hem na de install af
+  chmod 600 "$JAPK_PLEK/jarvis.apk" 2>/dev/null || true
   zeg "Gedownloade JARVIS gevonden: $bron -- ik zet hem op de rektelefoons met een oudere versie (Android weigert een neppe op de handtekening)."
 }
 jarvis_oogst() {
   command -v "$ADB" >/dev/null 2>&1 || return 0
   jarvis_download_bron   # 598b: eerst een op de Chromebook gedownloade jarvis.apk oppakken (bootstrap zonder dat een telefoon al de nieuwe versie heeft)
   # een verse download (apk zonder bekende code) vertrouwen we als de nieuwste: NIET overschrijven met een (mogelijk oudere) telefoon-apk.
-  [ -s "$REK_MAP/jarvis.apk" ] && [ ! -s "$REK_MAP/jarvis.apk.code" ] && return 0
+  [ -s "$JAPK_PLEK/jarvis.apk" ] && [ ! -s "$JAPK_PLEK/jarvis.apk.code" ] && return 0
   local s id code pad='' best_code=0 best_s=''
   # de cache telt mee als ondergrens: we oogsten alleen iets dat STRIKT nieuwer is dan wat er al klaarligt.
-  [ -s "$REK_MAP/jarvis.apk" ] && [ -s "$REK_MAP/jarvis.apk.code" ] && best_code="$(tr -dc 0-9 < "$REK_MAP/jarvis.apk.code")"
+  [ -s "$JAPK_PLEK/jarvis.apk" ] && [ -s "$JAPK_PLEK/jarvis.apk.code" ] && best_code="$(tr -dc 0-9 < "$JAPK_PLEK/jarvis.apk.code")"
   case "$best_code" in ''|*[!0-9]*) best_code=0 ;; esac
   for s in $(verbonden); do
     id="$(toestel_id "$s")"; [ -n "$id" ] || continue
@@ -1685,13 +1696,13 @@ jarvis_oogst() {
   pad="$("$ADB" -s "$best_s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | grep -i 'base\.apk' | head -1)"
   [ -n "$pad" ] || pad="$("$ADB" -s "$best_s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | head -1)"
   [ -n "$pad" ] || return 0
-  if "$ADB" -s "$best_s" pull "$pad" "$REK_MAP/jarvis.apk.nieuw" >/dev/null 2>&1 && [ -s "$REK_MAP/jarvis.apk.nieuw" ]; then
-    mv -f "$REK_MAP/jarvis.apk.nieuw" "$REK_MAP/jarvis.apk"
-    printf '%s\n' "$best_code" > "$REK_MAP/jarvis.apk.code"
-    chmod 600 "$REK_MAP/jarvis.apk" 2>/dev/null || true
+  if "$ADB" -s "$best_s" pull "$pad" "$JAPK_PLEK/jarvis.apk.nieuw" >/dev/null 2>&1 && [ -s "$JAPK_PLEK/jarvis.apk.nieuw" ]; then
+    mv -f "$JAPK_PLEK/jarvis.apk.nieuw" "$JAPK_PLEK/jarvis.apk"
+    printf '%s\n' "$best_code" > "$JAPK_PLEK/jarvis.apk.code"
+    chmod 600 "$JAPK_PLEK/jarvis.apk" 2>/dev/null || true
     zeg "Nieuwste JARVIS geoogst van $(toestel_naam "$best_s") (versionCode $best_code); klaar om op de andere rektelefoons te zetten."
   else
-    rm -f "$REK_MAP/jarvis.apk.nieuw" 2>/dev/null || true
+    rm -f "$JAPK_PLEK/jarvis.apk.nieuw" 2>/dev/null || true
   fi
 }
 # installeert de klaarliggende/geoogste nieuwste JARVIS op EEN telefoon als die ouder is (NOOIT de F8). 0 = telefoon draait nu de
@@ -1699,27 +1710,27 @@ jarvis_oogst() {
 jarvis_bijwerk_een() {
   local s="$1" naam="$2" apkcode='' opcode='' uit='' nieuw=''
   is_f8 "$s" && return 1
-  [ -s "$REK_MAP/jarvis.apk" ] || return 1
+  [ -s "$JAPK_PLEK/jarvis.apk" ] || return 1
   opcode="$(jarvis_apk_code "$s")"
-  if [ -s "$REK_MAP/jarvis.apk.code" ]; then
-    apkcode="$(tr -dc 0-9 < "$REK_MAP/jarvis.apk.code")"
+  if [ -s "$JAPK_PLEK/jarvis.apk.code" ]; then
+    apkcode="$(tr -dc 0-9 < "$JAPK_PLEK/jarvis.apk.code")"
     case "$apkcode" in *[!0-9]*) apkcode='' ;; esac
   fi
   # bekende code en de telefoon is al gelijk of nieuwer: niets doen.
   if [ -n "$apkcode" ] && [ -n "$opcode" ] && [ "$opcode" -ge "$apkcode" ]; then return 0; fi
   # install -r: gegevens blijven, alleen onze JARVIS (Android weigert een andere handtekening op hetzelfde pakket). 598b: een
   # gedownloade apk heeft nog geen bekende code -- die leiden we hierna van de telefoon af.
-  uit="$("$ADB" -s "$s" install -r "$REK_MAP/jarvis.apk" 2>&1)"
+  uit="$("$ADB" -s "$s" install -r "$JAPK_PLEK/jarvis.apk" 2>&1)"
   if printf '%s' "$uit" | grep -qi 'Success'; then
     nieuw="$(jarvis_apk_code "$s")"
-    [ -n "$nieuw" ] && printf '%s\n' "$nieuw" > "$REK_MAP/jarvis.apk.code"   # onbekende code na de install afgeleid
+    [ -n "$nieuw" ] && printf '%s\n' "$nieuw" > "$JAPK_PLEK/jarvis.apk.code"   # onbekende code na de install afgeleid
     zeg "$naam: JARVIS bijgewerkt naar versionCode ${apkcode:-${nieuw:-onbekend}} (was ${opcode:-onbekend})."
     return 0
   fi
   # downgrade / al aanwezig = de telefoon heeft al een gelijke of nieuwere versie: geen fout. Leg de code van de telefoon vast zodat
   # een onbekende (gedownloade) apk-cache niet blijft proberen en de oogst weer op versionCode kan vergelijken.
   if printf '%s' "$uit" | grep -qiE 'VERSION_DOWNGRADE|ALREADY_EXISTS|newer version'; then
-    [ -z "$apkcode" ] && [ -n "$opcode" ] && printf '%s\n' "$opcode" > "$REK_MAP/jarvis.apk.code"
+    [ -z "$apkcode" ] && [ -n "$opcode" ] && printf '%s\n' "$opcode" > "$JAPK_PLEK/jarvis.apk.code"
     return 0
   fi
   zeg "$naam: JARVIS bijwerken lukte niet ($(printf '%s' "$uit" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-120))."
@@ -3597,6 +3608,9 @@ status() {
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
   zeg "Console (knoppen): http://$KBHOST:$CONSOLE_POORT"
   zeg "Rektelefoons op de lijst: $(grep -c . "$TOEG" 2>/dev/null || echo 0)"
+  # 678c: waar de grote downloads (de JARVIS-apk, de Tailscale-apk) heen gaan -- de SD-kaart als die er is, anders de interne schijf.
+  if op_kaart; then zeg "Grote downloads: op de SD-kaart ($JAPK_PLEK) -- de kleine interne schijf blijft vrij. Sleutels blijven intern."
+  else zeg "Grote downloads: op de interne schijf ($JAPK_PLEK). Deel de SD-kaart met Linux (Bestanden > SD-kaart > Delen met Linux) en ik gebruik die vanzelf."; fi
   # 609: de lokale beheerder zet een melding als een telefoon na het veilige opruimen nog krap is (dan kan alleen een mens helpen).
   [ -s "$REK_MAP/beheerder-melding.txt" ] && zeg "$(cat "$REK_MAP/beheerder-melding.txt")"
   sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
@@ -3753,7 +3767,7 @@ tailscale_telefoon() {
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 0; }
   "$ADB" start-server >/dev/null 2>&1 || true
   # de officiele apk EEN keer ophalen (naar de ARTEMIS-map), daarna hergebruiken
-  local apk="$REK_MAP/tailscale.apk"
+  local apk="$JAPK_PLEK/tailscale.apk"
   if [ ! -s "$apk" ]; then
     zeg "Tailscale-apk ophalen van pkgs.tailscale.com (officieel)..."
     if ! curl -fsSL --max-time 300 -o "$apk.deel" "$TS_APK_URL" || [ ! -s "$apk.deel" ] || [ "$(head -c2 "$apk.deel" 2>/dev/null)" != "PK" ]; then
