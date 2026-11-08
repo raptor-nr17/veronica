@@ -210,6 +210,7 @@ REDEN_F="$REK_MAP/proxy-reden"                   # 592o: de laatste echte reden 
 F8_GEVONDEN_F="$REK_MAP/f8-gevonden.conf"        # 592p: het teruggevonden LAN-adres van de F8 (na een IP-wissel); Status leest dit
 DRAADLOOS_F="$REK_MAP/draadloos"                 # 596: onthouden draadloze adb-adressen (ip:5555) zodat de minuut-scan ze na een herstart weer verbindt
 KLAAR_F="$REK_MAP/klaargezet"                    # 667d: toestel-id's die al VOLLEDIG zijn klaargezet (telefoon_klaarzetten), zodat de auto-lus ze niet opnieuw doet
+BIJWERK_GEDAAN=''                                # 678m: gezet door jarvis_bijwerk_een zodra een telefoon ECHT een nieuwe JARVIS kreeg; dan zet klaarzetten er daarna Tailscale op
 KLAAR_LOCK="$REK_MAP/klaarzetten.lock"           # 667d: lock zodat de auto-klaarzet-lus niet twee keer tegelijk draait
 SCAN5555_T="$REK_MAP/scan5555.t"                 # 606: tijdstip van de laatste subnet-scan op poort 5555 (rem: eens per ~180 s)
 LAN_SUBNETTEN_F="$REK_MAP/lan-subnetten"         # 608: onthouden /24-prefixen waar ooit een telefoon te vinden was (beide wifi's), zodat de F8/rek na een wifi-wissel vanzelf terugkomt
@@ -620,7 +621,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <p style="margin-top:6px">Relay-adres (eenmalig, alleen op een gastnetwerk nodig): op het gastnetwerk melden de telefoons zich via de relay i.p.v. ntfy.sh. Zonder dit adres blijft de relay-lijst leeg. Kopieer het uit Veronica bij Instellingen, Relay (eindigt op &quot;.workers.dev&quot;).<br>
 <input id=relayAdres type=text autocomplete=off spellcheck=false placeholder="https://...workers.dev" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=relayAdresBewaar>Bewaar relay-adres</button></p>
-<p style="margin-top:6px">APK-link (eenmalig, voor een telefoon met een oude JARVIS): zo haalt ARTEMIS de nieuwste JARVIS-apk zelf van de server &mdash; geen token, geen handmatige download. Plak de downloadlink uit de bijwerk-mail (de link naar &quot;jarvis.apk&quot;) of de vaste serverlink (.../jarvis-app/&lt;code&gt;). Een Gmail-verpakking (www.google.com/url?q=...) mag; die haal ik er zelf af.<br>
+<p style="margin-top:6px">APK-link (eenmalig, voor een telefoon met een oude JARVIS): zo haalt ARTEMIS de nieuwste JARVIS-apk zelf van de server &mdash; geen token, geen handmatige download. Plak de downloadlink uit de bijwerk-mail (de link naar &quot;jarvis.apk&quot;), de &quot;LRWERK1&quot;-pakket-link uit diezelfde mail (daaruit lees ik de vaste, niet-verlopende serverlink), of de vaste serverlink zelf (.../jarvis-app/&lt;code&gt;). Een Gmail-verpakking (www.google.com/url?q=...) mag; die haal ik er zelf af.<br>
 <input id=apkLink type=text autocomplete=off spellcheck=false placeholder="https://.../jarvis-app/..." style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=apkLinkBewaar>Bewaar APK-link</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
@@ -1034,11 +1035,24 @@ class H(BaseHTTPRequestHandler):
             m = re.match(r'^https://www\.google\.com/url\?q=([^&]+)', a)
             if m:
                 a = urllib.parse.unquote(m.group(1))
-            # twee geldige vormen: de vaste §499-serverlink, OF een directe presigned bucket-link naar jarvis.apk (zoals in de mail).
+            # DRIE geldige vormen: de vaste §499-serverlink, een directe presigned bucket-link naar jarvis.apk (zoals in de mail),
+            # OF een pakket.json-link (678l: daaruit leest ARTEMIS de DURABELE §499-link -- de "LRWERK1 <adres>"-link uit de mail).
             ok499 = re.match(r'^https://[a-z0-9.-]{3,253}/jarvis-app/[a-z2-9]{10}$', a)
             okapk = re.match(r'^https://[a-z0-9.-]{3,253}/[A-Za-z0-9._~/%=&?-]*jarvis\.apk(\?\S+)?$', a)
+            okpakket = re.match(r'^https://[a-z0-9.-]{3,253}/[A-Za-z0-9._~/%=&?-]*pakket\.json(\?\S+)?$', a)
+            if okpakket:
+                # een pakket-link: bewaren als pakket-link; jarvis_pakket_bron haalt er de vaste serverlink uit.
+                try:
+                    pp = os.path.join(REK, 'pakket-link')
+                    with open(pp, 'w') as fh: fh.write(a + '\n')
+                    try: os.chmod(pp, 0o600)
+                    except Exception: pass
+                    self._schrijf(200, 'Pakket-link opgeslagen. Druk nu op "Telefoon klaarzetten"; ARTEMIS haalt uit het pakket de vaste (niet-verlopende) serverlink en zet de nieuwste JARVIS op de telefoon.')
+                except Exception as e:
+                    self._schrijf(500, 'fout: ' + str(e))
+                return
             if not (ok499 or okapk):
-                self._schrijf(400, 'Dat lijkt geen downloadlink. Het is een https-adres dat eindigt op jarvis.apk (met een ?... eraan) OF de vorm https://.../jarvis-app/<code>. Kopieer de link uit de bijwerk-mail of uit Veronica.'); return
+                self._schrijf(400, 'Dat lijkt geen downloadlink. Het is een https-adres dat eindigt op jarvis.apk (met een ?... eraan), een pakket.json-link, OF de vorm https://.../jarvis-app/<code>. Kopieer de link uit de bijwerk-mail of uit Veronica.'); return
             try:
                 with open(pad, 'w') as fh: fh.write(a + '\n')
                 try: os.chmod(pad, 0o600)
@@ -1437,6 +1451,7 @@ telefoon_klaarzetten() {
   fi
   jarvis_oogst "$([ -n "$auto" ] && echo 0 || echo 1)"   # de nieuwste JARVIS oogsten (knopdruk: toon=1 => per bron uitleggen wat faalt EN de serverlink NU ophalen); nooit de F8
   touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
+  BIJWERK_GEDAAN=''   # 678m: wordt 1 zodra jarvis_bijwerk_een hieronder echt een nieuwe JARVIS installeert
   while read -r s staat; do
     [ -n "$s" ] || continue
     case "$s" in *:*) continue ;; esac                 # alleen de kabel (usb-serienummer), geen draadloos adres
@@ -1486,6 +1501,13 @@ telefoon_klaarzetten() {
   done <<<"$regels"
   rm -f "$KLAAR_LOCK" 2>/dev/null || true
   verbind_draadloos; onthoud_wifi_adb; overzicht
+  # 678m: Tailscale AUTOMATISCH na een geslaagde JARVIS-update. Alleen als er echt is bijgewerkt (BIJWERK_GEDAAN), zodat het niet
+  # elke 3 minuten draait; tailscale_telefoon is idempotent (slaat een al geïnstalleerde over), slaat de F8 altijd over en raakt
+  # alleen telefoons op de lijst. Zo bereiken de telefoons elkaar na de update op hun vaste 100.x over elk wifi.
+  if [ -n "$BIJWERK_GEDAAN" ]; then
+    zeg "Nieuwe JARVIS geïnstalleerd -- ik zet er meteen Tailscale op (nooit de F8)."
+    tailscale_telefoon || true
+  fi
   if [ "$n" -gt 0 ]; then zeg "Klaar: $n telefoon(s) volledig klaargezet. De kabel mag eruit; ik vind ze terug via 5555 en JARVIS meldt zich bij de relay."; else [ -n "$auto" ] || zeg "Geen telefoon klaargezet (alleen de F8, of niets toegestaan aan de kabel)."; fi
 }
 
@@ -1716,6 +1738,41 @@ jarvis_apk_code() {   # de versionCode van het JARVIS-pakket op EEN telefoon (le
 # (het pakket bestaat al, met de echte sleutel), dus een install -r die niet onze JARVIS is faalt. Nooit willekeurige *.apk; nooit een
 # ander pakket. 599: toont (als er nog geen cache is) WELKE mappen hij doorzocht en wat hij zag -- ook als een map niet bestaat.
 # JARVIS_APK_DIR overschrijft de zoekmap (voor de test).
+# 678l: DE PAKKET-BRON -- volledig zonder een mens, en DURABEL. Het pakket (gemma-werk/taken/pakket.json, hetzelfde dat de
+# telefoons lezen, §367/§487) draagt update.vast = de VASTE §499-serverlink (server/gemmaWerk.js:203; die link verloopt NOOIT
+# zolang de serversleutel niet wisselt). Zet iemand dus EEN keer de pakket-link (de "LRWERK1 <adres>"-link uit de bijwerk-mail,
+# §504) in de console bij "APK-link", dan leest ARTEMIS daaruit de durabele §499-link en bewaart die als apk-link -- vanaf dan
+# haalt klaarzetten-auto de nieuwste JARVIS vanzelf, ook na de zeven dagen dat de pakket-link zelf geldig is. De pakket-link
+# bevat GEEN sleutel (alleen een presigned leesadres), dus hij mag in ~/.artemis-rek staan (600). Faalt het, dan vallen we terug
+# op de rechtstreekse serverlink/release/download-map. De live-fetch is vanuit de bouwomgeving niet te testen (de egress-proxy
+# weigert de opslag-host, 403); check_artemis toetst de STRUCTUUR (de extractie van update.vast, de validatie, de volgorde).
+jarvis_pakket_bron() {
+  local toon="${1:-0}"
+  command -v curl >/dev/null 2>&1 || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  if [ ! -s "$REK_MAP/pakket-link" ]; then
+    [ "$toon" = 1 ] && [ ! -s "$REK_MAP/apk-link" ] && zeg "  pakket: geen pakket-link ingesteld (optioneel). Plak de \"LRWERK1 <adres>\"-link uit de bijwerk-mail in de console bij \"APK-link\" -- dan leest ARTEMIS daaruit de vaste (niet-verlopende) serverlink."
+    return 0
+  fi
+  local link; link="$(head -1 "$REK_MAP/pakket-link" 2>/dev/null | tr -d '[:space:]')"
+  printf '%s' "$link" | grep -Eq '^https://[a-z0-9.-]{3,253}/[A-Za-z0-9._~/%=&?-]*pakket\.json(\?[^ ]*)?$' || { [ "$toon" = 1 ] && zeg "  pakket: de pakket-link heeft niet de vorm https://.../pakket.json?..."; return 0; }
+  local js vast
+  js="$(curl -fsSL --max-time 60 "$link" 2>>"$REK_MAP/artemis.log")" || { [ "$toon" = 1 ] && zeg "  pakket: het pakket is niet op te halen (netwerk, of de pakket-link is verlopen -- hij geldt 7 dagen)."; return 0; }
+  vast="$(printf '%s' "$js" | python3 -c 'import sys,json
+try:
+  d=json.load(sys.stdin); print((d.get("update") or {}).get("vast",""))
+except Exception: print("")' 2>/dev/null)"
+  if ! printf '%s' "$vast" | grep -Eq '^https://[a-z0-9.-]{3,253}/jarvis-app/[a-z2-9]{10}$'; then
+    [ "$toon" = 1 ] && zeg "  pakket: in het pakket staat (nog) geen vaste serverlink (update.vast). Zonder serversleutel komt die er niet; de rechtstreekse apk-link blijft dan de weg."
+    return 0
+  fi
+  # de durabele §499-link bewaren als apk-link, zodat jarvis_serverlink_bron hem gebruikt. Alleen schrijven als hij wijzigt.
+  if [ ! -s "$REK_MAP/apk-link" ] || [ "$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '[:space:]')" != "$vast" ]; then
+    printf '%s\n' "$vast" > "$REK_MAP/apk-link"; chmod 600 "$REK_MAP/apk-link" 2>/dev/null || true
+    rm -f "$REK_MAP/apk-link.gecheckt" 2>/dev/null || true   # meteen opnieuw ophalen
+    [ "$toon" = 1 ] && zeg "  pakket: de vaste §499-serverlink uit het pakket gehaald en bewaard als apk-link (verloopt niet)."
+  fi
+}
 # 673: haal de nieuwste jarvis.apk van de VASTE §499-serverlink (als die bij de installatie is meegegeven). Zo is er geen
 # handmatige download meer nodig: zodra een rektelefoon aan de kabel komt, zet de auto-klaarzet-lus de nieuwste JARVIS erop. De link
 # verloopt niet en wijst naar ons eigen domein; Android weigert bij install -r een apk met een andere handtekening, dus een
@@ -1804,6 +1861,7 @@ jarvis_download_bron() {
   # Zonder toon (de minuut-lus) blijft het stil, maar als er GEEN apk is zetten we toon alsnog op 1 zodat het log de reden toont.
   local d bron='' nieuwste='' found toon="${1:-0}"
   [ -s "$JAPK_PLEK/jarvis.apk" ] || toon=1   # geen apk klaar: altijd de reden tonen (ook in de lus -- precies de klacht van de eigenaar: welke bron faalde en waarom)
+  jarvis_pakket_bron "$toon"       # 678l: als er een pakket-link staat, daaruit de durabele §499-serverlink halen en als apk-link bewaren
   jarvis_serverlink_bron "$toon"   # 673: eerst de vaste serverlink proberen (geen handmatige download nodig)
   [ -s "$JAPK_PLEK/jarvis.apk" ] || jarvis_release_bron "$toon"   # 678h: geen serverlink/apk? probeer de privé release via een lees-token
   for d in "${JARVIS_APK_DIR:-}" "/mnt/chromeos/MyFiles/Downloads" "$HOME/Downloads" "$HOME/Linux files" "$HOME"; do
@@ -1883,6 +1941,7 @@ jarvis_bijwerk_een() {
   if printf '%s' "$uit" | grep -qi 'Success'; then
     nieuw="$(jarvis_apk_code "$s")"
     [ -n "$nieuw" ] && printf '%s\n' "$nieuw" > "$JAPK_PLEK/jarvis.apk.code"   # onbekende code na de install afgeleid
+    BIJWERK_GEDAAN=1   # 678m: echt bijgewerkt -> klaarzetten zet er daarna Tailscale op (nooit de F8)
     zeg "$naam: JARVIS bijgewerkt naar versionCode ${apkcode:-${nieuw:-onbekend}} (was ${opcode:-onbekend})."
     return 0
   fi
