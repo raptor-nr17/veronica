@@ -3129,6 +3129,11 @@ motor_meet() {
     # de GROTE kernen: de cores met een max-frequentie van minstens 90% van de hoogste (de prime + het grote cluster), als taskset-lijst
     big="$("$ADB" -s "$s" shell 'm=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=$(cat "$f" 2>/dev/null||echo 0); [ "$v" -gt "$m" ] 2>/dev/null && m=$v; done; t=$(( m*9/10 )); b=""; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=$(cat "$f" 2>/dev/null||echo 0); [ "$v" -ge "$t" ] 2>/dev/null || continue; n=${f#/sys/devices/system/cpu/cpu}; n=${n%%/*}; b="$b,$n"; done; echo "${b#,}"' 2>/dev/null | tr -d '\r ')"
     [ -n "$big" ] || big="0,1"
+    # 678n: threads = AANTAL GROTE KERNEN. De aanbevolen draden voor de motor is het aantal grote kernen (niet alle cores: de
+    # kleine kernen vertragen de decode). We tellen ze en nemen dat getal MEE in de meetreeks (naast 1/2/4/8), zodat de meting
+    # bewijst of de big-core-telling echt het snelst is. JARVIS' motor draait daarna standaard op dat aantal (motorinstel.js).
+    local bigN tset; bigN="$(printf '%s' "$big" | tr ',' '\n' | grep -c .)"; case "$bigN" in ''|*[!0-9]*) bigN=4 ;; esac
+    tset="$(printf '1\n2\n4\n8\n%s\n' "$bigN" | sort -n -u | paste -sd, -)"
     # llama-bench + model aanwezig? (nooit gokken -- eerlijk zeggen wat ontbreekt)
     if ! "$ADB" -s "$s" shell "[ -x $MEET_BENCH ]" >/dev/null 2>&1; then
       zeg "  $naam: llama-bench ontbreekt op $MEET_BENCH. Bouw hem als arm64-doel met de NDK (zelfde toolchain als de APK; recept: docs/lokaal-modelsysteem.md stap 1b) en push hem erheen, of leg een arm64-build in $MEET_BENCH op de telefoon."
@@ -3147,10 +3152,10 @@ motor_meet() {
     temp="$("$ADB" -s "$s" shell 'cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | sort -rn | head -1' 2>/dev/null | tr -d '\r')"
     klok="$("$ADB" -s "$s" shell "cat /sys/devices/system/cpu/cpu${big##*,}/cpufreq/scaling_cur_freq 2>/dev/null" 2>/dev/null | tr -d '\r')"
     scherm="$("$ADB" -s "$s" shell dumpsys deviceidle 2>/dev/null | grep -qi 'mScreenOn=true' && echo aan || echo uit)"
-    { echo "=== $naam ($id) -- $(date '+%Y-%m-%d %H:%M' 2>/dev/null)"; echo "grote kernen (taskset): $big | accu: ${accu:-?} | hoogste thermal: ${temp:-?} mdC | klok grote kern: ${klok:-?} kHz | scherm: $scherm"; } >>"$bestand"
-    zeg "  $naam: meten op kernen $big (accu ${accu:-?}, scherm $scherm)..."
-    # 5 runs achter elkaar (hitte-afremming zichtbaar): pp512 (prefill) + tg128 (decode) apart, threads 1/2/4/8, CPU-only
-    local uit; uit="$("$ADB" -s "$s" shell "taskset -c $big $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t 1,2,4,8 -p 512 -n 128 -r 5 2>&1" 2>/dev/null | tr -d '\r')"
+    { echo "=== $naam ($id) -- $(date '+%Y-%m-%d %H:%M' 2>/dev/null)"; echo "grote kernen (taskset): $big | aantal grote kernen (aanbevolen threads): $bigN | accu: ${accu:-?} | hoogste thermal: ${temp:-?} mdC | klok grote kern: ${klok:-?} kHz | scherm: $scherm"; } >>"$bestand"
+    zeg "  $naam: meten op kernen $big ($bigN grote kernen = aanbevolen threads; accu ${accu:-?}, scherm $scherm)..."
+    # 5 runs achter elkaar (hitte-afremming zichtbaar): pp512 (prefill) + tg128 (decode) apart, threads incl. het aantal grote kernen, CPU-only
+    local uit; uit="$("$ADB" -s "$s" shell "taskset -c $big $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t $tset -p 512 -n 128 -r 5 2>&1" 2>/dev/null | tr -d '\r')"
     printf '%s\n\n' "$uit" >>"$bestand"
     # de t/s-regels (pp512 en tg128) teruggeven aan de console
     printf '%s\n' "$uit" | grep -iE 'pp512|tg128|t/s|tokens' | head -12 | while IFS= read -r r; do zeg "    $r"; done
@@ -3160,7 +3165,7 @@ motor_meet() {
   if [ "$gedaan" -eq 0 ]; then
     zeg "Geen rektelefoon aan de kabel gemeten. Sluit er een aan (USB-foutopsporing), druk op 'Zoek telefoons', en zorg dat llama-bench + het meetmodel klaarstaan."
   else
-    zeg "Klaar. De pure decode-snelheid (tg128) hoort hoger te liggen dan de 0,9 tok/s die JARVIS meldt -- die telt prefill mee en is geschat (zie docs/lokaal-modelsysteem.md stap 1). Vergelijk daarna met LiteRT-LM via JARVIS' eigen meting."
+    zeg "Klaar. De pure decode-snelheid (tg128) hoort hoger te liggen dan de 0,9 tok/s die JARVIS meldt -- die telt prefill mee en is geschat (zie docs/lokaal-modelsysteem.md stap 1). De t-regel met het aantal grote kernen hoort het snelst (of vrijwel) te zijn: dat is het aantal draden waarop JARVIS' motor standaard draait. Vergelijk daarna met LiteRT-LM via JARVIS' eigen meting."
   fi
 }
 lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokale server, of niets
