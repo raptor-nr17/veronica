@@ -130,6 +130,17 @@ set -uo pipefail
 ARTEMIS_MAP="${ARTEMIS_MAP:-$HOME/artemis}"
 REK_MAP="${REK_MAP:-$HOME/.artemis-rek}"
 ADB="${ADB:-adb}"
+# 678g: de eigen (crypto)programma's van de eigenaar worden NOOIT verplaatst, opgeruimd of aangeraakt (besluit 8 nov: "oude
+# cryptoprogramma's laat je in de staat die ze zijn"). Vaste uitsluitlijst op mapnaam (basename). beschermd_pad() is de ENE poort;
+# opruimen, kaart_verhuis en de schijfmeting gaan er allemaal langs. Nooit een pad hieruit verplaatsen/wissen, ook niet als het groot is.
+BESCHERMD=".zcash-params verus .verus .zcash .komodo .hush zcash-params komodo"
+beschermd_pad() {   # waar: de map (of een ouder ervan) hoort bij de eigen programma's van de eigenaar -- afblijven
+  local p="$1" naam w
+  for w in $BESCHERMD; do
+    case "$p" in *"/$w"|*"/$w/"*) return 0 ;; esac
+  done
+  return 1
+}
 # 678c/678d: de SD-kaart van de Chromebook voor GROTE, verplaatsbare dingen (apk-downloads, uv/pip/npm-caches, ARTEMIS-traces/logs,
 # modelbestanden, de kennisboek-kopie), zodat de kleine Crostini-schijf ("het hokje", vaak maar 10 GB) niet volloopt en ARTEMIS wel
 # start. ChromeOS mount een met Linux gedeeld kaartje onder /mnt/chromeos/removable/<label>; het label is niet altijd UNTITLED, dus
@@ -172,6 +183,7 @@ kaart_verhuis() {
     local sub="${paar#*:}"
     local dst="$doel/$sub"
     case "$src" in *.venv*|*node_modules*|*/.cache/*|*/.npm*) continue ;; esac   # nooit caches/venv/node
+    beschermd_pad "$src" && continue                                              # 678g: nooit de eigen (crypto)programma's van de eigenaar
     [ -d "$src" ] && [ ! -L "$src" ] || continue                                  # een echte map, nog geen symlink
     mkdir -p "$(dirname "$dst")" 2>/dev/null || continue
     if cp -r "$src/." "$dst/" 2>/dev/null && rm -rf "$src" 2>/dev/null; then ln -s "$dst" "$src" 2>/dev/null || true; zeg "  - inerte data naar de kaart (hokje vrijgemaakt): $src"; fi
@@ -493,7 +505,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
@@ -598,7 +610,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -2927,6 +2939,62 @@ hardware() {
   [ "$n" -gt 0 ] || zeg "  Geen rektelefoon op de lijst aangesloten. Sluit er een aan (kabel + USB-foutopsporing) en druk op 'Zoek telefoons'."
   zeg "E4B (3,7 GB) met beeld vraagt een SNELLE GPU; op een niet-Snapdragon is hij vaak te traag om de F8 te vervangen. Uitleg + advies: docs/oude-telefoon-als-f8-vervanger.md."
 }
+# 678 stap 1b: de ECHTE modelsnelheid van een rektelefoon meten met llama-bench op de GROTE kernen, CPU-only. DRAAIT OP DE KABEL,
+# NOOIT de F8. pp512 (prefill) en tg128 (decode) apart, -t 1,2,4,8, -ngl 0 (CPU), grote kernen gepind met taskset (kernnummers uit
+# cpuinfo_max_freq), 5 runs; per run accu/temperatuur/klok/scherm gelogd zodat een lage uitkomst te duiden is (hitte/besparing).
+# llama-bench moet als arm64-binary op $MEET_BENCH staan (los NDK-doel, zelfde toolchain als libllamaserver.so in de APK); het model
+# is een klein GGUF (Qwen3 0.6B Q4_0) in $MEET_MODEL_LOK. Ontbreekt een van beide, dan zegt ARTEMIS precies wat te doen -- nooit een
+# verzonnen getal. Resultaten per telefoon in $MEET_MAP/<naam>.log; de console toont ze direct, Status noemt de laatste meting.
+MEET_MAP="$REK_MAP/meet"
+MEET_BENCH="/data/local/tmp/llama-bench"
+MEET_MODEL_LOK="$JAPK_PLEK/meet-model.gguf"
+MEET_MODEL_TEL="/data/local/tmp/meet-model.gguf"
+motor_meet() {
+  mkdir -p "$MEET_MAP" 2>/dev/null || true
+  local s id naam big mask gedaan=0
+  zeg "Snelheid meten (llama-bench, CPU, grote kernen) -- dit duurt per telefoon een paar minuten en kan warm worden. De F8 wordt nooit gemeten."
+  for s in $(verbonden); do
+    case "$s" in *:*) continue ;; esac                      # alleen de kabel (usb-serienummer): de meting is zwaar, geen draadloos
+    is_f8 "$s" && { zeg "  ($(toestel_naam "$s") = F8, overgeslagen -- de dagelijkse telefoon meten we nooit)"; continue; }
+    id="$(toestel_id "$s")"; toegestaan "$id" || { zeg "  ($(toestel_naam "$s")) staat niet op de lijst -- druk eerst op 'Zoek telefoons'."; continue; }
+    naam="$(toestel_naam "$s")"; local bestand="$MEET_MAP/$(printf '%s' "${naam:-$id}" | tr ' /:' '___').log"
+    # de GROTE kernen: de cores met een max-frequentie van minstens 90% van de hoogste (de prime + het grote cluster), als taskset-lijst
+    big="$("$ADB" -s "$s" shell 'm=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=$(cat "$f" 2>/dev/null||echo 0); [ "$v" -gt "$m" ] 2>/dev/null && m=$v; done; t=$(( m*9/10 )); b=""; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=$(cat "$f" 2>/dev/null||echo 0); [ "$v" -ge "$t" ] 2>/dev/null || continue; n=${f#/sys/devices/system/cpu/cpu}; n=${n%%/*}; b="$b,$n"; done; echo "${b#,}"' 2>/dev/null | tr -d '\r ')"
+    [ -n "$big" ] || big="0,1"
+    # llama-bench + model aanwezig? (nooit gokken -- eerlijk zeggen wat ontbreekt)
+    if ! "$ADB" -s "$s" shell "[ -x $MEET_BENCH ]" >/dev/null 2>&1; then
+      zeg "  $naam: llama-bench ontbreekt op $MEET_BENCH. Bouw hem als arm64-doel met de NDK (zelfde toolchain als de APK; recept: docs/lokaal-modelsysteem.md stap 1b) en push hem erheen, of leg een arm64-build in $MEET_BENCH op de telefoon."
+      continue
+    fi
+    if ! "$ADB" -s "$s" shell "[ -s $MEET_MODEL_TEL ]" >/dev/null 2>&1; then
+      if [ -s "$MEET_MODEL_LOK" ]; then zeg "  $naam: meetmodel erheen zetten..."; "$ADB" -s "$s" push "$MEET_MODEL_LOK" "$MEET_MODEL_TEL" >/dev/null 2>&1 || true; fi
+    fi
+    if ! "$ADB" -s "$s" shell "[ -s $MEET_MODEL_TEL ]" >/dev/null 2>&1; then
+      zeg "  $naam: het meetmodel ontbreekt ($MEET_MODEL_TEL). Leg een klein GGUF (Qwen3 0.6B Q4_0) in $MEET_MODEL_LOK op deze computer; dan zet ik het er de volgende keer zelf op."
+      continue
+    fi
+    # de omstandigheden loggen (hitte/besparing verklaren een lage uitkomst) -- accu, temperatuur, klok van de grote kernen, scherm
+    local accu temp klok scherm
+    accu="$("$ADB" -s "$s" shell dumpsys battery 2>/dev/null | awk -F': ' '/ level/{l=$2} / temperature/{t=$2} END{printf "%s%% %sdC", l, (t?t/10:"?")}' | tr -d '\r')"
+    temp="$("$ADB" -s "$s" shell 'cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | sort -rn | head -1' 2>/dev/null | tr -d '\r')"
+    klok="$("$ADB" -s "$s" shell "cat /sys/devices/system/cpu/cpu${big##*,}/cpufreq/scaling_cur_freq 2>/dev/null" 2>/dev/null | tr -d '\r')"
+    scherm="$("$ADB" -s "$s" shell dumpsys deviceidle 2>/dev/null | grep -qi 'mScreenOn=true' && echo aan || echo uit)"
+    { echo "=== $naam ($id) -- $(date '+%Y-%m-%d %H:%M' 2>/dev/null)"; echo "grote kernen (taskset): $big | accu: ${accu:-?} | hoogste thermal: ${temp:-?} mdC | klok grote kern: ${klok:-?} kHz | scherm: $scherm"; } >>"$bestand"
+    zeg "  $naam: meten op kernen $big (accu ${accu:-?}, scherm $scherm)..."
+    # 5 runs achter elkaar (hitte-afremming zichtbaar): pp512 (prefill) + tg128 (decode) apart, threads 1/2/4/8, CPU-only
+    local uit; uit="$("$ADB" -s "$s" shell "taskset -c $big $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t 1,2,4,8 -p 512 -n 128 -r 5 2>&1" 2>/dev/null | tr -d '\r')"
+    printf '%s\n\n' "$uit" >>"$bestand"
+    # de t/s-regels (pp512 en tg128) teruggeven aan de console
+    printf '%s\n' "$uit" | grep -iE 'pp512|tg128|t/s|tokens' | head -12 | while IFS= read -r r; do zeg "    $r"; done
+    zeg "  $naam: klaar -- volledige meting in $bestand (en in de Log)."
+    gedaan=$((gedaan+1))
+  done
+  if [ "$gedaan" -eq 0 ]; then
+    zeg "Geen rektelefoon aan de kabel gemeten. Sluit er een aan (USB-foutopsporing), druk op 'Zoek telefoons', en zorg dat llama-bench + het meetmodel klaarstaan."
+  else
+    zeg "Klaar. De pure decode-snelheid (tg128) hoort hoger te liggen dan de 0,9 tok/s die JARVIS meldt -- die telt prefill mee en is geschat (zie docs/lokaal-modelsysteem.md stap 1). Vergelijk daarna met LiteRT-LM via JARVIS' eigen meting."
+  fi
+}
 lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokale server, of niets
   local s id poort model lp="$LOKAAL_POORT"
   for s in $(verbonden); do
@@ -3656,8 +3724,19 @@ status() {
     zeg "SD-kaart: NIET gedeeld met Linux. Deel hem eenmalig (Bestanden > SD-kaart > rechtsklik > Delen met Linux) -- dan gebruik ik hem vanzelf voor grote GEWONE bestanden (geen caches: die kunnen niet op de kaart) en blijft het hokje vrijer."
   fi
   # 678f: wat vult het hokje echt? Toon de grootste mappen onder HOME, zodat een mens ziet waar de ruimte heen gaat (du telt alleen deze schijf: -x).
-  local top; top="$(du -xm --max-depth=2 "$HOME" 2>/dev/null | sort -rn | awk '$1>=50 && $2!="'"$HOME"'"{printf "    %s MB  %s\n",$1,$2}' | head -6)"
-  [ -n "$top" ] && { zeg "Grootste mappen in het hokje (>= 50 MB):"; printf '%s\n' "$top"; }
+  # 678g: de beschermde (crypto)mappen van de eigenaar HOREN NIET in de "grootste mappen"-lijst -- ARTEMIS mag ze nooit opruimen.
+  local alle; alle="$(du -xm --max-depth=2 "$HOME" 2>/dev/null | sort -rn)"
+  local top rust="" r w
+  top="$(printf '%s\n' "$alle" | awk -v h="$HOME" '$1>=50 && $2!=h{print}' | while read -r mb pad; do beschermd_pad "$pad" || printf '    %s MB  %s\n' "$mb" "$pad"; done | head -6)"
+  [ -n "$top" ] && { zeg "Grootste mappen in het hokje (>= 50 MB, de eigen programma's van de eigenaar staan er NIET bij):"; printf '%s\n' "$top"; }
+  # wat we met rust laten, wel eerlijk tonen (zodat het schijfbeeld klopt) maar nooit aanraken
+  rust="$(printf '%s\n' "$alle" | awk '$1>=50{print}' | while read -r mb pad; do beschermd_pad "$pad" && printf '    %s MB  %s\n' "$mb" "$pad"; done | head -4)"
+  [ -n "$rust" ] && { zeg "Met rust gelaten (van de eigenaar -- NOOIT opruimen of verplaatsen):"; printf '%s\n' "$rust"; }
+  # 678 stap 1b: de laatste snelheidsmeting(en) per telefoon, als er al gemeten is
+  if [ -d "$MEET_MAP" ] && ls "$MEET_MAP"/*.log >/dev/null 2>&1; then
+    zeg "Laatste snelheidsmetingen (llama-bench, tg128 = pure decode; 'Snelheid meten' om te verversen):"
+    local mf; for mf in "$MEET_MAP"/*.log; do zeg "  $(basename "$mf" .log): $(grep -iE 'tg128' "$mf" 2>/dev/null | tail -1 | sed 's/^ *//' || echo 'nog geen tg128-regel')"; done
+  fi
   # 609: de lokale beheerder zet een melding als een telefoon na het veilige opruimen nog krap is (dan kan alleen een mens helpen).
   [ -s "$REK_MAP/beheerder-melding.txt" ] && zeg "$(cat "$REK_MAP/beheerder-melding.txt")"
   sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
@@ -3808,7 +3887,17 @@ tailscale_op() {
 # (4) de app starten; (5) de inloglink (https://login.tailscale.com/...) uit logcat vissen en NAAR VERONICA sturen, zodat de
 # eigenaar hem EEN keer in de browser op de Chromebook goedkeurt -- geen tik op de telefoon. (Een auth-key kan de officiele
 # Android-app alleen via MDM/Device-Owner op een fabrieksverse telefoon; dat is te zwaar voor telefoons die al in gebruik zijn.)
-TS_APK_URL="${TS_APK_URL:-https://pkgs.tailscale.com/stable/tailscale-latest.apk}"   # officiele stabiele apk; de index staat op pkgs.tailscale.com/stable/#android
+TS_INDEX="${TS_INDEX:-https://pkgs.tailscale.com/stable/}"   # de officiele stabiele index; de Android-apk is VERSIE-GEBONDEN (tailscale-android-universal-<versie>.apk)
+# pkgs.tailscale.com/stable/ heeft GEEN 'tailscale-latest.apk' (dat gaf 404). We LEZEN de index en pakken de nieuwste android-universal-apk;
+# TS_APK_URL overschrijft dat als iemand een vaste URL wil. Nooit een versie gokken -- een geraden versie is een kapotte link (404).
+ts_apk_url() {   # echoot de volledige download-URL van de nieuwste officiele Android-apk, of niets
+  if [ -n "${TS_APK_URL:-}" ]; then printf '%s' "$TS_APK_URL"; return 0; fi
+  local idx file
+  idx="$(curl -fsSL --max-time 60 "$TS_INDEX" 2>/dev/null)" || return 1
+  file="$(printf '%s' "$idx" | grep -oE 'tailscale-android-universal-[0-9][0-9.]*\.apk' | sort -V | uniq | tail -1)"
+  [ -n "$file" ] || return 1
+  printf '%s%s' "$TS_INDEX" "$file"
+}
 tailscale_telefoon() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 0; }
@@ -3816,13 +3905,20 @@ tailscale_telefoon() {
   # de officiele apk EEN keer ophalen (naar de ARTEMIS-map), daarna hergebruiken
   local apk="$JAPK_PLEK/tailscale.apk"
   if [ ! -s "$apk" ]; then
-    zeg "Tailscale-apk ophalen van pkgs.tailscale.com (officieel)..."
-    if ! curl -fsSL --max-time 300 -o "$apk.deel" "$TS_APK_URL" || [ ! -s "$apk.deel" ] || [ "$(head -c2 "$apk.deel" 2>/dev/null)" != "PK" ]; then
-      rm -f "$apk.deel" 2>/dev/null
-      zeg "Kon de Tailscale-apk niet officieel ophalen. Open eenmalig https://pkgs.tailscale.com/stable/#android op de Chromebook, download de Android-apk naar Downloads, en noem hem tailscale.apk; of zet Tailscale via de Play Store op de telefoon."
+    local url; url="$(ts_apk_url)"
+    if [ -z "$url" ]; then
+      zeg "Kon de Tailscale-apk niet vinden op de officiele index ($TS_INDEX). Open eenmalig https://pkgs.tailscale.com/stable/#android op de Chromebook, download de Android-apk naar Downloads, en noem hem tailscale.apk; of zet Tailscale via de Play Store op de telefoon."
       return 1
     fi
-    mv -f "$apk.deel" "$apk"; chmod 600 "$apk" 2>/dev/null || true
+    zeg "Tailscale-apk ophalen (officieel): $url"
+    local tmp="$REK_MAP/tailscale.apk.deel"   # naar het HOKJE (ext4): curl schrijft daar; de kaart (9p) kan geen rename
+    if ! curl -fsSL --max-time 300 -o "$tmp" "$url" || [ ! -s "$tmp" ] || [ "$(head -c2 "$tmp" 2>/dev/null)" != "PK" ]; then
+      rm -f "$tmp" 2>/dev/null
+      zeg "Kon de Tailscale-apk niet officieel ophalen ($url). Open eenmalig https://pkgs.tailscale.com/stable/#android op de Chromebook, download de Android-apk naar Downloads, en noem hem tailscale.apk; of zet Tailscale via de Play Store op de telefoon."
+      return 1
+    fi
+    cp -f "$tmp" "$apk" && rm -f "$tmp"   # 678f: cp+rm i.p.v. mv -- $JAPK_PLEK kan op de kaart staan (9p: geen rename)
+    chmod 600 "$apk" 2>/dev/null || true
   fi
   local regels s staat id naam n=0
   regels="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1" "$2}')"
@@ -4088,6 +4184,7 @@ case "${1:-status}" in
   beheerder-opslag) beheerder_opslag ;;      # 609: de lokale beheerder -- vanzelf de opslag van de rektelefoons bewaken + veilig opruimen
   beheerder) beheerder_ronde ;;              # 675: de lokale beheerder -- weggevallen rektelefoon zelf draadloos terughalen, anders de eigenaar via Veronica (kabel/tik)
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
+  motor-meet) motor_meet ;;                   # 678 stap 1b: echte modelsnelheid meten (llama-bench, CPU, grote kernen), nooit de F8
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   rek-zoek) rek_zoek ;;
   rek-hotspot) rek_hotspot "${2:-}" ;;         # 616: het eigen rek-netwerk opzetten (hotspot-basis + de rest erop), nooit de F8
