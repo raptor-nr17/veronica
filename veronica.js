@@ -6536,6 +6536,18 @@
       for (const c of [m.dag, m.telefoon, m.model, m.versie || '-'].concat(Sl.GROEPEN.map((g) => pr(m.groepen && m.groepen[g.id])), [m.totaal === null ? '-' : String(m.totaal), String(m.nietNagekeken || 0)])) r.appendChild(el('td', '', c));
       tabel.appendChild(r);
     }
+    // 678 stap 11: zakte het totaal bij de laatste modelwissel van een telefoon meer dan 10 punten (buiten de ruis), dan is die wissel
+    // teruggedraaid -- hier zichtbaar. beoordeelWissel is de regel; dit toont alleen de laatste wissel per telefoon die erop afviel.
+    const wisselWaarschuwingen = [];
+    const perTel = new Map();
+    for (const m of ms) if (typeof m.totaal === 'number') { const a = perTel.get(m.telefoon) || []; a.push(m); perTel.set(m.telefoon, a); }
+    for (const [tel, reeks] of perTel) {
+      const j = reeks.length - 1;
+      if (j >= 1 && reeks[j].model && reeks[j - 1].model && reeks[j].model !== reeks[j - 1].model) {
+        const w = Sl.beoordeelWissel(reeks[j - 1], reeks[j]);
+        if (w.mag === false) wisselWaarschuwingen.push(el('p', 'tBron', `${tel}: modelwissel teruggedraaid — ${w.reden}.`));
+      }
+    }
     // De lijn over de tijd: per telefoon en model een reeks van het totaal (0-100). Alleen wat gemeten is.
     const reeksen = new Map();
     for (const m of ms) if (typeof m.totaal === 'number') { const k = `${m.telefoon} · ${m.model}`; if (!reeksen.has(k)) reeksen.set(k, []); reeksen.get(k).push(m); }
@@ -6559,7 +6571,7 @@
       tx.setAttribute('dx', String(i * 170)); tx.textContent = `${strepen[i % strepen.length] ? '- -' : '──'} ${naam}`; svg.appendChild(tx);
       i += 1;
     }
-    graf.replaceChildren(svg);
+    graf.replaceChildren(svg, ...wisselWaarschuwingen);
   }
   // ===================================================================
   // 549: AVENGERS ASSEMBLE. EEN knop: eerst zien wie meedoet en wie niet (met de reden), dan een tik, dan roepen met de BESTAANDE

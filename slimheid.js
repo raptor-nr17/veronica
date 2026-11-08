@@ -161,5 +161,24 @@
   }
   function procent(v) { return v && v.van ? Math.round((v.goed / v.van) * 100) : null; }
 
-  return { VERSIE, GROEPEN, VRAGEN, PROEF_KAART, PROEF_FEITEN, taal, leesJson, beoordeelAuto, nakijkVraag, leesNakijk, berichten, score, modelNaam, meting, procent };
+  // 678 stap 11: EEN MODELWISSEL WORDT GEBLOKKEERD BIJ MEER DAN 10 PUNTEN DALING. De slimheidsmeter draait na elke model-/LiteRT-LM-
+  // update; zakt het totaal meer dan DAALGRENS punten, dan is de nieuwe keuze slechter en wordt de wissel teruggedraaid. Een daling tot
+  // en met 10 is ruis (de meter zelf heeft spreiding). Een verbetering of gelijk mag altijd. Niet te vergelijken (geen cijfer, of een
+  // andere vragenset/VERSIE) = onbekend: dan beslist de meter niets -- hij blokkeert niet op ontbrekende data, maar bevestigt ook niet.
+  // oud/nieuw: een meting-object ({ totaal, set }) of een getal (het totaal). -> { mag, daling, reden }.
+  const DAALGRENS = 10;
+  function totaalVan(x) { return x && typeof x === 'object' ? (typeof x.totaal === 'number' ? x.totaal : null) : (typeof x === 'number' ? x : null); }
+  function setVan(x) { return x && typeof x === 'object' && typeof x.set !== 'undefined' ? x.set : null; }
+  function beoordeelWissel(oud, nieuw) {
+    const a = totaalVan(oud), b = totaalVan(nieuw);
+    if (a === null || b === null) return { mag: null, daling: null, reden: 'niet te meten (geen cijfer) -- de meter beslist niets' };
+    const so = setVan(oud), sn = setVan(nieuw);
+    if (so !== null && sn !== null && so !== sn) return { mag: null, daling: null, reden: 'een andere vragenset -- niet te vergelijken' };
+    const daling = a - b;
+    if (daling > DAALGRENS) return { mag: false, daling, reden: `${daling} punten lager dan ${a}: de nieuwe keuze is slechter, de wissel wordt teruggedraaid` };
+    if (daling > 0) return { mag: true, daling, reden: `${daling} punten lager, binnen de ruis (${DAALGRENS})` };
+    return { mag: true, daling, reden: daling < 0 ? `${-daling} punten beter` : 'gelijk gebleven' };
+  }
+
+  return { VERSIE, GROEPEN, VRAGEN, PROEF_KAART, PROEF_FEITEN, DAALGRENS, taal, leesJson, beoordeelAuto, nakijkVraag, leesNakijk, berichten, score, modelNaam, meting, procent, beoordeelWissel };
 }));
