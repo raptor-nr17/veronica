@@ -75,6 +75,11 @@ schrijf_bestanden() {
   # 571: de bron waarvandaan artemis-rek zichzelf bijwerkt (de site). Komt uit de omgeving bij de installatie EN bij een
   # zelf-bijwerkronde, zodat hij blijft staan. Geen naam in de code: de eigenaar geeft hem een keer mee in de installatieregel.
   if [ -n "${ARTEMIS_BRON:-}" ]; then printf '%s\n' "${ARTEMIS_BRON%/}" >"$rek/bron"; chmod 600 "$rek/bron"; fi
+  # 673: de VASTE §499-JARVIS-serverlink (.../jarvis-app/<code>). Verloopt niet, over internet bereikbaar ook op het gastnet.
+  # Komt EEN keer mee in de installatieregel (ARTEMIS_APK_LINK) en blijft in een runtime-bestand -- NOOIT in de code (de code is
+  # een HMAC van een geheime sleutel). Zo haalt ARTEMIS de nieuwste jarvis.apk vanzelf op als geen telefoon hem nog heeft, en hoeft
+  # er niets met de hand gedownload te worden. Alleen deze ene link-vorm wordt bewaard; elke andere waarde valt weg.
+  if [ -n "${ARTEMIS_APK_LINK:-}" ] && printf '%s' "$ARTEMIS_APK_LINK" | grep -Eq '^https://[a-z0-9.-]{3,253}/jarvis-app/[a-z2-9]{10}$'; then printf '%s\n' "$ARTEMIS_APK_LINK" >"$rek/apk-link"; chmod 600 "$rek/apk-link"; fi
   cat >"$rek/verboden-apps.txt" <<'LIJST'
 # Apps die ARTEMIS NOOIT mag openen of aantikken. Een regel = een pakketnaam, of een stukje ervan na "~".
 # TWEE SOORTEN, en een app op een telefoon is NOOIT een reden om die telefoon te weigeren (op alle drie de rektelefoons
@@ -1584,8 +1589,39 @@ jarvis_apk_code() {   # de versionCode van het JARVIS-pakket op EEN telefoon (le
 # (het pakket bestaat al, met de echte sleutel), dus een install -r die niet onze JARVIS is faalt. Nooit willekeurige *.apk; nooit een
 # ander pakket. 599: toont (als er nog geen cache is) WELKE mappen hij doorzocht en wat hij zag -- ook als een map niet bestaat.
 # JARVIS_APK_DIR overschrijft de zoekmap (voor de test).
+# 673: haal de nieuwste jarvis.apk van de VASTE §499-serverlink (als die bij de installatie is meegegeven). Zo is er geen
+# handmatige download meer nodig: zodra een rektelefoon aan de kabel komt, zet de auto-klaarzet-lus de nieuwste JARVIS erop. De link
+# verloopt niet en wijst naar ons eigen domein; Android weigert bij install -r een apk met een andere handtekening, dus een
+# vervangen bestand komt er niet op. Rate-limit: hoogstens eens per 6 uur, en met curl -z (conditioneel) zodat een ongewijzigd
+# bestand niet opnieuw ~50 MB kost. Een niet-apk (geen PK-zip-magie) of een piepklein antwoord wordt weggegooid.
+jarvis_serverlink_bron() {
+  command -v curl >/dev/null 2>&1 || return 0
+  [ -s "$REK_MAP/apk-link" ] || return 0
+  local link; link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '[:space:]')"
+  printf '%s' "$link" | grep -Eq '^https://[a-z0-9.-]{3,253}/jarvis-app/[a-z2-9]{10}$' || return 0
+  local nu stamp=0 stampf="$REK_MAP/apk-link.gecheckt"
+  nu="$(date +%s 2>/dev/null || echo 0)"
+  [ -s "$stampf" ] && stamp="$(tr -dc 0-9 < "$stampf" 2>/dev/null || echo 0)"
+  [ "$stamp" -gt 0 ] && [ $((nu - stamp)) -lt 21600 ] && return 0   # hoogstens eens per 6 uur
+  printf '%s\n' "$nu" > "$stampf" 2>/dev/null || true
+  local tmp="$REK_MAP/jarvis.apk.srv"
+  # conditioneel tegen een eerdere serverlink-download, zodat een ongewijzigde apk een 304 geeft (geen bytes)
+  if [ -s "$tmp" ]; then curl -fsSL --max-time 600 -z "$tmp" -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }
+  else curl -fsSL --max-time 600 -o "$tmp.new" "$link" >>"$REK_MAP/artemis.log" 2>&1 || { rm -f "$tmp.new" 2>/dev/null; return 0; }; fi
+  [ -s "$tmp.new" ] || return 0   # 304 (niet gewijzigd) of leeg: niets te doen
+  # een echte apk? (ZIP begint met PK\x03\x04) en minstens ~1 MB
+  if [ "$(head -c2 "$tmp.new" 2>/dev/null)" != "PK" ] || [ "$(wc -c < "$tmp.new" 2>/dev/null || echo 0)" -lt 1000000 ]; then rm -f "$tmp.new" 2>/dev/null; zeg "Serverlink gaf geen geldige apk; genegeerd."; return 0; fi
+  mv -f "$tmp.new" "$tmp" 2>/dev/null || return 0
+  # alleen oppakken als er nog geen cache is, of de serverlink-apk nieuwer is dan de cache
+  if [ -s "$REK_MAP/jarvis.apk" ] && [ ! "$tmp" -nt "$REK_MAP/jarvis.apk" ]; then return 0; fi
+  cp -f "$tmp" "$REK_MAP/jarvis.apk" 2>/dev/null || return 0
+  rm -f "$REK_MAP/jarvis.apk.code" 2>/dev/null || true   # onbekende versionCode: na de install afgeleid
+  chmod 600 "$REK_MAP/jarvis.apk" 2>/dev/null || true
+  zeg "Nieuwste JARVIS via de serverlink opgehaald -- ik zet hem op de rektelefoons met een oudere versie (Android weigert een neppe op de handtekening)."
+}
 jarvis_download_bron() {
   local d bron='' nieuwste='' found toon=0
+  jarvis_serverlink_bron   # 673: eerst de vaste serverlink proberen (geen handmatige download nodig)
   [ -s "$REK_MAP/jarvis.apk" ] || toon=1
   for d in "${JARVIS_APK_DIR:-}" "/mnt/chromeos/MyFiles/Downloads" "$HOME/Downloads" "$HOME/Linux files" "$HOME"; do
     [ -n "$d" ] || continue

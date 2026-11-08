@@ -2826,8 +2826,11 @@
       try { const r = await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify(b.roep) }, 3000); ok = r.ok; code = r.status; } catch (e) { ok = false; }
       if (ok) gedaan.push(b.wat);
       const waarom = code === 401 || code === 403 ? 'deze telefoon kent de code van de rij niet (een keer de QR van Veronica scannen op die telefoon lost dat op)' : 'geen antwoord';
+      const versieZin = (st.versie || {}).waarde || '?';
       logRegel(b.wat === 'kijk'
-        ? (ok ? `${t.naam} loopt achter (${(st.versie || {}).waarde || '?'}); ik vroeg hem nu te kijken of er een nieuwe versie is.` : `${t.naam} loopt achter, maar de vraag om te kijken kwam niet aan: ${waarom}.`)
+        ? (ok ? `${t.naam} loopt achter (${versieZin}); ik vroeg hem nu te kijken of er een nieuwe versie is.` : `${t.naam} loopt achter, maar de vraag om te kijken kwam niet aan: ${waarom}.`)
+        : b.wat === 'bijwerk'
+        ? (ok ? `${t.naam} loopt achter (${versieZin}); ik vroeg hem zichzelf bij te werken (desnoods via de serverlink).` : `${t.naam} loopt achter, maar de vraag om bij te werken kwam niet aan: ${waarom}.`)
         : (ok ? `${t.naam} is werker en zijn eigen motor stond uit; ik zette hem aan. Het model komt vanzelf binnen (wifi en lader).` : `${t.naam}: motor aanzetten kwam niet aan: ${waarom}.`));
     }
     if (besluit.length) {
@@ -2841,16 +2844,23 @@
     if (!rekAan() || !h || !h.id || !S.code || volLokaal()) return false;
     const tijd = nu();
     const eerder = RekV.per[h.id] || {};
-    const besluit = K.rekBesluitHart(h, tijd, eerder);
+    const besluit = K.rekBesluitHart(h, tijd, eerder);   // 673: kan nu 'bijwerk' en/of 'motor' zijn
     if (!besluit.length) return false;
-    eerder.motor = tijd;
-    RekV.per[h.id] = eerder;
-    try { localStorage.setItem('veronica-rek-rem', JSON.stringify(RekV.per)); } catch (e) { /* alleen voor nu */ }
-    const ok = await roepNaarId(h.id, besluit[0].roep);
-    logRegel(ok ? `${h.naam || 'Een telefoon'} is werker en zijn eigen motor stond uit; ik zette hem aan via de brievenbus. Het model komt vanzelf binnen (wifi en lader).`
-      : `${h.naam || 'Een telefoon'}: motor aanzetten kwam niet aan (de brievenbus was niet te bereiken). Ik probeer het later.`);
-    if (!ok) { eerder.motor = 0; try { localStorage.setItem('veronica-rek-rem', JSON.stringify(RekV.per)); } catch (e) { /* alleen voor nu */ } }
-    return ok;
+    let iets = false;
+    for (const b of besluit) {
+      eerder[b.wat] = tijd;   // ook als het misgaat: de rem geldt, anders elke hartslag opnieuw
+      RekV.per[h.id] = eerder;
+      try { localStorage.setItem('veronica-rek-rem', JSON.stringify(RekV.per)); } catch (e) { /* alleen voor nu */ }
+      const ok = await roepNaarId(h.id, b.roep);
+      if (ok) iets = true;
+      logRegel(b.wat === 'bijwerk'
+        ? (ok ? `${h.naam || 'Een telefoon'} loopt achter (${h.versie || '?'}); ik vroeg hem via de brievenbus zichzelf bij te werken (desnoods via de serverlink).`
+          : `${h.naam || 'Een telefoon'}: bijwerken kwam niet aan (de brievenbus was niet te bereiken). Ik probeer het later.`)
+        : (ok ? `${h.naam || 'Een telefoon'} is werker en zijn eigen motor stond uit; ik zette hem aan via de brievenbus. Het model komt vanzelf binnen (wifi en lader).`
+          : `${h.naam || 'Een telefoon'}: motor aanzetten kwam niet aan (de brievenbus was niet te bereiken). Ik probeer het later.`));
+      if (!ok) { eerder[b.wat] = 0; try { localStorage.setItem('veronica-rek-rem', JSON.stringify(RekV.per)); } catch (e) { /* alleen voor nu */ } }
+    }
+    return iets;
   }
   // 601: de modeldownload mag op de F8-HOTSPOT (Vodafone, metered), nooit op het gastnet. JARVIS herkent de hotspot aan de
   // wifi-naam (§570) en laat daar de metered-blokkade vallen -- maar alleen met een VERSE toestemming van Veronica, en Veronica

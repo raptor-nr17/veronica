@@ -478,8 +478,13 @@
     const e = eerder || {};
     const uit = [];
     const versie = v('versie');
-    if (versie && nieuwste && vergelijkVersie(versie, nieuwste) < 0 && tijd - (e.kijk || 0) >= REK_KIJK_MS) {
-      uit.push({ wat: 'kijk', roep: { soort: 'roep', handmatig: true, van: 'veronica' } });
+    if (versie && nieuwste && vergelijkVersie(versie, nieuwste) < 0) {
+      // 673: een telefoon die op afstand kan bijwerken (>= BIJWERK_NU_VANAF) krijgt 'bijwerk-nu'. Sinds JARVIS 1.9.92 haalt die
+      // roep de nieuwe APK desnoods via de vaste §499-serverlink (verloopt niet, ook op het gastnet) en installeert zonder tik waar
+      // Android dat toelaat -- dus hij gaat vanzelf naar de nieuwste versie. Een oudere telefoon kan alleen zelf KIJKEN (de 'roep').
+      // Elk met zijn EIGEN rem-sleutel (bijwerk / kijk), zodat de rem per soort geldt (de caller schrijft eerder[b.wat]).
+      if (vergelijkVersie(versie, BIJWERK_NU_VANAF) >= 0) { if (tijd - (e.bijwerk || 0) >= REK_KIJK_MS) uit.push({ wat: 'bijwerk', roep: { soort: 'bijwerk-nu', van: 'veronica' } }); }
+      else if (tijd - (e.kijk || 0) >= REK_KIJK_MS) uit.push({ wat: 'kijk', roep: { soort: 'roep', handmatig: true, van: 'veronica' } });
     }
     const m = v('motor');
     if (m && !m.aan && m.fase !== 'te-oud' && rekWerker(st, tijd) && tijd - (e.motor || 0) >= REK_MOTOR_MS) {
@@ -493,10 +498,19 @@
   function rekBesluitHart(h, tijd, eerder) {
     const e = eerder || {};
     if (!h || !h.id || typeof h.t !== 'number' || tijd - h.t > HARTSLAG_VERS_MS) return [];
+    const uit = [];
+    // 673: loopt deze telefoon achter op de versie waarmee Veronica is gemaakt, en kan hij op afstand bijwerken
+    // (>= BIJWERK_NU_VANAF), dan via de brievenbus 'bijwerk-nu' -- sinds JARVIS 1.9.92 gaat die desnoods via de vaste
+    // §499-serverlink, dus de telefoon gaat vanzelf naar de nieuwste versie, ook op het gastnet waar /jarvis/status nooit komt.
+    if (typeof h.versie === 'string' && /^\d+\.\d+\.\d+$/.test(h.versie) && vergelijkVersie(h.versie, JARVIS_NIEUWSTE) < 0
+      && vergelijkVersie(h.versie, BIJWERK_NU_VANAF) >= 0 && tijd - (e.bijwerk || 0) >= REK_KIJK_MS) {
+      uit.push({ wat: 'bijwerk', roep: { soort: 'bijwerk-nu', van: 'veronica' } });
+    }
     const m = h.motor;
-    if (h.rol !== 'werker' || h.pauze || h.dagelijks || h.sparen || !m || m.aan || m.teOud) return [];
-    if (tijd - (e.motor || 0) < REK_MOTOR_MS) return [];
-    return [{ wat: 'motor', roep: { soort: 'motor-aan', van: 'veronica' } }];
+    if (h.rol === 'werker' && !h.pauze && !h.dagelijks && !h.sparen && m && !m.aan && !m.teOud && tijd - (e.motor || 0) >= REK_MOTOR_MS) {
+      uit.push({ wat: 'motor', roep: { soort: 'motor-aan', van: 'veronica' } });
+    }
+    return uit;
   }
   // 525: WAAROM KOMT ER GEEN HARTSLAG, terwijl de telefoon wel over het wifi antwoordt? Uit zijn eigen /jarvis/status: zijn rol,
   // de motor, en wat de brievenbus zegt. Alleen wat hij meldt (hoogstens vijf minuten oud); anders null.
