@@ -445,7 +445,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
@@ -550,7 +550,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -3706,9 +3706,38 @@ tailscale_op() {
   else
     zeg "  - LET OP: zet eenmalig userspace-networking (anders kan Crostini crashen): echo 'FLAGS=\"--tun=userspace-networking\"' | sudo tee -a /etc/default/tailscaled && sudo systemctl restart tailscaled"
   fi
-  zeg "Nu inloggen. Er komt een adres; open dat in Chrome en log in met je Tailscale-account (dat maak je zelf aan op tailscale.com)."
-  sudo tailscale up || { zeg "Inloggen lukte niet."; return 1; }
-  zeg "Klaar. Dit toestel heet in Tailscale: $(tailscale ip -4 2>/dev/null | head -1). De telefoons zet ik zelf erbij met 'Tailscale op de telefoons'."
+  # 678b: AL ingelogd? Dan niets te doen -- alleen het adres melden.
+  local nu_ip; nu_ip="$(tailscale ip -4 2>/dev/null | head -1)"
+  if [ -n "$nu_ip" ] && ! tailscale status 2>/dev/null | grep -qiE 'logged out|stopped'; then
+    zeg "Deze Chromebook staat al in Tailscale: $nu_ip. Niets te doen."
+    relay_meld "Tailscale: deze Chromebook staat al ingelogd ($nu_ip)."
+    return 0
+  fi
+  # 678b: 'tailscale up' print de INLOGLINK en wacht dan tot je in Chrome inlogt. Dat wachten mag de console niet blokkeren, dus
+  # draaien we 'up' in een EIGEN sessie (setsid) op de achtergrond, lezen de link uit de uitvoer, en MELDEN hem naar Veronica/console.
+  # De eigenaar hoeft dan alleen in de browser te klikken -- geen terminal. 'up' blijft draaien tot de login rond is.
+  zeg "Nu inloggen. Ik haal de inloglink op (klik hem in Chrome en log in met je Tailscale-account)..."
+  local uit="$REK_MAP/tailscale-up.log"; : >"$uit" 2>/dev/null || uit="$(mktemp 2>/dev/null || echo /tmp/tailscale-up.log)"
+  setsid sudo -n tailscale up >"$uit" 2>&1 </dev/null &
+  local url='' i=0
+  while [ "$i" -lt 45 ]; do
+    url="$(grep -oE 'https://login\.tailscale\.com/[A-Za-z0-9._/-]+' "$uit" 2>/dev/null | head -1)"
+    [ -n "$url" ] && break
+    local ip2; ip2="$(tailscale ip -4 2>/dev/null | head -1)"
+    [ -n "$ip2" ] && { zeg "Al ingelogd: $ip2."; relay_meld "Tailscale: deze Chromebook is ingelogd ($ip2)."; return 0; }
+    sleep 1; i=$((i+1))
+  done
+  if [ -n "$url" ]; then
+    zeg "INLOGLINK (open in Chrome en log in met je eigen Tailscale-account):"
+    zeg "  $url"
+    relay_meld "Tailscale Chromebook: open deze inloglink in Chrome en log in -> $url"
+  elif grep -qiE 'is already logged in|already running' "$uit" 2>/dev/null; then
+    zeg "Al ingelogd. Adres: $(tailscale ip -4 2>/dev/null | head -1)."
+  else
+    zeg "Geen inloglink gevonden. Kijk in Log; of (eenmalig, als sudo een wachtwoord vraagt) typ: sudo tailscale up"
+    zeg "$(tail -3 "$uit" 2>/dev/null)"
+  fi
+  zeg "De telefoons zet ik zelf erbij met 'Tailscale op de telefoons' (aan de kabel). De F8 blijft erbuiten."
 }
 
 # 676: TAILSCALE OP ELKE REKTELEFOON, via de kabel, zonder dat de eigenaar op de telefoon hoeft te tikken. Nooit de F8.
