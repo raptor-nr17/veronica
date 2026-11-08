@@ -148,25 +148,33 @@ groot_plek() {   # een schrijfbare map voor grote bestanden: de kaart als die er
   mkdir -p "$p" 2>/dev/null || { p="$REK_MAP/opslag"; mkdir -p "$p" 2>/dev/null || true; }
   printf '%s' "$p"
 }
-# De env die de grote caches naar de kaart stuurt (alleen als de kaart er is). Cross-device: uv/pip/npm KOPIEREN dan i.p.v. hardlinken.
-kaart_cache_env() {
-  op_kaart || return 0
-  local c; c="$(groot_plek)/cache"; mkdir -p "$c/uv" "$c/pip" "$c/npm" "$c/xdg" 2>/dev/null || true
-  printf 'UV_CACHE_DIR=%s/uv PIP_CACHE_DIR=%s/pip npm_config_cache=%s/npm XDG_CACHE_HOME=%s/xdg' "$c" "$c" "$c" "$c"
-}
-# Verhuis bestaande GROTE, verplaatsbare mappen naar de kaart en vervang ze door een symlink IN HET HOKJE (een symlink op ext4 mag naar
-# de kaart wijzen; andersom niet). NOOIT de venv of node_modules (symlinks/rechten passen niet op exFAT). Alleen als de kaart er is;
-# de vrijgemaakte ruimte in het hokje is meteen bruikbaar (de kopie gaat naar de kaart, dan pas wordt het hokje leeggemaakt).
+# 678f: HET 9p-KAARTJE (ChromeOS-share, FAT/exFAT) KAN GEEN file-locks, atomische rename of chmod ('Operation not permitted').
+# Daarom MOETEN uv/pip/npm-caches (locks + atomische rename) EN de venv/node_modules (symlinks/+x) IN HET HOKJE blijven. Op de kaart
+# alleen GEWONE bestanden die je schrijft en daarna leest: APK-downloads, modellen, traces, kopieen. Er gaat dus GEEN cache naar de
+# kaart meer -- dat gaf 'uv: Could not acquire lock ... Operation not permitted'. Caches blijven op hun gewone plek in het hokje en
+# worden daar gesnoeid (opruimen/ruim_als_krap, 588).
+kaart_cache_env() { :; }   # 678f: leeg -- GEEN cache-redirect naar de kaart (de kaart kan geen locks/rename). Alleen hier gelaten zodat oude aanroepen niet breken.
+# kaart_verhuis doet nu twee dingen: (1) REPAREER de schade van 678d -- een cache/app die als symlink naar de kaart wijst wordt
+# teruggedraaid, zodat uv/pip/npm weer een ECHTE map in het hokje maken en niet meer op de kaart proberen te locken; (2) verplaats
+# alleen INERTE, write-once DATA (de kennisboek-kopie, oude traces) naar de kaart. NOOIT caches, venv, node_modules of levende app-state.
 kaart_verhuis() {
+  # (1) altijd: een cache/app-symlink naar de kaart terugdraaien (ook zonder kaart bruikbaar -- het repareert een eerder kapotgezette telefoon)
+  local l
+  for l in "$HOME/.cache/uv" "$HOME/.cache/pip" "$HOME/.npm" "$HOME/.cache/xdg" "$(artemis_app_dir)"; do
+    [ -L "$l" ] || continue
+    if rm -f "$l" 2>/dev/null; then zeg "  - cache/app terug in het hokje (de kaart kan geen locks/rename): $l"; fi
+  done
   op_kaart || return 0
-  local doel; doel="$(groot_plek)"; local app; app="$(artemis_app_dir)"; local paar
-  for paar in "$HOME/.cache/uv:cache/uv" "$HOME/.cache/pip:cache/pip" "$HOME/.npm:cache/npm" "$app:artemis-app"; do
-    local src="${paar%%:*}" sub="${paar#*:}"
-    local dst="$doel/$sub"   # 678e: NOOIT $sub op dezelfde local-regel waar sub net gezet wordt -- onder set -u zijn alle rechterkanten geexpandeerd voordat de locals bestaan (sub: unbound variable).
-    case "$src" in *.venv*|*node_modules*) continue ;; esac   # nooit de venv of node_modules
-    [ -e "$src" ] && [ ! -L "$src" ] || continue              # bestaat echt en is nog geen symlink
+  # (2) alleen inerte data naar de kaart; symlink terug IN HET HOKJE (ext4-symlink mag naar de kaart wijzen, de kaart krijgt nooit een symlink)
+  local doel; doel="$(groot_plek)"; local paar
+  for paar in "$REK_MAP/kennisboek:kennisboek" "$REK_MAP/traces:traces"; do
+    local src="${paar%%:*}"
+    local sub="${paar#*:}"
+    local dst="$doel/$sub"
+    case "$src" in *.venv*|*node_modules*|*/.cache/*|*/.npm*) continue ;; esac   # nooit caches/venv/node
+    [ -d "$src" ] && [ ! -L "$src" ] || continue                                  # een echte map, nog geen symlink
     mkdir -p "$(dirname "$dst")" 2>/dev/null || continue
-    if cp -r "$src/." "$dst/" 2>/dev/null && rm -rf "$src" 2>/dev/null; then ln -s "$dst" "$src" 2>/dev/null || true; zeg "  - naar de kaart verplaatst (hokje vrijgemaakt): $src"; fi
+    if cp -r "$src/." "$dst/" 2>/dev/null && rm -rf "$src" 2>/dev/null; then ln -s "$dst" "$src" 2>/dev/null || true; zeg "  - inerte data naar de kaart (hokje vrijgemaakt): $src"; fi
   done
 }
 JAPK_PLEK="$(groot_plek)"
@@ -363,8 +371,8 @@ zorg_venv() {
     if command -v uv >/dev/null 2>&1; then
       rm -rf "$ARTEMIS_MAP/.venv"
       # (1) de venv ZELF op 3.12 zetten, zodat latere uv-aanroepen hem hergebruiken i.p.v. 3.15 te kiezen.
-      ( cd "$ARTEMIS_MAP" && export $(kaart_cache_env); uv python install 3.12 >>"$REK_MAP/artemis.log" 2>&1; UV_PYTHON=3.12 uv venv --python 3.12 .venv >>"$REK_MAP/artemis.log" 2>&1 )
-      if ! ( cd "$ARTEMIS_MAP" && export $(kaart_cache_env); UV_PYTHON=3.12 uv sync >>"$REK_MAP/artemis.log" 2>&1 ); then
+      ( cd "$ARTEMIS_MAP" && uv python install 3.12 >>"$REK_MAP/artemis.log" 2>&1; UV_PYTHON=3.12 uv venv --python 3.12 .venv >>"$REK_MAP/artemis.log" 2>&1 )
+      if ! ( cd "$ARTEMIS_MAP" && UV_PYTHON=3.12 uv sync >>"$REK_MAP/artemis.log" 2>&1 ); then
         # (2) vangnet: een compiler erbij en nog een keer (laat uv nu zelf de Python kiezen -- met een compiler bouwt elke versie).
         venv_vangnet && ( cd "$ARTEMIS_MAP" && uv sync >>"$REK_MAP/artemis.log" 2>&1 ) \
           && zeg "venv opgebouwd na het installeren van de compiler." \
@@ -1522,7 +1530,7 @@ start_kern() {
     fi
   fi
   waak_ronde || return 1
-  kaart_verhuis   # 678d: is er een kaart, verplaats dan eerst de grote caches/traces erheen (maakt het hokje vrij; venv/node blijven intern)
+  kaart_verhuis   # 678f: repareer cache-symlinks naar de kaart (9p kan geen locks/rename) en verplaats alleen inerte data; caches/venv blijven intern
   ruim_als_krap   # 588: zelfherstel -- eerst opruimen als de schijf te krap is voor Node/venv (de blokkade van 580)
   zorg_venv   # 576: zorg dat de venv op Python 3.12 staat (anders faalt grpcio en start ARTEMIS nooit)
   # 581: ARTEMIS HOUDT zijn eigen 8000 (onze console staat op 8765). UV_PYTHON=3.12: ook ARTEMIS' eigen start.sh pakt 3.12.
@@ -1560,7 +1568,7 @@ start_kern() {
   # 592fix: via `env` -- een VARIABELE ($lok_env) in prefix-positie wordt door bash als het COMMANDO gelezen (niet als
   # toewijzing), waardoor 'PORT=8000: command not found' kwam. `env` neemt alle KEY=VAL (ook de lege/gevulde $lok_env)
   # gewoon als argumenten, dus het werkt met en zonder lokaal model.
-  ( cd "$ARTEMIS_MAP" && env PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 $(kaart_cache_env) $lok_env PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
+  ( cd "$ARTEMIS_MAP" && env PATH="$REK_MAP/geen-browser:$PATH" BROWSER=true DISPLAY= UV_PYTHON=3.12 $lok_env PORT="$ARTEMIS_POORT" ARTEMIS_PORT="$ARTEMIS_POORT" ARTEMIS_WEB_PORT="$ARTEMIS_POORT" ARTEMIS_NO_OPEN=1 NG_CLI_ANALYTICS=false ARTEMIS_ARTEMIS_JSONC="$REK_MAP/artemis.jsonc" setsid bash start.sh </dev/null >>"$REK_MAP/artemis.log" 2>&1 & echo $! >"$PIDA" )
   sleep 1
   ( setsid "$0" waakhond </dev/null >>"$LOG" 2>&1 & echo $! >"$PIDW" )
   zeg "ARTEMIS start (de eerste keer duurt het een paar minuten). ARTEMIS zelf: http://$KBHOST:$ARTEMIS_POORT"
@@ -1727,7 +1735,7 @@ jarvis_oogst() {
   [ -n "$pad" ] || pad="$("$ADB" -s "$best_s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | head -1)"
   [ -n "$pad" ] || return 0
   if "$ADB" -s "$best_s" pull "$pad" "$JAPK_PLEK/jarvis.apk.nieuw" >/dev/null 2>&1 && [ -s "$JAPK_PLEK/jarvis.apk.nieuw" ]; then
-    mv -f "$JAPK_PLEK/jarvis.apk.nieuw" "$JAPK_PLEK/jarvis.apk"
+    cp -f "$JAPK_PLEK/jarvis.apk.nieuw" "$JAPK_PLEK/jarvis.apk" && rm -f "$JAPK_PLEK/jarvis.apk.nieuw"   # 678f: cp+rm i.p.v. mv -- $JAPK_PLEK kan op de kaart staan en 9p ondersteunt geen rename
     printf '%s\n' "$best_code" > "$JAPK_PLEK/jarvis.apk.code"
     chmod 600 "$JAPK_PLEK/jarvis.apk" 2>/dev/null || true
     zeg "Nieuwste JARVIS geoogst van $(toestel_naam "$best_s") (versionCode $best_code); klaar om op de andere rektelefoons te zetten."
@@ -3643,10 +3651,13 @@ status() {
   zeg "Vrije ruimte in het hokje (interne Linux-schijf): ${vrij_hok:-?} MB. Te klein voor ARTEMIS? Maak het hokje groter in Instellingen > Over ChromeOS > Linux > Schijfgrootte."
   if op_kaart; then
     local vrij_kaart; vrij_kaart="$(df -Pm "$ARTEMIS_KAART" 2>/dev/null | awk 'NR==2{print $4}')"
-    zeg "SD-kaart gedeeld met Linux ($ARTEMIS_KAART): ${vrij_kaart:-?} MB vrij -- grote downloads, caches, traces en modellen gaan hierheen (sleutels blijven intern)."
+    zeg "SD-kaart gedeeld met Linux ($ARTEMIS_KAART): ${vrij_kaart:-?} MB vrij -- grote GEWONE bestanden (APK-downloads, modellen, traces, kopieen) gaan hierheen. Caches/venv blijven in het hokje: het kaartje (FAT via 9p) kan geen file-locks of rename, dus uv/pip/npm werken er niet."
   else
-    zeg "SD-kaart: NIET gedeeld met Linux. Deel hem eenmalig (Bestanden > SD-kaart > rechtsklik > Delen met Linux) -- dan gebruik ik hem vanzelf voor grote bestanden en blijft het hokje vrij."
+    zeg "SD-kaart: NIET gedeeld met Linux. Deel hem eenmalig (Bestanden > SD-kaart > rechtsklik > Delen met Linux) -- dan gebruik ik hem vanzelf voor grote GEWONE bestanden (geen caches: die kunnen niet op de kaart) en blijft het hokje vrijer."
   fi
+  # 678f: wat vult het hokje echt? Toon de grootste mappen onder HOME, zodat een mens ziet waar de ruimte heen gaat (du telt alleen deze schijf: -x).
+  local top; top="$(du -xm --max-depth=2 "$HOME" 2>/dev/null | sort -rn | awk '$1>=50 && $2!="'"$HOME"'"{printf "    %s MB  %s\n",$1,$2}' | head -6)"
+  [ -n "$top" ] && { zeg "Grootste mappen in het hokje (>= 50 MB):"; printf '%s\n' "$top"; }
   # 609: de lokale beheerder zet een melding als een telefoon na het veilige opruimen nog krap is (dan kan alleen een mens helpen).
   [ -s "$REK_MAP/beheerder-melding.txt" ] && zeg "$(cat "$REK_MAP/beheerder-melding.txt")"
   sleutel_check   # 584: waarschuw als de Gemini-sleutel een AQ-sleutel is (401) i.p.v. een AIza-sleutel
