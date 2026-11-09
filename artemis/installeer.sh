@@ -506,10 +506,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
+LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -624,6 +624,10 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <p style="margin-top:6px">APK-link (eenmalig, voor een telefoon met een oude JARVIS): zo haalt ARTEMIS de nieuwste JARVIS-apk zelf van de server &mdash; geen token, geen handmatige download. Plak de downloadlink uit de bijwerk-mail (de link naar &quot;jarvis.apk&quot;), de &quot;LRWERK1&quot;-pakket-link uit diezelfde mail (daaruit lees ik de vaste, niet-verlopende serverlink), of de vaste serverlink zelf (.../jarvis-app/&lt;code&gt;). Een Gmail-verpakking (www.google.com/url?q=...) mag; die haal ik er zelf af.<br>
 <input id=apkLink type=text autocomplete=off spellcheck=false placeholder="https://.../jarvis-app/..." style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=apkLinkBewaar>Bewaar APK-link</button></p>
+<p style="margin-top:6px">Tailscale-sleutel (eenmalig): de herbruikbare auth-key uit de Tailscale-admin (begint met &quot;tskey-&quot;). Hiermee zet ARTEMIS Tailscale op de rektelefoons zonder een tik. De sleutel blijft ALLEEN hier op de Chromebook (600) &mdash; nooit in het log, GitHub, de relay of Veronica.<br>
+<input id=tailscaleKey type=text autocomplete=off spellcheck=false placeholder="tskey-..." style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
+<button id=tailscaleKeyBewaar>Bewaar Tailscale-sleutel</button>
+<button data-cmd=tailscale-authkey>Tailscale op de telefoons (auth-key, zonder tik)</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <p style="margin:8px 0 2px;color:#8aa">Live (Log/Status vernieuwen hier, zonder je knop-uitkomst te overschrijven):</p>
 <pre id=live style="opacity:.85"></pre>
@@ -680,6 +684,17 @@ if(abw)abw.addEventListener('click',async()=>{{
   try{{
     const r=await fetch('/apk-link',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'link='+encodeURIComponent(v)}});
     uit.textContent=nu()+' — '+(await r.text());
+  }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
+}});
+// 678 stap 1: de Tailscale-sleutel bewaren (alleen lokaal op de Chromebook, 600; nooit in het log/GitHub/relay/Veronica).
+const tbw=document.getElementById('tailscaleKeyBewaar');
+if(tbw)tbw.addEventListener('click',async()=>{{
+  const v=(document.getElementById('tailscaleKey').value||'').trim();
+  uit.textContent=nu()+' — Tailscale-sleutel bewaren…';
+  try{{
+    const r=await fetch('/tailscale-key',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'key='+encodeURIComponent(v)}});
+    uit.textContent=nu()+' — '+(await r.text());
+    const el=document.getElementById('tailscaleKey'); if(el)el.value='';
   }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
 }});
 // 613: bij een zelf-herstart (Bijwerken) is de console ~1 s weg. Dit HERGEBRUIKT HETZELFDE tabblad: zodra de console terug is
@@ -1017,6 +1032,28 @@ class H(BaseHTTPRequestHandler):
                 try: os.chmod(pad, 0o600)
                 except Exception: pass
                 self._schrijf(200, 'Relay-adres opgeslagen. Druk nu op "Relay-lijst lezen" of "Rek opbouwen"; op het gastnetwerk leest ARTEMIS de telefoons nu via de relay (zoals Veronica).')
+            except Exception as e:
+                self._schrijf(500, 'fout: ' + str(e))
+            return
+        if p.path == '/tailscale-key':
+            # 678 stap 1: het config-veld voor de Tailscale auth-key. Strikt gevalideerd (tskey- + [A-Za-z0-9-]) en ALLEEN lokaal
+            # bewaard (600). De sleutel komt NOOIT in een antwoord, het log, GitHub, de relay of Veronica -- we bevestigen alleen
+            # met het prefix 'tskey-...'. Leeg = wissen. Een config-waarde, geen opdracht; staat nooit in de bron (openbare Pages).
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            k = (f.get('key', [''])[0]).strip()
+            pad = os.path.join(REK, 'tailscale-authkey')
+            if k == '':
+                try: os.remove(pad)
+                except Exception: pass
+                self._schrijf(200, 'Tailscale-sleutel gewist.'); return
+            if not re.match(r'^tskey-[A-Za-z0-9-]{10,}$', k):
+                self._schrijf(400, 'Dat lijkt geen Tailscale auth-key. Hij begint met "tskey-" (daarna letters, cijfers en streepjes). Maak er een in de Tailscale-admin (Settings > Keys, Reusable aan).'); return
+            try:
+                with open(pad, 'w') as fh: fh.write(k + '\n')
+                try: os.chmod(pad, 0o600)
+                except Exception: pass
+                self._schrijf(200, 'Tailscale-sleutel opgeslagen (tskey-...), alleen hier op de Chromebook. Druk nu op "Tailscale op de telefoons (auth-key, zonder tik)".')
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
@@ -4202,17 +4239,24 @@ tailscale_telefoon() {
     zeg "== Tailscale op $naam =="
     # 1. apk installeren (bestaat hij al, dan -r = bijwerken; een andere handtekening wordt door Android geweigerd)
     if "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1; then zeg "  - Tailscale stond er al."; else
-      local uit2; uit2="$("$ADB" -s "$s" install -r "$apk" 2>&1)"
-      if printf '%s' "$uit2" | grep -q Success; then zeg "  - Tailscale geinstalleerd."
+      # 678s: NOOIT de apk vanaf het 9p-kaartje STREAMEN. `adb install` streamt de apk vanaf het hostpad; een 9p/removable-mount
+      # (de SD-kaart, /mnt/chromeos/removable/...) kan daar halverwege op vastlopen ("Performing Streamed Install" + een leesfout).
+      # Kopieer de apk daarom eerst naar het HOKJE (ext4, $REK_MAP) en installeer van DAAR; lukt de kopie niet, dan het origineel.
+      local apkInst="$REK_MAP/tailscale-install.apk"
+      if cp -f "$apk" "$apkInst" 2>/dev/null && [ -s "$apkInst" ]; then :; else apkInst="$apk"; fi
+      local uit2; uit2="$("$ADB" -s "$s" install -r "$apkInst" 2>&1)"
+      [ "$apkInst" = "$REK_MAP/tailscale-install.apk" ] && rm -f "$apkInst" 2>/dev/null
+      if printf '%s' "$uit2" | grep -q Success; then zeg "  - Tailscale geinstalleerd (vanaf het hokje, niet gestreamd van de kaart)."
       elif printf '%s' "$uit2" | grep -q INSTALL_FAILED_USER_RESTRICTED; then
-        # Sommige toestellen weigeren een install via USB (de shell-uid) tot de schakelaar aan staat. Zeg PRECIES welke, en een
-        # eerlijke uitweg. GEEN file://-VIEW-"tik"-terugval: dat install-intent is op moderne Android geblokkeerd (werkt toch niet).
+        # De telefoon weigert een install via USB (de shell-uid) tot de schakelaar aan staat. Zeg PRECIES welke, en een eerlijke
+        # uitweg. GEEN file://-VIEW-"tik"-terugval: dat install-intent is op moderne Android geblokkeerd (werkt toch niet).
         zeg "  - installeren GEWEIGERD door de telefoon (INSTALL_FAILED_USER_RESTRICTED) -- dit is een instelling van de telefoon, niet een fout van ARTEMIS."
-        zeg "    Zet op $naam EENMALIG aan: Instellingen > Aanvullende instellingen > Ontwikkelaarsopties > 'Installeren via USB' (plus 'USB-foutopsporing (beveiligingsinstellingen)'); op sommige toestellen alleen met een ingelogd account van de fabrikant + simkaart."
-        zeg "    Daarna zet een volgende Tailscale-ronde hem vanzelf op $naam. Kan dat niet: zet Tailscale EEN keer met de hand uit de Play Store op $naam -- de rest (VPN-toestemming, always-on, inloglink) doet ARTEMIS daarna gewoon."
+        zeg "    Staat 'Installeren via USB' al aan, dan is meestal OOK 'USB-foutopsporing (beveiligingsinstellingen)' nodig (die laat de shell-uid pakketten beheren); die vraagt op sommige toestellen een ingelogd account van de fabrikant + simkaart."
+        zeg "    Lukt dat niet: zet Tailscale EEN keer met de hand uit de Play Store op $naam -- de rest (VPN-toestemming, always-on, inloglink) doet ARTEMIS daarna gewoon. (Op een toestel zonder dit slot gaat het vanzelf.)"
         continue
       else
-        zeg "  - installeren lukte niet: $(printf '%s' "$uit2" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-160). Overgeslagen."
+        # de VOLLEDIGE adb-fout tonen (de 'Failure [...]'-regel valt anders weg; niet afkappen tot 160 tekens).
+        zeg "  - installeren lukte niet (volledige adb-fout): $(printf '%s' "$uit2" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-600). Overgeslagen."
         continue
       fi
     fi
@@ -4241,6 +4285,87 @@ tailscale_telefoon() {
     n=$((n+1))
   done <<<"$regels"
   if [ "$n" -gt 0 ]; then zeg "Klaar: Tailscale op $n telefoon(s) gezet. Keur de inlogkoppeling(en) in de browser goed; daarna bereiken de telefoons elkaar op hun vaste 100.x over elk wifi."; else zeg "Geen telefoon met Tailscale ingericht (alleen de F8, of niets toegestaan aan de kabel)."; fi
+}
+
+# 678 stap 1 (AUTH-KEY): Tailscale op de rektelefoons met een HERBRUIKBARE, vooraf goedgekeurde auth-key (tag:rack), ZONDER een
+# inloglink per telefoon. De sleutel is GEHEIM en staat NOOIT in dit (openbare) script: hij komt uit ~/.artemis-rek/tailscale-authkey
+# (de eigenaar maakt hem in de Tailscale-admin -- Reusable aan, Tags: tag:rack -- en plakt hem één keer in de console; 600). Install
+# zoals §678s (kopie naar het ext4-hokje, nooit van de 9p-kaart streamen); daarna appops ACTIVATE_VPN + always-on, en de bring-up
+# via de CONNECT_VPN-broadcast met de key als extra. NOOIT de F8. De key komt NOOIT in een logboek (we tonen alleen 'tskey-...').
+# LET OP -- NIET vanuit de container te verifiëren: of de Android-app de key via deze broadcast aanneemt, wijst de proef op de kabel
+# uit; lukt het niet, dan blijft de inloglink van 'Tailscale op de telefoons' de uitweg.
+# tikt het EERSTE tikbare element aan waarvan het label (hoofdletterongevoelig) op het patroon past; via scherm_boom (uiautomator)
+# + wand_besturen (de §565-gate: nooit de F8, nooit een gevoelige app). 0 = getikt, 1 = niet gevonden.
+_ts_ui_tik() {
+  local s="$1" pat="$2" boom regel cx cy TAB; TAB="$(printf '\t')"
+  boom="$(scherm_boom "$s")" || return 1
+  regel="$(printf '%s\n' "$boom" | awk -F"$TAB" -v p="$pat" 'tolower($4) ~ tolower(p){print; exit}')"
+  [ -n "$regel" ] || return 1
+  cx="$(printf '%s' "$regel" | cut -f2)"; cy="$(printf '%s' "$regel" | cut -f3)"
+  wand_besturen tik "$s" "$cx" "$cy" >/dev/null 2>&1 || return 1
+  return 0
+}
+tailscale_authkey() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  local keyf="$REK_MAP/tailscale-authkey" key
+  [ -s "$keyf" ] || { zeg "Geen Tailscale auth-key ingesteld. Maak er één in de Tailscale-admin (Settings > Keys: Reusable aan) en plak hem één keer in het veld 'Tailscale-sleutel' hieronder. Hij staat alleen hier op de Chromebook (600), nooit in de code, het log, GitHub, de relay of Veronica."; return 0; }
+  key="$(head -1 "$keyf" 2>/dev/null | tr -d '\r\n ')"
+  case "$key" in tskey-*) : ;; *) zeg "De bewaarde sleutel heeft niet de vorm 'tskey-...'; plak hem opnieuw."; return 0 ;; esac
+  case "$key" in *[!A-Za-z0-9-]*) zeg "De bewaarde sleutel bevat ongeldige tekens; plak hem opnieuw."; return 0 ;; esac   # alleen tskey-...[A-Za-z0-9-], veilig voor input text
+  local apk="$JAPK_PLEK/tailscale.apk"
+  if [ ! -s "$apk" ]; then
+    local url tmp; url="$(ts_apk_url)"
+    [ -n "$url" ] || { zeg "Kon de Tailscale-apk niet vinden op de officiele index; of zet hem via de Play Store op de telefoon."; return 0; }
+    tmp="$REK_MAP/tailscale.apk.deel"
+    if curl -fsSL -m 180 "$url" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then cp -f "$tmp" "$apk" && rm -f "$tmp"; chmod 600 "$apk" 2>/dev/null || true; else zeg "Kon de Tailscale-apk niet officieel ophalen."; rm -f "$tmp" 2>/dev/null; return 0; fi
+  fi
+  local s naam id staat gedaan=0
+  for s in $(verbonden); do
+    case "$s" in *:*) continue ;; esac
+    staat="$("$ADB" -s "$s" get-state 2>/dev/null | tr -d '\r')"; [ "$staat" = "device" ] || { zeg "$(toestel_naam "$s"): nog niet toegestaan over de kabel (tik 'Toestaan')."; continue; }
+    is_f8 "$s" && { zeg "F8 overgeslagen (de dagelijkse telefoon krijgt NOOIT Tailscale van ons en wordt NOOIT bestuurd)."; continue; }
+    naam="$(toestel_naam "$s")"; [ -z "$naam" ] && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || { zeg "$naam staat niet op de lijst; overgeslagen (druk eerst op Zoek telefoons)."; continue; }
+    zeg "== Tailscale (auth-key) op $naam =="
+    # 1. installeren (zoals §678s: kopie naar het ext4-hokje, nooit van de 9p-kaart streamen); een toestel dat USB-install blokkeert -> Play Store
+    if "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1; then zeg "  - Tailscale stond er al."; else
+      local apkInst="$REK_MAP/tailscale-install.apk"
+      if cp -f "$apk" "$apkInst" 2>/dev/null && [ -s "$apkInst" ]; then :; else apkInst="$apk"; fi
+      local uit2; uit2="$("$ADB" -s "$s" install -r "$apkInst" 2>&1)"
+      [ "$apkInst" = "$REK_MAP/tailscale-install.apk" ] && rm -f "$apkInst" 2>/dev/null
+      if printf '%s' "$uit2" | grep -q Success; then zeg "  - Tailscale geinstalleerd (vanaf het hokje)."
+      elif printf '%s' "$uit2" | grep -q INSTALL_FAILED_USER_RESTRICTED; then zeg "  - installeren GEWEIGERD (INSTALL_FAILED_USER_RESTRICTED): dit toestel blokkeert install via USB -- zet Tailscale op $naam één keer via de Play Store; daarna doet deze knop de rest."; continue
+      else zeg "  - installeren lukte niet (volledige adb-fout): $(printf '%s' "$uit2" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-600). Overgeslagen."; continue; fi
+    fi
+    # 2. de VPN-toestemming VOORAF (zo komt de systeemvraag straks niet, of is hij al akkoord)
+    "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 && zeg "  - VPN-toestemming vooraf gegeven." || zeg "  - LET OP: VPN-toestemming vooraf lukte niet; ik tik het systeemvenster straks zelf weg."
+    "$ADB" -s "$s" shell settings put secure always_on_vpn_app com.tailscale.ipn >/dev/null 2>&1 || true
+    "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 1 >/dev/null 2>&1 || true
+    # 3. de app openen en via de schermtekst de auth-key-invoer kiezen (geen tik van een mens). NIET VANUIT DE CONTAINER GEVERIFIEERD:
+    #    de precieze labels/plekken van de Tailscale-app kunnen per versie verschillen; de proef op de kabel wijst het uit.
+    "$ADB" -s "$s" shell am start -n com.tailscale.ipn/.MainActivity >/dev/null 2>&1 || true
+    sleep 3
+    # het overloopmenu (drie puntjes) openen als 'Use an auth key' nog niet zichtbaar is, dan die keuze aantikken
+    if ! _ts_ui_tik "$s" 'auth[ -]?key|sleutel'; then
+      _ts_ui_tik "$s" 'more options|meer opties|options|opties|menu' >/dev/null 2>&1; sleep 1
+      _ts_ui_tik "$s" 'auth[ -]?key|sleutel' >/dev/null 2>&1
+    fi
+    sleep 1
+    # de sleutel typen in het tekstveld; de key komt NOOIT in het log (we tonen alleen 'tskey-...')
+    "$ADB" -s "$s" shell input text "$key" >/dev/null 2>&1 && zeg "  - auth-key ingevoerd (tskey-...)." || zeg "  - de sleutel invoeren lukte niet; kijk op $naam of het auth-key-veld open staat."
+    sleep 1
+    _ts_ui_tik "$s" 'connect|verbind|log ?in|inloggen|aanmelden|^ok$' >/dev/null 2>&1; sleep 2
+    # 4. het Android-VPN-systeemvenster wegtikken als het toch komt (OK/Toestaan/Allow)
+    _ts_ui_tik "$s" '^ok$|toestaan|allow|akkoord' >/dev/null 2>&1; sleep 1
+    # 5. vangnet: de CONNECT_VPN-broadcast (werkt als er al een profiel is)
+    "$ADB" -s "$s" shell am broadcast -a com.tailscale.ipn.CONNECT_VPN -n com.tailscale.ipn/.IPNReceiver >/dev/null 2>&1 || true
+    sleep 3
+    # 6. het 100.x-adres (tailnet) in het log zetten
+    local ip; ip="$("$ADB" -s "$s" shell ip -o -4 addr 2>/dev/null | tr -d '\r' | grep -oE '100\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    if [ -n "$ip" ]; then zeg "  - tailnet-adres van $naam: $ip"; else zeg "  - tailnet-adres nog niet zichtbaar (kan even duren; kijk anders in de Tailscale-admin of $naam verschijnt)."; fi
+    gedaan=$((gedaan+1))
+  done
+  [ "$gedaan" -gt 0 ] || zeg "Geen rektelefoon aan de kabel om te koppelen (nooit de F8). Druk op 'Zoek telefoons'."
 }
 
 # 580: hoeveel ruimte is er, en is dat genoeg voor ARTEMIS? ARTEMIS heeft Node.js 22 (~150 MB), een Python-venv (~300-500 MB)
@@ -4646,6 +4771,7 @@ case "${1:-status}" in
   searxng) searxng ;;
   tailscale) tailscale_op ;;
   tailscale-telefoon) tailscale_telefoon ;;   # 676: Tailscale op elke rektelefoon via de kabel (nooit de F8); inloglink naar Veronica
+  tailscale-authkey) tailscale_authkey ;;     # 678 stap 1: Tailscale met een auth-key, volledig zonder tik (toestellen die USB-install toestaan; anders via de Play Store), nooit de F8
   status) status ;;
   log) log ;;
   schijf) schijf ;;
