@@ -3235,7 +3235,7 @@ motor_meet() {
   local s id naam big mask gedaan=0
   zeg "Snelheid meten (llama-bench, CPU, grote kernen) -- dit duurt per telefoon een paar minuten en kan warm worden. De F8 wordt nooit gemeten."
   for s in $(verbonden); do
-    case "$s" in *:*) continue ;; esac                      # alleen de kabel (usb-serienummer): de meting is zwaar, geen draadloos
+    # 678: OOK draadloos (ip:5555) -- de bench draait op het toestel; adb streamt alleen de uitvoer, dus draadloos kan (alle 5 rektelefoons). De F8 nooit.
     is_f8 "$s" && { zeg "  ($(toestel_naam "$s") = F8, overgeslagen -- de dagelijkse telefoon meten we nooit)"; continue; }
     id="$(toestel_id "$s")"; toegestaan "$id" || { zeg "  ($(toestel_naam "$s")) staat niet op de lijst -- druk eerst op 'Zoek telefoons'."; continue; }
     naam="$(toestel_naam "$s")"; local bestand="$MEET_MAP/$(printf '%s' "${naam:-$id}" | tr ' /:' '___').log"
@@ -4250,6 +4250,19 @@ ts_apk_url() {   # echoot de volledige download-URL van de nieuwste officiele An
   [ -n "$file" ] || return 1
   printf '%s%s' "$TS_INDEX" "$file"
 }
+# 678: als de inloglink niet in logcat staat, hem uit het SCHERM van de Tailscale-app vissen -- de app toont de login.tailscale.com-url
+# als tekst naast de QR. uiautomator dump, door de §565-gate (nooit de F8, nooit een gevoelige app). PUUR lezen; de XML gaat naar
+# /sdcard en wordt meteen gewist. Echoot de url of niets. (De QR-afbeelding zelf lezen kan niet uit XML; de url eronder is wat we nodig hebben.)
+ts_ui_loginlink() {
+  local s="$1" xml
+  [ -n "$s" ] || return 1
+  is_f8 "$s" && return 1
+  wand_gate "$s" >/dev/null 2>&1 || return 1
+  "$ADB" -s "$s" shell uiautomator dump /sdcard/artemis-ts.xml >/dev/null 2>&1 || return 1
+  xml="$("$ADB" -s "$s" shell cat /sdcard/artemis-ts.xml 2>/dev/null | tr -d '\r')"
+  "$ADB" -s "$s" shell rm -f /sdcard/artemis-ts.xml >/dev/null 2>&1 || true
+  printf '%s' "$xml" | grep -oE 'https://login\.tailscale\.com/[A-Za-z0-9/._?=-]+' | head -1
+}
 tailscale_telefoon() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 0; }
@@ -4277,10 +4290,10 @@ tailscale_telefoon() {
   [ -n "$regels" ] || { zeg "Geen telefoon via de kabel te zien. Sluit de telefoon met USB aan en zet USB-foutopsporing aan."; return 1; }
   while read -r s staat; do
     [ -n "$s" ] || continue
-    case "$s" in *:*) continue ;; esac                 # alleen de kabel (usb-serienummer)
+    local draadloos=0; case "$s" in *:*) draadloos=1 ;; esac   # 678: OOK over draadloze adb (ip:5555) -- de rektelefoons kunnen zo zonder kabel in Tailscale
     naam="$(toestel_naam "$s")"; [ -z "$naam" ] && continue
     is_f8 "$s" && { zeg "F8 overgeslagen (de dagelijkse telefoon krijgt NOOIT Tailscale van ons)."; continue; }
-    [ "$staat" = "device" ] || { zeg "$naam: nog niet toegestaan over de kabel (tik 'Toestaan' op de telefoon)."; continue; }
+    [ "$staat" = "device" ] || { zeg "$naam: nog niet toegestaan (tik 'Toestaan' op de telefoon)."; continue; }
     id="$(toestel_id "$s")"; toegestaan "$id" || { zeg "$naam staat niet op de lijst; overgeslagen (druk eerst op Zoek telefoons)."; continue; }
     zeg "== Tailscale op $naam =="
     # 1. apk installeren (bestaat hij al, dan -r = bijwerken; een andere handtekening wordt door Android geweigerd)
@@ -4310,8 +4323,11 @@ tailscale_telefoon() {
     "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 && zeg "  - VPN-toestemming vooraf gegeven (geen venster)." || zeg "  - LET OP: VPN-toestemming vooraf lukte niet; mogelijk tikt de telefoon één keer een venster weg."
     # 3. always-on VPN (komt vanzelf op + terug na herstart). LET OP: na de appop, anders blijft hij 'disconnected'.
     "$ADB" -s "$s" shell settings put secure always_on_vpn_app com.tailscale.ipn >/dev/null 2>&1 || true
-    "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 1 >/dev/null 2>&1 || true
-    zeg "  - always-on VPN gezet."
+    # 678: lockdown NIET over draadloze adb -- dat snijdt de LAN (en onze eigen adb op 5555) af zodra de VPN opkomt, en een rektelefoon
+    # moet de relay/postbus over het open internet kunnen bereiken (die zitten niet op het tailnet). Over de kabel: ongewijzigd (lockdown 1).
+    if [ "$draadloos" = 1 ]; then "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 0 >/dev/null 2>&1 || true
+    else "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 1 >/dev/null 2>&1 || true; fi
+    zeg "  - always-on VPN gezet$([ "$draadloos" = 1 ] && echo ' (draadloos: geen lockdown, zodat adb en de relay blijven werken)')."
     # 4. de app starten en de inloglink uit logcat vissen (de eigenaar keurt hem in de browser goed; geen tik op de telefoon)
     "$ADB" -s "$s" logcat -c >/dev/null 2>&1 || true
     "$ADB" -s "$s" shell am start -n com.tailscale.ipn/.MainActivity >/dev/null 2>&1 || true
@@ -4325,8 +4341,15 @@ tailscale_telefoon() {
       zeg "  - inloglink: $link"
       relay_meld "Tailscale op $naam: keur hem goed in de browser op de Chromebook -> $link (één klik; op de telefoon hoef je niets te tikken). Daarna krijgt $naam een vast 100.x-adres." || true
     else
-      zeg "  - geen inloglink gevonden in logcat. Open Tailscale één keer op $naam en tik 'Sign in', of log in via de admin console met een pre-approved auth key."
-      relay_meld "Tailscale op $naam staat klaar (apk + VPN-toestemming + always-on), maar ik vond geen inloglink. Open Tailscale één keer op de telefoon en tik 'Sign in', of gebruik een pre-approved auth key in de admin console." || true
+      # 678: niet in logcat? Dan de inloglink/QR-url uit het SCHERM van de Tailscale-app vissen (uiautomator), door de §565-gate.
+      link="$(ts_ui_loginlink "$s")"
+      if [ -n "$link" ]; then
+        zeg "  - inloglink (via het scherm): $link"
+        relay_meld "Tailscale op $naam: keur hem goed in de browser op de Chromebook -> $link (één klik; op de telefoon hoef je niets te tikken). Daarna krijgt $naam een vast 100.x-adres." || true
+      else
+        zeg "  - geen inloglink gevonden (logcat + scherm). Open Tailscale één keer op $naam en tik 'Sign in', of log in via de admin console met een pre-approved auth key."
+        relay_meld "Tailscale op $naam staat klaar (apk + VPN-toestemming + always-on), maar ik vond geen inloglink. Open Tailscale één keer op de telefoon en tik 'Sign in', of gebruik een pre-approved auth key in de admin console." || true
+      fi
     fi
     n=$((n+1))
   done <<<"$regels"
@@ -4393,7 +4416,7 @@ wifi_hotspot_test() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
   local s naam feat con gedaan=0
   for s in $(verbonden); do
-    case "$s" in *:*) continue ;; esac
+    # 678: lezen mag OOK draadloos (ip:5555) -- er wordt niets aan-/uitgezet. De F8 nooit.
     is_f8 "$s" && { zeg "F8 overgeslagen (nooit aanraken)."; continue; }
     toegestaan "$(toestel_id "$s")" || continue
     naam="$(toestel_naam "$s")"; [ -z "$naam" ] && continue
@@ -4428,7 +4451,9 @@ ts_authkey_een() {
   fi
   "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 && zeg "  - VPN-toestemming vooraf gegeven." || zeg "  - LET OP: VPN-toestemming vooraf lukte niet; ik tik het systeemvenster straks zelf weg."
   "$ADB" -s "$s" shell settings put secure always_on_vpn_app com.tailscale.ipn >/dev/null 2>&1 || true
-  "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 1 >/dev/null 2>&1 || true
+  # 678: geen lockdown over draadloze adb (zou de LAN/adb afsnijden + de relay blokkeren die niet op het tailnet zit). Kabel: ongewijzigd.
+  case "$s" in *:*) "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 0 >/dev/null 2>&1 || true ;;
+              *) "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 1 >/dev/null 2>&1 || true ;; esac
   "$ADB" -s "$s" shell am start -n com.tailscale.ipn/.MainActivity >/dev/null 2>&1 || true
   sleep 3
   if ! _ts_ui_tik "$s" 'auth[ -]?key|sleutel'; then
@@ -4451,8 +4476,8 @@ tailscale_authkey() {
   ts_authkey_lees >/dev/null || { zeg "Geen Tailscale auth-key ingesteld. Maak er één in de Tailscale-admin (Settings > Keys: Reusable aan) en plak hem in het veld 'Tailscale-sleutel' hieronder. Alleen lokaal (600), nooit in code/log/GitHub/relay/Veronica."; return 0; }
   local s naam staat gedaan=0
   for s in $(verbonden); do
-    case "$s" in *:*) continue ;; esac
-    staat="$("$ADB" -s "$s" get-state 2>/dev/null | tr -d '\r')"; [ "$staat" = "device" ] || { zeg "$(toestel_naam "$s"): nog niet toegestaan over de kabel (tik 'Toestaan')."; continue; }
+    # 678: OOK draadloos (ip:5555) -- zo kunnen de rektelefoons zonder kabel met de auth-key in Tailscale. De F8 nooit.
+    staat="$("$ADB" -s "$s" get-state 2>/dev/null | tr -d '\r')"; [ "$staat" = "device" ] || { zeg "$(toestel_naam "$s"): nog niet toegestaan (tik 'Toestaan')."; continue; }
     is_f8 "$s" && { zeg "F8 overgeslagen (nooit Tailscale van ons, nooit besturen)."; continue; }
     naam="$(toestel_naam "$s")"; [ -z "$naam" ] && continue
     toegestaan "$(toestel_id "$s")" || { zeg "$naam staat niet op de lijst; overgeslagen (druk eerst op Zoek telefoons)."; continue; }
