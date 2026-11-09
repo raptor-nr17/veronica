@@ -506,7 +506,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
@@ -611,7 +611,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -960,6 +960,10 @@ class H(BaseHTTPRequestHandler):
             if wat == 'hervat': self._cors(200, doe_args(['wand-hervat'])); return
             if wat == 'zoek-allen': self._cors(200, doe_args(['wand-zoek', f.get('vraag', [''])[0]], timeout=40)); return   # 615: elke telefoon een andere zoekmachine
             if wat == 'tik-allen': self._cors(200, doe_args(['wand-tik-allen', f.get('x', ['0'])[0], f.get('y', ['0'])[0]])); return   # 615: tik naar alle telefoons tegelijk
+            if wat == 'doe':   # 678 stap 8: ARTEMIS op tekst -- het lokale model kiest, ARTEMIS tikt (serial optioneel; leeg = de eerste rektelefoon aan de kabel)
+                sd = (f.get('serial', [''])[0])
+                if sd and not WAND_SERIAL.match(sd): self._cors(400, 'onbruikbare telefoon'); return
+                self._cors(200, doe_args(['scherm-doe', f.get('doel', [''])[0], sd], timeout=180)); return
             s = (f.get('serial', [''])[0])
             if not WAND_SERIAL.match(s): self._cors(400, 'onbruikbare telefoon'); return
             if wat == 'tik': self._cors(200, doe_args(['wand-tik', s, f.get('x', ['0'])[0], f.get('y', ['0'])[0]])); return
@@ -1449,6 +1453,8 @@ telefoon_klaarzetten() {
     touch "$KLAAR_LOCK" 2>/dev/null || true
     zeg "Nieuwe telefoon aan de kabel gezien -- ik zet hem vanzelf klaar (geen knop nodig)."
   fi
+  zeg "== JARVIS-versie per telefoon (nu, vóór bijwerken) =="   # 678p: bovenaan, zodat hij niet uit het korte console-log valt
+  jarvis_versies
   jarvis_oogst "$([ -n "$auto" ] && echo 0 || echo 1)"   # de nieuwste JARVIS oogsten (knopdruk: toon=1 => per bron uitleggen wat faalt EN de serverlink NU ophalen); nooit de F8
   touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
   BIJWERK_GEDAAN=''   # 678m: wordt 1 zodra jarvis_bijwerk_een hieronder echt een nieuwe JARVIS installeert
@@ -1508,6 +1514,8 @@ telefoon_klaarzetten() {
     zeg "Nieuwe JARVIS geïnstalleerd -- ik zet er meteen Tailscale op (nooit de F8)."
     tailscale_telefoon || true
   fi
+  zeg "== JARVIS-versie per telefoon (na bijwerken) =="   # 678p: de uitkomst -- staat ook in Status (klaarzet-versies)
+  jarvis_versies
   if [ "$n" -gt 0 ]; then zeg "Klaar: $n telefoon(s) volledig klaargezet. De kabel mag eruit; ik vind ze terug via 5555 en JARVIS meldt zich bij de relay."; else [ -n "$auto" ] || zeg "Geen telefoon klaargezet (alleen de F8, of niets toegestaan aan de kabel)."; fi
 }
 
@@ -1730,6 +1738,28 @@ artemis_app_dir() {
 # iemand iets in de terminal doet. (Niet op echte toestellen geprobeerd vanuit de bouwomgeving; best-effort met eerlijke meldingen.)
 jarvis_apk_code() {   # de versionCode van het JARVIS-pakket op EEN telefoon (leeg = onbekend/niet geïnstalleerd)
   "$ADB" -s "$1" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | sed -n 's/.*versionCode=\([0-9]\{1,\}\).*/\1/p' | head -1 | tr -d '\r'
+}
+jarvis_apk_versie() {   # 678p: de versionName (1.9.xx) van JARVIS op EEN telefoon (leeg = niet geïnstalleerd)
+  "$ADB" -s "$1" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | sed -n 's/.*versionName=\([0-9][0-9.]*\).*/\1/p' | head -1 | tr -d '\r'
+}
+# 678p: DE VERSIE-REGEL PER TELEFOON. Toont van elke rektelefoon aan de kabel (nooit de F8) welke JARVIS er ECHT op staat
+# (versionName + versionCode). Wordt bovenaan de uitkomst van 'Telefoon klaarzetten' gezet (zodat hij niet uit het korte
+# console-log valt) en bewaard in $REK_MAP/klaarzet-versies, zodat Status hem ook laat zien. Alleen lezen (dumpsys).
+JARVIS_VERSIES_F="$REK_MAP/klaarzet-versies"
+jarvis_versies() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  local s id naam v c n=0 regel alles=""
+  for s in $(verbonden); do
+    case "$s" in *:*) continue ;; esac                      # alleen de kabel
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"; naam="${naam:-$id}"
+    v="$(jarvis_apk_versie "$s")"; c="$(jarvis_apk_code "$s")"
+    if [ -n "$v" ]; then regel="  $naam: JARVIS $v (code ${c:-?})"; else regel="  $naam: JARVIS niet geïnstalleerd"; fi
+    zeg "$regel"; alles="$alles$regel"$'\n'; n=$((n+1))
+  done
+  [ "$n" -gt 0 ] || zeg "  (geen rektelefoon aan de kabel; sluit er een aan en druk op 'Zoek telefoons')"
+  printf '%s' "$alles" > "$JARVIS_VERSIES_F" 2>/dev/null || true
 }
 # 598b/599: BOOTSTRAP zonder dat één telefoon al de nieuwe versie heeft -- ARTEMIS installeert een jarvis.apk die je op de CHROMEBOOK
 # downloadde (de JARVIS-downloadlink in Chrome). Een bestand dat op 'jarvis' begint en op '.apk' eindigt (dus ook 'jarvis (1).apk',
@@ -3247,6 +3277,25 @@ f8_zoek() {
   # elk model laden. Het eerste adres dat antwoordt is de primaire (F8).
   local poort gevonden="" model tok="" used=""
   [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
+  # 678o: EERST het onthouden adres kort toetsen. Antwoordt het niet meer (na een wifi-wissel: bv. een oud .109 op 192.168.178),
+  # dan VERGETEN we het en zoeken opnieuw op het hele netwerk (f8_hosts bevat o.a. 192.168.68.x). Zo blijft ARTEMIS niet op een
+  # dood adres hangen. Puur lezen (geen besturing van de F8).
+  if [ -s "$F8_GEVONDEN_F" ]; then
+    local oud_ip oud_poort="" oud_base; oud_base="$(cat "$F8_GEVONDEN_F" 2>/dev/null)"; oud_ip="$(printf '%s' "$oud_base" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    if [ -n "$oud_ip" ]; then
+      for poort in ${F8_ZOEK_POORTEN:-8000 8081}; do
+        if curl -fsS -m 1 "http://$oud_ip:$poort/v1/models" 2>/dev/null | grep -q '"id"'; then oud_poort="$poort"; break; fi
+        [ -n "$tok" ] && curl -fsS -m 1 -H "Authorization: Bearer $tok" "http://$oud_ip:$poort/v1/models" 2>/dev/null | grep -q '"id"' && { oud_poort="$poort"; used="$tok"; break; }
+      done
+      if [ -n "$oud_poort" ]; then
+        zeg "F8 nog op het onthouden adres: $oud_ip:$oud_poort."
+        printf 'http://%s:%s/v1' "$oud_ip" "$oud_poort" >"$F8_GEVONDEN_F"; chmod 600 "$F8_GEVONDEN_F" 2>/dev/null || true
+        onthoud_lan_subnet "$oud_ip"; return 0
+      fi
+      zeg "Het onthouden F8-adres ($oud_ip) antwoordt niet meer (ander wifi?); ik vergeet het en zoek opnieuw op het hele netwerk (incl. 192.168.68.x)."
+      rm -f "$F8_GEVONDEN_F" 2>/dev/null || true
+    fi
+  fi
   zeg "F8 zoeken op het lokale netwerk (poorten ${F8_ZOEK_POORTEN:-8000 8081}, /v1/models met een model)..."
   for poort in ${F8_ZOEK_POORTEN:-8000 8081}; do
     gevonden="$(f8_hosts | T="$tok" P="$poort" xargs -P 50 -I{} sh -c '
@@ -3264,7 +3313,7 @@ f8_zoek() {
       zeg "Geen MODELSERVER gevonden, maar JARVIS draait wel op $jarvis_ip. De F8 hangt dus op dit wifi -- alleen zijn modelserver staat UIT."
       zeg "Zet op de F8 OlliteRT's 'Start Server' aan (dat kan NIET op afstand -- iemand moet het op de F8 tikken), of zet de eigen JARVIS-motor aan (in Veronica: Motor aan). Druk daarna opnieuw op 'F8 terugvinden'."
     else
-      zeg "Geen F8 op het lokale netwerk gevonden (poorten ${F8_ZOEK_POORTEN:-8000 8081}, en geen JARVIS op 8080). Controleer of de F8 echt op dit wifi (192.168.178.x) hangt, en of OlliteRT of de JARVIS-motor aan staat."
+      zeg "Geen F8 op het lokale netwerk gevonden (poorten ${F8_ZOEK_POORTEN:-8000 8081}, en geen JARVIS op 8080). Ik zocht op het eigen /24, de onthouden netten en de gangbare thuisnetten (192.168.178/1/0/68/2.x). Controleer of de F8 echt op dit wifi hangt (nu waarschijnlijk 192.168.68.x), en of OlliteRT of de JARVIS-motor aan staat."
     fi
     return 1
   fi
@@ -4335,28 +4384,19 @@ wand_besturen() {
 wand_noodstop() { : >"$WAND_STOP_F"; zeg "Noodstop aan: de schermenwand bestuurt niets meer (kijken mag nog)."; }
 wand_hervat() { rm -f "$WAND_STOP_F" 2>/dev/null || true; zeg "Noodstop uit: de schermenwand mag weer besturen."; }
 
-# 678 stap 8: HET SCHERM ALS TEKST LEZEN -- de basis voor "ARTEMIS op tekst" (het lokale model kiest straks een element). Puur
-# LEZEN (uiautomator dump), nooit tikken, en ELKE telefoon gaat eerst door wand_gate: nooit de F8, alleen een rektelefoon op de
-# lijst, en NOOIT terwijl er een gevoelige (bank/kluis/betaal/crypto) of persoonlijke (Gmail/WhatsApp/Foto's) app op de voorgrond
-# staat -- dan geen boom (dezelfde §565-zeef als het kijken). De uitvoer is een KORTE genummerde lijst tikbare elementen met hun
-# plek als fractie (0..1), zodat het lokale model of een mens element N met 'wand-tik <fractie>' kan aantikken. De XML gaat naar
-# /sdcard, wordt gelezen en meteen gewist; niets wordt bewaard. De F8 wordt hier NOOIT gelezen (wand_gate + is_f8).
-scherm_lees() {
-  local s id naam reden xml wh w h gedaan=0
-  zeg "Scherm als tekst lezen (uiautomator) -- alleen de rektelefoons, nooit de F8, en nooit terwijl er een gevoelige of persoonlijke app op de voorgrond staat."
-  for s in $(verbonden); do
-    case "$s" in *:*) continue ;; esac                      # alleen de kabel
-    is_f8 "$s" && continue
-    id="$(toestel_id "$s")"; toegestaan "$id" || continue
-    naam="$(toestel_naam "$s")"; naam="${naam:-$id}"
-    if ! reden="$(wand_gate "$s")"; then zeg "== $naam: GEWEIGERD $reden =="; continue; fi
-    if ! "$ADB" -s "$s" shell uiautomator dump /sdcard/artemis-ui.xml >/dev/null 2>&1; then zeg "== $naam: scherm niet te lezen (scherm uit of vergrendeld?) =="; continue; fi
-    xml="$("$ADB" -s "$s" shell cat /sdcard/artemis-ui.xml 2>/dev/null | tr -d '\r')"
-    "$ADB" -s "$s" shell rm -f /sdcard/artemis-ui.xml >/dev/null 2>&1 || true
-    [ -n "$xml" ] || { zeg "== $naam: lege schermboom =="; continue; }
-    wh="$(wand_maat "$s")"; w="${wh%% *}"; h="${wh##* }"
-    zeg "== $naam -- scherm als tekst (tikbare elementen; tik met de wand of de fractie) =="
-    printf '%s' "$xml" | ARTEMIS_W="${w:-1080}" ARTEMIS_H="${h:-1920}" python3 -c '
+# 678 stap 8 (de LEZER): de ENE plek die de schermboom van EEN telefoon uitleest en als machinelijst teruggeeft. uiautomator dump
+# -> genummerde tikbare elementen, EEN per regel "N<TAB>cx<TAB>cy<TAB>label" (plek als fractie 0..1). PUUR lezen; de XML gaat naar
+# /sdcard, wordt gelezen en METEEN gewist (niets bewaard). De beller (scherm_lees voor een mens, scherm_doe voor het lokale model)
+# doet zelf de §565-zeef (wand_gate + is_f8) VOOR hij dit aanroept -- hier staat alleen het lezen+ontleden, geen besturing.
+scherm_boom() {
+  local s="${1:-}" xml wh w h
+  [ -n "$s" ] || return 1
+  "$ADB" -s "$s" shell uiautomator dump /sdcard/artemis-ui.xml >/dev/null 2>&1 || return 2
+  xml="$("$ADB" -s "$s" shell cat /sdcard/artemis-ui.xml 2>/dev/null | tr -d '\r')"
+  "$ADB" -s "$s" shell rm -f /sdcard/artemis-ui.xml >/dev/null 2>&1 || true
+  [ -n "$xml" ] || return 3
+  wh="$(wand_maat "$s")"; w="${wh%% *}"; h="${wh##* }"
+  printf '%s' "$xml" | ARTEMIS_W="${w:-1080}" ARTEMIS_H="${h:-1920}" python3 -c '
 import sys, os, re, html
 xml = sys.stdin.read()
 W = float(os.environ.get("ARTEMIS_W") or 1080); H = float(os.environ.get("ARTEMIS_H") or 1920)
@@ -4374,10 +4414,31 @@ for nd in re.findall(r"<node\b[^>]*?/?>", xml):
     cx = (x1 + x2) / 2 / W; cy = (y1 + y2) / 2 / H
     if not (0 <= cx <= 1 and 0 <= cy <= 1): continue
     n += 1
-    print("  %2d. %s  [tik %.3f %.3f]" % (n, label[:48], cx, cy))
+    sys.stdout.write("%d\t%.3f\t%.3f\t%s\n" % (n, cx, cy, label[:48]))
     if n >= 25: break
-if n == 0: print("  (geen tikbare tekst-elementen gevonden)")
-' 2>/dev/null || zeg "  (kon de schermboom niet ontleden)"
+' 2>/dev/null
+}
+
+# 678 stap 8 (voor een MENS): het scherm als tekst, alle rektelefoons aan de kabel. Elke telefoon eerst door wand_gate (nooit de
+# F8, alleen op de lijst, nooit bij een gevoelige/persoonlijke app -- de §565-zeef), dan scherm_boom en netjes geformatteerd. De
+# uitvoer is een KORTE genummerde lijst tikbare elementen met hun plek als fractie (0..1), zodat het lokale model of een mens
+# element N met 'wand-tik <fractie>' kan aantikken. De F8 wordt hier NOOIT gelezen (wand_gate + is_f8).
+scherm_lees() {
+  local s id naam reden gedaan=0 boom TAB
+  TAB="$(printf '\t')"
+  zeg "Scherm als tekst lezen (uiautomator) -- alleen de rektelefoons, nooit de F8, en nooit terwijl er een gevoelige of persoonlijke app op de voorgrond staat."
+  for s in $(verbonden); do
+    case "$s" in *:*) continue ;; esac                      # alleen de kabel
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"; naam="${naam:-$id}"
+    if ! reden="$(wand_gate "$s")"; then zeg "== $naam: GEWEIGERD $reden =="; continue; fi
+    boom="$(scherm_boom "$s")"
+    if [ -z "$boom" ]; then zeg "== $naam: geen tikbare tekst-elementen (scherm uit/vergrendeld of lege boom) =="; continue; fi
+    zeg "== $naam -- scherm als tekst (tikbare elementen; tik met de wand of de fractie) =="
+    printf '%s\n' "$boom" | while IFS="$TAB" read -r n cx cy label; do
+      [ -n "$n" ] && zeg "$(printf '  %2d. %s  [tik %s %s]' "$n" "$label" "$cx" "$cy")"
+    done
     gedaan=$((gedaan+1))
   done
   [ "$gedaan" -gt 0 ] || zeg "Geen rektelefoon aan de kabel om te lezen (druk op 'Zoek telefoons'; de F8 wordt nooit gelezen)."
@@ -4421,6 +4482,91 @@ wand_tik_allen() {
   zeg "Getikt op $n telefoon(s) tegelijk (nooit de F8)."
 }
 
+# 678 stap 8 (ARTEMIS OP TEKST, de LUS): het LOKALE MODEL kiest één element uit de schermlijst, ARTEMIS tikt het aan via de
+# bestaande wand (wand_besturen = §565-gate + noodstop). Zo "ziet" het lokale model het scherm als tekst en bestuurt het de
+# telefoon zonder beeld. STRIKT: puur lezen met scherm_boom, kiezen door het model, tikken via de wand. Nooit de F8, nooit een
+# gevoelige/persoonlijke app (elke ronde opnieuw door wand_gate), hoogstens SCHERM_DOE_MAX stappen, en de noodstop stopt meteen.
+# Het model KRIJGT alleen het doel + de genummerde lijst en mag ALLEEN een nummer, KLAAR of GEEN teruggeven -- geen vrije opdracht,
+# geen tekst om te typen. Geen model bereikbaar = ARTEMIS doet NIETS (het model is de bestuurder, niet ARTEMIS zelf).
+lok_model_klaar() {
+  local base token
+  base="$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" 2>/dev/null | head -1)"
+  [ -n "$base" ] || return 1
+  token="$(sed -n 's/^TOKEN=//p' "$REK_MAP/lokaal-model.conf" 2>/dev/null | head -1)"
+  curl -fsS -m 5 ${token:+-H "Authorization: Bearer $token"} "${base%/}/models" >/dev/null 2>&1
+}
+# vraag het lokale model (OpenAI-compatibel, de rektelefoon-motor of de F8 via lokaal-model.conf) welk genummerd element het wil
+# aantikken. Print UITSLUITEND een nummer, KLAAR of GEEN. Alles via env (geen shell-injectie); de JSON bouwt python3.
+scherm_vraag_model() {
+  local doel="$1" boom base token model
+  base="$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" 2>/dev/null | head -1)"
+  token="$(sed -n 's/^TOKEN=//p' "$REK_MAP/lokaal-model.conf" 2>/dev/null | head -1)"
+  model="$(sed -n 's/^MODEL=//p' "$REK_MAP/lokaal-model.conf" 2>/dev/null | head -1)"
+  boom="$2"
+  [ -n "$base" ] || { printf 'GEEN'; return 1; }
+  DOEL="$doel" BOOM="$boom" BASE="$base" TOKEN="${token:-local}" MODEL="${model:-local}" python3 -c '
+import os, re, json, urllib.request
+doel = os.environ["DOEL"]; boom = os.environ["BOOM"]
+rij = []
+for r in boom.splitlines():
+    c = r.split("\t")
+    if len(c) >= 4: rij.append("%s. %s" % (c[0], c[3]))
+lijst = "\n".join(rij)
+sys = ("Je bestuurt een Androidtelefoon door EEN genummerd element aan te tikken. Je krijgt een DOEL en de zichtbare tikbare "
+       "elementen. Antwoord met UITSLUITEND het nummer van het element dat je wilt aantikken, of KLAAR als het doel al bereikt "
+       "is, of GEEN als geen element past. Geen uitleg, alleen een nummer, KLAAR of GEEN.")
+usr = "DOEL: %s\n\nELEMENTEN:\n%s\n\nAntwoord (alleen een nummer, KLAAR of GEEN):" % (doel, lijst)
+body = json.dumps({"model": os.environ["MODEL"], "messages": [{"role":"system","content":sys},{"role":"user","content":usr}], "max_tokens": 8, "temperature": 0}).encode()
+req = urllib.request.Request(os.environ["BASE"].rstrip("/") + "/chat/completions", data=body, headers={"Content-Type":"application/json","Authorization":"Bearer "+os.environ["TOKEN"]})
+try:
+    d = json.load(urllib.request.urlopen(req, timeout=90))
+    t = (d["choices"][0]["message"]["content"] or "").strip()
+except Exception:
+    print("GEEN"); raise SystemExit
+tl = t.lower()
+m = re.search(r"\d+", t)
+if "klaar" in tl or "done" in tl: print("KLAAR")
+elif "geen" in tl or "none" in tl: print("GEEN")
+elif m: print(m.group(0))
+else: print("GEEN")
+' 2>/dev/null || printf 'GEEN'
+}
+scherm_doe() {
+  local doel="${1:-}" s="${2:-}" cand reden naam boom keuze regel cx cy label stap=0 max="${SCHERM_DOE_MAX:-8}" TAB
+  TAB="$(printf '\t')"
+  [ -n "$doel" ] || { zeg "GEWEIGERD geen doel opgegeven (zeg wat ARTEMIS moet bereiken)."; return 3; }
+  [ -f "$WAND_STOP_F" ] && { zeg "GEWEIGERD de noodstop staat aan (druk op Hervat)."; return 3; }
+  lok_model_klaar || { zeg "Geen lokaal model bereikbaar (zet eerst 'F8 terugvinden' of een rektelefoon-motor aan). ARTEMIS op tekst doet niets zonder model -- het model is de bestuurder."; return 1; }
+  if [ -z "$s" ]; then
+    for cand in $(verbonden); do case "$cand" in *:*) continue ;; esac; is_f8 "$cand" && continue; toegestaan "$(toestel_id "$cand")" || continue; s="$cand"; break; done
+  fi
+  [ -n "$s" ] || { zeg "Geen rektelefoon aan de kabel (nooit de F8)."; return 1; }
+  is_f8 "$s" && { zeg "GEWEIGERD de F8 wordt nooit bestuurd."; return 3; }
+  toegestaan "$(toestel_id "$s")" || { zeg "GEWEIGERD die telefoon staat niet op de rektelefoon-lijst."; return 3; }
+  naam="$(toestel_naam "$s")"; naam="${naam:-$(toestel_id "$s")}"
+  zeg "ARTEMIS op tekst -- doel: $doel (telefoon: $naam, hoogstens $max stappen). Het lokale model kiest; ARTEMIS tikt via de §565-gate."
+  while [ "$stap" -lt "$max" ]; do
+    [ -f "$WAND_STOP_F" ] && { zeg "Noodstop -- gestopt (stap $stap)."; return 0; }
+    if ! reden="$(wand_gate "$s")"; then zeg "Gestopt: $reden."; return 0; fi
+    boom="$(scherm_boom "$s")"
+    [ -n "$boom" ] || { zeg "Geen tikbare elementen op het scherm -- gestopt (stap $stap)."; return 0; }
+    keuze="$(scherm_vraag_model "$doel" "$boom")"
+    case "$keuze" in
+      KLAAR) zeg "Het model zegt: doel bereikt (na $stap stap(pen))."; return 0 ;;
+      ''|GEEN) zeg "Het model ziet geen passend element -- gestopt (stap $stap)."; return 0 ;;
+      *[!0-9]*) zeg "Het model gaf geen bruikbaar nummer ($keuze) -- gestopt."; return 0 ;;
+    esac
+    regel="$(printf '%s\n' "$boom" | awk -F"$TAB" -v k="$keuze" '$1==k{print; exit}')"
+    [ -n "$regel" ] || { zeg "Nummer $keuze staat niet op het scherm -- gestopt."; return 0; }
+    cx="$(printf '%s' "$regel" | cut -f2)"; cy="$(printf '%s' "$regel" | cut -f3)"; label="$(printf '%s' "$regel" | cut -f4)"
+    zeg "Stap $((stap+1)): tik $keuze ($label) op $naam."
+    wand_besturen tik "$s" "$cx" "$cy" >/dev/null 2>&1 || { zeg "De tik lukte niet -- gestopt."; return 0; }
+    stap=$((stap+1))
+    sleep 1
+  done
+  zeg "Klaar: $max stappen gedaan (de grens). Kijk op de wand of het doel bereikt is."
+}
+
 # 571: bij start en console eerst zichzelf bijwerken vanaf de site, dan opnieuw starten met de nieuwe code (een keer, geen lus).
 if { [ "${1:-}" = start ] || [ "${1:-}" = console ]; } && [ -z "${ARTEMIS_HERSTART:-}" ]; then
   zelf_bijwerken >/dev/null 2>&1 || true
@@ -4456,6 +4602,8 @@ case "${1:-status}" in
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   f8-kabel) f8_kabel_adres ;;                   # 678j: de F8 aan de kabel -- lees ALLEEN zijn wifi-adres uit en zet hem als denker (nooit besturen)
   scherm-lees) scherm_lees ;;                   # 678 stap 8: het scherm als tekst lezen (uiautomator), alleen de rektelefoons, nooit de F8, nooit een gevoelige app
+  scherm-doe) scherm_doe "${2:-}" "${3:-}" ;;   # 678 stap 8: de lus -- het lokale model kiest een element, ARTEMIS tikt het aan via de wand (§565-gate), nooit de F8
+  versies) jarvis_versies ;;                    # 678p: welke JARVIS-versie per telefoon echt geïnstalleerd is (alleen lezen, nooit de F8)
   rek-zoek) rek_zoek ;;
   rek-hotspot) rek_hotspot "${2:-}" ;;         # 616: het eigen rek-netwerk opzetten (hotspot-basis + de rest erop), nooit de F8
   rek-op) rek_op "${2:-}" ;;                    # 619/620: in één tik -- scan + relay-lijst (de rektelefoons terug in het rek, op het huis-wifi), nooit de F8
