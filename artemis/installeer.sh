@@ -4202,7 +4202,19 @@ tailscale_telefoon() {
     zeg "== Tailscale op $naam =="
     # 1. apk installeren (bestaat hij al, dan -r = bijwerken; een andere handtekening wordt door Android geweigerd)
     if "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1; then zeg "  - Tailscale stond er al."; else
-      if "$ADB" -s "$s" install -r "$apk" >/dev/null 2>&1; then zeg "  - Tailscale geinstalleerd."; else zeg "  - installeren lukte niet (ruimte? handtekening?); overgeslagen."; continue; fi
+      local uit2; uit2="$("$ADB" -s "$s" install -r "$apk" 2>&1)"
+      if printf '%s' "$uit2" | grep -q Success; then zeg "  - Tailscale geinstalleerd."
+      elif printf '%s' "$uit2" | grep -q INSTALL_FAILED_USER_RESTRICTED; then
+        # Sommige toestellen weigeren een install via USB (de shell-uid) tot de schakelaar aan staat. Zeg PRECIES welke, en een
+        # eerlijke uitweg. GEEN file://-VIEW-"tik"-terugval: dat install-intent is op moderne Android geblokkeerd (werkt toch niet).
+        zeg "  - installeren GEWEIGERD door de telefoon (INSTALL_FAILED_USER_RESTRICTED) -- dit is een instelling van de telefoon, niet een fout van ARTEMIS."
+        zeg "    Zet op $naam EENMALIG aan: Instellingen > Aanvullende instellingen > Ontwikkelaarsopties > 'Installeren via USB' (plus 'USB-foutopsporing (beveiligingsinstellingen)'); op sommige toestellen alleen met een ingelogd account van de fabrikant + simkaart."
+        zeg "    Daarna zet een volgende Tailscale-ronde hem vanzelf op $naam. Kan dat niet: zet Tailscale EEN keer met de hand uit de Play Store op $naam -- de rest (VPN-toestemming, always-on, inloglink) doet ARTEMIS daarna gewoon."
+        continue
+      else
+        zeg "  - installeren lukte niet: $(printf '%s' "$uit2" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-160). Overgeslagen."
+        continue
+      fi
     fi
     # 2. VPN-toestemming vooraf (geen systeemvenster). appops via shell-uid, geen root.
     "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 && zeg "  - VPN-toestemming vooraf gegeven (geen venster)." || zeg "  - LET OP: VPN-toestemming vooraf lukte niet; mogelijk tikt de telefoon één keer een venster weg."
