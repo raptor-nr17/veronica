@@ -628,6 +628,10 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <input id=tailscaleKey type=text autocomplete=off spellcheck=false placeholder="tskey-..." style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=tailscaleKeyBewaar>Bewaar Tailscale-sleutel</button>
 <button data-cmd=tailscale-authkey>Tailscale op de telefoons (auth-key, zonder tik)</button></p>
+<p style="margin-top:6px">Wifi van deze plek (eenmalig): zo geeft ARTEMIS een nieuwe rektelefoon zelf het wifi (en daarna de relay/Tailscale). SSID + wachtwoord blijven ALLEEN hier op de Chromebook (600) &mdash; nooit in het log, GitHub, de relay of Veronica. Dan is een nieuwe telefoon: kabel erin, USB-foutopsporing aan, verder niets.<br>
+<input id=wifiSsid type=text autocomplete=off spellcheck=false placeholder="wifi-naam (SSID)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:200px;min-height:48px">
+<input id=wifiWw type=password autocomplete=off spellcheck=false placeholder="wifi-wachtwoord" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:200px;min-height:48px">
+<button id=wifiBewaar>Bewaar wifi van deze plek</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <p style="margin:8px 0 2px;color:#8aa">Live (Log/Status vernieuwen hier, zonder je knop-uitkomst te overschrijven):</p>
 <pre id=live style="opacity:.85"></pre>
@@ -695,6 +699,18 @@ if(tbw)tbw.addEventListener('click',async()=>{{
     const r=await fetch('/tailscale-key',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'key='+encodeURIComponent(v)}});
     uit.textContent=nu()+' — '+(await r.text());
     const el=document.getElementById('tailscaleKey'); if(el)el.value='';
+  }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
+}});
+// 678: de wifi van deze plek bewaren (alleen lokaal op de Chromebook, 600; nooit in het log/GitHub/relay/Veronica).
+const wbw=document.getElementById('wifiBewaar');
+if(wbw)wbw.addEventListener('click',async()=>{{
+  const ssid=(document.getElementById('wifiSsid').value||'').trim();
+  const ww=(document.getElementById('wifiWw').value||'');
+  uit.textContent=nu()+' — wifi van deze plek bewaren…';
+  try{{
+    const r=await fetch('/wifi',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'ssid='+encodeURIComponent(ssid)+'&ww='+encodeURIComponent(ww)}});
+    uit.textContent=nu()+' — '+(await r.text());
+    const w=document.getElementById('wifiWw'); if(w)w.value='';
   }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
 }});
 // 613: bij een zelf-herstart (Bijwerken) is de console ~1 s weg. Dit HERGEBRUIKT HETZELFDE tabblad: zodra de console terug is
@@ -1054,6 +1070,29 @@ class H(BaseHTTPRequestHandler):
                 try: os.chmod(pad, 0o600)
                 except Exception: pass
                 self._schrijf(200, 'Tailscale-sleutel opgeslagen (tskey-...), alleen hier op de Chromebook. Druk nu op "Tailscale op de telefoons (auth-key, zonder tik)".')
+            except Exception as e:
+                self._schrijf(500, 'fout: ' + str(e))
+            return
+        if p.path == '/wifi':
+            # 678: de wifi van deze plek (SSID + wachtwoord). ALLEEN lokaal bewaard (600). Het wachtwoord komt NOOIT in een antwoord,
+            # het log, GitHub, de relay of Veronica. Een config-waarde, geen opdracht; staat nooit in de bron (openbare Pages).
+            # Leeg SSID = wissen. Zo geeft klaarzetten een nieuwe telefoon zelf wifi (cmd wifi connect-network).
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            ssid = (f.get('ssid', [''])[0]).strip()
+            ww = (f.get('ww', [''])[0])
+            pad = os.path.join(REK, 'wifi.conf')
+            if ssid == '':
+                try: os.remove(pad)
+                except Exception: pass
+                self._schrijf(200, 'Wifi van deze plek gewist.'); return
+            if '\n' in ssid or '\r' in ssid or '\n' in ww or '\r' in ww or len(ssid) > 64 or len(ww) > 128:
+                self._schrijf(400, 'SSID of wachtwoord lijkt ongeldig (te lang of met een regeleinde).'); return
+            try:
+                with open(pad, 'w') as fh: fh.write('SSID=' + ssid + '\nWW=' + ww + '\n')
+                try: os.chmod(pad, 0o600)
+                except Exception: pass
+                self._schrijf(200, 'Wifi van deze plek opgeslagen (SSID: ' + ssid + '; wachtwoord niet getoond), alleen hier op de Chromebook. Een nieuwe telefoon aan de kabel krijgt dit wifi nu vanzelf bij het klaarzetten.')
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
@@ -1534,8 +1573,15 @@ telefoon_klaarzetten() {
     fi
     # 8. JARVIS starten.
     "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 && zeg "  - JARVIS gestart." || zeg "  - JARVIS starten lukte niet (open hem één keer met de hand)."
-    # 9. Nakijken: zit hij op wifi (niet mobiele data)?
-    if [ -n "$ip" ]; then zeg "  - staat op wifi ($ip); hij hoort zich nu bij de relay te melden."; else zeg "  - LET OP: geen wifi-adres. Zet hem op het thuis-wifi; Privé-DNS staat nu automatisch, dus de wifi-validatie zou nu moeten lukken (geen terugval naar mobiele data meer)."; fi
+    # 9. Nakijken: zit hij op wifi (niet mobiele data)? Zo niet: de wifi van DEZE plek zelf doorgeven (als die bewaard is).
+    if [ -n "$ip" ]; then zeg "  - staat op wifi ($ip); hij hoort zich nu bij de relay te melden."; else
+      zeg "  - geen wifi-adres; ik probeer de wifi van deze plek zelf door te geven."
+      wifi_doorgeven "$s" "$naam"
+      ip="$("$ADB" -s "$s" shell ip -o -4 addr 2>/dev/null | tr -d '\r' | grep -oE '192\.168\.[0-9]+\.[0-9]+|10\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    fi
+    # 9b (678 stap 1): meteen Tailscale aanmelden met de bewaarde auth-key, zonder tik -- zo is een nieuwe telefoon: kabel erin,
+    # USB-foutopsporing aan, verder niets. Alleen als er een sleutel staat; anders doet het §678m-blok hieronder de inloglink-weg.
+    if ts_authkey_lees >/dev/null; then zeg "  - Tailscale aanmelden met de auth-key:"; ts_authkey_een "$s" "$naam" || true; fi
     # 667d: onthoud dat deze telefoon VOLLEDIG is klaargezet, zodat de auto-lus hem niet opnieuw doet.
     touch "$KLAAR_F" 2>/dev/null; chmod 600 "$KLAAR_F" 2>/dev/null || true
     grep -qxF "$id" "$KLAAR_F" 2>/dev/null || printf '%s\n' "$id" >>"$KLAAR_F"
@@ -1547,8 +1593,8 @@ telefoon_klaarzetten() {
   # 678m: Tailscale AUTOMATISCH na een geslaagde JARVIS-update. Alleen als er echt is bijgewerkt (BIJWERK_GEDAAN), zodat het niet
   # elke 3 minuten draait; tailscale_telefoon is idempotent (slaat een al geïnstalleerde over), slaat de F8 altijd over en raakt
   # alleen telefoons op de lijst. Zo bereiken de telefoons elkaar na de update op hun vaste 100.x over elk wifi.
-  if [ -n "$BIJWERK_GEDAAN" ]; then
-    zeg "Nieuwe JARVIS geïnstalleerd -- ik zet er meteen Tailscale op (nooit de F8)."
+  if [ -n "$BIJWERK_GEDAAN" ] && ! ts_authkey_lees >/dev/null; then
+    zeg "Nieuwe JARVIS geïnstalleerd -- ik zet er meteen Tailscale op (inloglink-weg; nooit de F8). Tip: met een bewaarde auth-key gaat dit zonder tik."
     tailscale_telefoon || true
   fi
   zeg "== JARVIS-versie per telefoon (na bijwerken) =="   # 678p: de uitkomst -- staat ook in Status (klaarzet-versies)
@@ -4305,65 +4351,91 @@ _ts_ui_tik() {
   wand_besturen tik "$s" "$cx" "$cy" >/dev/null 2>&1 || return 1
   return 0
 }
+# leest + valideert de bewaarde auth-key en echo't hem (de beller gebruikt hem meteen, nooit in een log). 1 = geen geldige sleutel.
+ts_authkey_lees() {
+  local keyf="$REK_MAP/tailscale-authkey" key
+  [ -s "$keyf" ] || return 1
+  key="$(head -1 "$keyf" 2>/dev/null | tr -d '\r\n ')"
+  case "$key" in tskey-*) : ;; *) return 1 ;; esac
+  case "$key" in *[!A-Za-z0-9-]*) return 1 ;; esac   # alleen tskey-...[A-Za-z0-9-], veilig voor input text
+  printf '%s' "$key"
+}
+# zorgt dat de Tailscale-apk klaarstaat; echo't het pad, of niets (1).
+ts_authkey_apk() {
+  local apk="$JAPK_PLEK/tailscale.apk" url tmp
+  if [ ! -s "$apk" ]; then
+    url="$(ts_apk_url)"; [ -n "$url" ] || return 1
+    tmp="$REK_MAP/tailscale.apk.deel"
+    curl -fsSL -m 180 "$url" -o "$tmp" 2>/dev/null && [ -s "$tmp" ] || { rm -f "$tmp" 2>/dev/null; return 1; }
+    cp -f "$tmp" "$apk" && rm -f "$tmp"; chmod 600 "$apk" 2>/dev/null || true
+  fi
+  printf '%s' "$apk"
+}
+# 678: de wifi van DEZE plek doorgeven aan EEN telefoon, zodat de relay/Tailscale werkt. SSID+wachtwoord staan ALLEEN lokaal
+# (~/.artemis-rek/wifi.conf, 600), nooit gepusht; het WACHTWOORD komt nooit in het log (de SSID wel -- dat is de lokale console).
+# cmd wifi connect-network (Android 11+). Nooit de F8. 0 = klaar/al-wifi, 1 = overgeslagen/mislukt.
+wifi_doorgeven() {
+  local s="$1" naam="$2" conf="$REK_MAP/wifi.conf" ssid ww
+  is_f8 "$s" && return 1
+  [ -s "$conf" ] || { zeg "  - geen wifi van deze plek bewaard; plak SSID + wachtwoord in de console als een nieuwe telefoon geen wifi heeft."; return 1; }
+  ssid="$(sed -n 's/^SSID=//p' "$conf" | head -1)"; ww="$(sed -n 's/^WW=//p' "$conf" | head -1)"
+  [ -n "$ssid" ] || { zeg "  - de bewaarde wifi heeft geen SSID; plak hem opnieuw."; return 1; }
+  if "$ADB" -s "$s" shell ip -o -4 addr show wlan0 2>/dev/null | grep -q 'inet '; then zeg "  - $naam heeft al wifi."; return 0; fi
+  if "$ADB" -s "$s" shell cmd wifi connect-network "$ssid" wpa2 "$ww" >/dev/null 2>&1; then zeg "  - wifi van deze plek doorgegeven aan $naam (SSID: $ssid; wachtwoord niet getoond)."; else zeg "  - wifi doorgeven lukte niet op $naam (cmd wifi niet beschikbaar of Android < 11?); zet het wifi eenmalig met de hand."; return 1; fi
+  sleep 4
+  if "$ADB" -s "$s" shell ip -o -4 addr show wlan0 2>/dev/null | grep -q 'inet '; then zeg "  - $naam is nu op het wifi."; else zeg "  - $naam is nog niet op het wifi (kan even duren; controleer SSID/wachtwoord)."; fi
+  return 0
+}
+# EEN telefoon (serial, naam) aanmelden bij Tailscale met de bewaarde auth-key, zonder tik. 0 = gedaan/al, 1 = overgeslagen.
+# De key komt NOOIT in het log (alleen 'tskey-...'). Nooit de F8. Via scherm_boom + wand_besturen (§565-gate). NIET vanuit de
+# container geverifieerd: de precieze Tailscale-UI-labels/plekken per versie wijst de proef op de kabel uit.
+ts_authkey_een() {
+  local s="$1" naam="$2" key apk apkInst uit2 ip
+  is_f8 "$s" && return 1
+  key="$(ts_authkey_lees)" || { zeg "  - geen (geldige) Tailscale-sleutel ingesteld; Tailscale overgeslagen op $naam."; return 1; }
+  apk="$(ts_authkey_apk)" || { zeg "  - kon de Tailscale-apk niet vinden; zet hem via de Play Store of de index."; return 1; }
+  if "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1; then zeg "  - Tailscale stond er al."; else
+    apkInst="$REK_MAP/tailscale-install.apk"
+    if cp -f "$apk" "$apkInst" 2>/dev/null && [ -s "$apkInst" ]; then :; else apkInst="$apk"; fi
+    uit2="$("$ADB" -s "$s" install -r "$apkInst" 2>&1)"
+    [ "$apkInst" = "$REK_MAP/tailscale-install.apk" ] && rm -f "$apkInst" 2>/dev/null
+    if printf '%s' "$uit2" | grep -q Success; then zeg "  - Tailscale geinstalleerd (vanaf het hokje)."
+    elif printf '%s' "$uit2" | grep -q INSTALL_FAILED_USER_RESTRICTED; then zeg "  - installeren GEWEIGERD (INSTALL_FAILED_USER_RESTRICTED): dit toestel blokkeert install via USB -- zet Tailscale op $naam één keer via de Play Store; daarna doet ARTEMIS de rest."; return 1
+    else zeg "  - installeren lukte niet (volledige adb-fout): $(printf '%s' "$uit2" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-600). Overgeslagen."; return 1; fi
+  fi
+  "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 && zeg "  - VPN-toestemming vooraf gegeven." || zeg "  - LET OP: VPN-toestemming vooraf lukte niet; ik tik het systeemvenster straks zelf weg."
+  "$ADB" -s "$s" shell settings put secure always_on_vpn_app com.tailscale.ipn >/dev/null 2>&1 || true
+  "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 1 >/dev/null 2>&1 || true
+  "$ADB" -s "$s" shell am start -n com.tailscale.ipn/.MainActivity >/dev/null 2>&1 || true
+  sleep 3
+  if ! _ts_ui_tik "$s" 'auth[ -]?key|sleutel'; then
+    _ts_ui_tik "$s" 'more options|meer opties|options|opties|menu' >/dev/null 2>&1; sleep 1
+    _ts_ui_tik "$s" 'auth[ -]?key|sleutel' >/dev/null 2>&1
+  fi
+  sleep 1
+  "$ADB" -s "$s" shell input text "$key" >/dev/null 2>&1 && zeg "  - auth-key ingevoerd (tskey-...)." || zeg "  - de sleutel invoeren lukte niet; kijk op $naam of het auth-key-veld open staat."
+  sleep 1
+  _ts_ui_tik "$s" 'connect|verbind|log ?in|inloggen|aanmelden|^ok$' >/dev/null 2>&1; sleep 2
+  _ts_ui_tik "$s" '^ok$|toestaan|allow|akkoord' >/dev/null 2>&1; sleep 1
+  "$ADB" -s "$s" shell am broadcast -a com.tailscale.ipn.CONNECT_VPN -n com.tailscale.ipn/.IPNReceiver >/dev/null 2>&1 || true
+  sleep 3
+  ip="$("$ADB" -s "$s" shell ip -o -4 addr 2>/dev/null | tr -d '\r' | grep -oE '100\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  if [ -n "$ip" ]; then zeg "  - tailnet-adres van $naam: $ip"; else zeg "  - tailnet-adres nog niet zichtbaar (kan even duren; kijk anders in de Tailscale-admin of $naam verschijnt)."; fi
+  return 0
+}
 tailscale_authkey() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
-  local keyf="$REK_MAP/tailscale-authkey" key
-  [ -s "$keyf" ] || { zeg "Geen Tailscale auth-key ingesteld. Maak er één in de Tailscale-admin (Settings > Keys: Reusable aan) en plak hem één keer in het veld 'Tailscale-sleutel' hieronder. Hij staat alleen hier op de Chromebook (600), nooit in de code, het log, GitHub, de relay of Veronica."; return 0; }
-  key="$(head -1 "$keyf" 2>/dev/null | tr -d '\r\n ')"
-  case "$key" in tskey-*) : ;; *) zeg "De bewaarde sleutel heeft niet de vorm 'tskey-...'; plak hem opnieuw."; return 0 ;; esac
-  case "$key" in *[!A-Za-z0-9-]*) zeg "De bewaarde sleutel bevat ongeldige tekens; plak hem opnieuw."; return 0 ;; esac   # alleen tskey-...[A-Za-z0-9-], veilig voor input text
-  local apk="$JAPK_PLEK/tailscale.apk"
-  if [ ! -s "$apk" ]; then
-    local url tmp; url="$(ts_apk_url)"
-    [ -n "$url" ] || { zeg "Kon de Tailscale-apk niet vinden op de officiele index; of zet hem via de Play Store op de telefoon."; return 0; }
-    tmp="$REK_MAP/tailscale.apk.deel"
-    if curl -fsSL -m 180 "$url" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then cp -f "$tmp" "$apk" && rm -f "$tmp"; chmod 600 "$apk" 2>/dev/null || true; else zeg "Kon de Tailscale-apk niet officieel ophalen."; rm -f "$tmp" 2>/dev/null; return 0; fi
-  fi
-  local s naam id staat gedaan=0
+  ts_authkey_lees >/dev/null || { zeg "Geen Tailscale auth-key ingesteld. Maak er één in de Tailscale-admin (Settings > Keys: Reusable aan) en plak hem in het veld 'Tailscale-sleutel' hieronder. Alleen lokaal (600), nooit in code/log/GitHub/relay/Veronica."; return 0; }
+  local s naam staat gedaan=0
   for s in $(verbonden); do
     case "$s" in *:*) continue ;; esac
     staat="$("$ADB" -s "$s" get-state 2>/dev/null | tr -d '\r')"; [ "$staat" = "device" ] || { zeg "$(toestel_naam "$s"): nog niet toegestaan over de kabel (tik 'Toestaan')."; continue; }
-    is_f8 "$s" && { zeg "F8 overgeslagen (de dagelijkse telefoon krijgt NOOIT Tailscale van ons en wordt NOOIT bestuurd)."; continue; }
+    is_f8 "$s" && { zeg "F8 overgeslagen (nooit Tailscale van ons, nooit besturen)."; continue; }
     naam="$(toestel_naam "$s")"; [ -z "$naam" ] && continue
-    id="$(toestel_id "$s")"; toegestaan "$id" || { zeg "$naam staat niet op de lijst; overgeslagen (druk eerst op Zoek telefoons)."; continue; }
+    toegestaan "$(toestel_id "$s")" || { zeg "$naam staat niet op de lijst; overgeslagen (druk eerst op Zoek telefoons)."; continue; }
     zeg "== Tailscale (auth-key) op $naam =="
-    # 1. installeren (zoals §678s: kopie naar het ext4-hokje, nooit van de 9p-kaart streamen); een toestel dat USB-install blokkeert -> Play Store
-    if "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1; then zeg "  - Tailscale stond er al."; else
-      local apkInst="$REK_MAP/tailscale-install.apk"
-      if cp -f "$apk" "$apkInst" 2>/dev/null && [ -s "$apkInst" ]; then :; else apkInst="$apk"; fi
-      local uit2; uit2="$("$ADB" -s "$s" install -r "$apkInst" 2>&1)"
-      [ "$apkInst" = "$REK_MAP/tailscale-install.apk" ] && rm -f "$apkInst" 2>/dev/null
-      if printf '%s' "$uit2" | grep -q Success; then zeg "  - Tailscale geinstalleerd (vanaf het hokje)."
-      elif printf '%s' "$uit2" | grep -q INSTALL_FAILED_USER_RESTRICTED; then zeg "  - installeren GEWEIGERD (INSTALL_FAILED_USER_RESTRICTED): dit toestel blokkeert install via USB -- zet Tailscale op $naam één keer via de Play Store; daarna doet deze knop de rest."; continue
-      else zeg "  - installeren lukte niet (volledige adb-fout): $(printf '%s' "$uit2" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-600). Overgeslagen."; continue; fi
-    fi
-    # 2. de VPN-toestemming VOORAF (zo komt de systeemvraag straks niet, of is hij al akkoord)
-    "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 && zeg "  - VPN-toestemming vooraf gegeven." || zeg "  - LET OP: VPN-toestemming vooraf lukte niet; ik tik het systeemvenster straks zelf weg."
-    "$ADB" -s "$s" shell settings put secure always_on_vpn_app com.tailscale.ipn >/dev/null 2>&1 || true
-    "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 1 >/dev/null 2>&1 || true
-    # 3. de app openen en via de schermtekst de auth-key-invoer kiezen (geen tik van een mens). NIET VANUIT DE CONTAINER GEVERIFIEERD:
-    #    de precieze labels/plekken van de Tailscale-app kunnen per versie verschillen; de proef op de kabel wijst het uit.
-    "$ADB" -s "$s" shell am start -n com.tailscale.ipn/.MainActivity >/dev/null 2>&1 || true
-    sleep 3
-    # het overloopmenu (drie puntjes) openen als 'Use an auth key' nog niet zichtbaar is, dan die keuze aantikken
-    if ! _ts_ui_tik "$s" 'auth[ -]?key|sleutel'; then
-      _ts_ui_tik "$s" 'more options|meer opties|options|opties|menu' >/dev/null 2>&1; sleep 1
-      _ts_ui_tik "$s" 'auth[ -]?key|sleutel' >/dev/null 2>&1
-    fi
-    sleep 1
-    # de sleutel typen in het tekstveld; de key komt NOOIT in het log (we tonen alleen 'tskey-...')
-    "$ADB" -s "$s" shell input text "$key" >/dev/null 2>&1 && zeg "  - auth-key ingevoerd (tskey-...)." || zeg "  - de sleutel invoeren lukte niet; kijk op $naam of het auth-key-veld open staat."
-    sleep 1
-    _ts_ui_tik "$s" 'connect|verbind|log ?in|inloggen|aanmelden|^ok$' >/dev/null 2>&1; sleep 2
-    # 4. het Android-VPN-systeemvenster wegtikken als het toch komt (OK/Toestaan/Allow)
-    _ts_ui_tik "$s" '^ok$|toestaan|allow|akkoord' >/dev/null 2>&1; sleep 1
-    # 5. vangnet: de CONNECT_VPN-broadcast (werkt als er al een profiel is)
-    "$ADB" -s "$s" shell am broadcast -a com.tailscale.ipn.CONNECT_VPN -n com.tailscale.ipn/.IPNReceiver >/dev/null 2>&1 || true
-    sleep 3
-    # 6. het 100.x-adres (tailnet) in het log zetten
-    local ip; ip="$("$ADB" -s "$s" shell ip -o -4 addr 2>/dev/null | tr -d '\r' | grep -oE '100\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-    if [ -n "$ip" ]; then zeg "  - tailnet-adres van $naam: $ip"; else zeg "  - tailnet-adres nog niet zichtbaar (kan even duren; kijk anders in de Tailscale-admin of $naam verschijnt)."; fi
-    gedaan=$((gedaan+1))
+    wifi_doorgeven "$s" "$naam"
+    ts_authkey_een "$s" "$naam" && gedaan=$((gedaan+1))
   done
   [ "$gedaan" -gt 0 ] || zeg "Geen rektelefoon aan de kabel om te koppelen (nooit de F8). Druk op 'Zoek telefoons'."
 }
