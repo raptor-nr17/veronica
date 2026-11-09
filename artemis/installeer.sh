@@ -213,6 +213,8 @@ KLAAR_F="$REK_MAP/klaargezet"                    # 667d: toestel-id's die al VOL
 BIJWERK_GEDAAN=''                                # 678m: gezet door jarvis_bijwerk_een zodra een telefoon ECHT een nieuwe JARVIS kreeg; dan zet klaarzetten er daarna Tailscale op
 KLAAR_LOCK="$REK_MAP/klaarzetten.lock"           # 667d: lock zodat de auto-klaarzet-lus niet twee keer tegelijk draait
 SCAN5555_T="$REK_MAP/scan5555.t"                 # 606: tijdstip van de laatste subnet-scan op poort 5555 (rem: eens per ~180 s)
+TS_BRUG_F="$REK_MAP/tailscale-bruggen"           # 678: socat-bruggen (lport 100.x pid) zodat adb de rektelefoons op hun VASTE 100.x bereikt, over elk netwerk
+TS_BRUG_T="$REK_MAP/tailscale-brug.t"            # 678: tijdstip van de laatste Tailscale-adb-ronde (rem: eens per ~300 s in de minuut-scan)
 LAN_SUBNETTEN_F="$REK_MAP/lan-subnetten"         # 608: onthouden /24-prefixen waar ooit een telefoon te vinden was (beide wifi's), zodat de F8/rek na een wifi-wissel vanzelf terugkomt
 PIDA="$REK_MAP/artemis.pid"
 PIDW="$REK_MAP/waakhond.pid"
@@ -273,6 +275,7 @@ scan() {
   "$ADB" start-server >/dev/null 2>&1 || true
   verbind_draadloos   # 596: onthouden draadloze telefoons weer verbinden (na een herstart van de telefoon)
   rek_verbind_lijst >/dev/null 2>&1 || true   # 620: eerst de telefoons die zichzelf aan de relay melden (ip:5555), nooit de F8; leeg = geen effect
+  rek_via_tailscale_rem   # 678: de rektelefoons op hun vaste 100.x via Tailscale (socat/tailscale nc), hoogstens eens per 300 s; best-effort
   touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
   local s id naam n=0
   for s in $(verbonden); do
@@ -506,10 +509,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
+LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -611,7 +614,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -4263,6 +4266,57 @@ ts_ui_loginlink() {
   "$ADB" -s "$s" shell rm -f /sdcard/artemis-ts.xml >/dev/null 2>&1 || true
   printf '%s' "$xml" | grep -oE 'https://login\.tailscale\.com/[A-Za-z0-9/._?=-]+' | head -1
 }
+# 678 (9 nov 21:16): het rek zit in Tailscale met VASTE 100.x-adressen. ARTEMIS draait in Crostini, die de tun van ChromeOS NIET
+# deelt, dus adb bereikt een 100.x niet rechtstreeks. Recept (§676/stap-2): tailscaled in Crostini met userspace-networking (dat
+# zet `tailscale_op`), en per telefoon een socat-brug van een lokale poort naar `tailscale nc <100.x> 5555`; dan `adb connect
+# 127.0.0.1:<lport>`. Zo werkt het rek op ELK netwerk (elke verhuizing): het 100.x-adres is vast. NOOIT de F8. Geen IP/naam hard
+# in dit (openbare) script -- de adressen komen uit `tailscale status` op de Chromebook; hostnamen loggen we niet (kunnen een
+# persoonsnaam dragen), alleen het 100.x-adres en de adb-modelnaam. NIET vanuit de container te verifiëren (geen Tailscale/socat/
+# echte telefoons hier); de proef draait op de Chromebook.
+rek_via_tailscale() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
+  command -v tailscale >/dev/null 2>&1 || { zeg "Tailscale ontbreekt in Crostini. Druk eerst op 'Tailscale op deze Chromebook (inloggen)'."; return 1; }
+  if ! command -v socat >/dev/null 2>&1; then
+    sudo -n apt-get install -y socat >/dev/null 2>&1 || { zeg "socat ontbreekt. Installeer het eenmalig: sudo apt-get install -y socat (daarna werkt deze knop)."; return 1; }
+  fi
+  tailscale status >/dev/null 2>&1 || { zeg "Tailscale is niet verbonden in Crostini. Druk op 'Tailscale op deze Chromebook (inloggen)' en log in; daarna deze knop opnieuw."; return 1; }
+  local zelf ip lport pid n=0
+  zelf="$(tailscale ip -4 2>/dev/null | head -1)"
+  # bestaande bruggen van een vorige ronde opruimen -- ALLEEN de onze, op PID uit het bestand (nooit pkill -f: dat raakt de eigen shell)
+  if [ -f "$TS_BRUG_F" ]; then while read -r _lp _ip _pid; do [ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true; done <"$TS_BRUG_F"; fi
+  : >"$TS_BRUG_F" 2>/dev/null || true
+  zeg "== Rek via Tailscale (vaste 100.x-adressen; werkt op elk netwerk) =="
+  for ip in $(tailscale status 2>/dev/null | awk '{print $1}' | grep -E '^100\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u); do
+    [ "$ip" = "$zelf" ] && continue
+    lport=$(( 5600 + n ))
+    socat "TCP-LISTEN:$lport,reuseaddr,fork,bind=127.0.0.1" "EXEC:tailscale nc $ip 5555" >/dev/null 2>&1 &
+    pid=$!
+    printf '%s %s %s\n' "$lport" "$ip" "$pid" >>"$TS_BRUG_F" 2>/dev/null || true
+    sleep 1
+    if "$ADB" connect "127.0.0.1:$lport" 2>/dev/null | grep -qiE 'connected|already'; then
+      if is_f8 "127.0.0.1:$lport"; then
+        "$ADB" disconnect "127.0.0.1:$lport" >/dev/null 2>&1 || true; kill "$pid" 2>/dev/null || true
+        zeg "  - een toestel op $ip is de F8 -- losgekoppeld (nooit besturen)."
+      else
+        zeg "  - $(toestel_naam "127.0.0.1:$lport") bereikbaar via Tailscale ($ip) op adb 127.0.0.1:$lport."
+        n=$((n+1))
+      fi
+    else
+      kill "$pid" 2>/dev/null || true
+      zeg "  - $ip niet bereikbaar via Tailscale (staat adb 5555 aan op die telefoon?)."
+    fi
+  done
+  [ "$n" -gt 0 ] && zeg "Rek via Tailscale: $n telefoon(s) verbonden. Blijft werken na een verhuizing (het 100.x-adres is vast)." || zeg "Geen telefoon via Tailscale verbonden (is Tailscale op de telefoons aan en adb 5555?)."
+}
+# de minuut-scan roept dit aan, maar hoogstens eens per ~300 s (de bruggen blijven staan; niet elke minuut herbouwen). Best-effort.
+rek_via_tailscale_rem() {
+  command -v tailscale >/dev/null 2>&1 || return 0
+  local nu laatst; nu="$(date +%s 2>/dev/null || echo 0)"
+  if [ -f "$TS_BRUG_T" ]; then laatst="$(cat "$TS_BRUG_T" 2>/dev/null || echo 0)"; else laatst=0; fi
+  [ $((nu - laatst)) -lt 300 ] 2>/dev/null && return 0
+  printf '%s\n' "$nu" >"$TS_BRUG_T" 2>/dev/null || true
+  rek_via_tailscale >/dev/null 2>&1 || true
+}
 tailscale_telefoon() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 0; }
@@ -4891,6 +4945,7 @@ case "${1:-status}" in
   searxng) searxng ;;
   tailscale) tailscale_op ;;
   tailscale-telefoon) tailscale_telefoon ;;   # 676: Tailscale op elke rektelefoon via de kabel (nooit de F8); inloglink naar Veronica
+  rek-tailscale) rek_via_tailscale ;;   # 678: adb de rektelefoons op hun vaste 100.x via Tailscale (socat/tailscale nc) -- werkt op elk netwerk
   tailscale-authkey) tailscale_authkey ;;     # 678 stap 1: Tailscale met een auth-key, volledig zonder tik (toestellen die USB-install toestaan; anders via de Play Store), nooit de F8
   wifi-hotspot-test) wifi_hotspot_test ;;      # 678: kan een telefoon tegelijk wifi + hotspot (STA+AP)? alleen lezen, uitkomst in het log, nooit de F8
   status) status ;;
