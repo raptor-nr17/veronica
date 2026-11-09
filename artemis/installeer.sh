@@ -757,6 +757,9 @@ button{font-size:18px;padding:12px 16px;border:0;border-radius:10px;background:#
 <div style="padding:8px 16px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
 <input id=zoekveld type=text placeholder="Eén vraag -> elke telefoon een andere zoekmachine" autocomplete=off style="flex:1;min-width:220px;font-size:16px;padding:10px;border-radius:8px;border:1px solid #334">
 <button id=zoekallen>Zoek op alle telefoons</button></div>
+<div style="padding:0 16px 8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+<input id=doelveld type=text placeholder="ARTEMIS op tekst: zeg wat het model moet doen (bijv. 'open de instellingen')" autocomplete=off style="flex:1;min-width:220px;font-size:16px;padding:10px;border-radius:8px;border:1px solid #334">
+<button id=doelknop>Doe op tekst</button></div>
 <p id=melding>De schermen komen eraan&hellip; (nooit de F8; nooit een telefoon met een bank-, kluis- of betaalapp op de voorgrond.)</p>
 <div id=wand></div>
 <div id=groot><div id=grootKop><span class=gnaam></span>
@@ -768,6 +771,10 @@ button{font-size:18px;padding:12px 16px;border:0;border-radius:10px;background:#
 const wand=document.getElementById('wand'),melding=document.getElementById('melding');
 const tegels=new Map();   // serial -> {el, img, reden}
 async function post(f){const b=new URLSearchParams(f);try{const r=await fetch('/wand-doe',{method:'POST',body:b});return await r.text();}catch(e){return 'niet gelukt';}}
+// 678q: ARTEMIS op tekst -- het lokale model kiest een element uit de schermlijst en ARTEMIS tikt het aan (door de §565-gate,
+// nooit de F8). Leeg serial = de eerste rektelefoon. Het kan even duren (model + maximaal een paar stappen); de uitslag komt in de melding.
+const doelknop=document.getElementById('doelknop');
+if(doelknop)doelknop.addEventListener('click',async()=>{const v=document.getElementById('doelveld');const d=(v.value||'').trim();if(!d)return;doelknop.disabled=true;melding.textContent='ARTEMIS op tekst bezig (het model kiest, ARTEMIS tikt)…';const r=await post({wat:'doe',doel:d});melding.textContent=r;doelknop.disabled=false;});
 function maakTegel(t){
   const el=document.createElement('div');el.className='tegel';
   el.innerHTML='<div class=tnaam></div><img class=tbeeld alt=""><div class=treden hidden></div>'+
