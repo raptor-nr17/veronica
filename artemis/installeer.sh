@@ -506,7 +506,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
@@ -611,7 +611,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -4386,6 +4386,29 @@ wifi_doorgeven() {
   if "$ADB" -s "$s" shell ip -o -4 addr show wlan0 2>/dev/null | grep -q 'inet '; then zeg "  - $naam is nu op het wifi."; else zeg "  - $naam is nog niet op het wifi (kan even duren; controleer SSID/wachtwoord)."; fi
   return 0
 }
+# 678: kan deze telefoon TEGELIJK op wifi EN een hotspot (STA+AP concurrency)? Dan kan hij later het eigen rek-wifi worden terwijl
+# hij zelf op het huis-wifi zit. ALLEEN LEZEN -- er wordt niets aan- of uitgezet. De uitkomst gaat in het log; niet vanuit de
+# container te verifiëren (de echte proef is kort de hotspot aanzetten terwijl wifi aan is). Nooit de F8.
+wifi_hotspot_test() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  local s naam feat con gedaan=0
+  for s in $(verbonden); do
+    case "$s" in *:*) continue ;; esac
+    is_f8 "$s" && { zeg "F8 overgeslagen (nooit aanraken)."; continue; }
+    toegestaan "$(toestel_id "$s")" || continue
+    naam="$(toestel_naam "$s")"; [ -z "$naam" ] && continue
+    zeg "== Wifi + hotspot tegelijk? (alleen lezen) op $naam =="
+    feat="$("$ADB" -s "$s" shell cmd wifi get-softap-supported-features 2>/dev/null | tr -d '\r' | tr '\n' ' ')"
+    [ -n "$feat" ] && zeg "  - softap-features: $(printf '%s' "$feat" | sed 's/  */ /g' | cut -c1-240)"
+    con="$("$ADB" -s "$s" shell dumpsys wifi 2>/dev/null | tr -d '\r' | grep -iE 'concurren|staapconcurrency|sta.?\+?.?ap|bridged' | head -4 | tr '\n' ' ')"
+    [ -n "$con" ] && zeg "  - dumpsys-aanwijzingen: $(printf '%s' "$con" | sed 's/  */ /g' | cut -c1-240)"
+    if printf '%s %s' "$feat" "$con" | grep -iqE 'sta.?ap.?concurren|STA_AP_CONCURRENCY|bridged'; then zeg "  - LIJKT wifi + hotspot tegelijk te steunen (STA+AP concurrency); de proef op de kabel bevestigt het."
+    else zeg "  - geen duidelijke aanwijzing voor wifi + hotspot tegelijk; mogelijk doet dit toestel het NIET (of de melding staat er niet). Niet geverifieerd -- test het op de kabel door kort de hotspot aan te zetten terwijl wifi aan is."; fi
+    zeg "  - (er is NIETS aan- of uitgezet; dit was alleen lezen.)"
+    gedaan=$((gedaan+1))
+  done
+  [ "$gedaan" -gt 0 ] || zeg "Geen rektelefoon aan de kabel (nooit de F8). Druk op 'Zoek telefoons'."
+}
 # EEN telefoon (serial, naam) aanmelden bij Tailscale met de bewaarde auth-key, zonder tik. 0 = gedaan/al, 1 = overgeslagen.
 # De key komt NOOIT in het log (alleen 'tskey-...'). Nooit de F8. Via scherm_boom + wand_besturen (§565-gate). NIET vanuit de
 # container geverifieerd: de precieze Tailscale-UI-labels/plekken per versie wijst de proef op de kabel uit.
@@ -4844,6 +4867,7 @@ case "${1:-status}" in
   tailscale) tailscale_op ;;
   tailscale-telefoon) tailscale_telefoon ;;   # 676: Tailscale op elke rektelefoon via de kabel (nooit de F8); inloglink naar Veronica
   tailscale-authkey) tailscale_authkey ;;     # 678 stap 1: Tailscale met een auth-key, volledig zonder tik (toestellen die USB-install toestaan; anders via de Play Store), nooit de F8
+  wifi-hotspot-test) wifi_hotspot_test ;;      # 678: kan een telefoon tegelijk wifi + hotspot (STA+AP)? alleen lezen, uitkomst in het log, nooit de F8
   status) status ;;
   log) log ;;
   schijf) schijf ;;
