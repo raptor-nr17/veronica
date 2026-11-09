@@ -506,7 +506,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
@@ -611,7 +611,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -4335,6 +4335,54 @@ wand_besturen() {
 wand_noodstop() { : >"$WAND_STOP_F"; zeg "Noodstop aan: de schermenwand bestuurt niets meer (kijken mag nog)."; }
 wand_hervat() { rm -f "$WAND_STOP_F" 2>/dev/null || true; zeg "Noodstop uit: de schermenwand mag weer besturen."; }
 
+# 678 stap 8: HET SCHERM ALS TEKST LEZEN -- de basis voor "ARTEMIS op tekst" (het lokale model kiest straks een element). Puur
+# LEZEN (uiautomator dump), nooit tikken, en ELKE telefoon gaat eerst door wand_gate: nooit de F8, alleen een rektelefoon op de
+# lijst, en NOOIT terwijl er een gevoelige (bank/kluis/betaal/crypto) of persoonlijke (Gmail/WhatsApp/Foto's) app op de voorgrond
+# staat -- dan geen boom (dezelfde §565-zeef als het kijken). De uitvoer is een KORTE genummerde lijst tikbare elementen met hun
+# plek als fractie (0..1), zodat het lokale model of een mens element N met 'wand-tik <fractie>' kan aantikken. De XML gaat naar
+# /sdcard, wordt gelezen en meteen gewist; niets wordt bewaard. De F8 wordt hier NOOIT gelezen (wand_gate + is_f8).
+scherm_lees() {
+  local s id naam reden xml wh w h gedaan=0
+  zeg "Scherm als tekst lezen (uiautomator) -- alleen de rektelefoons, nooit de F8, en nooit terwijl er een gevoelige of persoonlijke app op de voorgrond staat."
+  for s in $(verbonden); do
+    case "$s" in *:*) continue ;; esac                      # alleen de kabel
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"; naam="${naam:-$id}"
+    if ! reden="$(wand_gate "$s")"; then zeg "== $naam: GEWEIGERD $reden =="; continue; fi
+    if ! "$ADB" -s "$s" shell uiautomator dump /sdcard/artemis-ui.xml >/dev/null 2>&1; then zeg "== $naam: scherm niet te lezen (scherm uit of vergrendeld?) =="; continue; fi
+    xml="$("$ADB" -s "$s" shell cat /sdcard/artemis-ui.xml 2>/dev/null | tr -d '\r')"
+    "$ADB" -s "$s" shell rm -f /sdcard/artemis-ui.xml >/dev/null 2>&1 || true
+    [ -n "$xml" ] || { zeg "== $naam: lege schermboom =="; continue; }
+    wh="$(wand_maat "$s")"; w="${wh%% *}"; h="${wh##* }"
+    zeg "== $naam -- scherm als tekst (tikbare elementen; tik met de wand of de fractie) =="
+    printf '%s' "$xml" | ARTEMIS_W="${w:-1080}" ARTEMIS_H="${h:-1920}" python3 -c '
+import sys, os, re, html
+xml = sys.stdin.read()
+W = float(os.environ.get("ARTEMIS_W") or 1080); H = float(os.environ.get("ARTEMIS_H") or 1920)
+n = 0
+for nd in re.findall(r"<node\b[^>]*?/?>", xml):
+    def at(k):
+        m = re.search(r"\b" + k + r"=\"(.*?)\"", nd); return html.unescape(m.group(1)) if m else ""
+    if at("clickable") != "true": continue
+    label = (at("text") or at("content-desc")).strip()
+    if not label: continue
+    b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", nd)
+    if not b: continue
+    x1, y1, x2, y2 = map(int, b.groups())
+    if W <= 0 or H <= 0: continue
+    cx = (x1 + x2) / 2 / W; cy = (y1 + y2) / 2 / H
+    if not (0 <= cx <= 1 and 0 <= cy <= 1): continue
+    n += 1
+    print("  %2d. %s  [tik %.3f %.3f]" % (n, label[:48], cx, cy))
+    if n >= 25: break
+if n == 0: print("  (geen tikbare tekst-elementen gevonden)")
+' 2>/dev/null || zeg "  (kon de schermboom niet ontleden)"
+    gedaan=$((gedaan+1))
+  done
+  [ "$gedaan" -gt 0 ] || zeg "Geen rektelefoon aan de kabel om te lezen (druk op 'Zoek telefoons'; de F8 wordt nooit gelezen)."
+}
+
 # 615: EEN VRAAG -> ELKE REKTELEFOON EEN ANDERE ZOEKMACHINE in zijn eigen browser (am start VIEW). Zo ziet de eigenaar de
 # resultaten naast elkaar op de wand. Rouleert de machines; NOOIT de F8, alleen een toegestane telefoon, en wand_gate blokkeert
 # als er een gevoelige/persoonlijke app op de voorgrond staat. De vraag gaat URL-gecodeerd mee (geen shell-injectie).
@@ -4407,6 +4455,7 @@ case "${1:-status}" in
   motor-meet) motor_meet ;;                   # 678 stap 1b: echte modelsnelheid meten (llama-bench, CPU, grote kernen), nooit de F8
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   f8-kabel) f8_kabel_adres ;;                   # 678j: de F8 aan de kabel -- lees ALLEEN zijn wifi-adres uit en zet hem als denker (nooit besturen)
+  scherm-lees) scherm_lees ;;                   # 678 stap 8: het scherm als tekst lezen (uiautomator), alleen de rektelefoons, nooit de F8, nooit een gevoelige app
   rek-zoek) rek_zoek ;;
   rek-hotspot) rek_hotspot "${2:-}" ;;         # 616: het eigen rek-netwerk opzetten (hotspot-basis + de rest erop), nooit de F8
   rek-op) rek_op "${2:-}" ;;                    # 619/620: in één tik -- scan + relay-lijst (de rektelefoons terug in het rek, op het huis-wifi), nooit de F8
