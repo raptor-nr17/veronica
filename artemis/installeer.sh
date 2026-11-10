@@ -3240,6 +3240,17 @@ MEET_MAP="$REK_MAP/meet"
 MEET_BENCH="/data/local/tmp/llama-bench"
 MEET_MODEL_LOK="$JAPK_PLEK/meet-model.gguf"
 MEET_MODEL_TEL="/data/local/tmp/meet-model.gguf"
+BENCH_LOK="$JAPK_PLEK/llama-bench"               # 678: de arm64 llama-bench op de Chromebook (uit 'Data bouwen: llama-bench'); ARTEMIS pusht hem zelf naar elke telefoon
+# 678: zorg dat BENCH_LOK bestaat -- uit een door Cowork geplakte durable link (~/.artemis-rek/bench-link), anders de lokale file.
+# Echoot het pad als het er is, anders niets (1). De link is OPTIONEEL: zonder link volstaat het lokale bestand.
+bench_zorg() {
+  [ -s "$BENCH_LOK" ] && { printf '%s' "$BENCH_LOK"; return 0; }
+  local lf="$REK_MAP/bench-link" url; [ -s "$lf" ] || return 1
+  url="$(head -1 "$lf" 2>/dev/null | tr -d '\r\n ')"; case "$url" in https://*) : ;; *) return 1 ;; esac
+  curl -fsSL -m 300 "$url" -o "$BENCH_LOK.deel" 2>/dev/null && [ -s "$BENCH_LOK.deel" ] || { rm -f "$BENCH_LOK.deel" 2>/dev/null; return 1; }
+  mv -f "$BENCH_LOK.deel" "$BENCH_LOK" 2>/dev/null; chmod 755 "$BENCH_LOK" 2>/dev/null || true
+  [ -s "$BENCH_LOK" ] && printf '%s' "$BENCH_LOK"
+}
 motor_meet() {
   mkdir -p "$MEET_MAP" 2>/dev/null || true
   local s id naam big mask gedaan=0
@@ -3258,8 +3269,16 @@ motor_meet() {
     local bigN tset; bigN="$(printf '%s' "$big" | tr ',' '\n' | grep -c .)"; case "$bigN" in ''|*[!0-9]*) bigN=4 ;; esac
     tset="$(printf '1\n2\n4\n8\n%s\n' "$bigN" | sort -n -u | paste -sd, -)"
     # llama-bench + model aanwezig? (nooit gokken -- eerlijk zeggen wat ontbreekt)
+    # 678: ontbreekt llama-bench op de telefoon, maar staat hij op de Chromebook (BENCH_LOK, evt. via bench-link), dan ARTEMIS
+    # hem zelf erheen pushen -- zodat "Snelheid meten" niet meer faalt op /data/local/tmp/llama-bench.
     if ! "$ADB" -s "$s" shell "[ -x $MEET_BENCH ]" >/dev/null 2>&1; then
-      zeg "  $naam: llama-bench ontbreekt op $MEET_BENCH. Bouw hem als arm64-doel met de NDK (zelfde toolchain als de APK; recept: docs/lokaal-modelsysteem.md stap 1b) en push hem erheen, of leg een arm64-build in $MEET_BENCH op de telefoon."
+      if bench_zorg >/dev/null 2>&1 && "$ADB" -s "$s" push "$BENCH_LOK" "$MEET_BENCH" >/dev/null 2>&1; then
+        "$ADB" -s "$s" shell chmod 755 "$MEET_BENCH" >/dev/null 2>&1 || true
+        zeg "  $naam: llama-bench erop gezet (van de Chromebook)."
+      fi
+    fi
+    if ! "$ADB" -s "$s" shell "[ -x $MEET_BENCH ]" >/dev/null 2>&1; then
+      zeg "  $naam: llama-bench ontbreekt op $MEET_BENCH. Bouw hem met 'Data bouwen: llama-bench' (tak data-bouw-llama-bench), zet de arm64-binary in $BENCH_LOK op de Chromebook (of plak een durable https-link in ~/.artemis-rek/bench-link); dan zet ik hem er de volgende keer zelf op."
       continue
     fi
     if ! "$ADB" -s "$s" shell "[ -s $MEET_MODEL_TEL ]" >/dev/null 2>&1; then
@@ -4305,7 +4324,11 @@ rek_via_tailscale() {
         "$ADB" disconnect "127.0.0.1:$lport" >/dev/null 2>&1 || true; kill "$pid" 2>/dev/null || true
         zeg "  - een toestel op $ip is de F8 -- losgekoppeld (nooit besturen)."
       else
-        zeg "  - $(toestel_naam "127.0.0.1:$lport") bereikbaar via Tailscale ($ip) op adb 127.0.0.1:$lport."
+        # 678: log de ECHTE modelnaam EN het serienummer van het toestel dat op dit 100.x antwoordt, naast het 100.x -- zo klopt
+        # de naam/serie-koppeling altijd (live uit de telefoon, geen cache/gok). Wijkt het serienummer af van wat je verwacht op
+        # dit 100.x, dan is de Tailscale-IP verschoven -- rek_via_tailscale volgt dat vanzelf (het leest live `tailscale status`).
+        local model serial; model="$(toestel_naam "127.0.0.1:$lport")"; serial="$("$ADB" -s "127.0.0.1:$lport" shell getprop ro.serialno 2>/dev/null | tr -d '\r')"
+        zeg "  - ${model:-?} (serie ${serial:-?}) via Tailscale ($ip) op adb 127.0.0.1:$lport."
         n=$((n+1))
       fi
     else
