@@ -3296,8 +3296,20 @@ BENCH_LOK="$JAPK_PLEK/llama-bench"               # 678: de arm64 llama-bench op 
 # Echoot het pad als het er is, anders niets (1). De link is OPTIONEEL: zonder link volstaat het lokale bestand.
 bench_zorg() {
   [ -s "$BENCH_LOK" ] && { printf '%s' "$BENCH_LOK"; return 0; }
-  local lf="$REK_MAP/bench-link" url; [ -s "$lf" ] || return 1
-  url="$(head -1 "$lf" 2>/dev/null | tr -d '\r\n ')"; case "$url" in https://*) : ;; *) return 1 ;; esac
+  local url=''
+  # 1) een geplakte durable bench-link (optioneel; blijft werken).
+  [ -s "$REK_MAP/bench-link" ] && url="$(head -1 "$REK_MAP/bench-link" 2>/dev/null | tr -d '\r\n ')"
+  # 2) 678 (10 nov): TIK-VRIJ -- de vaste serverlink /meet-bench, AFGELEID van de al-geconfigureerde apk-link
+  #    (https://<host>/jarvis-app/<code>). Zo hoeft niemand nog een bench-link te plakken; de server 302't naar de binary in de
+  #    bucket. Geen adres hard in de code (dat zou een naam zijn) -- de basis komt uit het apk-link-bestand.
+  case "$url" in https://*) : ;; *)
+    if [ -s "$REK_MAP/apk-link" ]; then
+      local apk basis; apk="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
+      basis="$(printf '%s' "$apk" | sed -n 's#^\(https://[a-z0-9.-]\{3,253\}\)/jarvis-app/[a-z2-9]\{10\}$#\1#p')"
+      [ -n "$basis" ] && url="$basis/meet-bench"
+    fi ;;
+  esac
+  case "$url" in https://*) : ;; *) return 1 ;; esac
   curl -fsSL -m 300 "$url" -o "$BENCH_LOK.deel" 2>/dev/null && [ -s "$BENCH_LOK.deel" ] || { rm -f "$BENCH_LOK.deel" 2>/dev/null; return 1; }
   mv -f "$BENCH_LOK.deel" "$BENCH_LOK" 2>/dev/null; chmod 755 "$BENCH_LOK" 2>/dev/null || true
   [ -s "$BENCH_LOK" ] && printf '%s' "$BENCH_LOK"
