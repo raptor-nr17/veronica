@@ -3280,7 +3280,14 @@ hardware() {
 # is een klein GGUF (Qwen3 0.6B Q4_0) in $MEET_MODEL_LOK. Ontbreekt een van beide, dan zegt ARTEMIS precies wat te doen -- nooit een
 # verzonnen getal. Resultaten per telefoon in $MEET_MAP/<naam>.log; de console toont ze direct, Status noemt de laatste meting.
 MEET_MAP="$REK_MAP/meet"
-MEET_TIMEOUT=900                                 # 678 (10 nov): per telefoon hoogstens zoveel seconden op de adb-shell wachten; valt de Tailscale-brug weg, dan niet eeuwig hangen maar melden + door naar de volgende
+MEET_TIMEOUT=900                                 # 678 (10 nov): hoogstens zoveel seconden op EEN adb-shell (--help, pushes) wachten; valt de Tailscale-brug weg, dan niet eeuwig hangen
+# 678 (10 nov, avond): de meting zelf draait LOSGEKOPPELD op de telefoon (nohup -> bestand), ARTEMIS POLLT het bestand. Zo kost een
+# weggevallen brug niets (de meting loopt op de telefoon door) en blijft een deeluitslag (per draden-aantal) bewaard. Nodig omdat
+# 3 van de 4 telefoons de hele reeks niet binnen 900 s haalden (de S10 draait zijn grote kernen op 520 MHz -- echt traag).
+MEET_MAXW=2400                                   # hoogstens zoveel seconden pollen op EEN telefoon; daarna deeluitslag + de meting loopt los door (druk later Meetuitslag)
+MEET_POLL=30                                     # elke zoveel seconden het uitvoerbestand ophalen (korte adb-cat; een mislukte poll is geen ramp, de volgende leest de voortgang)
+MEET_TEL_UIT="/data/local/tmp/meet.uit"          # waar de losgekoppelde meting op de telefoon naartoe schrijft
+MEET_TEL_SH="/data/local/tmp/meet.sh"            # het meetscript op de telefoon
 MEET_BENCH="/data/local/tmp/llama-bench"
 MEET_MODEL_LOK="$JAPK_PLEK/meet-model.gguf"
 MEET_MODEL_TEL="/data/local/tmp/meet-model.gguf"
@@ -3414,29 +3421,41 @@ motor_meet() {
     hulp="$(timeout 120 "$ADB" -s "$s" shell "$MEET_BENCH --help 2>&1; echo RC=\$?" 2>/dev/null | tr -d '\r')"
     hrc="$(printf '%s\n' "$hulp" | sed -n 's/^RC=\([0-9][0-9]*\)$/\1/p' | tail -1)"
     { echo "[zelftest] $MEET_BENCH --help -> exitcode ${hrc:-?}:"; printf '%s\n' "$hulp" | grep -vE '^RC=[0-9]*$' | head -6; echo; } >>"$bestand"
-    # 5 runs achter elkaar (hitte-afremming zichtbaar): pp512 (prefill) + tg128 (decode) apart, threads incl. het aantal grote kernen, CPU-only. Met exitcode.
-    # taskset met het HEX-MASKER; faalt dat toch (oude toybox), dan de meting ZONDER affiniteit (alleen -t threads) -- liever een
-    # meting zonder pinning dan geen meting. RC = de exit van de meting (via `A || B`), niet van taskset.
-    local benchcmd="$MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t $tset -p 512 -n 128 -r 5"
-    # 678 (10 nov): met een TIME-OUT -- valt de adb-shell/Tailscale-brug weg midden in de meting (gezien: een telefoon hing een half uur), dan kappen
-    # we na MEET_TIMEOUT s af, melden het en gaan DOOR naar de volgende telefoon (het slot komt vrij aan het eind van de lus).
-    local ruw mrc uit rc
-    ruw="$(timeout "$MEET_TIMEOUT" "$ADB" -s "$s" shell "taskset $hexmask $benchcmd 2>&1 || $benchcmd 2>&1; echo RC=\$?" 2>/dev/null)"; mrc=$?
-    if [ "$mrc" = 124 ]; then
-      { echo "[meting] VASTGELOPEN: time-out na ${MEET_TIMEOUT}s -- de adb-shell/Tailscale-brug viel weg. Overgeslagen."; echo; } >>"$bestand"
-      zeg "    $naam: VASTGELOPEN (time-out na ${MEET_TIMEOUT}s -- adb/Tailscale-brug weg?). Overgeslagen; door naar de volgende."
-      continue
-    fi
-    uit="$(printf '%s' "$ruw" | tr -d '\r')"
-    rc="$(printf '%s\n' "$uit" | sed -n 's/^RC=\([0-9][0-9]*\)$/\1/p' | tail -1)"
-    { echo "[meting] exitcode ${rc:-?}:"; printf '%s\n' "$uit" | grep -vE '^RC=[0-9]*$'; echo; } >>"$bestand"
-    # de t/s-regels teruggeven aan de console; GEEN meetregels -> de exitcode + de fout (niet verbergen -- dat was de blinde vlek)
-    if printf '%s\n' "$uit" | grep -qiE 'pp512|tg128'; then
-      printf '%s\n' "$uit" | grep -iE 'pp512|tg128|t/s|tokens' | head -12 | while IFS= read -r r; do zeg "    $r"; done
-    else
-      zeg "    GEEN meetregels -- llama-bench exitcode ${rc:-?} (zelftest --help: ${hrc:-?}). Zie Meetuitslag voor de fout (arch/bionic, exec-recht of noexec /data/local/tmp)."
-    fi
-    zeg "  $naam: klaar -- volledige meting in $bestand (en in de Log)."
+    toonUit() { printf '%s\n' "$1" | grep -iE 'draden|pp512|tg128|t/s' | head -24 | while IFS= read -r r; do zeg "    $r"; done; }
+    # Staat er al een VOLTOOIDE (losgekoppelde) meting van een eerdere, afgebroken poll? Dan die pakken -- niet opnieuw meten
+    # (de S10 kan >40 min doen; zo gaat een in de achtergrond afgemaakte meting niet verloren bij een nieuwe druk).
+    local vorig; vorig="$(timeout 25 "$ADB" -s "$s" shell "cat $MEET_TEL_UIT 2>/dev/null" 2>/dev/null | tr -d '\r')"
+    case "$vorig" in
+      *KLAAR*)
+        { echo "[meting] klaar (losgekoppelde meting van eerder):"; printf '%s\n' "$vorig" | grep -v '^KLAAR$'; echo; } >>"$bestand"
+        toonUit "$vorig"; zeg "  $naam: klaar (uit een eerdere achtergrondmeting)."; gedaan=$((gedaan+1)); continue ;;
+    esac
+    # 678 (10 nov, avond): de meting LOSGEKOPPELD op de telefoon. Een meetscript (per draden-aantal een aparte run, zodat een
+    # deeluitslag bewaard blijft) + nohup; ARTEMIS pollt het uitvoerbestand. taskset met het HEX-MASKER, met terugval zonder
+    # affiniteit (oude toybox). -r 3 (kortere reeks dan de oude -r 5 -- sneller op de trage telefoons).
+    local tset_sp; tset_sp="$(printf '%s' "$tset" | tr ',' ' ')"
+    "$ADB" -s "$s" shell "cat > $MEET_TEL_SH" <<SH
+for t in $tset_sp; do
+  echo "=== draden \$t ==="
+  taskset $hexmask $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t \$t -p 512 -n 128 -r 3 2>&1 || $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t \$t -p 512 -n 128 -r 3 2>&1
+done
+echo KLAAR
+SH
+    timeout 30 "$ADB" -s "$s" shell "chmod 755 $MEET_TEL_SH; rm -f $MEET_TEL_UIT; nohup sh $MEET_TEL_SH >$MEET_TEL_UIT 2>&1 </dev/null & echo gestart" >/dev/null 2>&1
+    zeg "  $naam: meting gestart (losgekoppeld op de telefoon, kernen $big masker $hexmask); ik lees de voortgang..."
+    local wacht=0 klaar=0 laatste='' tussen
+    while [ "$wacht" -lt "$MEET_MAXW" ]; do
+      sleep "$MEET_POLL"; wacht=$((wacht + MEET_POLL))
+      # een korte, begrensde poll; valt de brug weg, dan faalt deze poll maar loopt de meting op de telefoon door -> de volgende poll leest 'm
+      tussen="$(timeout 25 "$ADB" -s "$s" shell "cat $MEET_TEL_UIT 2>/dev/null" 2>/dev/null | tr -d '\r')"
+      [ -n "$tussen" ] && laatste="$tussen"
+      case "$tussen" in *KLAAR*) klaar=1; break ;; esac
+    done
+    { echo "[meting] $([ "$klaar" = 1 ] && echo 'klaar' || echo "deeluitslag na ${wacht}s -- de rest loopt mogelijk nog op de telefoon"):"; printf '%s\n' "$laatste" | grep -v '^KLAAR$'; echo; } >>"$bestand"
+    if printf '%s\n' "$laatste" | grep -qiE 'pp512|tg128'; then toonUit "$laatste"
+    else zeg "    Nog geen meetregels (zelftest --help: ${hrc:-?}). De meting loopt los op de telefoon; druk later Meetuitslag."; fi
+    [ "$klaar" = 1 ] && zeg "  $naam: klaar -- volledige meting in $bestand (en in de Log)." \
+      || zeg "  $naam: deeluitslag bewaard; de rest loopt los door op de telefoon (een weggevallen brug kost niets). Druk later Meetuitslag voor de volledige uitslag."
     gedaan=$((gedaan+1))
   done
   if [ "$gedaan" -eq 0 ]; then
