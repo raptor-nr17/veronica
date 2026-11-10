@@ -62,6 +62,30 @@
 
   function schermUrl(base) { return String(base || '').replace(/\/+$/, '') + '/jarvis/scherm'; }
   function tikUrl(base) { return String(base || '').replace(/\/+$/, '') + '/jarvis/tik'; }
+  // 678: de screencap via de HTTPS-RELAY (JARVIS pusht hem daar, Veronica haalt het laatste frame). Zo kan een https-Veronica
+  // tóch live (geen mixed content). Het frame is base64 van de VERSLEUTELDE JPEG -- Veronica ontsleutelt met de rij-sleutel.
+  function schermUrlRelay(relayBasis, onderwerp) { return String(relayBasis || '').replace(/\/+$/, '') + '/scherm/' + String(onderwerp || ''); }
+
+  // bronnen(telefoon, relayBasis): de mogelijke screencap-bronnen, op VOLGORDE van voorkeur: direct Tailscale 100.x, dan de
+  //  https-relay (als er een schermOnderwerp is), dan een direct LAN-wifi-adres. Nooit localhost. Elk: { basis, soort, onderwerp }.
+  function bronnen(telefoon, relayBasis) {
+    const t = telefoon && typeof telefoon === 'object' ? telefoon : {};
+    const uit = [];
+    const ts = String(t.tailscale || t.ts || '').trim();
+    if (isTailscale(ts)) uit.push({ basis: 'http://' + ts + ':' + JARVIS_POORT, soort: 'direct', onderwerp: null });
+    const r = String(relayBasis || t.relay || '').trim().replace(/\/+$/, '');
+    const onderwerp = String(t.schermOnderwerp || '').trim();
+    if (r && !isLokaal(r) && /^[-_A-Za-z0-9]{1,64}$/.test(onderwerp)) uit.push({ basis: r, soort: 'relay', onderwerp: onderwerp });
+    const w = String(t.wifi || t.ip || '').trim();
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(w) && !isLokaal(w)) uit.push({ basis: 'http://' + w + ':' + JARVIS_POORT, soort: 'direct', onderwerp: null });
+    return uit;
+  }
+  // kiesBron(telefoon, relayBasis, origin): de EERSTE bron die live mag vanaf deze pagina-origin (mixed-content-regel). null = geen.
+  //  Vanaf een https-Veronica valt de directe http-100.x af en wint de https-relay vanzelf.
+  function kiesBron(telefoon, relayBasis, origin) {
+    for (const b of bronnen(telefoon, relayBasis)) if (kanLive(origin, b.basis)) return b;
+    return null;
+  }
 
   // tikFractie(rect, bw, bh, clientX, clientY): dezelfde object-fit:contain-rekenwijze als KERN.plek, maar PUUR (met een rect i.p.v.
   // een canvas), zodat het grote scherm EXACT dezelfde mapping gebruikt -- de fix voor de tik-drift bij "Groot". Fractie 0..1.
@@ -90,18 +114,23 @@
   function tegels(telefoons, relayBasis, origin, nooitLijst, bankKluisLijst) {
     const lijst = (Array.isArray(telefoons) ? telefoons : []).slice(0, KERN.MAX_TEGELS || 8);
     return lijst.map((t) => {
-      const b = basis(t, relayBasis);
       const kijk = KERN.kijkAlleen ? KERN.kijkAlleen(t.vinger, nooitLijst, t.naam, bankKluisLijst) : /f8/i.test(String(t.naam || ''));
-      const live = kanLive(origin, b);
+      const bron = kiesBron(t, relayBasis, origin);
+      const alle = bronnen(t, relayBasis);
       let reden = '';
-      if (!b) reden = 'geen direct of relay-adres (zet Tailscale aan, of gebruik de kabel-wand)';
-      else if (!live) reden = 'deze pagina is https en kan het http-adres niet ophalen (mixed content) -- via de relay of de ARTEMIS-console';
-      return { naam: t.naam || 'Telefoon', vinger: t.vinger || null, basis: b, live: live, kijkAlleen: !!kijk, reden: reden };
+      if (!alle.length) reden = 'geen direct of relay-adres (zet Tailscale aan, of gebruik de kabel-wand)';
+      else if (!bron) reden = 'deze pagina is https en kan het http-adres niet ophalen (mixed content) -- via de https-relay of de ARTEMIS-console';
+      return {
+        naam: t.naam || 'Telefoon', vinger: t.vinger || null,
+        basis: bron ? bron.basis : null, soort: bron ? bron.soort : null, onderwerp: bron ? bron.onderwerp : null,
+        live: !!bron, kijkAlleen: !!kijk, reden: reden,
+      };
     });
   }
 
   const API = {
-    POLL_MS, JARVIS_POORT, isLokaal, isTailscale, basis, kanLive, schermUrl, tikUrl, tikFractie, tikPayload, tegels, kern: KERN,
+    POLL_MS, JARVIS_POORT, isLokaal, isTailscale, basis, kanLive, schermUrl, tikUrl, schermUrlRelay,
+    bronnen, kiesBron, tikFractie, tikPayload, tegels, kern: KERN,
   };
 
   // --- de browser-kant: INERT tot mount() wordt aangeroepen (geen netwerk bij het laden; dat eist de privé-hoek, §466) ---
@@ -113,6 +142,7 @@
       const o = opties && typeof opties === 'object' ? opties : {};
       const haal = o.fetch || (typeof fetch === 'function' ? fetch.bind(null) : null);
       const origin = o.origin || (typeof location !== 'undefined' ? location.origin : '');
+      const ontsleutel = typeof o.ontsleutel === 'function' ? o.ontsleutel : null;   // (base64) -> Blob/ArrayBuffer; nodig voor de relay-bron
       const rijen = tegels(o.telefoons, o.relayBasis, origin, o.nooitLijst || [], o.bankKluisLijst || []);
       if (!container) return { stop() {} };
       while (container.firstChild) container.removeChild(container.firstChild);
@@ -128,9 +158,13 @@
           const p = document.createElement('p'); p.className = 'swnReden'; p.textContent = t.reden; tegel.appendChild(p);
           grid.appendChild(tegel); continue;
         }
+        if (t.soort === 'relay' && !ontsleutel) {   // de relay geeft versleutelde base64 -- zonder sleutel geen beeld (eerlijk)
+          const p = document.createElement('p'); p.className = 'swnReden'; p.textContent = 'relay-beeld, maar geen sleutel om het te tonen'; tegel.appendChild(p);
+          grid.appendChild(tegel); continue;
+        }
         const c = document.createElement('canvas'); c.className = 'swnScherm'; tegel.appendChild(c);
         const stand = (KERN.nieuweBeeldStand || (() => ({})))(Date.now());
-        pollTegel(t, c, stand, S, haal);
+        pollTegel(t, c, stand, S, haal, ontsleutel);
         if (!t.kijkAlleen) koppelTik(t, c, S, haal);
         grid.appendChild(tegel);
       }
@@ -141,16 +175,20 @@
       };
     };
 
-    function pollTegel(t, canvas, stand, S, haal) {
+    function pollTegel(t, canvas, stand, S, haal, ontsleutel) {
       if (!haal) return;
+      const url = t.soort === 'relay' ? schermUrlRelay(t.basis, t.onderwerp) : schermUrl(t.basis);
       let bezig = false, teller = 0;
       const tik = async () => {
         if (bezig) return; bezig = true;
         try {
-          const r = await haal(schermUrl(t.basis), { cache: 'no-store' });
+          const r = await haal(url, { cache: 'no-store' });
           if (r && r.ok) {
-            const blob = await r.blob();
-            const bitmap = (typeof createImageBitmap === 'function') ? await createImageBitmap(blob) : null;
+            // direct: de JPEG zelf; relay: base64 van de VERSLEUTELDE JPEG -> eerst ontsleutelen tot een blob
+            let blob;
+            if (t.soort === 'relay') { const b64 = await r.text(); blob = await ontsleutel(b64); }
+            else blob = await r.blob();
+            const bitmap = (blob && typeof createImageBitmap === 'function') ? await createImageBitmap(blob) : null;
             if (bitmap) {
               if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
               if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
