@@ -635,6 +635,10 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <input id=wifiSsid type=text autocomplete=off spellcheck=false placeholder="wifi-naam (SSID)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:200px;min-height:48px">
 <input id=wifiWw type=password autocomplete=off spellcheck=false placeholder="wifi-wachtwoord" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:200px;min-height:48px">
 <button id=wifiBewaar>Bewaar wifi van deze plek</button></p>
+<p style="margin-top:6px">Meet-links (voor &quot;Snelheid meten&quot;): plak de llama-bench-link (de presigned link die Claude geeft, 7 dagen geldig). Het meetmodel hoeft NIET: ARTEMIS haalt Qwen3 0.6B zelf van Hugging Face naar de SD-kaart. Beide blijven ALLEEN hier (600). Laat een veld leeg om het niet te wijzigen.<br>
+<input id=benchLink type=text autocomplete=off spellcheck=false placeholder="llama-bench-link (https://...)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
+<input id=modelLink type=text autocomplete=off spellcheck=false placeholder="meetmodel-link (optioneel, laat leeg)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
+<button id=meetLinksBewaar>Bewaar meet-links</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <p style="margin:8px 0 2px;color:#8aa">Live (Log/Status vernieuwen hier, zonder je knop-uitkomst te overschrijven):</p>
 <pre id=live style="opacity:.85"></pre>
@@ -714,6 +718,17 @@ if(wbw)wbw.addEventListener('click',async()=>{{
     const r=await fetch('/wifi',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'ssid='+encodeURIComponent(ssid)+'&ww='+encodeURIComponent(ww)}});
     uit.textContent=nu()+' — '+(await r.text());
     const w=document.getElementById('wifiWw'); if(w)w.value='';
+  }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
+}});
+// 678: de meet-links bewaren (llama-bench + optioneel meetmodel), alleen lokaal op de Chromebook (600). Een leeg veld = niet wijzigen.
+const mbw=document.getElementById('meetLinksBewaar');
+if(mbw)mbw.addEventListener('click',async()=>{{
+  const bench=(document.getElementById('benchLink').value||'').trim();
+  const model=(document.getElementById('modelLink').value||'').trim();
+  uit.textContent=nu()+' — meet-links bewaren…';
+  try{{
+    const r=await fetch('/meet-links',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'bench='+encodeURIComponent(bench)+'&model='+encodeURIComponent(model)}});
+    uit.textContent=nu()+' — '+(await r.text());
   }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
 }});
 // 613: bij een zelf-herstart (Bijwerken) is de console ~1 s weg. Dit HERGEBRUIKT HETZELFDE tabblad: zodra de console terug is
@@ -1103,6 +1118,34 @@ class H(BaseHTTPRequestHandler):
                 try: os.chmod(pad, 0o600)
                 except Exception: pass
                 self._schrijf(200, 'Wifi van deze plek opgeslagen (SSID: ' + ssid + '; wachtwoord niet getoond), alleen hier op de Chromebook. Een nieuwe telefoon aan de kabel krijgt dit wifi nu vanzelf bij het klaarzetten.')
+            except Exception as e:
+                self._schrijf(500, 'fout: ' + str(e))
+            return
+        if p.path == '/meet-links':
+            # 678: de links voor "Snelheid meten": llama-bench (bench-link) en optioneel het meetmodel (meet-model-link). ALLEEN
+            # lokaal bewaard (600); nooit in de bron (openbare Pages), het log, GitHub, de relay of Veronica. Een https-link, of leeg
+            # (= dat veld niet wijzigen). ARTEMIS haalt de bench hier vandaan en pusht hem bij het meten; het model valt zonder link
+            # terug op de Hugging-Face-standaard.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            bench = (f.get('bench', [''])[0]).strip()
+            model = (f.get('model', [''])[0]).strip()
+            gedaan = []
+            try:
+                for naam, waarde in (('bench-link', bench), ('meet-model-link', model)):
+                    if waarde == '':
+                        continue
+                    if not waarde.startswith('https://') or '\n' in waarde or '\r' in waarde or len(waarde) > 2000:
+                        self._schrijf(400, 'De ' + naam + ' moet een https-link zijn (geen regeleinde, niet te lang).'); return
+                    pad = os.path.join(REK, naam)
+                    with open(pad, 'w') as fh: fh.write(waarde + '\n')
+                    try: os.chmod(pad, 0o600)
+                    except Exception: pass
+                    gedaan.append(naam)
+                if gedaan:
+                    self._schrijf(200, 'Opgeslagen (' + ', '.join(gedaan) + '), alleen hier op de Chromebook. Druk nu op "Snelheid meten (llama-bench)"; ARTEMIS zet de bench + het model zelf op elke telefoon.')
+                else:
+                    self._schrijf(200, 'Niets gewijzigd (beide velden leeg). Het meetmodel haalt ARTEMIS sowieso zelf op; de llama-bench-link heb je wel nodig.')
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
@@ -3251,13 +3294,21 @@ bench_zorg() {
   mv -f "$BENCH_LOK.deel" "$BENCH_LOK" 2>/dev/null; chmod 755 "$BENCH_LOK" 2>/dev/null || true
   [ -s "$BENCH_LOK" ] && printf '%s' "$BENCH_LOK"
 }
-# 678: zorg dat het meetmodel op de Chromebook staat -- uit een door Cowork geplakte durable link (~/.artemis-rek/meet-model-link),
-# anders de lokale file. De bron (HF/bucket) bepaalt Cowork: de exacte HF-bestandsnaam is hier niet veilig te raden (§517).
+# 678: zorg dat het meetmodel op de Chromebook staat (op de SD-kaart via MEET_MODEL_LOK=$JAPK_PLEK, niet het ext4-hokje). Bron:
+# een door Cowork geplakte link (~/.artemis-rek/meet-model-link), anders de STANDAARD -- Qwen3 0.6B Q4_0 GGUF op Hugging Face
+# (publiek, stabiel, door Cowork nagekeken op 10 nov). Zo hoeft niemand iets te plakken. We controleren de GGUF-magic, zodat een
+# foute download (HTML/redirect) niet als model doorgaat (§517: nooit een verzonnen/verkeerd bestand).
+MEET_MODEL_HF="https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_0.gguf"
 model_zorg() {
   [ -s "$MEET_MODEL_LOK" ] && { printf '%s' "$MEET_MODEL_LOK"; return 0; }
-  local lf="$REK_MAP/meet-model-link" url; [ -s "$lf" ] || return 1
-  url="$(head -1 "$lf" 2>/dev/null | tr -d '\r\n ')"; case "$url" in https://*) : ;; *) return 1 ;; esac
-  curl -fsSL -m 1200 "$url" -o "$MEET_MODEL_LOK.deel" 2>/dev/null && [ -s "$MEET_MODEL_LOK.deel" ] || { rm -f "$MEET_MODEL_LOK.deel" 2>/dev/null; return 1; }
+  local lf="$REK_MAP/meet-model-link" url
+  if [ -s "$lf" ]; then url="$(head -1 "$lf" 2>/dev/null | tr -d '\r\n ')"; else url="$MEET_MODEL_HF"; fi
+  case "$url" in https://*) : ;; *) return 1 ;; esac
+  mkdir -p "$(dirname "$MEET_MODEL_LOK")" 2>/dev/null || true
+  zeg "  meetmodel ophalen (~382 MB, naar de SD-kaart)..."
+  curl -fsSL -m 3600 "$url" -o "$MEET_MODEL_LOK.deel" 2>/dev/null && [ -s "$MEET_MODEL_LOK.deel" ] || { rm -f "$MEET_MODEL_LOK.deel" 2>/dev/null; zeg "  meetmodel ophalen lukte niet ($url)."; return 1; }
+  # GGUF-magic: de eerste vier tekens horen "GGUF" te zijn; anders is het een foutpagina/redirect, geen model.
+  if [ "$(head -c4 "$MEET_MODEL_LOK.deel" 2>/dev/null)" != "GGUF" ]; then rm -f "$MEET_MODEL_LOK.deel" 2>/dev/null; zeg "  de download is geen GGUF-model (foutpagina?). Overgeslagen."; return 1; fi
   mv -f "$MEET_MODEL_LOK.deel" "$MEET_MODEL_LOK" 2>/dev/null
   [ -s "$MEET_MODEL_LOK" ] && printf '%s' "$MEET_MODEL_LOK"
 }
@@ -4306,9 +4357,10 @@ ts_ui_loginlink() {
 # deelt, dus adb bereikt een 100.x niet rechtstreeks. Recept (§676/stap-2): tailscaled in Crostini met userspace-networking (dat
 # zet `tailscale_op`), en per telefoon een socat-brug van een lokale poort naar `tailscale nc <100.x> 5555`; dan `adb connect
 # 127.0.0.1:<lport>`. Zo werkt het rek op ELK netwerk (elke verhuizing): het 100.x-adres is vast. NOOIT de F8. Geen IP/naam hard
-# in dit (openbare) script -- de adressen komen uit `tailscale status` op de Chromebook; hostnamen loggen we niet (kunnen een
-# persoonsnaam dragen), alleen het 100.x-adres en de adb-modelnaam. NIET vanuit de container te verifiëren (geen Tailscale/socat/
-# echte telefoons hier); de proef draait op de Chromebook.
+# in dit (openbare) script -- de adressen EN de tailnet-hostnamen komen uit `tailscale status` op de Chromebook (runtime; niets
+# staat in de code). De hostnaam wordt wél in het LOKALE console-log getoond (127.0.0.1-only) -- nodig om te zien welk 100.x welke
+# telefoon is (de S10/Cat-verwarring van 10 nov: twee 100.x kwamen bij dezelfde Cat uit). NIET vanuit de container te verifiëren
+# (geen Tailscale/socat/echte telefoons hier); de proef draait op de Chromebook.
 rek_via_tailscale() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 1; }
   command -v tailscale >/dev/null 2>&1 || { zeg "Tailscale ontbreekt in Crostini. Druk eerst op 'Tailscale op deze Chromebook (inloggen)'."; return 1; }
@@ -4316,14 +4368,25 @@ rek_via_tailscale() {
     sudo -n apt-get install -y socat >/dev/null 2>&1 || { zeg "socat ontbreekt. Installeer het eenmalig: sudo apt-get install -y socat (daarna werkt deze knop)."; return 1; }
   fi
   tailscale status >/dev/null 2>&1 || { zeg "Tailscale is niet verbonden in Crostini. Druk op 'Tailscale op deze Chromebook (inloggen)' en log in; daarna deze knop opnieuw."; return 1; }
-  local zelf ip lport pid n=0
+  local zelf status_out regel ip host lport pid n=0 model serial gezien_serie=""
   zelf="$(tailscale ip -4 2>/dev/null | head -1)"
   # bestaande bruggen van een vorige ronde opruimen -- ALLEEN de onze, op PID uit het bestand (nooit pkill -f: dat raakt de eigen shell)
   if [ -f "$TS_BRUG_F" ]; then while read -r _lp _ip _pid; do [ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true; done <"$TS_BRUG_F"; fi
   : >"$TS_BRUG_F" 2>/dev/null || true
+  status_out="$(tailscale status 2>/dev/null)"
   zeg "== Rek via Tailscale (vaste 100.x-adressen; werkt op elk netwerk) =="
-  for ip in $(tailscale status 2>/dev/null | awk '{print $1}' | grep -E '^100\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u); do
+  # per peer: het 100.x, de tailnet-hostnaam (kolom 2 -- zo zie je WELKE telefoon welk adres heeft) en of hij offline is. We
+  # ONTDUBBELEN op serienummer: komen twee 100.x bij hetzelfde toestel uit (dubbele Tailscale-aanmelding), dan houden we er één en
+  # melden de andere -- zodat je ziet dat een adres NIET de telefoon is die je verwacht (de S10/Cat-verwarring van 10 nov).
+  while IFS= read -r regel; do
+    ip="$(printf '%s' "$regel" | awk '{print $1}')"
+    case "$ip" in 100.*) : ;; *) continue ;; esac
     [ "$ip" = "$zelf" ] && continue
+    host="$(printf '%s' "$regel" | awk '{print $2}')"
+    if printf '%s' "$regel" | grep -qiw offline; then
+      zeg "  - $host ($ip): OFFLINE in Tailscale -- niet te bereiken (staat die telefoon aan en verbonden met Tailscale?)."
+      continue
+    fi
     lport=$(( 5600 + n ))
     socat "TCP-LISTEN:$lport,reuseaddr,fork,bind=127.0.0.1" "EXEC:tailscale nc $ip 5555" >/dev/null 2>&1 &
     pid=$!
@@ -4332,20 +4395,25 @@ rek_via_tailscale() {
     if "$ADB" connect "127.0.0.1:$lport" 2>/dev/null | grep -qiE 'connected|already'; then
       if is_f8 "127.0.0.1:$lport"; then
         "$ADB" disconnect "127.0.0.1:$lport" >/dev/null 2>&1 || true; kill "$pid" 2>/dev/null || true
-        zeg "  - een toestel op $ip is de F8 -- losgekoppeld (nooit besturen)."
-      else
-        # 678: log de ECHTE modelnaam EN het serienummer van het toestel dat op dit 100.x antwoordt, naast het 100.x -- zo klopt
-        # de naam/serie-koppeling altijd (live uit de telefoon, geen cache/gok). Wijkt het serienummer af van wat je verwacht op
-        # dit 100.x, dan is de Tailscale-IP verschoven -- rek_via_tailscale volgt dat vanzelf (het leest live `tailscale status`).
-        local model serial; model="$(toestel_naam "127.0.0.1:$lport")"; serial="$("$ADB" -s "127.0.0.1:$lport" shell getprop ro.serialno 2>/dev/null | tr -d '\r')"
-        zeg "  - ${model:-?} (serie ${serial:-?}) via Tailscale ($ip) op adb 127.0.0.1:$lport."
-        n=$((n+1))
+        zeg "  - $host ($ip) is de F8 -- losgekoppeld (nooit besturen)."
+        continue
       fi
+      model="$(toestel_naam "127.0.0.1:$lport")"; serial="$("$ADB" -s "127.0.0.1:$lport" shell getprop ro.serialno 2>/dev/null | tr -d '\r')"
+      # ONTDUBBELEN: dit serienummer al eerder verbonden via een ander 100.x? Dan is het DEZELFDE telefoon (twee tailnet-nodes voor
+      # één toestel) -- die tweede brug loskoppelen en melden; zo blijf je niet twee keer naar hetzelfde toestel pushen.
+      if [ -n "$serial" ] && printf ' %s ' "$gezien_serie" | grep -qF " $serial "; then
+        "$ADB" -s "127.0.0.1:$lport" disconnect >/dev/null 2>&1; "$ADB" disconnect "127.0.0.1:$lport" >/dev/null 2>&1 || true; kill "$pid" 2>/dev/null || true
+        zeg "  - $host ($ip) = DEZELFDE telefoon (serie $serial, $model) als een eerder 100.x -- overgeslagen. Dubbele Tailscale-aanmelding voor dit toestel; de telefoon die je hier verwacht, staat niet (meer) op dit adres."
+        continue
+      fi
+      gezien_serie="$gezien_serie $serial"
+      zeg "  - $host: ${model:-?} (serie ${serial:-?}) via Tailscale ($ip) op adb 127.0.0.1:$lport."
+      n=$((n+1))
     else
       kill "$pid" 2>/dev/null || true
-      zeg "  - $ip niet bereikbaar via Tailscale (staat adb 5555 aan op die telefoon?)."
+      zeg "  - $host ($ip) reageert niet op adb 5555 -- adb-over-tcp staat waarschijnlijk uit (na een herstart). Zet 'm weer aan: sluit die telefoon één keer met de kabel aan en druk op 'Telefoon klaarzetten' (dat zet 5555 herstart-vast)."
     fi
-  done
+  done <<< "$status_out"
   [ "$n" -gt 0 ] && zeg "Rek via Tailscale: $n telefoon(s) verbonden. Blijft werken na een verhuizing (het 100.x-adres is vast)." || zeg "Geen telefoon via Tailscale verbonden (is Tailscale op de telefoons aan en adb 5555?)."
 }
 # de minuut-scan roept dit aan, maar hoogstens eens per ~300 s (de bruggen blijven staan; niet elke minuut herbouwen). Best-effort.
