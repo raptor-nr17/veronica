@@ -3251,6 +3251,16 @@ bench_zorg() {
   mv -f "$BENCH_LOK.deel" "$BENCH_LOK" 2>/dev/null; chmod 755 "$BENCH_LOK" 2>/dev/null || true
   [ -s "$BENCH_LOK" ] && printf '%s' "$BENCH_LOK"
 }
+# 678: zorg dat het meetmodel op de Chromebook staat -- uit een door Cowork geplakte durable link (~/.artemis-rek/meet-model-link),
+# anders de lokale file. De bron (HF/bucket) bepaalt Cowork: de exacte HF-bestandsnaam is hier niet veilig te raden (§517).
+model_zorg() {
+  [ -s "$MEET_MODEL_LOK" ] && { printf '%s' "$MEET_MODEL_LOK"; return 0; }
+  local lf="$REK_MAP/meet-model-link" url; [ -s "$lf" ] || return 1
+  url="$(head -1 "$lf" 2>/dev/null | tr -d '\r\n ')"; case "$url" in https://*) : ;; *) return 1 ;; esac
+  curl -fsSL -m 1200 "$url" -o "$MEET_MODEL_LOK.deel" 2>/dev/null && [ -s "$MEET_MODEL_LOK.deel" ] || { rm -f "$MEET_MODEL_LOK.deel" 2>/dev/null; return 1; }
+  mv -f "$MEET_MODEL_LOK.deel" "$MEET_MODEL_LOK" 2>/dev/null
+  [ -s "$MEET_MODEL_LOK" ] && printf '%s' "$MEET_MODEL_LOK"
+}
 motor_meet() {
   mkdir -p "$MEET_MAP" 2>/dev/null || true
   local s id naam big mask gedaan=0
@@ -3282,10 +3292,10 @@ motor_meet() {
       continue
     fi
     if ! "$ADB" -s "$s" shell "[ -s $MEET_MODEL_TEL ]" >/dev/null 2>&1; then
-      if [ -s "$MEET_MODEL_LOK" ]; then zeg "  $naam: meetmodel erheen zetten..."; "$ADB" -s "$s" push "$MEET_MODEL_LOK" "$MEET_MODEL_TEL" >/dev/null 2>&1 || true; fi
+      if model_zorg >/dev/null 2>&1; then zeg "  $naam: meetmodel erheen zetten..."; "$ADB" -s "$s" push "$MEET_MODEL_LOK" "$MEET_MODEL_TEL" >/dev/null 2>&1 || true; fi
     fi
     if ! "$ADB" -s "$s" shell "[ -s $MEET_MODEL_TEL ]" >/dev/null 2>&1; then
-      zeg "  $naam: het meetmodel ontbreekt ($MEET_MODEL_TEL). Leg een klein GGUF (Qwen3 0.6B Q4_0) in $MEET_MODEL_LOK op deze computer; dan zet ik het er de volgende keer zelf op."
+      zeg "  $naam: het meetmodel ontbreekt ($MEET_MODEL_TEL). Leg een klein GGUF (Qwen3 0.6B Q4_0) in $MEET_MODEL_LOK op deze computer (of plak een durable https-link in ~/.artemis-rek/meet-model-link); dan zet ik het er zelf op."
       continue
     fi
     # de omstandigheden loggen (hitte/besparing verklaren een lage uitkomst) -- accu, temperatuur, klok van de grote kernen, scherm
