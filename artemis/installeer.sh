@@ -1281,14 +1281,20 @@ stop_artemis() {
 
 # Een ronde van de waakhond. Geeft 0 terug als ARTEMIS mag blijven draaien.
 waak_ronde() {
-  local s id pkg soort
+  local s id pkg soort via_ts
   local naam
   for s in $(verbonden); do
+    # 678 (10 nov): een Tailscale-brug (127.0.0.1:560x uit TS_BRUG_F) is een rektelefoon die rek_via_tailscale verbond (de F8 is
+    # daar al uitgesloten + ontdubbeld). Zulke tunnel-toestellen staan NIET op de kabel-lijst (TOEG) en hun adb-shell is tijdens
+    # een meting BEZIG (dus soms even geen modelnaam). Geen van beide is een reden voor een STOP of een disconnect -- dat doodde
+    # de meting (een tunnel-telefoon via 127.0.0.1:5600 werd als 'onbekend' gezien; ARTEMIS + de meet-lezer gingen uit, de tunnels vielen weg).
+    via_ts=0; case "$s" in 127.0.0.1:56[0-9][0-9]) { [ -f "$TS_BRUG_F" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$TS_BRUG_F" 2>/dev/null; } && via_ts=1 ;; esac
     naam="$(toestel_naam "$s")"
-    # 675: een toestel dat GEEN modelnaam teruggeeft is half-verbonden/offline (de adb-shell antwoordt niet). Dat is GEEN
-    # veiligheidsrisico (niet te besturen, geen schermfoto) en dus GEEN reden om ARTEMIS te stoppen -- precies de valse STOP
-    # "een toestel dat niet op de lijst staat ()" met een lege naam (gezien 05:18 en 10:03). Ruim een dood draadloos adres op en ga door.
+    # 675: een toestel dat GEEN modelnaam teruggeeft is half-verbonden/offline (de adb-shell antwoordt niet). Geen veiligheidsrisico
+    # (niet te besturen, geen schermfoto) en dus GEEN reden om ARTEMIS te stoppen. Een DOOD draadloos adres ruimen we op; een BEZIGE
+    # Tailscale-meettunnel laten we met rust (die moet blijven staan).
     if [ -z "$naam" ]; then
+      if [ "$via_ts" -eq 1 ]; then logregel "Overgeslagen: $s (Tailscale-meettunnel, adb-shell bezig) -- geen STOP, tunnel blijft staan."; continue; fi
       case "$s" in *:*) "$ADB" disconnect "$s" >/dev/null 2>&1 || true ;; esac
       logregel "Overgeslagen: $s antwoordt niet (geen modelnaam) -- geen STOP."
       continue
@@ -1300,7 +1306,8 @@ waak_ronde() {
       stop_artemis
       return 1
     fi
-    if ! toegestaan "$id"; then
+    # een tunnel-toestel dat niet op de kabel-lijst staat is GEEN reden voor een STOP (de verboden-app-controle hieronder geldt wél).
+    if [ "$via_ts" -eq 0 ] && ! toegestaan "$id"; then
       logregel "STOP: een toestel dat niet op de lijst staat ($naam). ARTEMIS is uitgezet."
       case "$s" in *:*) "$ADB" disconnect "$s" >/dev/null 2>&1 || true ;; esac
       stop_artemis
