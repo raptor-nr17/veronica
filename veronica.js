@@ -3471,6 +3471,17 @@
   // steeds opnieuw getekend). Bewaren = EEN roep 'motor-instel' met de code; lukt het wifi niet, dan gaat hij via de brievenbus (haal).
   // De dagelijkse telefoon krijgt hier geen knop: zijn eigen harde regels (495) gaan altijd voor.
   const InstV = { id: '', adres: '' };
+  // 678 (stap 4): de ROL per telefoon vastleggen (window.Rekrollen -> opslag jarvis-rek-rollen, lokaal zoals de SSID->plek-tabel).
+  // Alleen hier bewaard en getoond; ARTEMIS koppelt de rol per serienummer aan het toestel. "Gemeten wint van de gok": regel()
+  // toont de passendheid (welk model de klasse trekt) met de gemeten tg128 ernaast -- geen verzonnen drempel.
+  const RekRol = {
+    s: (window.Rekrollen && window.Rekrollen.SLEUTEL) || 'jarvis-rek-rollen',
+    lees() { try { return window.Rekrollen ? window.Rekrollen.lees(localStorage.getItem(this.s)) : {}; } catch (e) { return {}; } },
+    rolVan(id) { try { return (window.Rekrollen && window.Rekrollen.rolVan(this.lees(), id)) || ''; } catch (e) { return ''; } },
+    zet(id, rol) { try { if (!window.Rekrollen) return; localStorage.setItem(this.s, JSON.stringify(window.Rekrollen.zet(this.lees(), id, rol || null))); } catch (e) { /* alleen lokaal */ } },
+    regel(id, cap, tps) { try { const r = this.rolVan(id); return (r && window.Rekrollen) ? window.Rekrollen.regel(r, cap || '', { tps: tps }) : 'geen rol gekozen'; } catch (e) { return ''; } },
+  };
+  function rolTps(h) { return h && h.motor && typeof h.motor.tps === 'number' ? h.motor.tps : undefined; }
   function openInstel(id, adres) {
     const h = HB.per[id];
     if (!h || !window.MotorInstel) return false;
@@ -3480,6 +3491,7 @@
     $('instelModel').value = i.model; $('instelGpu').checked = i.gpu; $('instelDraden').value = i.draden; $('instelContext').value = i.context;
     $('instelTemp').value = i.temp; $('instelDenk').value = i.denk; $('instelAccu').value = i.accuMin; $('instelWarmte').value = i.tempMax; $('instelLader').checked = i.alleenLader;
     $('instelStand').textContent = window.MotorInstel.zin(h.instel ? i : null);
+    if ($('instelRol')) { $('instelRol').value = RekRol.rolVan(id); $('instelRolStand').textContent = RekRol.regel(id, h.klasse, rolTps(h)); }
     $('instelPaneel').hidden = false;
     return true;
   }
@@ -3512,6 +3524,14 @@
     if (id === 'instelBewaar') stuurInstel(false).catch(() => {});
     if (id === 'instelStandaard') stuurInstel(true).catch(() => {});
     if (id === 'instelSluit') $('instelPaneel').hidden = true;
+  });
+  // 678 (stap 4): de rol opslaan zodra je 'm kiest (lokaal; los van de roep-gebaseerde "Bewaar").
+  document.addEventListener('change', (e) => {
+    if (!e.target || e.target.id !== 'instelRol') return;
+    RekRol.zet(InstV.id, e.target.value);
+    const h = HB.per[InstV.id] || {};
+    $('instelRolStand').textContent = RekRol.regel(InstV.id, h.klasse, rolTps(h));
+    logRegel(`Rol ${e.target.value || 'gewist'} voor ${h.naam || 'telefoon'} (lokaal vastgelegd).`);
   });
 
   // 492: "Zelftest nu": EEN roep 'zelftest' met de code. De telefoon kijkt alleen; de uitslag komt met de volgende meting.
