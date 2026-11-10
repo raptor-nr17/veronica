@@ -509,7 +509,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
@@ -614,7 +614,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -3386,7 +3386,14 @@ motor_meet() {
     fi
     # de omstandigheden loggen (hitte/besparing verklaren een lage uitkomst) -- accu, temperatuur, klok van de grote kernen, scherm
     local accu temp klok scherm
-    accu="$("$ADB" -s "$s" shell dumpsys battery 2>/dev/null | awk -F': ' '/ level/{l=$2} / temperature/{t=$2} END{printf "%s%% %sdC", l, (t?t/10:"?")}' | tr -d '\r')"
+    # 678 (10 nov): ROBUUST + BEGRENSD -- de oude awk liet op sommige toestellen de HELE dumpsys-batterij in accu staan
+    # (level:80 ... protection:0). Nu pakken we alleen het getal van de eerste 'level:'- en 'temperature:'-regel; wat er verder in
+    # de dump staat raakt accu nooit meer.
+    local bat lvl tmp
+    bat="$("$ADB" -s "$s" shell dumpsys battery 2>/dev/null | tr -d '\r')"
+    lvl="$(printf '%s\n' "$bat" | grep -m1 -oE 'level: *[0-9]+' | grep -oE '[0-9]+')"
+    tmp="$(printf '%s\n' "$bat" | grep -m1 -oE 'temperature: *[0-9]+' | grep -oE '[0-9]+')"
+    accu="${lvl:-?}% $([ -n "$tmp" ] && awk "BEGIN{printf \"%.1f\", $tmp/10}" || echo '?')dC"
     temp="$("$ADB" -s "$s" shell 'cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | sort -rn | head -1' 2>/dev/null | tr -d '\r')"
     klok="$("$ADB" -s "$s" shell "cat /sys/devices/system/cpu/cpu${big##*,}/cpufreq/scaling_cur_freq 2>/dev/null" 2>/dev/null | tr -d '\r')"
     scherm="$("$ADB" -s "$s" shell dumpsys deviceidle 2>/dev/null | grep -qi 'mScreenOn=true' && echo aan || echo uit)"
@@ -3405,6 +3412,31 @@ motor_meet() {
   else
     zeg "Klaar. De pure decode-snelheid (tg128) hoort hoger te liggen dan de 0,9 tok/s die JARVIS meldt -- die telt prefill mee en is geschat (zie docs/lokaal-modelsysteem.md stap 1). De t-regel met het aantal grote kernen hoort het snelst (of vrijwel) te zijn: dat is het aantal draden waarop JARVIS' motor standaard draait. Vergelijk daarna met LiteRT-LM via JARVIS' eigen meting."
   fi
+}
+# 678 (10 nov): de meetuitslag TONEN. motor_meet draait op de achtergrond en de Log toont maar de laatste ~12 regels, dus de
+# llama-bench-getallen (pp512/tg128 t/s) scrollen weg. Dit is een SYNCHRONE opdracht (geen LOPEND): subprocess.run geeft de volle
+# uitvoer terug aan de console, dus de hele tabel is zichtbaar. Leest alleen de per-telefoon-logs die motor_meet al wegschreef
+# ($MEET_MAP/<naam>.log) -- geen adb, geen meting, puur tonen. Zo komt Cowork aan de getallen voor de rollen zonder terminal.
+meetuitslag() {
+  if ! ls "$MEET_MAP"/*.log >/dev/null 2>&1; then
+    zeg "Nog geen meetuitslag. Druk eerst op 'Snelheid meten (llama-bench)' en wacht tot er per telefoon 'klaar' in de Log staat."
+    return 0
+  fi
+  zeg "== Meetuitslag (llama-bench, CPU) =="
+  zeg "tg128 = de pure decode-snelheid (tok/s); pp512 = prefill. De t-regel met het aantal grote kernen hoort het snelst (of vrijwel) -- dat wordt JARVIS' standaard aantal draden."
+  local f naam n=0
+  for f in "$MEET_MAP"/*.log; do
+    [ -f "$f" ] || continue
+    naam="$(basename "$f" .log)"
+    zeg ""
+    zeg "--- $naam ---"
+    # de contextregel (grote kernen/accu/temp) + de llama-bench-tabel (de regels met pp512/tg128/t/s). Direct naar stdout (wordt
+    # door de console opgevangen); geen while-lus nodig.
+    grep -E 'grote kernen \(taskset\)|pp512|tg128|t/s' "$f" 2>/dev/null | sed 's/^/  /'
+    n=$((n+1))
+  done
+  zeg ""
+  zeg "($n telefoon(s) gemeten. De volledige meting staat in $MEET_MAP/*.log op de Chromebook.)"
 }
 lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokale server, of niets
   local s id poort model lp="$LOKAAL_POORT"
@@ -5069,6 +5101,7 @@ case "${1:-status}" in
   beheerder) beheerder_ronde ;;              # 675: de lokale beheerder -- weggevallen rektelefoon zelf draadloos terughalen, anders de eigenaar via Veronica (kabel/tik)
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-meet) motor_meet ;;                   # 678 stap 1b: echte modelsnelheid meten (llama-bench, CPU, grote kernen), nooit de F8
+  meetuitslag) meetuitslag ;;                  # 678 (10 nov): de llama-bench-tabel per telefoon tonen (uit ~/.artemis-rek/meet/*.log) -- synchroon, geen 12-regel-afkapping van de Log
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   f8-kabel) f8_kabel_adres ;;                   # 678j: de F8 aan de kabel -- lees ALLEEN zijn wifi-adres uit en zet hem als denker (nooit besturen)
   scherm-lees) scherm_lees ;;                   # 678 stap 8: het scherm als tekst lezen (uiautomator), alleen de rektelefoons, nooit de F8, nooit een gevoelige app
