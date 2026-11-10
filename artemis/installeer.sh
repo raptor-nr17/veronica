@@ -3316,19 +3316,35 @@ motor_meet() {
   mkdir -p "$MEET_MAP" 2>/dev/null || true
   # 678: EEN tegelijk. motor-meet draait op de achtergrond (LOPEND) en haalt een 382 MB-model op; een tweede druk zou dubbel
   # downloaden naar hetzelfde .deel. mkdir is een atomair slot; een verlaten slot (vorige run gedood) ouder dan een uur telt niet.
-  local lock="$REK_MAP/motor-meet.lock"
-  if [ -d "$lock" ] && [ -z "$(find "$lock" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
-    zeg "Snelheid meten draait al (op de achtergrond). Kijk in Log (console-motor-meet.log); wacht tot het klaar is, of druk later opnieuw."; return 0
+  local lock="$REK_MAP/motor-meet.lock" oudpid=''
+  [ -d "$lock" ] && oudpid="$(cat "$lock/pid" 2>/dev/null || echo '')"
+  # het slot vervalt zodra het PROCES niet meer leeft (pid-check) -- anders bleef de knop dood nadat een ronde crashte (de
+  # "lock: unbound variable" van 11:18 liet het slot staan, want de oude trap las een lokale var die bij EXIT weg was). Een uur
+  # is het vangnet tegen pid-hergebruik.
+  if [ -d "$lock" ] && [ -n "$oudpid" ] && kill -0 "$oudpid" 2>/dev/null && [ -z "$(find "$lock" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+    zeg "Snelheid meten draait al (op de achtergrond, pid $oudpid). Kijk in Log (console-motor-meet.log); wacht tot het klaar is."; return 0
   fi
   rm -rf "$lock" 2>/dev/null; mkdir "$lock" 2>/dev/null || { zeg "Kon het motor-meet-slot niet zetten."; return 0; }
-  trap 'rm -rf "$lock" 2>/dev/null' EXIT INT TERM
+  echo "$$" >"$lock/pid" 2>/dev/null || true
+  # LET OP: de EXIT-trap draait in de GLOBALE scope, waar de lokale $lock NIET bestaat -> onder set -u gaf 'rm -rf "$lock"' daar
+  # "lock: unbound variable", en dan werd het slot niet opgeruimd. Gebruik het globale $REK_MAP-pad, dat altijd gebonden is.
+  trap 'rm -rf "$REK_MAP/motor-meet.lock" 2>/dev/null' EXIT INT TERM
   local s id naam big mask gedaan=0
   zeg "Snelheid meten (llama-bench, CPU, grote kernen) -- dit duurt per telefoon een paar minuten en kan warm worden (het meetmodel is 382 MB; de eerste keer duurt het ophalen even). De F8 wordt nooit gemeten."
   for s in $(verbonden); do
     # 678: OOK draadloos (ip:5555) -- de bench draait op het toestel; adb streamt alleen de uitvoer, dus draadloos kan (alle 5 rektelefoons). De F8 nooit.
     is_f8 "$s" && { zeg "  ($(toestel_naam "$s") = F8, overgeslagen -- de dagelijkse telefoon meten we nooit)"; continue; }
-    id="$(toestel_id "$s")"; toegestaan "$id" || { zeg "  ($(toestel_naam "$s")) staat niet op de lijst -- druk eerst op 'Zoek telefoons'."; continue; }
-    naam="$(toestel_naam "$s")"; local bestand="$MEET_MAP/$(printf '%s' "${naam:-$id}" | tr ' /:' '___').log"
+    id="$(toestel_id "$s")"
+    naam="$(toestel_naam "$s")"; [ -n "$naam" ] || { sleep 1; naam="$(toestel_naam "$s")"; }   # een verse tunnel antwoordt soms pas de 2e keer
+    [ -n "$naam" ] || naam="$id"                                                                 # nooit een lege naam tonen ('()' of ':')
+    # 678 (10 nov): een Tailscale-brug (127.0.0.1:560x uit TS_BRUG_F) is per definitie een rektelefoon -- rek_via_tailscale zette hem
+    # op (de F8 is daar al uitgesloten en ontdubbeld). Die hoeft niet OOK op de 'Zoek telefoons'-lijst (die alleen de kabel scant);
+    # anders is geen enkele Tailscale-telefoon te meten (ze stonden niet op de kabel-lijst -> onterecht "staat niet op de lijst").
+    local via_ts=0; case "$s" in 127.0.0.1:56[0-9][0-9]) { [ -f "$TS_BRUG_F" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$TS_BRUG_F" 2>/dev/null; } && via_ts=1 ;; esac
+    if [ "$via_ts" -eq 0 ] && ! toegestaan "$id"; then
+      zeg "  ($naam) staat niet op de lijst -- druk eerst op 'Zoek telefoons', of verbind hem via 'Rek via Tailscale'."; continue
+    fi
+    local bestand="$MEET_MAP/$(printf '%s' "$naam" | tr ' /:' '___').log"
     # de GROTE kernen: de cores met een max-frequentie van minstens 90% van de hoogste (de prime + het grote cluster), als taskset-lijst
     big="$("$ADB" -s "$s" shell 'm=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=$(cat "$f" 2>/dev/null||echo 0); [ "$v" -gt "$m" ] 2>/dev/null && m=$v; done; t=$(( m*9/10 )); b=""; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=$(cat "$f" 2>/dev/null||echo 0); [ "$v" -ge "$t" ] 2>/dev/null || continue; n=${f#/sys/devices/system/cpu/cpu}; n=${n%%/*}; b="$b,$n"; done; echo "${b#,}"' 2>/dev/null | tr -d '\r ')"
     [ -n "$big" ] || big="0,1"
@@ -3341,20 +3357,31 @@ motor_meet() {
     # 678: ontbreekt llama-bench op de telefoon, maar staat hij op de Chromebook (BENCH_LOK, evt. via bench-link), dan ARTEMIS
     # hem zelf erheen pushen -- zodat "Snelheid meten" niet meer faalt op /data/local/tmp/llama-bench.
     if ! "$ADB" -s "$s" shell "[ -x $MEET_BENCH ]" >/dev/null 2>&1; then
-      if bench_zorg >/dev/null 2>&1 && "$ADB" -s "$s" push "$BENCH_LOK" "$MEET_BENCH" >/dev/null 2>&1; then
+      # eerst llama-bench op de Chromebook (van BENCH_LOK of de bench-link), DAN naar de telefoon pushen -- gesplitst zodat we
+      # eerlijk zeggen WAT misging (klaarzetten vs. adb-push), de "didn't use the link"-onduidelijkheid van 11:18.
+      if ! bench_zorg >/dev/null 2>&1; then
+        zeg "  $naam: kon llama-bench niet klaarzetten op de Chromebook (geen $BENCH_LOK, en de bench-link ontbreekt of werkte niet). Plak de link opnieuw in 'Meet-links' of bouw hem met 'Data bouwen: llama-bench'."
+      elif "$ADB" -s "$s" push "$BENCH_LOK" "$MEET_BENCH" >/dev/null 2>&1; then
         "$ADB" -s "$s" shell chmod 755 "$MEET_BENCH" >/dev/null 2>&1 || true
         zeg "  $naam: llama-bench erop gezet (van de Chromebook)."
+      else
+        zeg "  $naam: llama-bench staat klaar op de Chromebook maar de adb-push mislukte (tunnel traag/afgebroken?)."
       fi
     fi
     if ! "$ADB" -s "$s" shell "[ -x $MEET_BENCH ]" >/dev/null 2>&1; then
-      zeg "  $naam: llama-bench ontbreekt op $MEET_BENCH. Bouw hem met 'Data bouwen: llama-bench' (tak data-bouw-llama-bench), zet de arm64-binary in $BENCH_LOK op de Chromebook (of plak een durable https-link in ~/.artemis-rek/bench-link); dan zet ik hem er de volgende keer zelf op."
+      zeg "  $naam: llama-bench ontbreekt op $MEET_BENCH -- overgeslagen (durable https-link in 'Meet-links', of bouw via 'Data bouwen: llama-bench')."
       continue
     fi
     if ! "$ADB" -s "$s" shell "[ -s $MEET_MODEL_TEL ]" >/dev/null 2>&1; then
-      if model_zorg >/dev/null 2>&1; then zeg "  $naam: meetmodel erheen zetten..."; "$ADB" -s "$s" push "$MEET_MODEL_LOK" "$MEET_MODEL_TEL" >/dev/null 2>&1 || true; fi
+      if ! model_zorg >/dev/null 2>&1; then
+        zeg "  $naam: kon het meetmodel niet klaarzetten op de Chromebook (download van Hugging Face of de geplakte link mislukte)."
+      else
+        zeg "  $naam: meetmodel erheen zetten (382 MB over adb, kan even duren)..."
+        "$ADB" -s "$s" push "$MEET_MODEL_LOK" "$MEET_MODEL_TEL" >/dev/null 2>&1 || zeg "  $naam: de adb-push van het meetmodel mislukte (382 MB over Tailscale kan afbreken -- probeer opnieuw)."
+      fi
     fi
     if ! "$ADB" -s "$s" shell "[ -s $MEET_MODEL_TEL ]" >/dev/null 2>&1; then
-      zeg "  $naam: het meetmodel ontbreekt ($MEET_MODEL_TEL). Leg een klein GGUF (Qwen3 0.6B Q4_0) in $MEET_MODEL_LOK op deze computer (of plak een durable https-link in ~/.artemis-rek/meet-model-link); dan zet ik het er zelf op."
+      zeg "  $naam: het meetmodel ontbreekt ($MEET_MODEL_TEL) -- overgeslagen. Het staat $([ -s "$MEET_MODEL_LOK" ] && echo wel || echo niet) op de Chromebook; plak evt. een durable https-link in 'Meet-links'."
       continue
     fi
     # de omstandigheden loggen (hitte/besparing verklaren een lage uitkomst) -- accu, temperatuur, klok van de grote kernen, scherm
@@ -3374,7 +3401,7 @@ motor_meet() {
     gedaan=$((gedaan+1))
   done
   if [ "$gedaan" -eq 0 ]; then
-    zeg "Geen rektelefoon aan de kabel gemeten. Sluit er een aan (USB-foutopsporing), druk op 'Zoek telefoons', en zorg dat llama-bench + het meetmodel klaarstaan."
+    zeg "Geen rektelefoon gemeten. Verbind er een (kabel + 'Zoek telefoons', of 'Rek via Tailscale'), en zorg dat llama-bench + het meetmodel klaarstaan."
   else
     zeg "Klaar. De pure decode-snelheid (tg128) hoort hoger te liggen dan de 0,9 tok/s die JARVIS meldt -- die telt prefill mee en is geschat (zie docs/lokaal-modelsysteem.md stap 1). De t-regel met het aantal grote kernen hoort het snelst (of vrijwel) te zijn: dat is het aantal draden waarop JARVIS' motor standaard draait. Vergelijk daarna met LiteRT-LM via JARVIS' eigen meting."
   fi
@@ -4378,8 +4405,21 @@ rek_via_tailscale() {
   tailscale status >/dev/null 2>&1 || { zeg "Tailscale is niet verbonden in Crostini. Druk op 'Tailscale op deze Chromebook (inloggen)' en log in; daarna deze knop opnieuw."; return 1; }
   local zelf status_out regel ip host lport pid n=0 model serial gezien_serie=""
   zelf="$(tailscale ip -4 2>/dev/null | head -1)"
-  # bestaande bruggen van een vorige ronde opruimen -- ALLEEN de onze, op PID uit het bestand (nooit pkill -f: dat raakt de eigen shell)
+  # 678 (10 nov): ELKE ronde eerst ALLE oude tunnels EN adb-verbindingen weg. Anders is `adb connect 127.0.0.1:560x` een no-op
+  # ("already connected") die de verbinding van de VORIGE ronde teruggeeft -- met de serie van de telefoon van toen. Zo versprong
+  # het doel van een 100.x tussen rondes (de ene ronde de ene telefoon, de andere ronde een andere op dezelfde poort) en werd de S10 nooit echt
+  # verbonden: adb onthoudt de serie PER POORT, en een achtergebleven socat/tailscale-nc houdt de poort vast. Dit is NIET een
+  # dubbele Tailscale-aanmelding (de eerste hypothese), maar plak-processen tussen rondes. Alles op PID/poort -- nooit pkill -f,
+  # dat raakt de eigen shell (de 592o-les).
+  local p q
+  for p in 5600 5601 5602 5603 5604 5605 5606 5607 5608 5609; do
+    "$ADB" disconnect "127.0.0.1:$p" >/dev/null 2>&1 || true          # adb's gecachte verbinding + serie-per-poort weg (de kern van de fix)
+  done
   if [ -f "$TS_BRUG_F" ]; then while read -r _lp _ip _pid; do [ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true; done <"$TS_BRUG_F"; fi
+  for p in 5600 5601 5602 5603 5604 5605 5606 5607 5608 5609; do
+    for q in $(pids_op_poort "$p" 2>/dev/null); do kill "$q" 2>/dev/null || true; done   # een achtergebleven socat-listener op die poort (PID uit het bestand kan verloren zijn)
+  done
+  sleep 1                                                              # de oude socat/tailscale-nc laten afsterven voor we opnieuw binden
   : >"$TS_BRUG_F" 2>/dev/null || true
   status_out="$(tailscale status 2>/dev/null)"
   zeg "== Rek via Tailscale (vaste 100.x-adressen; werkt op elk netwerk) =="
