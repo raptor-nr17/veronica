@@ -3280,6 +3280,7 @@ hardware() {
 # is een klein GGUF (Qwen3 0.6B Q4_0) in $MEET_MODEL_LOK. Ontbreekt een van beide, dan zegt ARTEMIS precies wat te doen -- nooit een
 # verzonnen getal. Resultaten per telefoon in $MEET_MAP/<naam>.log; de console toont ze direct, Status noemt de laatste meting.
 MEET_MAP="$REK_MAP/meet"
+MEET_TIMEOUT=900                                 # 678 (10 nov): per telefoon hoogstens zoveel seconden op de adb-shell wachten; valt de Tailscale-brug weg, dan niet eeuwig hangen maar melden + door naar de volgende
 MEET_BENCH="/data/local/tmp/llama-bench"
 MEET_MODEL_LOK="$JAPK_PLEK/meet-model.gguf"
 MEET_MODEL_TEL="/data/local/tmp/meet-model.gguf"
@@ -3324,6 +3325,9 @@ motor_meet() {
   if [ -d "$lock" ] && [ -n "$oudpid" ] && kill -0 "$oudpid" 2>/dev/null && [ -z "$(find "$lock" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
     zeg "Snelheid meten draait al (op de achtergrond, pid $oudpid). Kijk in Log (console-motor-meet.log); wacht tot het klaar is."; return 0
   fi
+  # bij het terugpakken van een verlaten/vastgelopen slot: de oude (hangende) motor-meet eerst doden, zodat de nieuwe run schoon
+  # overneemt (een vorige ronde die op een weggevallen adb-shell hing, hield anders de telefoon bezet).
+  [ -n "$oudpid" ] && kill "$oudpid" 2>/dev/null || true
   rm -rf "$lock" 2>/dev/null; mkdir "$lock" 2>/dev/null || { zeg "Kon het motor-meet-slot niet zetten."; return 0; }
   echo "$$" >"$lock/pid" 2>/dev/null || true
   # LET OP: de EXIT-trap draait in de GLOBALE scope, waar de lokale $lock NIET bestaat -> onder set -u gaf 'rm -rf "$lock"' daar
@@ -3365,7 +3369,7 @@ motor_meet() {
       # eerlijk zeggen WAT misging (klaarzetten vs. adb-push), de "didn't use the link"-onduidelijkheid van 11:18.
       if ! bench_zorg >/dev/null 2>&1; then
         zeg "  $naam: kon llama-bench niet klaarzetten op de Chromebook (geen $BENCH_LOK, en de bench-link ontbreekt of werkte niet). Plak de link opnieuw in 'Meet-links' of bouw hem met 'Data bouwen: llama-bench'."
-      elif "$ADB" -s "$s" push "$BENCH_LOK" "$MEET_BENCH" >/dev/null 2>&1; then
+      elif timeout 120 "$ADB" -s "$s" push "$BENCH_LOK" "$MEET_BENCH" >/dev/null 2>&1; then
         "$ADB" -s "$s" shell chmod 755 "$MEET_BENCH" >/dev/null 2>&1 || true
         zeg "  $naam: llama-bench erop gezet (van de Chromebook)."
       else
@@ -3381,7 +3385,7 @@ motor_meet() {
         zeg "  $naam: kon het meetmodel niet klaarzetten op de Chromebook (download van Hugging Face of de geplakte link mislukte)."
       else
         zeg "  $naam: meetmodel erheen zetten (382 MB over adb, kan even duren)..."
-        "$ADB" -s "$s" push "$MEET_MODEL_LOK" "$MEET_MODEL_TEL" >/dev/null 2>&1 || zeg "  $naam: de adb-push van het meetmodel mislukte (382 MB over Tailscale kan afbreken -- probeer opnieuw)."
+        timeout "$MEET_TIMEOUT" "$ADB" -s "$s" push "$MEET_MODEL_LOK" "$MEET_MODEL_TEL" >/dev/null 2>&1 || zeg "  $naam: de adb-push van het meetmodel mislukte of liep vast (382 MB over Tailscale kan afbreken -- probeer opnieuw)."
       fi
     fi
     if ! "$ADB" -s "$s" shell "[ -s $MEET_MODEL_TEL ]" >/dev/null 2>&1; then
@@ -3407,14 +3411,23 @@ motor_meet() {
     # ZELFTEST: start de binary überhaupt op dit toestel? Een lege meetuitslag kwam doordat llama-bench niets (bruikbaars) schreef
     # -- meestal de verkeerde architectuur/bionic, geen exec-recht, of noexec op /data/local/tmp. --help + exitcode wijst het aan.
     local hulp hrc
-    hulp="$("$ADB" -s "$s" shell "$MEET_BENCH --help 2>&1; echo RC=\$?" 2>/dev/null | tr -d '\r')"
+    hulp="$(timeout 120 "$ADB" -s "$s" shell "$MEET_BENCH --help 2>&1; echo RC=\$?" 2>/dev/null | tr -d '\r')"
     hrc="$(printf '%s\n' "$hulp" | sed -n 's/^RC=\([0-9][0-9]*\)$/\1/p' | tail -1)"
     { echo "[zelftest] $MEET_BENCH --help -> exitcode ${hrc:-?}:"; printf '%s\n' "$hulp" | grep -vE '^RC=[0-9]*$' | head -6; echo; } >>"$bestand"
     # 5 runs achter elkaar (hitte-afremming zichtbaar): pp512 (prefill) + tg128 (decode) apart, threads incl. het aantal grote kernen, CPU-only. Met exitcode.
     # taskset met het HEX-MASKER; faalt dat toch (oude toybox), dan de meting ZONDER affiniteit (alleen -t threads) -- liever een
     # meting zonder pinning dan geen meting. RC = de exit van de meting (via `A || B`), niet van taskset.
     local benchcmd="$MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t $tset -p 512 -n 128 -r 5"
-    local uit rc; uit="$("$ADB" -s "$s" shell "taskset $hexmask $benchcmd 2>&1 || $benchcmd 2>&1; echo RC=\$?" 2>/dev/null | tr -d '\r')"
+    # 678 (10 nov): met een TIME-OUT -- valt de adb-shell/Tailscale-brug weg midden in de meting (gezien: een telefoon hing een half uur), dan kappen
+    # we na MEET_TIMEOUT s af, melden het en gaan DOOR naar de volgende telefoon (het slot komt vrij aan het eind van de lus).
+    local ruw mrc uit rc
+    ruw="$(timeout "$MEET_TIMEOUT" "$ADB" -s "$s" shell "taskset $hexmask $benchcmd 2>&1 || $benchcmd 2>&1; echo RC=\$?" 2>/dev/null)"; mrc=$?
+    if [ "$mrc" = 124 ]; then
+      { echo "[meting] VASTGELOPEN: time-out na ${MEET_TIMEOUT}s -- de adb-shell/Tailscale-brug viel weg. Overgeslagen."; echo; } >>"$bestand"
+      zeg "    $naam: VASTGELOPEN (time-out na ${MEET_TIMEOUT}s -- adb/Tailscale-brug weg?). Overgeslagen; door naar de volgende."
+      continue
+    fi
+    uit="$(printf '%s' "$ruw" | tr -d '\r')"
     rc="$(printf '%s\n' "$uit" | sed -n 's/^RC=\([0-9][0-9]*\)$/\1/p' | tail -1)"
     { echo "[meting] exitcode ${rc:-?}:"; printf '%s\n' "$uit" | grep -vE '^RC=[0-9]*$'; echo; } >>"$bestand"
     # de t/s-regels teruggeven aan de console; GEEN meetregels -> de exitcode + de fout (niet verbergen -- dat was de blinde vlek)
