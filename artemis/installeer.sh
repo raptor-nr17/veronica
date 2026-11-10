@@ -3397,13 +3397,25 @@ motor_meet() {
     temp="$("$ADB" -s "$s" shell 'cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | sort -rn | head -1' 2>/dev/null | tr -d '\r')"
     klok="$("$ADB" -s "$s" shell "cat /sys/devices/system/cpu/cpu${big##*,}/cpufreq/scaling_cur_freq 2>/dev/null" 2>/dev/null | tr -d '\r')"
     scherm="$("$ADB" -s "$s" shell dumpsys deviceidle 2>/dev/null | grep -qi 'mScreenOn=true' && echo aan || echo uit)"
-    { echo "=== $naam ($id) -- $(date '+%Y-%m-%d %H:%M' 2>/dev/null)"; echo "grote kernen (taskset): $big | aantal grote kernen (aanbevolen threads): $bigN | accu: ${accu:-?} | hoogste thermal: ${temp:-?} mdC | klok grote kern: ${klok:-?} kHz | scherm: $scherm"; } >>"$bestand"
+    # 678 (10 nov): het .log VERS per run (truncate), zodat Meetuitslag altijd de LAATSTE meting toont (motor_meet werd vaker gedraaid).
+    { echo "=== $naam ($id) -- $(date '+%Y-%m-%d %H:%M' 2>/dev/null)"; echo "grote kernen (taskset): $big | aantal grote kernen (aanbevolen threads): $bigN | accu: ${accu:-?} | hoogste thermal: ${temp:-?} mdC | klok grote kern: ${klok:-?} kHz | scherm: $scherm"; } >"$bestand"
     zeg "  $naam: meten op kernen $big ($bigN grote kernen = aanbevolen threads; accu ${accu:-?}, scherm $scherm)..."
-    # 5 runs achter elkaar (hitte-afremming zichtbaar): pp512 (prefill) + tg128 (decode) apart, threads incl. het aantal grote kernen, CPU-only
-    local uit; uit="$("$ADB" -s "$s" shell "taskset -c $big $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t $tset -p 512 -n 128 -r 5 2>&1" 2>/dev/null | tr -d '\r')"
-    printf '%s\n\n' "$uit" >>"$bestand"
-    # de t/s-regels (pp512 en tg128) teruggeven aan de console
-    printf '%s\n' "$uit" | grep -iE 'pp512|tg128|t/s|tokens' | head -12 | while IFS= read -r r; do zeg "    $r"; done
+    # ZELFTEST: start de binary überhaupt op dit toestel? Een lege meetuitslag kwam doordat llama-bench niets (bruikbaars) schreef
+    # -- meestal de verkeerde architectuur/bionic, geen exec-recht, of noexec op /data/local/tmp. --help + exitcode wijst het aan.
+    local hulp hrc
+    hulp="$("$ADB" -s "$s" shell "$MEET_BENCH --help 2>&1; echo RC=\$?" 2>/dev/null | tr -d '\r')"
+    hrc="$(printf '%s\n' "$hulp" | sed -n 's/^RC=\([0-9][0-9]*\)$/\1/p' | tail -1)"
+    { echo "[zelftest] $MEET_BENCH --help -> exitcode ${hrc:-?}:"; printf '%s\n' "$hulp" | grep -vE '^RC=[0-9]*$' | head -6; echo; } >>"$bestand"
+    # 5 runs achter elkaar (hitte-afremming zichtbaar): pp512 (prefill) + tg128 (decode) apart, threads incl. het aantal grote kernen, CPU-only. Met exitcode.
+    local uit rc; uit="$("$ADB" -s "$s" shell "taskset -c $big $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t $tset -p 512 -n 128 -r 5 2>&1; echo RC=\$?" 2>/dev/null | tr -d '\r')"
+    rc="$(printf '%s\n' "$uit" | sed -n 's/^RC=\([0-9][0-9]*\)$/\1/p' | tail -1)"
+    { echo "[meting] exitcode ${rc:-?}:"; printf '%s\n' "$uit" | grep -vE '^RC=[0-9]*$'; echo; } >>"$bestand"
+    # de t/s-regels teruggeven aan de console; GEEN meetregels -> de exitcode + de fout (niet verbergen -- dat was de blinde vlek)
+    if printf '%s\n' "$uit" | grep -qiE 'pp512|tg128'; then
+      printf '%s\n' "$uit" | grep -iE 'pp512|tg128|t/s|tokens' | head -12 | while IFS= read -r r; do zeg "    $r"; done
+    else
+      zeg "    GEEN meetregels -- llama-bench exitcode ${rc:-?} (zelftest --help: ${hrc:-?}). Zie Meetuitslag voor de fout (arch/bionic, exec-recht of noexec /data/local/tmp)."
+    fi
     zeg "  $naam: klaar -- volledige meting in $bestand (en in de Log)."
     gedaan=$((gedaan+1))
   done
@@ -3430,9 +3442,9 @@ meetuitslag() {
     naam="$(basename "$f" .log)"
     zeg ""
     zeg "--- $naam ---"
-    # de contextregel (grote kernen/accu/temp) + de llama-bench-tabel (de regels met pp512/tg128/t/s). Direct naar stdout (wordt
-    # door de console opgevangen); geen while-lus nodig.
-    grep -E 'grote kernen \(taskset\)|pp512|tg128|t/s' "$f" 2>/dev/null | sed 's/^/  /'
+    # het hele (verse) per-telefoon-log: de contextregel + [zelftest] (--help + exitcode) + [meting] (exitcode + de tabel OF de
+    # fout). motor_meet trunceert het per run, dus dit is altijd de laatste meting. Direct naar stdout (door de console opgevangen).
+    head -40 "$f" 2>/dev/null | sed 's/^/  /'
     n=$((n+1))
   done
   zeg ""
