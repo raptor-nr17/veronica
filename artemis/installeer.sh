@@ -3348,6 +3348,10 @@ motor_meet() {
     # de GROTE kernen: de cores met een max-frequentie van minstens 90% van de hoogste (de prime + het grote cluster), als taskset-lijst
     big="$("$ADB" -s "$s" shell 'm=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=$(cat "$f" 2>/dev/null||echo 0); [ "$v" -gt "$m" ] 2>/dev/null && m=$v; done; t=$(( m*9/10 )); b=""; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=$(cat "$f" 2>/dev/null||echo 0); [ "$v" -ge "$t" ] 2>/dev/null || continue; n=${f#/sys/devices/system/cpu/cpu}; n=${n%%/*}; b="$b,$n"; done; echo "${b#,}"' 2>/dev/null | tr -d '\r ')"
     [ -n "$big" ] || big="0,1"
+    # 678 (10 nov): de toybox-taskset op Android kent GEEN -c (kernlijst), wel de HEX-MASKER-vorm (taskset <mask> cmd). Zet de
+    # komma-lijst van kern-indexen ($big) om naar een masker: 4,5,6,7 -> f0, 0-7 -> ff.
+    mask=0; local _c; for _c in ${big//,/ }; do case "$_c" in ''|*[!0-9]*) : ;; *) mask=$(( mask | (1 << _c) )) ;; esac; done
+    local hexmask; hexmask="$(printf '%x' "$mask")"
     # 678n: threads = AANTAL GROTE KERNEN. De aanbevolen draden voor de motor is het aantal grote kernen (niet alle cores: de
     # kleine kernen vertragen de decode). We tellen ze en nemen dat getal MEE in de meetreeks (naast 1/2/4/8), zodat de meting
     # bewijst of de big-core-telling echt het snelst is. JARVIS' motor draait daarna standaard op dat aantal (motorinstel.js).
@@ -3398,7 +3402,7 @@ motor_meet() {
     klok="$("$ADB" -s "$s" shell "cat /sys/devices/system/cpu/cpu${big##*,}/cpufreq/scaling_cur_freq 2>/dev/null" 2>/dev/null | tr -d '\r')"
     scherm="$("$ADB" -s "$s" shell dumpsys deviceidle 2>/dev/null | grep -qi 'mScreenOn=true' && echo aan || echo uit)"
     # 678 (10 nov): het .log VERS per run (truncate), zodat Meetuitslag altijd de LAATSTE meting toont (motor_meet werd vaker gedraaid).
-    { echo "=== $naam ($id) -- $(date '+%Y-%m-%d %H:%M' 2>/dev/null)"; echo "grote kernen (taskset): $big | aantal grote kernen (aanbevolen threads): $bigN | accu: ${accu:-?} | hoogste thermal: ${temp:-?} mdC | klok grote kern: ${klok:-?} kHz | scherm: $scherm"; } >"$bestand"
+    { echo "=== $naam ($id) -- $(date '+%Y-%m-%d %H:%M' 2>/dev/null)"; echo "grote kernen (taskset): $big (masker $hexmask) | aantal grote kernen (aanbevolen threads): $bigN | accu: ${accu:-?} | hoogste thermal: ${temp:-?} mdC | klok grote kern: ${klok:-?} kHz | scherm: $scherm"; } >"$bestand"
     zeg "  $naam: meten op kernen $big ($bigN grote kernen = aanbevolen threads; accu ${accu:-?}, scherm $scherm)..."
     # ZELFTEST: start de binary überhaupt op dit toestel? Een lege meetuitslag kwam doordat llama-bench niets (bruikbaars) schreef
     # -- meestal de verkeerde architectuur/bionic, geen exec-recht, of noexec op /data/local/tmp. --help + exitcode wijst het aan.
@@ -3407,7 +3411,10 @@ motor_meet() {
     hrc="$(printf '%s\n' "$hulp" | sed -n 's/^RC=\([0-9][0-9]*\)$/\1/p' | tail -1)"
     { echo "[zelftest] $MEET_BENCH --help -> exitcode ${hrc:-?}:"; printf '%s\n' "$hulp" | grep -vE '^RC=[0-9]*$' | head -6; echo; } >>"$bestand"
     # 5 runs achter elkaar (hitte-afremming zichtbaar): pp512 (prefill) + tg128 (decode) apart, threads incl. het aantal grote kernen, CPU-only. Met exitcode.
-    local uit rc; uit="$("$ADB" -s "$s" shell "taskset -c $big $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t $tset -p 512 -n 128 -r 5 2>&1; echo RC=\$?" 2>/dev/null | tr -d '\r')"
+    # taskset met het HEX-MASKER; faalt dat toch (oude toybox), dan de meting ZONDER affiniteit (alleen -t threads) -- liever een
+    # meting zonder pinning dan geen meting. RC = de exit van de meting (via `A || B`), niet van taskset.
+    local benchcmd="$MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t $tset -p 512 -n 128 -r 5"
+    local uit rc; uit="$("$ADB" -s "$s" shell "taskset $hexmask $benchcmd 2>&1 || $benchcmd 2>&1; echo RC=\$?" 2>/dev/null | tr -d '\r')"
     rc="$(printf '%s\n' "$uit" | sed -n 's/^RC=\([0-9][0-9]*\)$/\1/p' | tail -1)"
     { echo "[meting] exitcode ${rc:-?}:"; printf '%s\n' "$uit" | grep -vE '^RC=[0-9]*$'; echo; } >>"$bestand"
     # de t/s-regels teruggeven aan de console; GEEN meetregels -> de exitcode + de fout (niet verbergen -- dat was de blinde vlek)
