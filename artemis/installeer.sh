@@ -512,7 +512,7 @@ MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodi
 TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'beheerder'}   # 578b/676/677: ook Rek opbouwen, Koppel via de kabel, Tailscale en de beheerder op de achtergrond (anders 25 s AbortError) -- die doen adb-werk dat langer dan de ~25 s fetch-time-out van de pagina duurde (AbortError). Nu meteen terug + via Log/Status te volgen.
+LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -3314,8 +3314,16 @@ model_zorg() {
 }
 motor_meet() {
   mkdir -p "$MEET_MAP" 2>/dev/null || true
+  # 678: EEN tegelijk. motor-meet draait op de achtergrond (LOPEND) en haalt een 382 MB-model op; een tweede druk zou dubbel
+  # downloaden naar hetzelfde .deel. mkdir is een atomair slot; een verlaten slot (vorige run gedood) ouder dan een uur telt niet.
+  local lock="$REK_MAP/motor-meet.lock"
+  if [ -d "$lock" ] && [ -z "$(find "$lock" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+    zeg "Snelheid meten draait al (op de achtergrond). Kijk in Log (console-motor-meet.log); wacht tot het klaar is, of druk later opnieuw."; return 0
+  fi
+  rm -rf "$lock" 2>/dev/null; mkdir "$lock" 2>/dev/null || { zeg "Kon het motor-meet-slot niet zetten."; return 0; }
+  trap 'rm -rf "$lock" 2>/dev/null' EXIT INT TERM
   local s id naam big mask gedaan=0
-  zeg "Snelheid meten (llama-bench, CPU, grote kernen) -- dit duurt per telefoon een paar minuten en kan warm worden. De F8 wordt nooit gemeten."
+  zeg "Snelheid meten (llama-bench, CPU, grote kernen) -- dit duurt per telefoon een paar minuten en kan warm worden (het meetmodel is 382 MB; de eerste keer duurt het ophalen even). De F8 wordt nooit gemeten."
   for s in $(verbonden); do
     # 678: OOK draadloos (ip:5555) -- de bench draait op het toestel; adb streamt alleen de uitvoer, dus draadloos kan (alle 5 rektelefoons). De F8 nooit.
     is_f8 "$s" && { zeg "  ($(toestel_naam "$s") = F8, overgeslagen -- de dagelijkse telefoon meten we nooit)"; continue; }
@@ -4378,7 +4386,10 @@ rek_via_tailscale() {
   # per peer: het 100.x, de tailnet-hostnaam (kolom 2 -- zo zie je WELKE telefoon welk adres heeft) en of hij offline is. We
   # ONTDUBBELEN op serienummer: komen twee 100.x bij hetzelfde toestel uit (dubbele Tailscale-aanmelding), dan houden we er één en
   # melden de andere -- zodat je ziet dat een adres NIET de telefoon is die je verwacht (de S10/Cat-verwarring van 10 nov).
-  while IFS= read -r regel; do
+  # LET OP: lees de peer-regels van FD 3, niet van stdin -- anders eet een commando in de lus (adb/socat/tailscale nc, die stdin
+  # lezen) de here-string op en valt de lus na de EERSTE peer stil (de 1-telefoon-regressie van 10 nov). Elk stdin-etend commando
+  # krijgt bovendien </dev/null.
+  while IFS= read -r regel <&3; do
     ip="$(printf '%s' "$regel" | awk '{print $1}')"
     case "$ip" in 100.*) : ;; *) continue ;; esac
     [ "$ip" = "$zelf" ] && continue
@@ -4388,17 +4399,17 @@ rek_via_tailscale() {
       continue
     fi
     lport=$(( 5600 + n ))
-    socat "TCP-LISTEN:$lport,reuseaddr,fork,bind=127.0.0.1" "EXEC:tailscale nc $ip 5555" >/dev/null 2>&1 &
+    socat "TCP-LISTEN:$lport,reuseaddr,fork,bind=127.0.0.1" "EXEC:tailscale nc $ip 5555" </dev/null >/dev/null 2>&1 &
     pid=$!
     printf '%s %s %s\n' "$lport" "$ip" "$pid" >>"$TS_BRUG_F" 2>/dev/null || true
     sleep 1
-    if "$ADB" connect "127.0.0.1:$lport" 2>/dev/null | grep -qiE 'connected|already'; then
+    if "$ADB" connect "127.0.0.1:$lport" </dev/null 2>/dev/null | grep -qiE 'connected|already'; then
       if is_f8 "127.0.0.1:$lport"; then
         "$ADB" disconnect "127.0.0.1:$lport" >/dev/null 2>&1 || true; kill "$pid" 2>/dev/null || true
         zeg "  - $host ($ip) is de F8 -- losgekoppeld (nooit besturen)."
         continue
       fi
-      model="$(toestel_naam "127.0.0.1:$lport")"; serial="$("$ADB" -s "127.0.0.1:$lport" shell getprop ro.serialno 2>/dev/null | tr -d '\r')"
+      model="$(toestel_naam "127.0.0.1:$lport")"; serial="$("$ADB" -s "127.0.0.1:$lport" shell getprop ro.serialno </dev/null 2>/dev/null | tr -d '\r')"
       # ONTDUBBELEN: dit serienummer al eerder verbonden via een ander 100.x? Dan is het DEZELFDE telefoon (twee tailnet-nodes voor
       # één toestel) -- die tweede brug loskoppelen en melden; zo blijf je niet twee keer naar hetzelfde toestel pushen.
       if [ -n "$serial" ] && printf ' %s ' "$gezien_serie" | grep -qF " $serial "; then
@@ -4413,7 +4424,7 @@ rek_via_tailscale() {
       kill "$pid" 2>/dev/null || true
       zeg "  - $host ($ip) reageert niet op adb 5555 -- adb-over-tcp staat waarschijnlijk uit (na een herstart). Zet 'm weer aan: sluit die telefoon één keer met de kabel aan en druk op 'Telefoon klaarzetten' (dat zet 5555 herstart-vast)."
     fi
-  done <<< "$status_out"
+  done 3<<< "$status_out"
   [ "$n" -gt 0 ] && zeg "Rek via Tailscale: $n telefoon(s) verbonden. Blijft werken na een verhuizing (het 100.x-adres is vast)." || zeg "Geen telefoon via Tailscale verbonden (is Tailscale op de telefoons aan en adb 5555?)."
 }
 # de minuut-scan roept dit aan, maar hoogstens eens per ~300 s (de bruggen blijven staan; niet elke minuut herbouwen). Best-effort.
