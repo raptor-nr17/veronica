@@ -3292,7 +3292,8 @@ MEET_TIMEOUT=900                                 # 678 (10 nov): hoogstens zovee
 # weggevallen brug niets (de meting loopt op de telefoon door) en blijft een deeluitslag (per draden-aantal) bewaard. Nodig omdat
 # 3 van de 4 telefoons de hele reeks niet binnen 900 s haalden (de S10 draait zijn grote kernen op 520 MHz -- echt traag).
 MEET_MAXW=2400                                   # hoogstens zoveel seconden pollen op EEN telefoon; daarna deeluitslag + de meting loopt los door (druk later Meetuitslag)
-MEET_POLL=30                                     # elke zoveel seconden het uitvoerbestand ophalen (korte adb-cat; een mislukte poll is geen ramp, de volgende leest de voortgang)
+MEET_RUN_T=420                                   # hoogstens zoveel seconden PER draden-aantal op de telefoon (timeout); een instortende run (S10) sleept de rest niet mee, de klare getallen blijven bewaard
+MEET_POLL=30                                    # elke zoveel seconden het uitvoerbestand ophalen (korte adb-cat; een mislukte poll is geen ramp, de volgende leest de voortgang)
 MEET_TEL_UIT="/data/local/tmp/meet.uit"          # waar de losgekoppelde meting op de telefoon naartoe schrijft
 MEET_TEL_SH="/data/local/tmp/meet.sh"            # het meetscript op de telefoon
 MEET_BENCH="/data/local/tmp/llama-bench"
@@ -3454,9 +3455,12 @@ motor_meet() {
     # affiniteit (oude toybox). -r 3 (kortere reeks dan de oude -r 5 -- sneller op de trage telefoons).
     local tset_sp; tset_sp="$(printf '%s' "$tset" | tr ',' ' ')"
     "$ADB" -s "$s" shell "cat > $MEET_TEL_SH" <<SH
+TO=''; command -v timeout >/dev/null 2>&1 && TO="timeout $MEET_RUN_T"
 for t in $tset_sp; do
   echo "=== draden \$t ==="
-  taskset $hexmask $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t \$t -p 512 -n 128 -r 3 2>&1 || $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t \$t -p 512 -n 128 -r 3 2>&1
+  \$TO taskset $hexmask $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t \$t -p 512 -n 128 -r 3 2>&1; rc=\$?
+  if [ \$rc -eq 124 ]; then echo "[timeout] draden \$t na $MEET_RUN_T s -- overgeslagen, de rest gaat door"
+  elif [ \$rc -ne 0 ]; then \$TO $MEET_BENCH -m $MEET_MODEL_TEL -ngl 0 -t \$t -p 512 -n 128 -r 3 2>&1; fi
 done
 echo KLAAR
 SH

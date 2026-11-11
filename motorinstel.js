@@ -23,7 +23,7 @@
   const GROOT_MIN_RAM_MB = 5200;
   const KLEIN = { draden: 2, dradenMax: 4, context: 1024, contextMax: 2048 };
   const isKlein = (ram) => ram > 0 && ram < GROOT_MIN_RAM_MB;
-  const GRENS = { draden: [1, 8], context: [1024, 8192], temp: [0, 1.5], denk: [0, 4096], accuMin: [20, 95], tempMax: [30, 45] };
+  const GRENS = { draden: [1, 4], context: [1024, 8192], temp: [0, 1.5], denk: [0, 4096], accuMin: [20, 95], tempMax: [30, 45] };
   const binnen = (x, [min, max], std) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : std);
 
   // cap: { ramMb, sdk, dagelijks }. De rektelefoons: het gewone model (E2B) op de CPU, ook met veel geheugen (zuinig en koel).
