@@ -29,9 +29,9 @@
 //  - Een model dat een fout geeft of niet antwoordt telt als gefaald, de route gaat door; er wordt nooit een antwoord verzonnen.
 // Afspraak: geen merk, persoon of plaats in dit bestand (het gaat mee naar de openbare Veronica-site).
 (function (wortel, fabriek) {
-  if (typeof module === 'object' && module.exports) module.exports = fabriek(require('./trap.js'), require('./antwoordlog.js'));
-  else wortel.Cascade = fabriek(wortel.Trap, wortel.Antwoordlog);
-}(typeof self !== 'undefined' ? self : this, function (Trap, Antwoordlog) {
+  if (typeof module === 'object' && module.exports) module.exports = fabriek(require('./trap.js'), require('./antwoordlog.js'), require('./keurmeester.js'));
+  else wortel.Cascade = fabriek(wortel.Trap, wortel.Antwoordlog, wortel.Keurmeester);
+}(typeof self !== 'undefined' ? self : this, function (Trap, Antwoordlog, wortel_Keur) {
   'use strict';
 
   const STAPPEN = Object.freeze(['geheugen', 'regels', 'verdeler', 'model', 'f8', 'gemini']);
@@ -71,6 +71,39 @@
     return gerangschikt.filter((t) => warmteVan(t) !== 'rustig').concat(gerangschikt.filter((t) => warmteVan(t) === 'rustig'));
   }
 
+  // rolBezetting(telefoons): wie vervult nu welke rol, en wie NEEMT hem over als de eigen telefoon wegvalt (niet klaar, bezig, of veel te warm).
+  // Zo blijft Veronica praten met een telefoon minder: het denken (brein) valt terug op een andere breintelefoon en anders op de bibliothecaris, het
+  // zoeken (bibliothecaris) op het brein, en de indeling (verdeler) op gewone code -- de verdeler is niet gekoeld en doet daarom alleen licht werk,
+  // dus niemand neemt HEM over met een model. Terug: [{ rol, status: 'eigen'|'overgenomen'|'code'|'leeg', door: [id], zin }]. Voert niets uit.
+  function rolBezetting(telefoons) {
+    const alle = (Array.isArray(telefoons) ? telefoons : []).filter((t) => t && t.id);
+    const bruikbaar = (t) => klaar(t) && warmteVan(t) !== 'over';
+    const vind = (rol, extra) => alle.filter((t) => t.rol === rol && bruikbaar(t) && (!extra || extra(t)));
+    const naam = (t) => t.naam || t.id;
+    const lijst = (l) => l.map(naam).join(' en ');
+    const hadden = (rol) => alle.filter((t) => t.rol === rol);
+    const weg = (rol) => { const h = hadden(rol).filter((t) => !bruikbaar(t)); return h.length ? ` (${lijst(h)} doet nu niet mee)` : ''; };
+    const uit = [];
+    const brein = vind('brein');
+    if (brein.length) uit.push({ rol: 'brein', status: 'eigen', door: brein.map((t) => t.id), zin: `Het denken doet ${lijst(brein)}.` });
+    else {
+      const o = vind('bibliothecaris');
+      uit.push(o.length ? { rol: 'brein', status: 'overgenomen', door: o.map((t) => t.id), zin: `Het denken doet nu ${lijst(o)}${weg('brein')}.` }
+        : { rol: 'brein', status: 'leeg', door: [], zin: `Er is geen telefoon om mee te denken${weg('brein')}.` });
+    }
+    const bib = vind('bibliothecaris');
+    if (bib.length) uit.push({ rol: 'bibliothecaris', status: 'eigen', door: bib.map((t) => t.id), zin: `Het zoeken en onthouden doet ${lijst(bib)}.` });
+    else {
+      const o = vind('brein');
+      uit.push(o.length ? { rol: 'bibliothecaris', status: 'overgenomen', door: o.map((t) => t.id), zin: `Het zoeken doet nu ${lijst(o)}${weg('bibliothecaris')}.` }
+        : { rol: 'bibliothecaris', status: 'leeg', door: [], zin: `Er is geen telefoon om mee te zoeken${weg('bibliothecaris')}.` });
+    }
+    const ver = vind('verdeler', (t) => warmteVan(t) !== 'rustig');
+    uit.push(ver.length ? { rol: 'verdeler', status: 'eigen', door: ver.map((t) => t.id), zin: `Het indelen doet ${lijst(ver)}.` }
+      : { rol: 'verdeler', status: 'code', door: [], zin: `Het indelen doet gewone code${weg('verdeler')}.` });
+    return uit;
+  }
+
   async function veilig(fn) { try { return await fn(); } catch (e) { return { fout: String((e && e.message) || e).slice(0, 80) }; } }
 
   // route(vraag, ctx, uitv): loopt de trap. ctx = { prive, volLokaal, geminiToegestaan, f8: {beschikbaar}, telefoons: [{id, naam, rol, klaar, bezig, backend}],
@@ -87,7 +120,7 @@
         haast: c.haast === true, wacht: records.filter((r) => r.s === 'poging').reduce((a, r) => a + (typeof r.ms === 'number' ? r.ms : 0), 0) });
       const log = Antwoordlog.lees((c.log || []).concat(records));
       return Object.assign({ antwoord: antwoord, bron: bron === 'niemand' ? null : bron, telefoon: telefoon || null, soort: soort, stappen: stappen, records: records,
-        geescaleerd: geescaleerd, alarm: Antwoordlog.alarm(log) }, extra || {});
+        geescaleerd: geescaleerd, alarm: Antwoordlog.alarm(log), rollen: rolBezetting(c.telefoons) }, extra || {});
     };
     if (!q) { stap('geheugen', false, 'lege vraag'); return klaarMet('niemand', null, null, { reden: 'lege vraag' }); }
 
@@ -127,7 +160,13 @@
       const a = m && !m.fout ? tekst(m.antwoord) : '';
       let chk = m && !m.fout ? Trap.controle(soort, q, a) : { ok: false, reden: m && m.fout ? 'telefoon gaf een fout' : 'geen antwoord' };
       let score = null; let tweede = null;
-      if (chk.ok && !haast && c.tweedeControle === true && u.beoordeel) {
+      if (chk.ok && !haast && c.keurmeester === true && u.rechter && wortel_Keur) {
+        // 678 punt 4: GEEN enkel model als keurmeester. Eerst de regels (hierboven), dan twee rechters uit VERSCHILLENDE families die het eens moeten zijn;
+        // oneens = een derde of omhoog. De maker is nooit zijn eigen rechter. Geen rechters beschikbaar = de regels beslissen (niets ingebeeld).
+        const k = await veilig(() => wortel_Keur.keur(soort, q, a, { id: t.id, model: t.model }, (c.telefoons || []).filter((x) => klaar(x) && warmteVan(x) !== 'over'), u.rechter));
+        if (k && k.ok === false) { chk = { ok: false, reden: 'de keurmeesters keuren het af (' + k.reden + ')' }; tweede = (k.rechters || []).join('+'); }
+        else if (k && k.ok === true) tweede = (k.rechters || []).join('+');
+      } else if (chk.ok && !haast && c.tweedeControle === true && u.beoordeel) {
         // een ANDERE telefoon kijkt na: bij voorkeur een rek-telefoon die niet warm is; de (niet-gekoelde) verdeler alleen als laatste redmiddel
         const anders = kand.filter((x) => warmteVan(x) === 'ok' || warmteVan(x) === 'onbekend').concat((c.telefoons || []).filter((x) => klaar(x) && x.rol === 'verdeler' && warmteVan(x) !== 'over' && warmteVan(x) !== 'rustig')).find((x) => x.id !== t.id);
         if (anders) {
@@ -199,5 +238,5 @@
     return uit;
   }
 
-  return { route, kandidaten, telefoonsUitRollen, achtergrondPlan, warmte, STAPPEN, ROL_VOOR, ROL_KLUS, LANG, WARMTE, MAX_MODELPOGINGEN, MAX_ZONDER_HAAST, DRADEN };
+  return { route, kandidaten, telefoonsUitRollen, achtergrondPlan, rolBezetting, warmte, STAPPEN, ROL_VOOR, ROL_KLUS, LANG, WARMTE, MAX_MODELPOGINGEN, MAX_ZONDER_HAAST, DRADEN };
 }));

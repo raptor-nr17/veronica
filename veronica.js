@@ -6421,7 +6421,7 @@
       const ar = arRijen.find((x) => x.benoemd && String(x.naam).toLowerCase() === String(e.kaart.naam).toLowerCase());
       const temp = ar && ar.temp != null ? ar.temp : (typeof h.temp === 'number' ? h.temp : null);
       return { id: e.kaart.id, naam: e.kaart.naam, klaar: e.kaart.status === 'groen', rol: RekRol.rolVan(e.kaart.id) || null, temp: temp, gekoeld: !!(ar && ar.gekoeld),
-        backend: backendWoord(h.motor && h.motor.backend), gevraagd: h.instel && h.instel.gpu === true ? 'gpu' : 'cpu' };
+        model: String((h.motor && (h.motor.model || h.motor.modelNaam)) || ''), backend: backendWoord(h.motor && h.motor.backend), gevraagd: h.instel && h.instel.gpu === true ? 'gpu' : 'cpu' };
     });
     const gast = lijst.find((e) => e.kaart.gast);
     const vraagAan = async (e, q) => { const t0 = Date.now(); const antwoord = await trapVraag(e, q); return { antwoord, ms: Date.now() - t0, tokens: null }; };
@@ -6429,8 +6429,12 @@
       regels: async (q) => { const r = window.Stekkerstem && window.Stekkerstem.herken(q); return r ? { antwoord: window.Stekkerstem.bevestigZin(r), actie: { doel: r.doel, actie: r.actie } } : null; },
       model: async (t, q) => { const e = lijst.find((x) => x.kaart.id === t.id); if (!e) return { fout: 'telefoon niet in de lijst' }; const m = await vraagAan(e, q); return Object.assign(m, { backend: t.backend }); },
       f8: async (q) => (gast ? vraagAan(gast, q) : { fout: 'geen F8' }),
+      rechter: async (t, q, a) => { const e = lijst.find((x) => x.kaart.id === t.id); if (!e || !window.Keurmeester) return { fout: 'geen rechter' }; return { oordeel: await trapVraag(e, window.Keurmeester.rechterPrompt(q, a)) }; },
+      // 678 punt 3: de verdeler is een heel klein model; zijn JSON wordt STRENG gelezen (aanroep.js). Ongeldig na een nieuwe poging = gewone code, nooit blind uitvoeren.
+      verdeel: async (q, tel) => { const e = lijst.find((x) => x.kaart.id === tel.id); if (!e || !window.Aanroep) return { fout: 'geen verdeler' };
+        const r = await window.Aanroep.verdeel(q, (prompt) => trapVraag(e, prompt)); return r.omhoog ? { fout: r.fout } : r; },
     };
-    const ctx = { prive: o.prive === true, volLokaal: volLokaal(), geminiToegestaan: false, haast: o.haast !== false, dubbel: o.dubbel === true, tweedeControle: o.tweedeControle === true,
+    const ctx = { prive: o.prive === true, volLokaal: volLokaal(), geminiToegestaan: false, haast: o.haast !== false, dubbel: o.dubbel === true, tweedeControle: o.tweedeControle === true, keurmeester: o.keurmeester !== false,
       f8: { beschikbaar: !!gast && gast.kaart.status === 'groen' }, telefoons: rek, log: cascadeLog(), nu: Date.now() };
     const r = await C.route(tekst, ctx, uitv);
     cascadeBewaar(r.records);

@@ -207,6 +207,11 @@ PROXY_LOG="$REK_MAP/proxy-blok.log"              # waar de proxy geblokkeerde ac
 ALLEEN_KIJKEN_F="$REK_MAP/alleen-kijken"         # bestaat = alleen-kijken-stand (alleen Home mag); de console-knop zet hem
 ACTIEF_F="$REK_MAP/proxy-actief"                 # 592L: welk model antwoordde het laatst (Status leest dit)
 REDEN_F="$REK_MAP/proxy-reden"                   # 592o: de laatste echte reden van een mislukt/geblokkeerd verzoek (Status leest dit)
+# 678 (11 nov, eigenaar 17:41): GEMINI IS HET ENIGE DAT GELD KOST OF OP EEN LIMIET LOOPT. Daarom: standaard UIT, alleen de ALLERLAATSTE terugval, alleen met een
+# AI Studio-sleutel (AIza...) zonder Vertex/projectgegevens, een lage dagteller, en bij een 429 of 503 NIET herhalen maar stoppen en terug naar lokaal.
+# De vlag is een BESTAND (afwezig = uit): de enige manier om Gemini aan te zetten is de knop in de console of `artemis-rek gemini-aan`.
+GEM_AAN_F="$REK_MAP/gemini-aan"; GEM_DAG_F="$REK_MAP/gemini-dag"; GEM_STOP_F="$REK_MAP/gemini-stop"
+GEMINI_MAX_DAG="${GEMINI_MAX_DAG:-20}"
 F8_GEVONDEN_F="$REK_MAP/f8-gevonden.conf"        # 592p: het teruggevonden LAN-adres van de F8 (na een IP-wissel); Status leest dit
 DRAADLOOS_F="$REK_MAP/draadloos"                 # 596: onthouden draadloze adb-adressen (ip:5555) zodat de minuut-scan ze na een herstart weer verbindt
 KLAAR_F="$REK_MAP/klaargezet"                    # 667d: toestel-id's die al VOLLEDIG zijn klaargezet (telefoon_klaarzetten), zodat de auto-lus ze niet opnieuw doet
@@ -509,7 +514,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
@@ -614,7 +619,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -1748,7 +1753,8 @@ start_proxy() {
   local subnetten=""; if [ "$f8lan" = 1 ]; then local sp; for sp in $(bekende_lan_subnetten); do subnetten="$subnetten$sp,"; done; fi
   ( env PROXY_POORT="$PROXY_POORT" F8_BASE="$base" F8_TOKEN="${token:-local}" \
       ALLEEN_KIJKEN_FILE="$ALLEEN_KIJKEN_F" PROXY_LOG="$PROXY_LOG" \
-      GEMINI_KEY="$gkey" GEMINI_MODELLEN="gemini-3.8-flash,gemini-3.6-flash" \
+      GEMINI_KEY="$gkey" GEMINI_MODELLEN="gemini-3.8-flash,gemini-3.6-flash" GEMINI_STAAT_DIR="$REK_MAP" GEMINI_MAX_DAG="$GEMINI_MAX_DAG" \
+      AREK_PAD="${BIN_SELF:-artemis-rek}/artemis-rek" \
       PROXY_RESERVE="$reserve" PROXY_ACTIEF_FILE="$ACTIEF_F" PROXY_REDEN_FILE="$REDEN_F" \
       F8_LAN="$f8lan" F8_GEVONDEN_FILE="$F8_GEVONDEN_F" F8_SCAN_POORTEN="8000" F8_SUBNETTEN="$subnetten" \
       setsid python3 "$PROXYF" </dev/null >>"$REK_MAP/proxy.log" 2>&1 & echo $! >"$PROXY_PIDF" )
@@ -1760,6 +1766,11 @@ start_proxy() {
 start_kern() {
   [ -d "$ARTEMIS_MAP" ] || { zeg "ARTEMIS staat er niet. Draai eerst installeer.sh."; return 1; }
   [ -s "$TOEG" ] || { zeg "Er staat nog geen rektelefoon op de lijst. Sluit er een aan (kabel + USB-foutopsporing); de console vindt hem vanzelf."; return 1; }
+  # 678: ZONDER lokaal model en ZONDER Gemini kan ARTEMIS niet denken -- en we laten hem dan NIET stilletjes op Gemini terugvallen.
+  if [ ! -s "$REK_MAP/lokaal-model.conf" ] && [ ! -f "$GEM_AAN_F" ]; then
+    zeg "ARTEMIS start niet: er is geen lokaal model gekozen en Gemini staat UIT (standaard, want Gemini is het enige dat iets kan kosten). Kies 'Lokaal model' (de F8 of een rektelefoon), of zet Gemini bewust aan met de knop 'Gemini: uit/aan'."
+    return 1
+  fi
   # 592j: draait ARTEMIS al? Alleen "draait al" zeggen als er GEEN vangnet nodig is, OF het vangnet ook echt draait. Draait
   # ARTEMIS wel maar het vangnet niet (de oude bug: een herstart liet de oude ARTEMIS zonder proxy doordraaien), dan stop ik
   # ALLES en herstart schoon MET vangnet -- een alleen-kijken-/handel-taak mag nooit zonder vangnet draaien.
@@ -2232,11 +2243,14 @@ schrijf_artemis_jsonc() {
     # na elke milestone-edit (dus TIJDENS het plannen) -> dat was de Gemini-429 bij de proef. We schrijven daarom het VOLLEDIGE
     # formaat (top-level planner + utils, dan geeft _expand_default_into_nodes het ongewijzigd door) met ELKE node op het
     # lokale model en Gemini (gemini-3.8-flash) alleen als terugval. Python bouwt de JSON (robuust bij modelnamen).
-    python3 - "$lm_model" >"$REK_MAP/artemis.jsonc" <<'PY'
+    local gem_aan=0; [ -f "$GEM_AAN_F" ] && gem_aan=1
+    python3 - "$lm_model" "$gem_aan" >"$REK_MAP/artemis.jsonc" <<'PY'
 import json, sys
 m = sys.argv[1]
+gem = sys.argv[2] == "1"      # 678: Gemini UIT = GEEN Google-terugval in de config (ARTEMIS belt Google anders zelf, buiten de proxy om)
 def lok(temp=None):
-    d = {"provider": "openai", "model": m, "fallback": {"provider": "google", "model": "gemini-3.8-flash", "thinking_level": "medium"}}
+    d = {"provider": "openai", "model": m}
+    if gem: d["fallback"] = {"provider": "google", "model": "gemini-3.8-flash", "thinking_level": "medium"}
     if temp is not None: d["temperature"] = temp
     return d
 cfg = {
@@ -2250,6 +2264,14 @@ cfg = {
 }
 print(json.dumps(cfg, indent=2))
 PY
+  elif [ ! -f "$GEM_AAN_F" ]; then
+    # 678: geen lokaal model EN Gemini uit: een config zonder ENIG Google-model (start_kern weigert dan sowieso te starten).
+    cat >"$REK_MAP/artemis.jsonc" <<'JSONC'
+{
+  // 678: Gemini staat UIT en er is geen lokaal model gekozen; dit is een lege config zonder Google. Kies 'Lokaal model' of zet Gemini aan.
+  "default": { "provider": "openai", "model": "geen-lokaal-model" }
+}
+JSONC
   else
     cat >"$REK_MAP/artemis.jsonc" <<'JSONC'
 {
@@ -2314,6 +2336,51 @@ ACTIEF_FILE = os.environ.get('PROXY_ACTIEF_FILE', '')   # hier noteren we welk m
 # faalt i.p.v. 351 s te hangen.
 BREAKER_S = int(os.environ.get('PROXY_BREAKER_S', '30') or '30')
 GEMINI_TIMEOUT = int(os.environ.get('PROXY_GEMINI_TIMEOUT', '90') or '90')
+
+# 678: HARDE GEMINI-BEWAKING. Gemini is het enige dat geld kan kosten of op een limiet loopt. Per verzoek wordt dit gepoort: de vlag moet AAN staan (bestand
+# gemini-aan), de sleutel moet een AI Studio-sleutel zijn (AIza..., geen Vertex), er is een dagplafond, en na een 429 of 503 wordt er NIET herhaald maar
+# gestopt (gemini-stop) zodat de keten terug naar lokaal valt. Alle toestand staat in bestanden naast artemis-rek, zodat de console-knop het zonder herstart zet.
+import time as _gt
+GEMINI_DIR = os.environ.get('GEMINI_STAAT_DIR', '') or ''
+GEMINI_MAX_DAG = int(os.environ.get('GEMINI_MAX_DAG', '20') or '20')
+def _gpad(n):
+    return os.path.join(GEMINI_DIR, n) if GEMINI_DIR else ''
+def _g_lees(n):
+    try:
+        with open(_gpad(n)) as f:
+            return f.read().strip()
+    except Exception:
+        return ''
+def _g_dag():
+    d = _g_lees('gemini-dag').split()
+    return int(d[1]) if len(d) == 2 and d[0] == _gt.strftime('%Y-%m-%d') and d[1].isdigit() else 0
+def _g_tel():
+    n = _g_dag() + 1   # EERST lezen: open(..., 'w') leegt het bestand, anders telt het altijd 1 en doet het dagplafond niets
+    try:
+        with open(_gpad('gemini-dag'), 'w') as f:
+            f.write(_gt.strftime('%Y-%m-%d') + ' ' + str(n))
+    except Exception:
+        pass
+def _g_stop(seconden):
+    try:
+        with open(_gpad('gemini-stop'), 'w') as f:
+            f.write(str(int(_gt.time()) + int(seconden)))
+    except Exception:
+        pass
+def _gemini_mag():
+    # (mag, reden). Elke weigering is een reden in gewone taal voor de log.
+    if not GEMINI_DIR or not GEMINI_KEY:
+        return False, 'geen sleutel of geen staatmap'
+    if not os.path.exists(_gpad('gemini-aan')):
+        return False, 'Gemini staat uit'
+    if not GEMINI_KEY.startswith('AIza'):
+        return False, 'geen AI Studio-sleutel (AIza...)'
+    st = _g_lees('gemini-stop')
+    if st.isdigit() and int(st) > _gt.time():
+        return False, 'gestopt na een 429/503'
+    if _g_dag() >= GEMINI_MAX_DAG:
+        return False, 'dagplafond bereikt (' + str(GEMINI_MAX_DAG) + ')'
+    return True, ''
 _KAPOT = {}   # base -> tijd tot wanneer dit lokale model wordt overgeslagen
 REDEN_FILE = os.environ.get('PROXY_REDEN_FILE', '')   # 592o: de laatste echte reden van een mislukt verzoek (Status leest dit)
 
@@ -2340,7 +2407,7 @@ def _backends():
                               'base': str(r['base']).rstrip('/'), 'token': r.get('token', 'local'), 'model': r.get('model')})
     except Exception:
         pass
-    if GEMINI_KEY:
+    if _gemini_mag()[0]:   # 678: de harde bewaking, per verzoek
         for m in [x.strip() for x in GEMINI_MODELLEN.split(',') if x.strip()]:
             lijst.append({'naam': 'Gemini:' + m, 'soort': 'gemini', 'base': GEMINI_BASE, 'token': GEMINI_KEY, 'model': m})
     return lijst
@@ -2702,6 +2769,65 @@ def _krimp(body, niveau):
     b['messages'] = msgs
     return b
 
+# 678 (eigenaar 11 nov 17:41): DE GESCHIEDENIS KORT en het SCHERM ALS TEKST. De F8 weigerde door beeld + 60 berichten + gereedschap tegelijk. Daarom gaat er
+# standaard maar de systeemprompt + de laatste PROXY_HIST_MAX berichten door (HIST_MAX, 8), en wordt een schermafbeelding vervangen door het scherm als TEKST
+# (artemis-rek scherm-tekst, uiautomator) als dat te lezen is. GEWEIGERD door de §565-zeef = geen beeld en geen tekst; niet te lezen = het beeld blijft staan.
+import subprocess as _sp
+HIST_MAX = int(os.environ.get('PROXY_HIST_MAX', '8') or '8')
+SCHERM_TEKST = (os.environ.get('PROXY_SCHERM_TEKST', '1') or '1') != '0'
+AREK_PAD = os.environ.get('AREK_PAD', '') or ''
+SCHERM_TIMEOUT = int(os.environ.get('PROXY_SCHERM_TIMEOUT', '20') or '20')
+def _is_beeld(d):
+    return isinstance(d, dict) and d.get('type') in ('image_url', 'image', 'input_image')
+def _kort_historie(body, maxn=None):
+    maxn = HIST_MAX if maxn is None else maxn
+    msgs = list(body.get('messages') or [])
+    kop = msgs[:1] if msgs and (msgs[0] or {}).get('role') == 'system' else []
+    rest = msgs[len(kop):]
+    if maxn > 0 and len(rest) > maxn:
+        rest = rest[-maxn:]
+        while rest and (rest[0] or {}).get('role') == 'tool':   # een tool-antwoord zonder zijn aanroep is ongeldig: weg
+            rest = rest[1:]
+    b = dict(body); b['messages'] = kop + rest
+    return b
+def _scherm_tekst_halen():
+    # (status, tekst): status 'tekst' | 'geweigerd' | 'geen'. Elke fout = 'geen' (dan blijft het beeld staan, behalve bij 'geweigerd').
+    if not AREK_PAD:
+        return 'geen', 'geen artemis-rek-pad'
+    try:
+        r = _sp.run([AREK_PAD, 'scherm-tekst'], capture_output=True, text=True, timeout=SCHERM_TIMEOUT)
+        uit = (r.stdout or '').strip()
+    except Exception as e:
+        return 'geen', str(e)[:80]
+    if uit.startswith('GEWEIGERD'):
+        return 'geweigerd', uit[:200]
+    if uit.startswith('SCHERM'):
+        return 'tekst', uit[:3000]
+    return 'geen', uit[:200]
+def _scherm_als_tekst(body):
+    msgs = list(body.get('messages') or [])
+    if not any(isinstance(m, dict) and isinstance(m.get('content'), list) and any(_is_beeld(d) for d in m['content']) for m in msgs):
+        return body
+    status, tekst = _scherm_tekst_halen()
+    if status == 'geen':
+        _notuleer('[scherm] niet als tekst te lezen (' + tekst + '): het beeld blijft staan')
+        return body
+    nieuw = []
+    laatste = max([i for i, m in enumerate(msgs) if isinstance(m, dict) and isinstance(m.get('content'), list) and any(_is_beeld(d) for d in m['content'])])
+    for i, m in enumerate(msgs):
+        c = (m or {}).get('content') if isinstance(m, dict) else None
+        if isinstance(c, list) and any(_is_beeld(d) for d in c):
+            delen = [d for d in c if not _is_beeld(d)]
+            if i == laatste:
+                delen.append({'type': 'text', 'text': (tekst if status == 'tekst' else '[schermbeeld niet getoond: ' + tekst + ']')})
+            else:
+                delen.append({'type': 'text', 'text': '[ouder schermbeeld weggelaten]'})
+            m = dict(m, content=delen)
+        nieuw.append(m)
+    _notuleer('[scherm] ' + ('als TEKST doorgegeven' if status == 'tekst' else 'GEWEIGERD door de zeef: geen beeld en geen tekst') + ' (' + str(len(tekst)) + ' tekens)')
+    b = dict(body); b['messages'] = nieuw
+    return b
+
 # 592k: velden die een lokale OpenAI-server (OlliteRT/llama.cpp) vaak METEEN weigert (verbinding dicht zonder antwoord). We
 # parsen de actie toch uit de TEKST (de systeemprompt vertelt het model al het call:NAME{...}-formaat), dus deze API-velden
 # zijn hier overbodig en mogen eruit als het model de volle vorm weigert.
@@ -2812,6 +2938,11 @@ def _probeer_gemini(be, pad, body):
     # ook voor Gemini (geschiedenis eruit, het BEELD blijft -- het model moet kijken), cappen de uitvoer, en zetten een time-out
     # zodat een trage stap FAALT (en de volgende reserve/ARTEMIS het overneemt) i.p.v. 351 s te hangen. Tools blijven staan (Gemini
     # ondersteunt ze); de vangnet-regels gelden daarna via _herschrijf.
+    mag, waarom = _gemini_mag()   # 678: ook hier (de lijst kan oud zijn): na een 429/503 of bij het dagplafond geen tweede model proberen
+    if not mag:
+        _notuleer('[gemini] overgeslagen: ' + waarom)
+        return None, {'overgeslagen': True, 'msg': waarom}
+    _g_tel()
     b = _krimp(body, 1); b['model'] = be['model']
     t0 = _t.time()
     try:
@@ -2828,6 +2959,9 @@ def _probeer_gemini(be, pad, body):
             pass
         info = {'code': e.code, 'msg': foutlijf.decode('utf-8', 'replace')[:300], 'ms': ms}
         _notuleer(f'[model-fout] {be["naam"]}: HTTP {e.code}, {ms} ms: {info["msg"][:160]}')
+        if e.code in (429, 503):   # 678: NIET herhalen. 429 = quota (tot de volgende dag), 503 = overbelast (een uur). Daarna valt de keten terug naar lokaal.
+            _g_stop(86400 if e.code == 429 else 3600)
+            _notuleer(f'[gemini] gestopt na HTTP {e.code}: niet herhalen, terug naar lokaal')
         return None, info
     except Exception as e:
         ms = int((_t.time() - t0) * 1000)
@@ -2939,6 +3073,9 @@ class H(BaseHTTPRequestHandler):
             return
         # 592k: naar het model met shape-logging + variant-opnieuw; de foutmelding is EERLIJK over de oorzaak (niet 'te groot'
         # als de verbinding al in tientallen ms sluit). De echte fout en de request-vorm staan in de Log.
+        if SCHERM_TEKST:
+            body = _scherm_als_tekst(body)   # 678: een schermafbeelding wordt tekst (of weggelaten bij een geweigerde zeef)
+        body = _kort_historie(body)          # 678: standaard een korte geschiedenis
         resp, info = _chat_naar_model(pad, body)
         if resp is None:
             # 592L: alle backends (F8 -> reserve-E4B -> Gemini) faalden. De melding noemt de LAATSTE backend en blijft eerlijk
@@ -3453,12 +3590,34 @@ motor_meet() {
     toonUit() { printf '%s\n' "$1" | grep -iE 'draden|pp512|tg128|t/s' | head -24 | while IFS= read -r r; do zeg "    $r"; done; }
     # Staat er al een VOLTOOIDE (losgekoppelde) meting van een eerdere, afgebroken poll? Dan die pakken -- niet opnieuw meten
     # (de S10 kan >40 min doen; zo gaat een in de achtergrond afgemaakte meting niet verloren bij een nieuwe druk).
-    local vorig; vorig="$(timeout 25 "$ADB" -s "$s" shell "cat $MEET_TEL_UIT 2>/dev/null" 2>/dev/null | tr -d '\r')"
+    # 678 (11 nov): ALLEEN een meting die NU nog loopt of van de laatste 20 minuten is wordt overgenomen. Een oud KLAAR-bestand (de
+    # twee rektelefoons gaven zo twee keer de vervuilde getallen van 17:29) wordt VERWIJDERD en er wordt echt opnieuw gemeten.
+    local vorig loopt leeftijd; vorig="$(timeout 25 "$ADB" -s "$s" shell "cat $MEET_TEL_UIT 2>/dev/null" 2>/dev/null | tr -d '\r')"
+    loopt="$(timeout 25 "$ADB" -s "$s" shell "ps -A 2>/dev/null | grep -c '[m]eet.sh'" 2>/dev/null | tr -d '\r ')"
+    leeftijd="$(timeout 25 "$ADB" -s "$s" shell 'n=$(date +%s); m=$(stat -c %Y /data/local/tmp/meet.uit 2>/dev/null); [ -n "$m" ] && echo $((n-m)) || echo 999999' 2>/dev/null | tr -d '\r ')"
+    case "${leeftijd:-999999}" in ''|*[!0-9]*) leeftijd=999999 ;; esac
     case "$vorig" in
       *KLAAR*)
-        { echo "[meting] klaar (losgekoppelde meting van eerder):"; printf '%s\n' "$vorig" | grep -v '^KLAAR$'; echo; } >>"$bestand"
-        toonUit "$vorig"; zeg "  $naam: klaar (uit een eerdere achtergrondmeting)."; gedaan=$((gedaan+1)); continue ;;
+        if [ "$leeftijd" -le 1200 ]; then
+          { echo "[meting] klaar (losgekoppelde meting van ${leeftijd}s geleden):"; printf '%s\n' "$vorig" | grep -v '^KLAAR$'; echo; } >>"$bestand"
+          toonUit "$vorig"; zeg "  $naam: klaar (uit een meting van ${leeftijd}s geleden)."; gedaan=$((gedaan+1)); continue
+        fi
+        zeg "  $naam: de oude meetuitslag (${leeftijd}s oud) is weggegooid; ik meet opnieuw."
+        "$ADB" -s "$s" shell "rm -f $MEET_TEL_UIT" >/dev/null 2>&1 || true ;;
     esac
+    # 678 (11 nov): SCHOON METEN. JARVIS (en zijn model) stoppen zodat niets meerekent, scherm aan, en eerst afkoelen (hoogstens 10 min tot
+    # <= 35 graden). JARVIS wordt na de meting weer gestart. Alleen het eigen JARVIS-pakket; nooit iets anders.
+    if [ "${loopt:-0}" -eq 0 ]; then
+      "$ADB" -s "$s" shell am force-stop "$JARVIS_PKG" >/dev/null 2>&1 && zeg "  $naam: JARVIS gestopt tijdens de meting (zodat zijn model niet meerekent)."
+      "$ADB" -s "$s" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+      local koel=0 tnu
+      while [ "$koel" -lt 600 ]; do
+        tnu="$("$ADB" -s "$s" shell dumpsys battery 2>/dev/null | tr -d '\r' | grep -m1 -oE 'temperature: *[0-9]+' | grep -oE '[0-9]+')"
+        [ -z "$tnu" ] || [ "$tnu" -le 350 ] && break
+        [ "$koel" -eq 0 ] && zeg "  $naam: te warm ($(awk "BEGIN{printf \"%.1f\", $tnu/10}") graden); even afkoelen voor de meting..."
+        sleep 30; koel=$((koel+30))
+      done
+    fi
     # 678 (10 nov, avond): de meting LOSGEKOPPELD op de telefoon. Een meetscript (per draden-aantal een aparte run, zodat een
     # deeluitslag bewaard blijft) + nohup; ARTEMIS pollt het uitvoerbestand. taskset met het HEX-MASKER, met terugval zonder
     # affiniteit (oude toybox). -r 3 (kortere reeks dan de oude -r 5 -- sneller op de trage telefoons).
@@ -3486,6 +3645,7 @@ SH
     { echo "[meting] $([ "$klaar" = 1 ] && echo 'klaar' || echo "deeluitslag na ${wacht}s -- de rest loopt mogelijk nog op de telefoon"):"; printf '%s\n' "$laatste" | grep -v '^KLAAR$'; echo; } >>"$bestand"
     if printf '%s\n' "$laatste" | grep -qiE 'pp512|tg128'; then toonUit "$laatste"
     else zeg "    Nog geen meetregels (zelftest --help: ${hrc:-?}). De meting loopt los op de telefoon; druk later Meetuitslag."; fi
+    [ "$klaar" = 1 ] && "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
     [ "$klaar" = 1 ] && zeg "  $naam: klaar -- volledige meting in $bestand (en in de Log)." \
       || zeg "  $naam: deeluitslag bewaard; de rest loopt los door op de telefoon (een weggevallen brug kost niets). Druk later Meetuitslag voor de volledige uitslag."
     gedaan=$((gedaan+1))
@@ -4141,6 +4301,10 @@ lokaal() {
   zeg "Doe nu: Stop, dan Start, dan een taak. (ARTEMIS herstart met het lokale model.)"
 }
 lokaal_uit() {
+  if [ -s "$REK_MAP/lokaal-model.conf" ] && [ ! -f "$GEM_AAN_F" ]; then
+    zeg "Het lokale model blijft staan: Gemini staat UIT, dus er is niets om naar terug te vallen. Zet eerst Gemini bewust aan (knop 'Gemini: uit/aan') als je echt van het lokale model af wilt."
+    return 1
+  fi
   if [ -s "$REK_MAP/lokaal-model.conf" ]; then
     local serial fport; serial="$(sed -n 's/^ADB_SERIAL=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
     fport="$(sed -n 's/^ADB_FORWARD=//p' "$REK_MAP/lokaal-model.conf" | head -1)"
@@ -4271,7 +4435,47 @@ sleutel_check() {
   esac
 }
 
+# gemini_sleutelsoort: wat voor sleutel staat er in ARTEMIS' .env? aistudio (AIza..., kan gratis zijn) | AQ (werkt hier niet) | vertex (betaald project: NOOIT) | geen | onbekend.
+# DE FACTURATIE van het project is NIET uit de sleutel te halen: dat moet de eigenaar in Google AI Studio nakijken (de sleutel toont daar "Free tier" of niet).
+gemini_sleutelsoort() {
+  local env="$ARTEMIS_MAP/.env" k
+  [ -f "$env" ] || { printf 'geen'; return; }
+  if grep -qE '^(GOOGLE_GENAI_USE_VERTEXAI|GOOGLE_CLOUD_PROJECT|GOOGLE_APPLICATION_CREDENTIALS|VERTEX[A-Z_]*)=' "$env" 2>/dev/null; then printf 'vertex'; return; fi
+  k="$(sed -n 's/^GEMINI_API_KEY=//p' "$env" 2>/dev/null | head -1 | tr -d '"'"'"' \r')"
+  case "$k" in '') printf 'geen' ;; AIza*) printf 'aistudio' ;; AQ.*|AQ*) printf 'AQ' ;; *) printf 'onbekend' ;; esac
+}
+gemini_vandaag() { local d="" n=""; { read -r d n <"$GEM_DAG_F"; } 2>/dev/null || true; if [ "$d" = "$(date +%F)" ]; then printf '%s' "${n:-0}"; else printf '0'; fi; }
+gemini_stand() {
+  local soort="" vandaag="" stop="" nu=""; soort="$(gemini_sleutelsoort)"; vandaag="$(gemini_vandaag)"; nu="$(date +%s)"
+  stop="$(cat "$GEM_STOP_F" 2>/dev/null || true)"
+  if [ -f "$GEM_AAN_F" ]; then
+    zeg "Gemini: AAN (laatste terugval) -- vandaag $vandaag van hoogstens $GEMINI_MAX_DAG, sleutel: $soort."
+    case "$stop" in ''|*[!0-9]*) : ;; *) [ "$stop" -gt "$nu" ] && zeg "Gemini is GESTOPT na een 429/503 (tot $(date -d "@$stop" '+%d-%m %H:%M')); er wordt niet herhaald, ARTEMIS blijft lokaal." ;; esac
+  else
+    zeg "Gemini: UIT (standaard). ARTEMIS gebruikt alleen het lokale model. Vandaag $vandaag van hoogstens $GEMINI_MAX_DAG."
+  fi
+}
+gemini_aan() {
+  local soort; soort="$(gemini_sleutelsoort)"
+  case "$soort" in
+    aistudio) : ;;
+    vertex) zeg "Gemini blijft UIT: in ARTEMIS' .env staan Vertex-/projectgegevens, en Vertex rekent af per gebruik. Haal die weg en gebruik alleen een AI Studio-sleutel (AIza...)."; return 1 ;;
+    AQ) zeg "Gemini blijft UIT: een AQ-sleutel werkt hier niet (401) en hoort niet bij de gratis laag. Gebruik een AI Studio-sleutel (AIza...)."; return 1 ;;
+    geen) zeg "Gemini blijft UIT: er staat geen GEMINI_API_KEY in ARTEMIS' .env."; return 1 ;;
+    *) zeg "Gemini blijft UIT: de sleutel in ARTEMIS' .env is geen AI Studio-sleutel (AIza...), dus ik kan niet weten dat hij gratis is."; return 1 ;;
+  esac
+  : >"$GEM_AAN_F"; chmod 600 "$GEM_AAN_F" 2>/dev/null || true; rm -f "$GEM_STOP_F"
+  schrijf_artemis_jsonc 2>/dev/null || true
+  zeg "Gemini: AAN, alleen als allerlaatste terugval, hoogstens $GEMINI_MAX_DAG per dag; bij een 429 of 503 stopt het meteen en blijft ARTEMIS lokaal. LET OP: of het project achter deze sleutel facturatie heeft kan ARTEMIS NIET zien -- controleer in Google AI Studio (Get API key) dat deze sleutel op de gratis laag staat. Doe: Stop, dan Start."
+}
+gemini_uit() {
+  rm -f "$GEM_AAN_F"
+  schrijf_artemis_jsonc 2>/dev/null || true
+  zeg "Gemini: UIT. ARTEMIS gebruikt alleen het lokale model (en de reserve-telefoons). Doe: Stop, dan Start."
+}
+gemini_wissel() { if [ -f "$GEM_AAN_F" ]; then gemini_uit; else gemini_aan; fi; }
 status() {
+  gemini_stand
   if artemis_draait; then
     local p poorten open_poort; p="$(artemis_pid)"   # 592j: echte pid -- ook als het pid-bestand leeg/verouderd is maar 8000 luistert
     zeg "ARTEMIS draait (pid ${p:-onbekend})."
@@ -5053,6 +5257,50 @@ scherm_lees() {
   [ "$gedaan" -gt 0 ] || zeg "Geen rektelefoon aan de kabel om te lezen (druk op 'Zoek telefoons'; de F8 wordt nooit gelezen)."
 }
 
+# 678 (eigenaar 11 nov 17:41): het scherm als TEKST voor het MODEL in plaats van een schermafbeelding (de proxy roept dit aan). Een tekstmodel kan zo plannen
+# zonder beeld, en de F8 weigert niet meer door beeld + 60 berichten + gereedschap. EERSTE regel is een vast woord zodat de proxy het kan lezen:
+#   GEWEIGERD <reden>  de §565-zeef (wand_gate) zegt nee (gevoelige/persoonlijke app, de F8, niet op de lijst): er gaat GEEN beeld en GEEN tekst naar het model;
+#   GEEN <reden>       niet te lezen (scherm uit/vergrendeld, geen telefoon): de proxy mag het beeld dan laten staan;
+#   SCHERM ...         de tekst. Nooit de F8; alleen kabel of een Tailscale-meettunnel (127.0.0.1:56xx), geen draadloos adb.
+# Zonder serial: de EERSTE leesbare rektelefoon (ARTEMIS krijgt van ons geen vaste telefoon; met een telefoon aangesloten is dat exact die ene).
+scherm_tekst() {
+  local want="${1:-}" s naam reden boom TAB tekst
+  TAB="$(printf '\t')"
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    [ -n "$want" ] && [ "$s" != "$want" ] && continue
+    case "$s" in 127.0.0.1:56[0-9][0-9]) : ;; *:*) continue ;; esac
+    naam="$(toestel_naam "$s")"; naam="${naam:-telefoon}"
+    if ! reden="$(wand_gate "$s")"; then printf 'GEWEIGERD %s\n' "$reden"; return 0; fi
+    boom="$(scherm_boom "$s")"
+    tekst="$(scherm_zichtbaar "$s")"
+    if [ -z "$boom" ] && [ -z "$tekst" ]; then printf 'GEEN het scherm van %s is uit of vergrendeld, of heeft geen tekst\n' "$naam"; return 0; fi
+    printf 'SCHERM van %s (als tekst, in plaats van een schermafbeelding). Tikbare elementen, plek als fractie 0..1:\n' "$naam"
+    printf '%s\n' "$boom" | while IFS="$TAB" read -r n cx cy label; do [ -n "$n" ] && printf '  %s. %s [%s %s]\n' "$n" "$label" "$cx" "$cy"; done
+    [ -n "$tekst" ] && printf 'Overige zichtbare tekst: %s\n' "$tekst"
+    return 0
+  done
+  printf 'GEEN geen leesbare rektelefoon\n'
+}
+# De zichtbare tekst (ook niet-tikbaar), kort en ontdubbeld; dezelfde uiautomator-dump als scherm_boom en meteen gewist.
+scherm_zichtbaar() {
+  local s="${1:-}" xml
+  [ -n "$s" ] || return 1
+  "$ADB" -s "$s" shell uiautomator dump /sdcard/artemis-ui.xml >/dev/null 2>&1 || return 2
+  xml="$("$ADB" -s "$s" shell cat /sdcard/artemis-ui.xml 2>/dev/null | tr -d '\r')"
+  "$ADB" -s "$s" shell rm -f /sdcard/artemis-ui.xml >/dev/null 2>&1 || true
+  printf '%s' "$xml" | python3 -c '
+import sys, re, html
+xml = sys.stdin.read(); gezien = []; 
+for nd in re.findall(r"<node\b[^>]*?/?>", xml):
+    for k in ("text", "content-desc"):
+        m = re.search(r"\b" + k + r"=\"(.*?)\"", nd)
+        t = html.unescape(m.group(1)).strip() if m else ""
+        if t and t[:60] not in gezien: gezien.append(t[:60])
+sys.stdout.write(" | ".join(gezien[:40]))
+' 2>/dev/null
+}
+
 # 615: EEN VRAAG -> ELKE REKTELEFOON EEN ANDERE ZOEKMACHINE in zijn eigen browser (am start VIEW). Zo ziet de eigenaar de
 # resultaten naast elkaar op de wand. Rouleert de machines; NOOIT de F8, alleen een toegestane telefoon, en wand_gate blokkeert
 # als er een gevoelige/persoonlijke app op de voorgrond staat. De vraag gaat URL-gecodeerd mee (geen shell-injectie).
@@ -5211,6 +5459,7 @@ case "${1:-status}" in
   meetuitslag) meetuitslag ;;                  # 678 (10 nov): de llama-bench-tabel per telefoon tonen (uit ~/.artemis-rek/meet/*.log) -- synchroon, geen 12-regel-afkapping van de Log
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   f8-kabel) f8_kabel_adres ;;                   # 678j: de F8 aan de kabel -- lees ALLEEN zijn wifi-adres uit en zet hem als denker (nooit besturen)
+  scherm-tekst) scherm_tekst "${2:-}" ;;          # 678: het scherm als tekst voor het MODEL (de proxy roept dit aan)
   scherm-lees) scherm_lees ;;                   # 678 stap 8: het scherm als tekst lezen (uiautomator), alleen de rektelefoons, nooit de F8, nooit een gevoelige app
   scherm-doe) scherm_doe "${2:-}" "${3:-}" ;;   # 678 stap 8: de lus -- het lokale model kiest een element, ARTEMIS tikt het aan via de wand (§565-gate), nooit de F8
   versies) jarvis_versies ;;                    # 678p: welke JARVIS-versie per telefoon echt geïnstalleerd is (alleen lezen, nooit de F8)
@@ -5225,6 +5474,10 @@ case "${1:-status}" in
   klaarzetten) telefoon_klaarzetten ;;         # 667c: een rektelefoon aan de kabel volledig klaarzetten (wifi/DNS/batterij/5555/JARVIS), nooit de F8
   overzicht) overzicht ;;
   rek-aanwezig) rek_aanwezig ;;                 # 678 punt 22: JSON van de aanwezige rektelefoons (alleen lezen) voor Veronica
+  gemini-aan) gemini_aan ;;                    # 678: Gemini AAN (alleen laatste terugval, gratis AIza-sleutel, dagplafond)
+  gemini-uit) gemini_uit ;;
+  gemini-wissel) gemini_wissel ;;               # 678: de knop 'Gemini: uit/aan' in de console
+  gemini-stand) gemini_stand ;;
   schermenwand) schermenwand ;;                # 602: JSON van de telefoons op de wand (serial, naam, reden als er nu niets mag)
   schermfoto) schermfoto "${2:-}" ;;           # 602: één schermfoto (pad), of GEWEIGERD met reden (§565-zeef, nooit de F8)
   wand-tik) wand_besturen tik "${2:-}" "${3:-}" "${4:-}" ;;
