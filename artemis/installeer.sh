@@ -880,12 +880,21 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'text/plain; charset=utf-8'); self.send_header('Content-Length', str(len(b)))
         self.send_header('Access-Control-Allow-Origin', '*'); self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers(); self.wfile.write(b)
+    def _cors_json(self, code, body):
+        b = body.encode('utf-8'); self.send_response(code)
+        self.send_header('Content-Type', 'application/json; charset=utf-8'); self.send_header('Content-Length', str(len(b)))
+        self.send_header('Access-Control-Allow-Origin', '*'); self.send_header('Cache-Control', 'no-store')
+        self.end_headers(); self.wfile.write(b)
     def do_OPTIONS(self):
         self._cors(204, '')
     def do_GET(self):
         p = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(p.query)
         if p.path in ('/', '/index.html'):
             self._schrijf(200, PAGINA.format(ap=int(os.environ.get('ARTEMIS_POORT', '8000'))), 'text/html; charset=utf-8')
+        elif p.path == '/rek.json':
+            # 678 punt 22: alleen LEZEN -- welke rektelefoons ARTEMIS nu ziet (kabel/wifi/Tailscale), voor de lijst in Veronica.
+            t = doe_args(['rek-aanwezig'], 25)
+            self._cors_json(200, t if t.startswith('[') else '[]')
         elif p.path == '/status.json':
             aan = os.path.exists(os.path.join(REK, 'artemis.pid'))
             self._schrijf(200, '{"console":true,"artemis":%s}' % ('true' if aan else 'false'), 'application/json')
@@ -4909,6 +4918,27 @@ schermfoto() {
   rm -f "$uit" 2>/dev/null || true; zeg "GEWEIGERD de schermfoto lukte niet (telefoon vergrendeld of adb kwijt)"; return 3
 }
 # schermenwand -- JSON van de telefoons die nu op de wand horen (serial, naam, id, en de reden als er nu niets getoond mag worden).
+# 678 (punt 22): JSON van de AANWEZIGE rektelefoons voor Veronica ("aanwezig" hangt zo niet alleen van de hartslag af). Alleen LEZEN.
+# Per toestel: het typenummer (ro.product.model), hoe het verbonden is (kabel / wifi / tailscale) en een korte sleutel (8 hex van
+# een hash van het serienummer -- het serienummer zelf gaat NIET naar buiten). De F8 komt er nooit in. Een toestel in de Tailscale-
+# bruggenlijst telt mee ook als het niet op de kabellijst staat (dat is precies het geval dat Veronica miste).
+rek_aanwezig() {
+  local eerste=1 s naam via sl
+  printf '['
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    naam="$(toestel_naam "$s")"; naam="$(printf '%s' "$naam" | tr -cd 'A-Za-z0-9 ._-')"; [ -n "$naam" ] || naam="onbekend"
+    via="kabel"
+    case "$s" in
+      127.0.0.1:56[0-9][0-9]) via="tailscale" ;;
+      *:*) via="wifi" ;;
+    esac
+    sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"
+    [ "$eerste" = 1 ] || printf ','; eerste=0
+    printf '{"model":%s,"via":%s,"sleutel":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")"
+  done
+  printf ']\n'
+}
 schermenwand() {
   local eerste=1 s id naam reden
   printf '['
@@ -5191,6 +5221,7 @@ case "${1:-status}" in
   klaarzetten-auto) telefoon_klaarzetten auto ;;   # 667d: de minuut-lus -- alleen een NIEUWE, nog niet klaargezette telefoon aan de kabel
   klaarzetten) telefoon_klaarzetten ;;         # 667c: een rektelefoon aan de kabel volledig klaarzetten (wifi/DNS/batterij/5555/JARVIS), nooit de F8
   overzicht) overzicht ;;
+  rek-aanwezig) rek_aanwezig ;;                 # 678 punt 22: JSON van de aanwezige rektelefoons (alleen lezen) voor Veronica
   schermenwand) schermenwand ;;                # 602: JSON van de telefoons op de wand (serial, naam, reden als er nu niets mag)
   schermfoto) schermfoto "${2:-}" ;;           # 602: één schermfoto (pad), of GEWEIGERD met reden (§565-zeef, nooit de F8)
   wand-tik) wand_besturen tik "${2:-}" "${3:-}" "${4:-}" ;;
