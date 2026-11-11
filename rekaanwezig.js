@@ -18,6 +18,7 @@
   const MAX = 12;
   const VIA = { kabel: 'via de kabel', wifi: 'via wifi (adb)', tailscale: 'via Tailscale (adb)' };
   const SLEUTEL = 'veronica-rek-namen';
+  const KOEL_SLEUTEL = 'veronica-rek-gekoeld';   // welke toestellen op een cooler liggen (zelf aangegeven, lokaal, per ARTEMIS-sleutel)
 
   const schoon = (t, max) => String(t == null ? '' : t).replace(/[^\p{L}\p{N} ._()\/+-]/gu, '').trim().slice(0, max);
 
@@ -34,7 +35,8 @@
       const via = VIA[x.via] ? x.via : 'kabel';
       if (!model || !sleutel || gezien.has(sleutel)) continue;
       if (/F8|25102PCBEG/i.test(model)) continue;   // de dagelijkse telefoon hoort hier nooit
-      gezien.add(sleutel); uit.push({ model: model, via: via, sleutel: sleutel });
+      const temp = typeof x.temp === 'number' && isFinite(x.temp) && x.temp > -20 && x.temp < 80 ? Math.round(x.temp * 10) / 10 : null;   // batterij in graden; onbekend blijft null
+      gezien.add(sleutel); uit.push({ model: model, via: via, sleutel: sleutel, temp: temp });
       if (uit.length >= MAX) break;
     }
     return uit;
@@ -57,10 +59,26 @@
     return uit;
   }
 
+  // gekoeld(ruw): { sleutel: true } van de toestellen die op een cooler liggen. Standaard NIET gekoeld (voorzichtig). Kapotte opslag = {}.
+  function gekoeld(ruw) {
+    let o = ruw;
+    if (typeof o === 'string') { try { o = JSON.parse(o); } catch (e) { return {}; } }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+    const uit = {}; for (const k of Object.keys(o)) if (/^[0-9a-f]{8}$/.test(k) && o[k] === true) uit[k] = true;
+    return uit;
+  }
+  function zetGekoeld(map, sleutel, aan) {
+    const uit = gekoeld(map);
+    if (!/^[0-9a-f]{8}$/.test(String(sleutel || ''))) return uit;
+    if (aan) uit[sleutel] = true; else delete uit[sleutel];
+    return uit;
+  }
+
   // rijen(artemisLijst, namenMap, bekend): per ARTEMIS-toestel een rij. bekend = [{naam, klaar, reden}] van de telefoons die Veronica
   // zelf kent (uit pantserStand/hartslag). Een koppeling bestaat ALLEEN via een gelijke naam (hoofdletterongevoelig).
-  function rijen(artemis, namenMap, bekend) {
+  function rijen(artemis, namenMap, bekend, koelMap) {
     const nm = namen(namenMap);
+    const km = gekoeld(koelMap);
     const bk = Array.isArray(bekend) ? bekend : [];
     return lees(artemis).map((a) => {
       const naam = nm[a.sleutel] || a.model;
@@ -68,8 +86,10 @@
       let pantser; let klaar = null;
       if (eigen) { klaar = eigen.klaar === true; pantser = klaar ? 'klaar in het pantser' : `nog niet klaar: ${eigen.reden || 'geen reden gemeld'}`; }
       else pantser = 'in het pantser: nog niet bevestigd door de telefoon zelf (geen hartslag aan deze naam gekoppeld)';
+      const koel = km[a.sleutel] === true;
       return { sleutel: a.sleutel, model: a.model, naam: naam, benoemd: !!nm[a.sleutel], aanwezig: true, via: a.via, viaZin: VIA[a.via], klaar: klaar, pantser: pantser,
-        zin: `${naam}: aanwezig ${VIA[a.via]} · ${pantser}` };
+        temp: a.temp, gekoeld: koel,
+        zin: `${naam}: aanwezig ${VIA[a.via]}${a.temp != null ? ` · ${String(a.temp).replace('.', ',')} °C` : ''} · ${koel ? 'op de cooler' : 'niet op de cooler'} · ${pantser}` };
     });
   }
 
@@ -82,5 +102,5 @@
     return `ARTEMIS ziet ${l.length} ${l.length === 1 ? 'rektelefoon' : 'rektelefoons'} aanwezig · ${klaar} bevestigd klaar in het pantser${onbekend ? ` · ${onbekend} nog niet bevestigd` : ''}`;
   }
 
-  return { lees, namen, zetNaam, rijen, samenvatting, SLEUTEL, VIA, MAX };
+  return { lees, namen, zetNaam, gekoeld, zetGekoeld, rijen, samenvatting, SLEUTEL, KOEL_SLEUTEL, VIA, MAX };
 }));

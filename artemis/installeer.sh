@@ -893,7 +893,7 @@ class H(BaseHTTPRequestHandler):
             self._schrijf(200, PAGINA.format(ap=int(os.environ.get('ARTEMIS_POORT', '8000'))), 'text/html; charset=utf-8')
         elif p.path == '/rek.json':
             # 678 punt 22: alleen LEZEN -- welke rektelefoons ARTEMIS nu ziet (kabel/wifi/Tailscale), voor de lijst in Veronica.
-            t = doe_args(['rek-aanwezig'], 25)
+            t = doe_args(['rek-aanwezig'], 45)
             self._cors_json(200, t if t.startswith('[') else '[]')
         elif p.path == '/status.json':
             aan = os.path.exists(os.path.join(REK, 'artemis.pid'))
@@ -4923,7 +4923,7 @@ schermfoto() {
 # een hash van het serienummer -- het serienummer zelf gaat NIET naar buiten). De F8 komt er nooit in. Een toestel in de Tailscale-
 # bruggenlijst telt mee ook als het niet op de kabellijst staat (dat is precies het geval dat Veronica miste).
 rek_aanwezig() {
-  local eerste=1 s naam via sl
+  local eerste=1 s naam via sl tmp
   printf '['
   for s in $(verbonden); do
     is_f8 "$s" && continue
@@ -4934,8 +4934,11 @@ rek_aanwezig() {
       *:*) via="wifi" ;;
     esac
     sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"
+    # 678: de BATTERIJTEMPERATUUR (dumpsys geeft tienden van graden). Leeg of onzin = null: nooit een getal verzinnen.
+    tmp="$(timeout 8 "$ADB" -s "$s" shell dumpsys battery 2>/dev/null | tr -d '\r' | grep -m1 -oE 'temperature: *[0-9]+' | grep -oE '[0-9]+$')"
+    case "$tmp" in ''|*[!0-9]*) tmp="null" ;; *) tmp="$(awk -v t="$tmp" 'BEGIN{printf "%.1f", t/10}')" ;; esac
     [ "$eerste" = 1 ] || printf ','; eerste=0
-    printf '{"model":%s,"via":%s,"sleutel":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")"
+    printf '{"model":%s,"via":%s,"sleutel":%s,"temp":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")" "$tmp"
   done
   printf ']\n'
 }

@@ -223,7 +223,6 @@
       canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
     }
 
-    wortel.Schermenwand = API;
   }
 
   return API;
