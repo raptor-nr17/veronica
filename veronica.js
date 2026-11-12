@@ -3128,7 +3128,7 @@
     const r = window.Rekaanwezig.rijen(RekAanw.lijst, rekNamen(), rekBekend(), rekKoel());
     vak.hidden = !r.length;
     if (!r.length) { vak.textContent = ''; return; }
-    morphKinderen(vak, [(() => { const d = el('div', 'pantserHelpRegel', window.Rekaanwezig.samenvatting(r)); d.dataset.sleutel = 'samenvatting'; return d; })()].concat(r.map((x) => {
+    morphKinderen(vak, [(() => { const d = el('div', 'pantserHelpRegel', window.Rekaanwezig.samenvatting(r, pantserStand())); d.dataset.sleutel = 'samenvatting'; return d; })()].concat(r.map((x) => {
       const d = el('div', 'pantserHelpRegel', x.zin); d.dataset.sleutel = `${x.sleutel}|${x.zin}`;
       const k = el('button', '', x.benoemd ? 'Andere naam' : 'Geef een naam'); k.dataset.rekNaam = x.sleutel; k.dataset.rekModel = x.model; d.append(' ', k);
       const kk = el('button', '', x.gekoeld ? 'Ligt niet op de cooler' : 'Ligt op de cooler'); kk.dataset.rekKoel = x.sleutel; kk.dataset.rekKoelNu = x.gekoeld ? '1' : '0'; d.append(' ', kk);   // 678: een menselijke keuze

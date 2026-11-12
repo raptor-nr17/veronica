@@ -51,6 +51,14 @@
   }
   const klaar = (t) => t && t.klaar === true && t.bezig !== true && !t.dagelijks && t.f8 !== true;   // de F8/dagelijkse telefoon is nooit "het rek"
 
+  // rechterVolgorde(telefoons): wie als rechter wordt gevraagd, in volgorde. Eerst de rek-telefoons (gekoeld, niet warm), dan de rek-telefoons die al rustig aan doen,
+  // en de VERDELER (niet gekoeld, alleen licht werk) alleen als laatste: een korte JA/NEE is licht, maar hij rekt nooit voor een gekoelde telefoon.
+  function rechterVolgorde(telefoons) {
+    const ok = (Array.isArray(telefoons) ? telefoons : []).filter((x) => klaar(x) && warmteVan(x) !== 'over');
+    const rek = ok.filter((x) => x.rol !== 'verdeler');
+    return rek.filter((x) => warmteVan(x) !== 'rustig').concat(rek.filter((x) => warmteVan(x) === 'rustig'), ok.filter((x) => x.rol === 'verdeler' && warmteVan(x) !== 'rustig'));
+  }
+
   // warmte(temp, gekoeld): 'onbekend' | 'ok' | 'rustig' | 'over' voor een batterijtemperatuur in graden. Grenzen: gekoeld 39 (rustig) en 42 (over, gelijk aan de
   // rek-grens van de motor-instellingen); niet gekoeld 36 en 39. Dit is een REGEL, geen model: pure vergelijking van een gemeten getal.
   const WARMTE = Object.freeze({ gekoeld: { rustig: 39, over: 42 }, ongekoeld: { rustig: 36, over: 39 } });
@@ -163,7 +171,7 @@
       if (chk.ok && !haast && c.keurmeester === true && u.rechter && wortel_Keur) {
         // 678 punt 4: GEEN enkel model als keurmeester. Eerst de regels (hierboven), dan twee rechters uit VERSCHILLENDE families die het eens moeten zijn;
         // oneens = een derde of omhoog. De maker is nooit zijn eigen rechter. Geen rechters beschikbaar = de regels beslissen (niets ingebeeld).
-        const k = await veilig(() => wortel_Keur.keur(soort, q, a, { id: t.id, model: t.model }, (c.telefoons || []).filter((x) => klaar(x) && warmteVan(x) !== 'over'), u.rechter));
+        const k = await veilig(() => wortel_Keur.keur(soort, q, a, { id: t.id, model: t.model }, rechterVolgorde(c.telefoons), u.rechter));
         if (k && k.ok === false) { chk = { ok: false, reden: 'de keurmeesters keuren het af (' + k.reden + ')' }; tweede = (k.rechters || []).join('+'); }
         else if (k && k.ok === true) tweede = (k.rechters || []).join('+');
       } else if (chk.ok && !haast && c.tweedeControle === true && u.beoordeel) {
@@ -238,5 +246,5 @@
     return uit;
   }
 
-  return { route, kandidaten, telefoonsUitRollen, achtergrondPlan, rolBezetting, warmte, STAPPEN, ROL_VOOR, ROL_KLUS, LANG, WARMTE, MAX_MODELPOGINGEN, MAX_ZONDER_HAAST, DRADEN };
+  return { route, rechterVolgorde, kandidaten, telefoonsUitRollen, achtergrondPlan, rolBezetting, warmte, STAPPEN, ROL_VOOR, ROL_KLUS, LANG, WARMTE, MAX_MODELPOGINGEN, MAX_ZONDER_HAAST, DRADEN };
 }));

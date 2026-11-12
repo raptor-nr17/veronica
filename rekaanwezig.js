@@ -94,13 +94,25 @@
   }
 
   // samenvatting(rijen): een korte kop.
-  function samenvatting(r) {
+  // telling(rijen, ps): "N van M klaar" MET de ARTEMIS-telefoons. M = de telefoons die Veronica kent + de aanwezige ARTEMIS-toestellen die ze nog niet
+  // aan een telefoon van haar koppelde (die kon ze niet tellen: ze zijn er wel, ze melden alleen nog geen hartslag); N = wat Veronica klaar meldt.
+  // Zo staat er niet meer "0 van 2 klaar" terwijl ARTEMIS er vier ziet. ps = { klaar, totaal } van de pantser-regel.
+  function telling(rijen, ps) {
+    const l = Array.isArray(rijen) ? rijen : []; const p = ps && typeof ps === 'object' ? ps : {};
+    const kent = Number.isFinite(p.totaal) ? p.totaal : 0; const klaar = Number.isFinite(p.klaar) ? p.klaar : 0;
+    // Een niet-benoemd ARTEMIS-toestel kan dezelfde telefoon zijn die Veronica al kent (we weten het pas bij een naam): dus NIET optellen maar het grootste van de twee.
+    const totaal = Math.max(kent, l.length);
+    const extra = Math.max(0, l.length - kent);
+    return { klaar: Math.min(klaar, totaal), totaal: totaal, extra: extra, zin: `${Math.min(klaar, totaal)} van ${totaal} klaar` };
+  }
+  function samenvatting(r, ps) {
     const l = Array.isArray(r) ? r : [];
     if (!l.length) return '';
+    if (ps) { const t = telling(l, ps); return `Pantser: ${t.zin} · ARTEMIS ziet ${l.length} ${l.length === 1 ? 'rektelefoon' : 'rektelefoons'} aanwezig${t.extra ? ` (${t.extra} nog niet aan Veronica gekoppeld)` : ''}`; }
     const klaar = l.filter((x) => x.klaar === true).length;
     const onbekend = l.filter((x) => x.klaar === null).length;
     return `ARTEMIS ziet ${l.length} ${l.length === 1 ? 'rektelefoon' : 'rektelefoons'} aanwezig · ${klaar} bevestigd klaar in het pantser${onbekend ? ` · ${onbekend} nog niet bevestigd` : ''}`;
   }
 
-  return { lees, namen, zetNaam, gekoeld, zetGekoeld, rijen, samenvatting, SLEUTEL, KOEL_SLEUTEL, VIA, MAX };
+  return { lees, namen, zetNaam, gekoeld, zetGekoeld, rijen, telling, samenvatting, SLEUTEL, KOEL_SLEUTEL, VIA, MAX };
 }));

@@ -3355,11 +3355,36 @@ _bh_verbonden_ids() {
     id="$(toestel_id "$s")"; [ -n "$id" ] && printf '%s\n' "$id"
   done
 }
+# 678 (12 nov): een lijst-regel "adb:<ip>:5555" is een NOODID: toen de telefoon op de lijst kwam kon het serienummer niet gelezen worden. Zodra die telefoon
+# verbonden is (of zich laat verbinden) heeft hij zijn echte serienummer; de beheerder bleef de noodregel als "weg" zien en meldde elke ronde dat hij hem
+# miste. Nu wordt de noodregel VERVANGEN door het echte serienummer (of weggehaald als dat er al staat). Nooit de F8; alleen de lijst wordt aangepast.
+bh_migreer_adres_ids() {
+  [ -s "$TOEG" ] || return 0
+  local regel adres echt
+  while read -r regel; do
+    case "$regel" in adb:*) ;; *) continue ;; esac
+    adres="${regel#adb:}"
+    case "$adres" in *[!0-9.:]*|'') continue ;; esac
+    "$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device"{print $1}' | grep -qxF "$adres" || "$ADB" connect "$adres" >/dev/null 2>&1 || true
+    "$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device"{print $1}' | grep -qxF "$adres" || continue
+    is_f8 "$adres" && continue
+    echt="$("$ADB" -s "$adres" shell getprop ro.serialno 2>/dev/null | tr -d '\r\n ')"
+    [ -n "$echt" ] || continue
+    if grep -qxF "$echt" "$TOEG" 2>/dev/null; then
+      grep -vxF "$regel" "$TOEG" >"$TOEG.t" 2>/dev/null && mv -f "$TOEG.t" "$TOEG" 2>/dev/null || true
+    else
+      awk -v a="$regel" -v b="$echt" '{ if ($0==a) print b; else print $0 }' "$TOEG" >"$TOEG.t" 2>/dev/null && mv -f "$TOEG.t" "$TOEG" 2>/dev/null || true
+    fi
+    chmod 600 "$TOEG" 2>/dev/null || true
+    zeg "Beheerder: de noodregel $regel is vervangen door het echte serienummer van die telefoon."
+  done < "$TOEG"
+}
 beheerder_ronde() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
   "$ADB" start-server >/dev/null 2>&1 || true
   if [ ! -s "$TOEG" ]; then zeg "Beheerder: nog geen rektelefoons op de lijst (druk op 'Zoek telefoons' of zet er een klaar aan de kabel)."; return 0; fi
   local verwacht hersteld=0 weg=0 nodig="" id nu_ids nu_ids2
+  bh_migreer_adres_ids
   verwacht="$(grep -cvE '^\s*$' "$TOEG" 2>/dev/null | tr -d ' ')"; case "$verwacht" in ''|*[!0-9]*) verwacht=0 ;; esac
   nu_ids="$(_bh_verbonden_ids | tr '\n' ' ')"
   while read -r id; do
