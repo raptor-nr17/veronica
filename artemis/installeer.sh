@@ -21,6 +21,7 @@
 #
 # Daarna: `artemis-rek start` (console op http://penguin.linux.test:8765), `artemis-rek stop`, `artemis-rek toestellen`,
 # `artemis-rek draadloos`, `artemis-rek status`.
+ARTEMIS_EINDEREGEL=1   # 678: bovenaan verklaard: dit bestand eindigt op '# EINDE-ARTEMIS-SCRIPT'; zelf_bijwerken weigert een download zonder die regel (afgekapt)
 set -euo pipefail
 
 ARTEMIS_REPO="https://github.com/google/artemis"
@@ -339,15 +340,26 @@ vergeet() {
 zelf_bijwerken() {
   [ -s "$BRONF" ] || { zeg "Geen bron voor bijwerken ingesteld (niet meegegeven bij de installatie)."; return 1; }
   command -v curl >/dev/null 2>&1 || { zeg "Bijwerken: curl ontbreekt."; return 1; }
-  local base tmp code; base="$(cat "$BRONF")"; tmp="$(mktemp)" || return 1
+  local base tmp code rc poging=0 klaar=0 fout="" grootte; base="$(cat "$BRONF")"; tmp="$(mktemp)" || return 1
   # 586: toon de HTTP-code, zodat je ziet WAAROM het niet lukt (000 = geen internet/site weg, 404 = verkeerd adres).
   zeg "Bijwerken 1/4: script ophalen van $base/artemis/installeer.sh ..."
   # 605: cache-buster + no-cache-koppen. GitHub Pages (Fastly) cachet een bestand ~10 min; ZONDER dit kreeg de zelf-bijwerker een
   # OUDE installeer.sh terug en bleef een nieuwe versie (bv. §604) uren weg, ook na 'Bijwerken'. Een unieke query (?nc=<epoch>) plus
   # Cache-Control: no-cache dwingt een VERSE kopie af, zodat een nieuwe versie altijd vanzelf binnenkomt.
-  code="$(curl -fsSL -m 30 -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' -w '%{http_code}' "$base/artemis/installeer.sh?nc=$(date +%s)" -o "$tmp" 2>/dev/null)"; code="${code:-000}"
-  if [ "$code" != "200" ] || [ ! -s "$tmp" ]; then zeg "Bijwerken: ophalen mislukte (http $code). Geen internet, of de site is even weg. Niets veranderd."; rm -f "$tmp"; return 1; fi
-  if ! bash -n "$tmp" 2>/dev/null; then zeg "Bijwerken: het opgehaalde script is geen geldige bash; niets veranderd."; rm -f "$tmp"; return 1; fi
+  # 678 (12 nov): "geen geldige bash" bij een bestand dat WEL geldig is (435 KB): curl -m 30 brak midden in de overdracht af terwijl -w nog http 200 meldde, dus een
+  # AFGEKAPT bestand. Nu: gecomprimeerd ophalen (--compressed, veel kleiner), 90 s, het curl-resultaat zelf controleren, en tot DRIE pogingen; een afgekapt bestand
+  # herken je aan het ontbreken van de eindregel. Het mislukte bestand blijft in $REK_MAP/bijwerken-mislukt.sh (600) om de oorzaak te zien. Pas een bestand dat bash
+  # leest EN de eindregel draagt (of een oudere versie zonder eindregel-afspraak die wel bash leest) wordt gebruikt.
+  while [ "$poging" -lt "${BIJWERK_POGINGEN:-3}" ] && [ "$klaar" = 0 ]; do
+    poging=$((poging + 1))
+    code="$(curl -fsSL --compressed --retry 1 --retry-delay 2 -m "${BIJWERK_TIMEOUT:-90}" -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' -w '%{http_code}' "$base/artemis/installeer.sh?nc=$(date +%s)-$poging" -o "$tmp" 2>/dev/null)"; rc=$?; code="${code:-000}"
+    if [ "$rc" -ne 0 ] || [ "$code" != "200" ] || [ ! -s "$tmp" ]; then fout="ophalen mislukte (http $code, curl $rc)"; sleep 2; continue; fi
+    grootte="$(wc -c <"$tmp" 2>/dev/null | tr -d ' ')"
+    if ! bash -n "$tmp" 2>/dev/null; then fout="het bestand ($grootte bytes) is geen geldige bash -- waarschijnlijk afgekapt"; cp "$tmp" "$REK_MAP/bijwerken-mislukt.sh" 2>/dev/null && chmod 600 "$REK_MAP/bijwerken-mislukt.sh" 2>/dev/null; sleep 2; continue; fi
+    if grep -q 'ARTEMIS_EINDEREGEL=1' "$tmp" && ! tail -n 3 "$tmp" | grep -q '^# EINDE-ARTEMIS-SCRIPT$'; then fout="de eindregel ontbreekt ($grootte bytes) -- afgekapt"; cp "$tmp" "$REK_MAP/bijwerken-mislukt.sh" 2>/dev/null && chmod 600 "$REK_MAP/bijwerken-mislukt.sh" 2>/dev/null; sleep 2; continue; fi
+    klaar=1
+  done
+  if [ "$klaar" != 1 ]; then zeg "Bijwerken: het opgehaalde script is niet bruikbaar na $poging pogingen ($fout); niets veranderd. Probeer het zo nog eens, liefst op een snelle verbinding."; rm -f "$tmp"; return 1; fi
   if ! grep -q 'artemis-rek' "$tmp" || ! grep -q 'ARTEMIS_REPO=' "$tmp"; then zeg "Bijwerken: het opgehaalde script lijkt niet op ARTEMIS; niets veranderd."; rm -f "$tmp"; return 1; fi
   if ARTEMIS_BRON="$base" bash "$tmp" --alleen-bestanden "$REK_MAP" "$BIN_SELF" >/dev/null 2>&1; then
     logregel "Bijgewerkt vanaf de site (http $code)."
@@ -5864,3 +5876,4 @@ zeg "Klaar -- en dit was de laatste keer in de terminal."
 zeg "Alles gaat nu via de console in Chrome: http://$KBHOST:$CONSOLE_POORT (op ChromeOS NIET localhost -- de Linux-VM heet penguin.linux.test)"
 zeg "Daar staan de knoppen Start, Stop, Status, Zoek telefoons en Bijwerken. De console draait voortaan vanzelf,"
 zeg "werkt zichzelf bij vanaf de site, en zoekt elke minuut zelf nieuwe rektelefoons. Je hoeft hier niets meer te typen."
+# EINDE-ARTEMIS-SCRIPT
