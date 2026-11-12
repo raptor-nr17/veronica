@@ -514,10 +514,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
+LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -604,6 +604,8 @@ def lus():
                 doe('beheerder')   # 675: de lokale beheerder -- elke ~2 min kijken of alle rektelefoons verbonden zijn, een weggevallene zelf terughalen, anders de eigenaar vragen
             if RONDE % 15 == 7:
                 doe('lokaal-auto')   # 592: lokaal model AANzetten zodra er een lokale server verschijnt ("standaard AAN")
+            if RONDE % 10 == 2:
+                doe('meet-hervat')   # 678: een onderbroken Snelheid-meten-lezer na een console-herstart weer oppakken
             if RONDE % 5 == 3:
                 doe('voortgang-controle')   # 678 (12 nov): kijkt of er langer dan 30 minuten niets gepusht is (stil; melding hoogstens eens per uur)
             if RONDE % 180 == 45:
@@ -651,6 +653,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <input id=vgToken type=password autocomplete=off spellcheck=false placeholder="leestoken (privé-repo, optioneel)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=vgBewaar>Bewaar voortgang</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
+<pre id=meetUit hidden></pre>
 <p style="margin:8px 0 2px;color:#8aa">Live (Log/Status vernieuwen hier, zonder je knop-uitkomst te overschrijven):</p>
 <pre id=live style="opacity:.85"></pre>
 <script>
@@ -662,13 +665,16 @@ const uit=document.getElementById('uit');
 const live=document.getElementById('live');
 function nu(){{return new Date().toLocaleTimeString();}}
 async function doe(c,naar){{
-  const vak=(naar==='live')?live:uit;
+  // 678 (12 nov): Meetuitslag krijgt een EIGEN vak dat de automatische Status-verversing (en een herladen na een console-herstart) nooit overschrijft; de laatste uitslag blijft bewaard in deze tab.
+  const vak=(naar==='live')?live:(c==='meetuitslag'?document.getElementById('meetUit'):uit);
+  if(c==='meetuitslag'){{vak.hidden=false;}}
   vak.textContent=nu()+' — bezig: '+c+'…';
   const ac=new AbortController();const t=setTimeout(()=>ac.abort(),25000);
   try{{
     const r=await fetch('/doe?cmd='+encodeURIComponent(c),{{method:'POST',signal:ac.signal}});
     clearTimeout(t);
     vak.textContent=nu()+' — '+c+':\\n'+(await r.text());
+    if(c==='meetuitslag'){{try{{sessionStorage.setItem('meetuitslag',vak.textContent);}}catch(e){{}}}}
     if(c==='bijwerken'||c==='start'||c==='rek-op'||c==='kabel-koppel'||c==='klaarzetten'||c==='beheerder'||c==='tailscale-telefoon'||c==='tailscale'){{setTimeout(()=>doe('log','live'),7000);setTimeout(()=>doe('status','live'),20000);}}
   }}catch(e){{
     clearTimeout(t);
@@ -757,6 +763,7 @@ if(mbw)mbw.addEventListener('click',async()=>{{
 // laadt deze pagina zichzelf opnieuw -- geen nieuw tabblad, geen dode pagina. We openen NOOIT zelf een tab.
 let _consoleWeg=false;
 setInterval(()=>{{fetch('/',{{method:'HEAD',cache:'no-store'}}).then(()=>{{if(_consoleWeg)location.reload();}}).catch(()=>{{_consoleWeg=true;}});}},3000);
+try{{const m=sessionStorage.getItem('meetuitslag');if(m){{const v=document.getElementById('meetUit');v.textContent=m;v.hidden=false;}}}}catch(e){{}}
 doe('status');
 </script></main></body></html>"""
 # 602: DE SCHERMENWAND -- de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen. Alle veiligheid zit in de
@@ -3628,6 +3635,7 @@ motor_meet() {
   [ -n "$oudpid" ] && kill "$oudpid" 2>/dev/null || true
   rm -rf "$lock" 2>/dev/null; mkdir "$lock" 2>/dev/null || { zeg "Kon het motor-meet-slot niet zetten."; return 0; }
   echo "$$" >"$lock/pid" 2>/dev/null || true
+  date +%s >"$REK_MAP/meet-bezig" 2>/dev/null || true   # 678: markering "er loopt een meting"; wordt pas weggehaald als alle telefoons klaar zijn. Na een console-herstart pakt meet-hervat hem op.
   # LET OP: de EXIT-trap draait in de GLOBALE scope, waar de lokale $lock NIET bestaat -> onder set -u gaf 'rm -rf "$lock"' daar
   # "lock: unbound variable", en dan werd het slot niet opgeruimd. Gebruik het globale $REK_MAP-pad, dat altijd gebonden is.
   trap 'rm -rf "$REK_MAP/motor-meet.lock" 2>/dev/null' EXIT INT TERM
@@ -3658,7 +3666,8 @@ motor_meet() {
     # kleine kernen vertragen de decode). We tellen ze en nemen dat getal MEE in de meetreeks (naast 1/2/4/8), zodat de meting
     # bewijst of de big-core-telling echt het snelst is. JARVIS' motor draait daarna standaard op dat aantal (motorinstel.js).
     local bigN tset; bigN="$(printf '%s' "$big" | tr ',' '\n' | grep -c .)"; case "$bigN" in ''|*[!0-9]*) bigN=4 ;; esac
-    tset="$(printf '1\n2\n4\n8\n%s\n' "$bigN" | sort -n -u | paste -sd, -)"
+    # 678 (12 nov): NOOIT meer draden dan grote kernen (de S10 heeft er twee: 4 en 8 draden storten daar in en kosten alleen tijd). Minstens 1 draad.
+    tset="$(printf '1\n2\n4\n8\n%s\n' "$bigN" | sort -n -u | awk -v m="$bigN" '$1<=m' | paste -sd, -)"; [ -n "$tset" ] || tset=1
     # llama-bench + model aanwezig? (nooit gokken -- eerlijk zeggen wat ontbreekt)
     # 678: ontbreekt llama-bench op de telefoon, maar staat hij op de Chromebook (BENCH_LOK, evt. via bench-link), dan ARTEMIS
     # hem zelf erheen pushen -- zodat "Snelheid meten" niet meer faalt op /data/local/tmp/llama-bench.
@@ -3751,6 +3760,10 @@ motor_meet() {
     # deeluitslag bewaard blijft) + nohup; ARTEMIS pollt het uitvoerbestand. taskset met het HEX-MASKER, met terugval zonder
     # affiniteit (oude toybox). -r 3 (kortere reeks dan de oude -r 5 -- sneller op de trage telefoons).
     local tset_sp; tset_sp="$(printf '%s' "$tset" | tr ',' ' ')"
+    # 678 (12 nov): loopt de meting op de telefoon AL (een console-herstart doodde alleen de lezer, niet de meting), dan sluiten we daarop aan en lezen we verder
+    # in plaats van een tweede run te starten die de eerste overschrijft.
+    if [ "${loopt:-0}" -gt 0 ]; then zeg "  $naam: de meting loopt al op de telefoon; ik lees gewoon verder mee."
+    else
     "$ADB" -s "$s" shell "cat > $MEET_TEL_SH" <<SH
 TO=''; command -v timeout >/dev/null 2>&1 && TO="timeout $MEET_RUN_T"
 for t in $tset_sp; do
@@ -3762,7 +3775,8 @@ done
 echo KLAAR
 SH
     timeout 30 "$ADB" -s "$s" shell "chmod 755 $MEET_TEL_SH; rm -f $MEET_TEL_UIT; nohup sh $MEET_TEL_SH >$MEET_TEL_UIT 2>&1 </dev/null & echo gestart" >/dev/null 2>&1
-    zeg "  $naam: meting gestart (losgekoppeld op de telefoon, kernen $big masker $hexmask); ik lees de voortgang..."
+    zeg "  $naam: meting gestart (losgekoppeld op de telefoon, kernen $big masker $hexmask, draden $tset); ik lees de voortgang..."
+    fi
     local wacht=0 klaar=0 laatste='' tussen
     while [ "$wacht" -lt "$MEET_MAXW" ]; do
       sleep "$MEET_POLL"; wacht=$((wacht + MEET_POLL))
@@ -3779,6 +3793,7 @@ SH
       || zeg "  $naam: deeluitslag bewaard; de rest loopt los door op de telefoon (een weggevallen brug kost niets). Druk later Meetuitslag voor de volledige uitslag."
     gedaan=$((gedaan+1))
   done
+  rm -f "$REK_MAP/meet-bezig" 2>/dev/null || true   # alle telefoons doorlopen: er hoeft niets meer hervat te worden
   if [ "$gedaan" -eq 0 ]; then
     zeg "Geen rektelefoon gemeten. Verbind er een (kabel + 'Zoek telefoons', of 'Rek via Tailscale'), en zorg dat llama-bench + het meetmodel klaarstaan."
   else
@@ -3789,6 +3804,18 @@ SH
 # llama-bench-getallen (pp512/tg128 t/s) scrollen weg. Dit is een SYNCHRONE opdracht (geen LOPEND): subprocess.run geeft de volle
 # uitvoer terug aan de console, dus de hele tabel is zichtbaar. Leest alleen de per-telefoon-logs die motor_meet al wegschreef
 # ($MEET_MAP/<naam>.log) -- geen adb, geen meting, puur tonen. Zo komt Cowork aan de getallen voor de rollen zonder terminal.
+# 678 (12 nov): na een console-herstart is de LEZER van een losgekoppelde meting weg, de meting op de telefoon loopt door. Staat de markering "meet-bezig" er nog
+# (jonger dan 3 uur) en draait er geen lezer meer, dan start dit de lezer opnieuw: motor_meet sluit aan op wat al loopt en leest verder.
+meet_hervat() {
+  local m="$REK_MAP/meet-bezig" lock="$REK_MAP/motor-meet.lock" t nu pid
+  [ -s "$m" ] || return 0
+  t="$(head -1 "$m" 2>/dev/null)"; case "$t" in ''|*[!0-9]*) rm -f "$m"; return 0 ;; esac
+  nu="$(date +%s)"; [ $((nu - t)) -gt 10800 ] && { rm -f "$m"; return 0; }
+  pid="$(cat "$lock/pid" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0   # er is nog een lezer
+  zeg "Snelheid meten: de lezer was weg (console herstart?); ik lees de meting op de telefoon verder."
+  motor_meet
+}
 meetuitslag() {
   if ! ls "$MEET_MAP"/*.log >/dev/null 2>&1; then
     zeg "Nog geen meetuitslag. Druk eerst op 'Snelheid meten (llama-bench)' en wacht tot er per telefoon 'klaar' in de Log staat."
@@ -5587,6 +5614,7 @@ case "${1:-status}" in
   motor-meet) motor_meet ;;                   # 678 stap 1b: echte modelsnelheid meten (llama-bench, CPU, grote kernen), nooit de F8
   voortgang) voortgang_toon ;;                 # 678 (12 nov): laatste commit-tijd per tak, uit de publieke API (en met een token ook van privé-repo's)
   voortgang-controle) voortgang_controle ;;    # 678: stil; een melding als er langer dan 30 minuten niets gepusht is
+  meet-hervat) meet_hervat ;;                  # 678 (12 nov): de lezer van een losgekoppelde meting weer starten na een console-herstart
   meetuitslag) meetuitslag ;;                  # 678 (10 nov): de llama-bench-tabel per telefoon tonen (uit ~/.artemis-rek/meet/*.log) -- synchroon, geen 12-regel-afkapping van de Log
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   f8-kabel) f8_kabel_adres ;;                   # 678j: de F8 aan de kabel -- lees ALLEEN zijn wifi-adres uit en zet hem als denker (nooit besturen)
