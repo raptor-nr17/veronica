@@ -660,6 +660,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <input id=vgBron type=text autocomplete=off spellcheck=false placeholder="eigenaar/repo tak (toevoegen)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <input id=vgToken type=password autocomplete=off spellcheck=false placeholder="leestoken (privé-repo, optioneel)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=vgBewaar>Bewaar voortgang</button></p>
+<p style="margin-top:6px">Rij-code (laat ARTEMIS de EIGEN motor van een rektelefoon op poort 8081 gebruiken als lokaal model; staat alleen hier, 600): <input id=rijCode type=password autocomplete=off spellcheck=false placeholder="rij-code" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:200px;min-height:48px"> <button id=rijBewaar>Bewaar rij-code</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <pre id=meetUit hidden></pre>
 <p style="margin:8px 0 2px;color:#8aa">Live (Log/Status vernieuwen hier, zonder je knop-uitkomst te overschrijven):</p>
@@ -746,6 +747,16 @@ if(wbw)wbw.addEventListener('click',async()=>{{
   }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
 }});
 // 678: de meet-links bewaren (llama-bench + optioneel meetmodel), alleen lokaal op de Chromebook (600). Een leeg veld = niet wijzigen.
+const rjb=document.getElementById('rijBewaar');
+if(rjb)rjb.addEventListener('click',async()=>{{
+  const code=(document.getElementById('rijCode').value||'').trim();
+  uit.textContent=nu()+' — rij-code bewaren…';
+  try{{
+    const r=await fetch('/rij-code',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'code='+encodeURIComponent(code)}});
+    uit.textContent=nu()+' — '+(await r.text());
+    document.getElementById('rijCode').value='';
+  }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
+}});
 const vgb=document.getElementById('vgBewaar');
 if(vgb)vgb.addEventListener('click',async()=>{{
   const bron=(document.getElementById('vgBron').value||'').trim();
@@ -1192,6 +1203,23 @@ class H(BaseHTTPRequestHandler):
                     self._schrijf(200, 'Opgeslagen (' + ', '.join(gedaan) + '), alleen hier op de Chromebook. Druk nu op "Snelheid meten (llama-bench)"; ARTEMIS zet de bench + het model zelf op elke telefoon.')
                 else:
                     self._schrijf(200, 'Niets gewijzigd (beide velden leeg). Het meetmodel haalt ARTEMIS sowieso zelf op; de llama-bench-link heb je wel nodig.')
+            except Exception as e:
+                self._schrijf(500, 'fout: ' + str(e))
+            return
+        if p.path == '/rij-code':
+            # 678 (12 nov): de rij-code bewaren (600) zodat 'Lokaal model' ook de eigen motor (poort 8081) kan gebruiken. Strikt gevalideerd, nooit teruggegeven.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            code = (f.get('code', [''])[0]).strip()
+            if not code:
+                self._schrijf(200, 'Niets gewijzigd (veld leeg).'); return
+            if not re.match(r'^[A-Za-z0-9_-]{6,128}$', code):
+                self._schrijf(200, 'Dat lijkt geen rij-code (6 tot 128 letters, cijfers, - of _).'); return
+            try:
+                pad = os.path.join(REK, 'rek-token.conf')
+                with open(pad, 'w') as fh: fh.write(code + '\n')
+                os.chmod(pad, 0o600)
+                self._schrijf(200, 'Rij-code bewaard, alleen hier op de Chromebook. Druk nu op Lokaal model: ik zoek ook de eigen motor (poort 8081) van de rektelefoons.')
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
@@ -3846,16 +3874,21 @@ meetuitslag() {
   zeg "($n telefoon(s) gemeten. De volledige meting staat in $MEET_MAP/*.log op de Chromebook.)"
 }
 lokaal_vind() {   # echoot "SERIAL|PHONEPORT|MODEL" van de eerste werkende lokale server, of niets
-  local s id poort model lp="$LOKAAL_POORT"
+  local s id poort model lp="$LOKAAL_POORT" tok="" ids kop
+  # 678 (12 nov): staat de rij-code in rek-token.conf (via het veld "Rij-code" in de console), dan telt ook de EIGEN motor van een rektelefoon (poort 8081, die
+  # de code als sleutel vraagt). Zonder code blijft het bij de open servers; de code gaat nooit in een logboek of melding.
+  [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
   for s in $(verbonden); do
     id="$(toestel_id "$s")"; [ -n "$id" ] || continue
     toegestaan "$id" || continue
     is_f8 "$s" && continue
-    for poort in 8000 11434 8080; do
+    for poort in 8000 11434 8080 $([ -n "$tok" ] && echo 8081); do
       "$ADB" -s "$s" forward --remove tcp:"$lp" >/dev/null 2>&1 || true
       "$ADB" -s "$s" forward tcp:"$lp" tcp:"$poort" >/dev/null 2>&1 || continue
-      model="$(curl -fsS -m 5 "http://127.0.0.1:$lp/v1/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | grep -iE 'e4b|e2b|gemma|3n|vision' | head -1)"
-      [ -n "$model" ] || model="$(curl -fsS -m 5 "http://127.0.0.1:$lp/v1/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
+      kop=(); [ "$poort" = 8081 ] && kop=(-H "Authorization: Bearer $tok")
+      ids="$(curl -fsS -m 5 "${kop[@]}" "http://127.0.0.1:$lp/v1/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/')"
+      model="$(printf '%s\n' "$ids" | grep -iE 'e4b|e2b|gemma|3n|vision' | head -1)"
+      [ -n "$model" ] || model="$(printf '%s\n' "$ids" | head -1)"
       "$ADB" -s "$s" forward --remove tcp:"$lp" >/dev/null 2>&1 || true
       if [ -n "$model" ]; then printf '%s|%s|%s' "$s" "$poort" "$model"; return 0; fi
     done
@@ -4447,7 +4480,7 @@ lokaal() {
   zeg "Zoek een lokaal model op de rektelefoons (OlliteRT/ollama, zonder sleutel)..."
   vondst="$(lokaal_vind)"
   if [ -z "$vondst" ]; then
-    zeg "Geen lokale OpenAI-server zonder sleutel gevonden (geprobeerd: 8000/11434/8080 op elke rektelefoon; de eigen motor op 8081 vraagt de rij-code)."
+    zeg "Geen lokale OpenAI-server gevonden (geprobeerd: 8000/11434/8080 op elke rektelefoon$([ -s "$REK_MAP/rek-token.conf" ] && echo ', en de eigen motor op 8081 met je rij-code' || echo '; de eigen motor op 8081 vraagt de rij-code: zet die in het veld \"Rij-code\" hieronder')). Staat de eigen motor aan (Veronica: Motor aan)?"
     zeg "Twee wegen:"
     zeg "  1) Start OlliteRT op een rektelefoon (Start Server + een multimodaal Gemma, bv. E4B) en druk opnieuw op 'Lokaal model'."
     zeg "  2) Of de F8 thuis als gast-brein (OlliteRT, >30% accu, niet in gebruik): zet met de hand in $REK_MAP/lokaal-model.conf:"
@@ -4457,7 +4490,8 @@ lokaal() {
   fi
   serial="${vondst%%|*}"; model="${vondst##*|}"; poort="$(printf '%s' "$vondst" | cut -d'|' -f2)"
   "$ADB" -s "$serial" forward tcp:"$lp" tcp:"$poort" >/dev/null 2>&1 || true
-  printf 'BASE_URL=http://127.0.0.1:%s/v1\nMODEL=%s\nTOKEN=local\nADB_SERIAL=%s\nADB_FORWARD=%s:%s\n' "$lp" "$model" "$serial" "$lp" "$poort" >"$REK_MAP/lokaal-model.conf"
+  local conf_tok=local; [ "$poort" = 8081 ] && conf_tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
+  printf 'BASE_URL=http://127.0.0.1:%s/v1\nMODEL=%s\nTOKEN=%s\nADB_SERIAL=%s\nADB_FORWARD=%s:%s\n' "$lp" "$model" "${conf_tok:-local}" "$serial" "$lp" "$poort" >"$REK_MAP/lokaal-model.conf"
   chmod 600 "$REK_MAP/lokaal-model.conf"
   zeg "Lokaal model AAN: '$model' op $(toestel_naam "$serial") (telefoonpoort $poort, via 127.0.0.1:$lp). Gemini is nu alleen terugval."
   schrijf_artemis_jsonc   # artemis.jsonc -> lokaal-primair
