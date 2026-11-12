@@ -3736,7 +3736,10 @@ motor_meet() {
     if [ "${loopt:-0}" -eq 0 ]; then
       "$ADB" -s "$s" shell am force-stop "$JARVIS_PKG" >/dev/null 2>&1 && zeg "  $naam: JARVIS gestopt tijdens de meting (zodat zijn model niet meerekent)."
       "$ADB" -s "$s" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
-      local koel=0 tnu
+      # 678 (12 nov, eigenaar): de telefoons op de cooler (de rektelefoons op de ventilator) worden moeilijk heet -> GEEN afkoelwachttijd. Alleen een telefoon die NIET op de
+      # cooler ligt (NIET_GEKOELD_MODELLEN, de modelcode) wacht tot hij koel genoeg is.
+      local koel=0 tnu mod; mod="$(toestel_naam "$s")"
+      case " ${NIET_GEKOELD_MODELLEN:-22041219PG} " in *" $mod "*) koel=0 ;; *) koel=600 ;; esac
       while [ "$koel" -lt 600 ]; do
         tnu="$("$ADB" -s "$s" shell dumpsys battery 2>/dev/null | tr -d '\r' | grep -m1 -oE 'temperature: *[0-9]+' | grep -oE '[0-9]+')"
         [ -z "$tnu" ] || [ "$tnu" -le 350 ] && break
