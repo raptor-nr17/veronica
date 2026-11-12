@@ -459,11 +459,19 @@ herstart_console() {
 # stuurde) komt hier terecht, zodat de venv-rebuild en de herstart ook dan gebeuren.
 bijwerken() {
   zeg "== Bijwerken gestart $(date '+%H:%M:%S') =="
+  # 678 (12 nov): de console herstarten stopt ook ARTEMIS (SIGTERM, zelfde cgroup). Stond ARTEMIS aan (draaide hij, of was de gewenste stand "aan"), dan zetten we de
+  # gewenste stand na de herstart WEER aan en wissen we de pogingenteller: de console-lus start hem dan vanzelf opnieuw, zonder dat iemand Stop+Start hoeft te tikken.
+  local was_aan=0; { artemis_draait || [ -f "$AANF" ]; } 2>/dev/null && was_aan=1
   zelf_bijwerken || zeg "Het script bijwerken ging niet door; ik ga wel verder met de venv en de console."
   zeg "Bijwerken 3/4: de Python-venv nalopen (3.12) ..."
   zorg_venv forceer
   zeg "Bijwerken 4/4: de console herstarten op poort $CONSOLE_POORT ..."
   herstart_console
+  if [ "$was_aan" = 1 ]; then
+    touch "$AANF" 2>/dev/null || true; chmod 600 "$AANF" 2>/dev/null || true
+    rm -f "$REK_MAP/start-pogingen" "$REK_MAP/start-gestopt" 2>/dev/null || true
+    zeg "ARTEMIS stond aan; de console start hem na de herstart vanzelf weer (binnen een minuut, met vangnet-proxy)."
+  fi
   zeg "== Bijwerken klaar. Doe nu: Stop, dan Start, dan een taak. (De console draait op http://$KBHOST:$CONSOLE_POORT.) =="
 }
 
@@ -4660,8 +4668,10 @@ status() {
   elif [ -f "$REK_MAP/start-gestopt" ]; then
     # 583: na 3 mislukte starts stopte de lus met proberen -- zeg dat duidelijk in plaats van stil te blijven.
     zeg "ARTEMIS staat uit. $(cat "$REK_MAP/start-gestopt")"
+  elif [ -f "$AANF" ]; then
+    zeg "ARTEMIS staat nu uit, maar de gewenste stand is AAN: de console start hem binnen een minuut vanzelf weer (na een Bijwerken of herstart)."
   else
-    zeg "ARTEMIS staat uit."
+    zeg "ARTEMIS staat uit (de gewenste stand is uit: druk op Start om hem aan te zetten)."
   fi
   if leeft "$PIDW"; then zeg "De waakhond kijkt mee."; fi
   zeg "Console (knoppen): http://$KBHOST:$CONSOLE_POORT"
