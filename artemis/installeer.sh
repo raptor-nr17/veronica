@@ -352,7 +352,7 @@ zelf_bijwerken() {
   # leest EN de eindregel draagt (of een oudere versie zonder eindregel-afspraak die wel bash leest) wordt gebruikt.
   while [ "$poging" -lt "${BIJWERK_POGINGEN:-3}" ] && [ "$klaar" = 0 ]; do
     poging=$((poging + 1))
-    code="$(curl -fsSL --compressed --retry 1 --retry-delay 2 -m "${BIJWERK_TIMEOUT:-90}" -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' -w '%{http_code}' "$base/artemis/installeer.sh?nc=$(date +%s)-$poging" -o "$tmp" 2>/dev/null)"; rc=$?; code="${code:-000}"
+    code="$(curl -fsSL --compressed --retry "${BIJWERK_RETRY:-1}" --retry-delay 2 -m "${BIJWERK_TIMEOUT:-90}" -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' -w '%{http_code}' "$base/artemis/installeer.sh?nc=$(date +%s)-$poging" -o "$tmp" 2>/dev/null)"; rc=$?; code="${code:-000}"
     if [ "$rc" -ne 0 ] || [ "$code" != "200" ] || [ ! -s "$tmp" ]; then fout="ophalen mislukte (http $code, curl $rc)"; sleep 2; continue; fi
     grootte="$(wc -c <"$tmp" 2>/dev/null | tr -d ' ')"
     if ! bash -n "$tmp" 2>/dev/null; then fout="het bestand ($grootte bytes) is geen geldige bash -- waarschijnlijk afgekapt"; cp "$tmp" "$REK_MAP/bijwerken-mislukt.sh" 2>/dev/null && chmod 600 "$REK_MAP/bijwerken-mislukt.sh" 2>/dev/null; sleep 2; continue; fi
@@ -5679,7 +5679,9 @@ scherm_doe() {
 
 # 571: bij start en console eerst zichzelf bijwerken vanaf de site, dan opnieuw starten met de nieuwe code (een keer, geen lus).
 if { [ "${1:-}" = start ] || [ "${1:-}" = console ]; } && [ -z "${ARTEMIS_HERSTART:-}" ]; then
-  zelf_bijwerken >/dev/null 2>&1 || true
+  # 678 (12 nov): bij het OPSTARTEN (ook na Bijwerken) mag het ophalen de console nooit minuten ophouden: een SNELLE poging (25 s, geen retry, een keer). De grondige
+  # vorm (3 pogingen, 90 s) is alleen voor de knop Bijwerken.
+  BIJWERK_POGINGEN=1 BIJWERK_TIMEOUT=25 BIJWERK_RETRY=0 zelf_bijwerken >/dev/null 2>&1 || true
   ARTEMIS_HERSTART=1 exec "$0" "$@"
 fi
 case "${1:-status}" in
@@ -5747,7 +5749,7 @@ case "${1:-status}" in
   vergeet) vergeet ;;
   bijwerken) bijwerken ;;
   zelf-bijwerken) bijwerken ;;   # 577: de oude console stuurt Bijwerken hierheen -> ook dan venv-rebuild + console-herstart
-  zelf-bijwerken-stil) zelf_bijwerken >/dev/null 2>&1 || true ;;   # 587: de console-lus; ALLEEN ophalen (geen venv/herstart) -- herstart_als_nieuwer laadt de nieuwe code
+  zelf-bijwerken-stil) BIJWERK_POGINGEN=1 BIJWERK_TIMEOUT=25 BIJWERK_RETRY=0 zelf_bijwerken >/dev/null 2>&1 || true ;;   # 587: de console-lus; ALLEEN ophalen (geen venv/herstart) -- herstart_als_nieuwer laadt de nieuwe code
   toestellen) toestellen ;;
   draadloos) draadloos ;;
   mcp) mcp ;;
