@@ -6444,11 +6444,15 @@
     // De koppeling met ARTEMIS gaat ALLEEN via een naam die de eigenaar zelf gaf (de hartslag draagt geen toesteltype): dan komen de batterijtemperatuur
     // (ARTEMIS leest die via adb) en "ligt op de cooler" mee. Zonder koppeling: de temperatuur uit de hartslag en NIET gekoeld (voorzichtig).
     const arRijen = window.Rekaanwezig ? window.Rekaanwezig.rijen(RekAanw.lijst, rekNamen(), [], rekKoel()) : [];
+    // 678: kaart.id is het ADRES (of "brief:<toestel>"); de rollen (Rekrollen) en de hartslagen (HB.per) hangen aan het TOESTEL-id. Zonder deze vertaling vond de trap
+    // nooit een rol en dus nooit een telefoon (gevonden door check_hoofdveld_eind).
+    const toestelIdVan = (e) => { const w = e.weg || {}; if (w.soort === 'brief') return w.toestel; const t = w.t || S.telefoons.find((x) => x.adres === e.kaart.id); return (t && t.id) || ((hartslagVoorAdres(e.kaart.id) || {}).id) || e.kaart.id; };
     const rek = lijst.filter((e) => !e.kaart.gast).map((e) => {
-      const h = HB.per[e.kaart.id] || {};
+      const tid = toestelIdVan(e);
+      const h = HB.per[tid] || {};
       const ar = arRijen.find((x) => x.benoemd && String(x.naam).toLowerCase() === String(e.kaart.naam).toLowerCase());
       const temp = ar && ar.temp != null ? ar.temp : (typeof h.temp === 'number' ? h.temp : null);
-      return { id: e.kaart.id, naam: e.kaart.naam, klaar: e.kaart.status === 'groen', rol: RekRol.rolVan(e.kaart.id) || null, temp: temp, gekoeld: !!(ar && ar.gekoeld),
+      return { id: e.kaart.id, naam: e.kaart.naam, klaar: e.kaart.status === 'groen', rol: RekRol.rolVan(tid) || null, temp: temp, gekoeld: !!(ar && ar.gekoeld),
         model: String((h.motor && (h.motor.model || h.motor.modelNaam)) || ''), backend: backendWoord(h.motor && h.motor.backend), gevraagd: h.instel && h.instel.gpu === true ? 'gpu' : 'cpu' };
     });
     const gast = lijst.find((e) => e.kaart.gast);
