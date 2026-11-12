@@ -514,7 +514,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
@@ -604,6 +604,8 @@ def lus():
                 doe('beheerder')   # 675: de lokale beheerder -- elke ~2 min kijken of alle rektelefoons verbonden zijn, een weggevallene zelf terughalen, anders de eigenaar vragen
             if RONDE % 15 == 7:
                 doe('lokaal-auto')   # 592: lokaal model AANzetten zodra er een lokale server verschijnt ("standaard AAN")
+            if RONDE % 5 == 3:
+                doe('voortgang-controle')   # 678 (12 nov): kijkt of er langer dan 30 minuten niets gepusht is (stil; melding hoogstens eens per uur)
             if RONDE % 180 == 45:
                 doe('beheerder-opslag')   # 609: de lokale beheerder -- elke ~3 uur de opslag van de rektelefoons bewaken + veilig opruimen (nooit de F8)
             if RONDE % 180 == 120:
@@ -619,7 +621,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=voortgang>Voortgang</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -644,6 +646,10 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <input id=benchLink type=text autocomplete=off spellcheck=false placeholder="llama-bench-link (https://...)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <input id=modelLink type=text autocomplete=off spellcheck=false placeholder="meetmodel-link (optioneel, laat leeg)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=meetLinksBewaar>Bewaar meet-links</button></p>
+<p style="margin-top:6px">Voortgang (laat de console nakijken of het bouwwerk doorgaat): zet een bron per regel als <code>eigenaar/repo tak</code>; de Pages-repo staat er vanzelf in. Voor een privé-repo een token met ALLEEN leesrecht. Beide blijven alleen hier (600); laat een veld leeg om het niet te wijzigen.<br>
+<input id=vgBron type=text autocomplete=off spellcheck=false placeholder="eigenaar/repo tak (toevoegen)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
+<input id=vgToken type=password autocomplete=off spellcheck=false placeholder="leestoken (privé-repo, optioneel)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
+<button id=vgBewaar>Bewaar voortgang</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <p style="margin:8px 0 2px;color:#8aa">Live (Log/Status vernieuwen hier, zonder je knop-uitkomst te overschrijven):</p>
 <pre id=live style="opacity:.85"></pre>
@@ -726,6 +732,17 @@ if(wbw)wbw.addEventListener('click',async()=>{{
   }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
 }});
 // 678: de meet-links bewaren (llama-bench + optioneel meetmodel), alleen lokaal op de Chromebook (600). Een leeg veld = niet wijzigen.
+const vgb=document.getElementById('vgBewaar');
+if(vgb)vgb.addEventListener('click',async()=>{{
+  const bron=(document.getElementById('vgBron').value||'').trim();
+  const token=(document.getElementById('vgToken').value||'').trim();
+  uit.textContent=nu()+' — voortgang bewaren…';
+  try{{
+    const r=await fetch('/voortgang-bron',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'bron='+encodeURIComponent(bron)+'&token='+encodeURIComponent(token)}});
+    uit.textContent=nu()+' — '+(await r.text());
+    document.getElementById('vgToken').value='';
+  }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
+}});
 const mbw=document.getElementById('meetLinksBewaar');
 if(mbw)mbw.addEventListener('click',async()=>{{
   const bench=(document.getElementById('benchLink').value||'').trim();
@@ -1160,6 +1177,30 @@ class H(BaseHTTPRequestHandler):
                     self._schrijf(200, 'Opgeslagen (' + ', '.join(gedaan) + '), alleen hier op de Chromebook. Druk nu op "Snelheid meten (llama-bench)"; ARTEMIS zet de bench + het model zelf op elke telefoon.')
                 else:
                     self._schrijf(200, 'Niets gewijzigd (beide velden leeg). Het meetmodel haalt ARTEMIS sowieso zelf op; de llama-bench-link heb je wel nodig.')
+            except Exception as e:
+                self._schrijf(500, 'fout: ' + str(e))
+            return
+        if p.path == '/voortgang-bron':
+            # 678 (12 nov): bron (eigenaar/repo tak) toevoegen en/of een LEESTOKEN bewaren; alleen op de Chromebook (600), strikt gevalideerd, nooit teruggegeven.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            bron = (f.get('bron', [''])[0]).strip(); tok = (f.get('token', [''])[0]).strip(); gedaan = []
+            try:
+                if bron:
+                    if not re.match(r'^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100} [A-Za-z0-9._/-]{1,100}$', bron):
+                        self._schrijf(200, 'Dat is geen bron. Schrijf: eigenaar/repo tak (bijvoorbeeld naam/project main).'); return
+                    pad = os.path.join(REK, 'voortgang-bronnen')
+                    bestaand = open(pad).read().split('\n') if os.path.exists(pad) else []
+                    if bron not in bestaand: bestaand.append(bron)
+                    with open(pad, 'w') as fh: fh.write('\n'.join(x for x in bestaand if x.strip()) + '\n')
+                    os.chmod(pad, 0o600); gedaan.append('bron')
+                if tok:
+                    if not re.match(r'^[A-Za-z0-9_]{20,255}$', tok):
+                        self._schrijf(200, 'Dat lijkt geen GitHub-token (letters, cijfers en _, minstens 20 tekens).'); return
+                    pad = os.path.join(REK, 'voortgang-token')
+                    with open(pad, 'w') as fh: fh.write(tok + '\n')
+                    os.chmod(pad, 0o600); gedaan.append('leestoken')
+                self._schrijf(200, ('Opgeslagen (' + ', '.join(gedaan) + '), alleen hier op de Chromebook. Druk op Voortgang.') if gedaan else 'Niets gewijzigd (beide velden leeg).')
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
@@ -3358,6 +3399,65 @@ _bh_verbonden_ids() {
 # 678 (12 nov): een lijst-regel "adb:<ip>:5555" is een NOODID: toen de telefoon op de lijst kwam kon het serienummer niet gelezen worden. Zodra die telefoon
 # verbonden is (of zich laat verbinden) heeft hij zijn echte serienummer; de beheerder bleef de noodregel als "weg" zien en meldde elke ronde dat hij hem
 # miste. Nu wordt de noodregel VERVANGEN door het echte serienummer (of weggehaald als dat er al staat). Nooit de F8; alleen de lijst wordt aangepast.
+# 678 (12 nov): VOORTGANG. De eigenaar wil dat de lokale AI zelf kan nakijken of het bouwwerk nog doorgaat: de laatste commit-tijd per tak, en een
+# melding (via Veronica) als er langer dan VOORTGANG_MAX_MIN minuten niets gepusht is. Bronnen: de Pages-repo, AFGELEID van het bron-adres van de site
+# (geen naam in dit bestand), plus de regels "eigenaar/repo tak" in ~/.artemis-rek/voortgang-bronnen. Voor een PRIVE-repo is een token met alleen
+# LEESrecht nodig (~/.artemis-rek/voortgang-token, 600, nooit in een logboek of melding). Alleen lezen; er wordt niets gewijzigd of gepusht.
+VOORTGANG_BRONNEN_F="$REK_MAP/voortgang-bronnen"; VOORTGANG_TOKEN_F="$REK_MAP/voortgang-token"; VOORTGANG_MELD_F="$REK_MAP/voortgang-melding"
+VOORTGANG_MAX_MIN="${VOORTGANG_MAX_MIN:-30}"
+voortgang_bronnen() {   # regels "eigenaar/repo tak"; de Pages-repo volgt uit het bron-adres (https://<eigenaar>.<host>/<repo>)
+  local b host pad; b="$(cat "$BRONF" 2>/dev/null | head -1 | tr -d '\r\n ')"
+  case "$b" in https://*.*/*)
+    host="${b#https://}"; pad="${host#*/}"; host="${host%%/*}"; pad="${pad%%/*}"; host="${host%%.*}"
+    [ -n "$host" ] && [ -n "$pad" ] && printf '%s/%s main\n' "$host" "$pad" ;; esac
+  [ -s "$VOORTGANG_BRONNEN_F" ] && grep -E '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+ [A-Za-z0-9._/-]+$' "$VOORTGANG_BRONNEN_F"
+  return 0
+}
+voortgang_laatste() {   # $1 repo, $2 tak -> epoch van de laatste commit, of leeg
+  command -v curl >/dev/null 2>&1 || return 0; command -v python3 >/dev/null 2>&1 || return 0
+  local kop=() tok; [ -s "$VOORTGANG_TOKEN_F" ] && { tok="$(head -1 "$VOORTGANG_TOKEN_F" | tr -d '\r\n ')"; [ -n "$tok" ] && kop=(-H "Authorization: Bearer $tok"); }
+  curl -fsSL -m 15 -H 'Accept: application/vnd.github+json' "${kop[@]}" "https://api.github.com/repos/$1/commits?sha=$2&per_page=1" 2>/dev/null \
+    | python3 -c 'import sys,json,datetime
+try:
+    d=json.load(sys.stdin)[0]["commit"]["committer"]["date"]
+    print(int(datetime.datetime.strptime(d,"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()))
+except Exception: pass' 2>/dev/null
+}
+voortgang_toon() {
+  local nu regel repo tak t min nieuwste=0 n=0 ok=0
+  nu="$(date +%s)"
+  zeg "Voortgang van het bouwwerk (laatste commit per tak, uit GitHub; alleen lezen):"
+  while read -r repo tak; do
+    [ -n "$repo" ] || continue; n=$((n+1))
+    t="$(voortgang_laatste "$repo" "$tak")"
+    case "$t" in ''|*[!0-9]*) zeg "  $repo @ $tak: niet te lezen (privé zonder token, of geen internet)."; continue ;; esac
+    ok=$((ok+1)); min=$(( (nu - t) / 60 )); [ "$t" -gt "$nieuwste" ] && nieuwste="$t"
+    zeg "  $repo @ $tak: laatste commit $(date -d "@$t" '+%d-%m %H:%M' 2>/dev/null) ($min min geleden)$([ "$min" -gt "$VOORTGANG_MAX_MIN" ] && echo " -- LANGER DAN $VOORTGANG_MAX_MIN MIN STIL")"
+  done < <(voortgang_bronnen)
+  [ "$n" -eq 0 ] && zeg "  Geen bronnen. Zet er een in het veld \"Voortgang-bronnen\" (eigenaar/repo tak)."
+  if [ "$ok" -gt 0 ]; then
+    min=$(( (nu - nieuwste) / 60 ))
+    if [ "$min" -gt "$VOORTGANG_MAX_MIN" ]; then zeg "Er is $min minuten niets gepusht (grens $VOORTGANG_MAX_MIN)."; else zeg "Het werk loopt: de nieuwste push was $min minuten geleden."; fi
+  fi
+  [ -s "$VOORTGANG_TOKEN_F" ] || zeg "  (Zonder token zie ik alleen openbare repo's; de privé-werktak kan ik pas lezen met een leestoken in het veld \"Voortgang-token\".)"
+}
+voortgang_controle() {   # stil; hoogstens eens per uur een melding; 23:00-07:00 niet
+  local nu uur nieuwste=0 repo tak t min laatst
+  nu="$(date +%s)"; uur="$(date +%H)"; uur=$((10#${uur:-12}))
+  [ "$uur" -ge 23 ] || [ "$uur" -lt 7 ] && return 0
+  while read -r repo tak; do
+    [ -n "$repo" ] || continue; t="$(voortgang_laatste "$repo" "$tak")"
+    case "$t" in ''|*[!0-9]*) continue ;; esac
+    [ "$t" -gt "$nieuwste" ] && nieuwste="$t"
+  done < <(voortgang_bronnen)
+  [ "$nieuwste" -gt 0 ] || return 0
+  min=$(( (nu - nieuwste) / 60 ))
+  [ "$min" -gt "$VOORTGANG_MAX_MIN" ] || { rm -f "$VOORTGANG_MELD_F" 2>/dev/null; return 0; }
+  laatst="$(cat "$VOORTGANG_MELD_F" 2>/dev/null | head -1)"; case "$laatst" in ''|*[!0-9]*) laatst=0 ;; esac
+  [ $((nu - laatst)) -lt 3600 ] && return 0
+  printf '%s\n' "$nu" >"$VOORTGANG_MELD_F" 2>/dev/null; chmod 600 "$VOORTGANG_MELD_F" 2>/dev/null || true
+  relay_meld "Voortgang: er is $min minuten niets gepusht (grens $VOORTGANG_MAX_MIN). Het bouwwerk staat mogelijk stil -- kijk in de console op Voortgang, of vraag Claude door te gaan."
+}
 bh_migreer_adres_ids() {
   [ -s "$TOEG" ] || return 0
   local regel adres echt
@@ -5482,6 +5582,8 @@ case "${1:-status}" in
   beheerder) beheerder_ronde ;;              # 675: de lokale beheerder -- weggevallen rektelefoon zelf draadloos terughalen, anders de eigenaar via Veronica (kabel/tik)
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-meet) motor_meet ;;                   # 678 stap 1b: echte modelsnelheid meten (llama-bench, CPU, grote kernen), nooit de F8
+  voortgang) voortgang_toon ;;                 # 678 (12 nov): laatste commit-tijd per tak, uit de publieke API (en met een token ook van privé-repo's)
+  voortgang-controle) voortgang_controle ;;    # 678: stil; een melding als er langer dan 30 minuten niets gepusht is
   meetuitslag) meetuitslag ;;                  # 678 (10 nov): de llama-bench-tabel per telefoon tonen (uit ~/.artemis-rek/meet/*.log) -- synchroon, geen 12-regel-afkapping van de Log
   motor-zoek) f8_zoek ;;                        # 592p: de F8 terugvinden op het LAN na een IP-wissel (ander wifi)
   f8-kabel) f8_kabel_adres ;;                   # 678j: de F8 aan de kabel -- lees ALLEEN zijn wifi-adres uit en zet hem als denker (nooit besturen)
