@@ -3590,6 +3590,7 @@ motor_meet() {
     toonUit() { printf '%s\n' "$1" | grep -iE 'draden|pp512|tg128|t/s' | head -24 | while IFS= read -r r; do zeg "    $r"; done; }
     # Staat er al een VOLTOOIDE (losgekoppelde) meting van een eerdere, afgebroken poll? Dan die pakken -- niet opnieuw meten
     # (de S10 kan >40 min doen; zo gaat een in de achtergrond afgemaakte meting niet verloren bij een nieuwe druk).
+    # (versie 12 nov: schone meting -- de console meldt 'de oude meetuitslag ... is weggegooid' als dit script draait)
     # 678 (11 nov): ALLEEN een meting die NU nog loopt of van de laatste 20 minuten is wordt overgenomen. Een oud KLAAR-bestand (de
     # twee rektelefoons gaven zo twee keer de vervuilde getallen van 17:29) wordt VERWIJDERD en er wordt echt opnieuw gemeten.
     local vorig loopt leeftijd; vorig="$(timeout 25 "$ADB" -s "$s" shell "cat $MEET_TEL_UIT 2>/dev/null" 2>/dev/null | tr -d '\r')"
