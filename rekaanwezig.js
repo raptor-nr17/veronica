@@ -36,7 +36,10 @@
       if (!model || !sleutel || gezien.has(sleutel)) continue;
       if (/F8|25102PCBEG/i.test(model)) continue;   // de dagelijkse telefoon hoort hier nooit
       const temp = typeof x.temp === 'number' && isFinite(x.temp) && x.temp > -20 && x.temp < 80 ? Math.round(x.temp * 10) / 10 : null;   // batterij in graden; onbekend blijft null
-      gezien.add(sleutel); uit.push({ model: model, via: via, sleutel: sleutel, temp: temp });
+      // 678 (12 nov): het JARVIS-toestel-id dat ARTEMIS via adb van de telefoon ZELF las (/jarvis/status). Dat bindt dit ARTEMIS-toestel aan een Veronica-telefoon op
+      // IDENTITEIT, niet op een IP-adres of een naam. Onbekend/ongeldig = null (JARVIS draait niet, of meldt zich niet).
+      const toestel = /^[a-z0-9]{12,32}$/.test(String(x.toestel || '')) ? String(x.toestel) : null;
+      gezien.add(sleutel); uit.push({ model: model, via: via, sleutel: sleutel, temp: temp, toestel: toestel });
       if (uit.length >= MAX) break;
     }
     return uit;
@@ -82,14 +85,17 @@
     const bk = Array.isArray(bekend) ? bekend : [];
     return lees(artemis).map((a) => {
       const naam = nm[a.sleutel] || a.model;
-      const eigen = nm[a.sleutel] ? bk.find((b) => b && String(b.naam || '').toLowerCase() === nm[a.sleutel].toLowerCase()) : null;
+      // 678: EERST op identiteit (het toestel-id dat ARTEMIS van de telefoon las), pas dan op een zelf gekozen naam.
+      const opId = a.toestel ? bk.find((b) => b && b.id && b.id === a.toestel) : null;
+      const eigen = opId || (nm[a.sleutel] ? bk.find((b) => b && String(b.naam || '').toLowerCase() === nm[a.sleutel].toLowerCase()) : null);
       let pantser; let klaar = null;
       if (eigen) { klaar = eigen.klaar === true; pantser = klaar ? 'klaar in het pantser' : `nog niet klaar: ${eigen.reden || 'geen reden gemeld'}`; }
-      else pantser = 'in het pantser: nog niet bevestigd door de telefoon zelf (geen hartslag aan deze naam gekoppeld)';
+      else if (a.toestel) pantser = 'JARVIS draait op deze telefoon, maar meldt zich niet bij Veronica: scan de QR van Veronica op die telefoon (of zet de relay aan)';
+      else pantser = 'ARTEMIS ziet hem, maar JARVIS antwoordt niet op deze telefoon: start JARVIS (of installeer hem) en scan de QR van Veronica';
       const koel = km[a.sleutel] === true;
-      return { sleutel: a.sleutel, model: a.model, naam: naam, benoemd: !!nm[a.sleutel], aanwezig: true, via: a.via, viaZin: VIA[a.via], klaar: klaar, pantser: pantser,
+      return { sleutel: a.sleutel, model: a.model, naam: opId && opId.naam ? opId.naam : naam, benoemd: !!nm[a.sleutel] || !!opId, gekoppeld: !!eigen, toestel: a.toestel || null, aanwezig: true, via: a.via, viaZin: VIA[a.via], klaar: klaar, pantser: pantser,
         temp: a.temp, gekoeld: koel,
-        zin: `${naam}: aanwezig ${VIA[a.via]}${a.temp != null ? ` · ${String(a.temp).replace('.', ',')} °C` : ''} · ${koel ? 'op de cooler' : 'niet op de cooler'} · ${pantser}` };
+        zin: `${opId && opId.naam ? opId.naam : naam}: aanwezig ${VIA[a.via]}${a.temp != null ? ` · ${String(a.temp).replace('.', ',')} °C` : ''} · ${koel ? 'op de cooler' : 'niet op de cooler'} · ${pantser}` };
     });
   }
 

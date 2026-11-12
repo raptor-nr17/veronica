@@ -115,7 +115,7 @@
       // 547: het lange geheugen (feiten, samenvattingen, onthoud, stijl) komt van de geheugen-telefoon, of uit de laatste kopie.
       const lang = d.lang ? await d.lang.laad() : null;
       const lv = lang && window.FennaGeheugen ? window.FennaGeheugen.voorFenna(lang) : null;
-      const persona = Object.assign({}, U.store.persona, lv ? { feiten: lv.feiten, samenvatting: [U.store.persona && U.store.persona.samenvatting, lv.samenvatting].filter(Boolean).join(' '), stijl: lv.stijl } : {});
+      const persona = Object.assign({}, U.store.persona, { rol: (U.store.persona || {}).rol === 'gewoon' ? 'gewoon' : 'prive' }, lv ? { feiten: lv.feiten, samenvatting: [U.store.persona && U.store.persona.samenvatting, lv.samenvatting].filter(Boolean).join(' '), stijl: lv.stijl } : {});
       const f = Fenna ? Fenna.bouw({ persona, beurten: eerder, vraag: gr ? `${Fenna.GEREEDSCHAP[gr].opdracht}\n\n${vraag}` : vraag, kanaal: 'relay', geheugen: g.systeem }) : { systeem: g.systeem, vraag };
       const start = d.nu();
       const r = await R.vraag(f.vraag, { systeem: f.systeem });
@@ -171,6 +171,22 @@
       b.addEventListener('click', async () => { U.store.persona = Object.assign({}, U.store.persona, { modus: m }); await bewaar(); teken(); });
       modus.append(b);
     }
+    // 678: het rolblok. Speels (standaard in de privé-hoek, alleen voor jou) of de gewone Veronica. Blijft helemaal lokaal in deze hoek.
+    const rol = el('div');
+    for (const [m, naam] of [['prive', 'Speels (alleen voor jou)'], ['gewoon', 'Gewone Veronica']]) {
+      const b = el('button', '', naam); b.type = 'button'; b.dataset.fennaRol = m; b.setAttribute('aria-pressed', String(((pe.rol === 'gewoon') ? 'gewoon' : 'prive') === m));
+      b.addEventListener('click', async () => { U.store.persona = Object.assign({}, U.store.persona, { rol: m }); await bewaar(); teken(); });
+      rol.append(b);
+    }
+    k.append(el('p', 'phKlein', 'Rol: een volwassen, vrouwelijke stem, speels tot pittig, altijd suggestief en nooit expliciet. Alles blijft in deze hoek: niets gaat naar Gemini of buiten het huis, en niets komt in het teamlogboek of de kostenlog.'), rol);
+    // 678: de STEMMING. Zelf zetten, of Veronica leidt hem af uit je toon (door de code, geen model).
+    const stem = el('div');
+    for (const [m, naam] of [['auto', 'Laat Veronica kiezen'], ['zacht', 'Zacht'], ['speels', 'Speels'], ['pittig', 'Pittig']]) {
+      const b = el('button', '', naam); b.type = 'button'; b.dataset.fennaStemming = m; b.setAttribute('aria-pressed', String(((pe.stemming && pe.stemming !== 'auto') ? pe.stemming : 'auto') === m));
+      b.addEventListener('click', async () => { U.store.persona = Object.assign({}, U.store.persona, { stemming: m }); await bewaar(); teken(); });
+      stem.append(b);
+    }
+    k.append(el('p', 'phKlein', 'Stemming: kies zelf hoe ver Veronica gaat, of laat haar het afleiden uit je laatste berichten.'), stem);
     k.append(el('p', 'phKlein', 'Gespreksmodus: de hele kaart. Werkmodus: alleen de eerste alinea, je stijl en de eerlijkheidsregel.'), modus);
     const veld = (sleutel, label, uitleg, standaard) => {
       const w = el('div'); const t = el('textarea'); t.rows = sleutel === 'kaart' ? 8 : 3; t.id = `phFenna_${sleutel}`; t.setAttribute('aria-label', label);
@@ -189,7 +205,7 @@
     const bewaarFenna = async () => {
       // 547: feiten en stijl gaan naar de geheugen-telefoon (eerst in de wachtrij); in de hoek blijft alleen de kaart en de samenvatting.
       if (d.lang) { await d.lang.schrijf({ op: 'feiten', tekst: feiten.t.value.slice(0, 2000) }); await d.lang.schrijf({ op: 'stijl', tekst: stijl.t.value.slice(0, 2000) }); }
-      U.store.persona = { kaart: kaart.t.value.slice(0, 3000), feiten: d.lang ? '' : feiten.t.value.slice(0, 2000), samenvatting: sam.t.value.slice(0, 2000), stijl: d.lang ? '' : stijl.t.value.slice(0, 2000), modus: (U.store.persona || {}).modus === 'werk' ? 'werk' : 'gesprek' };
+      U.store.persona = { kaart: kaart.t.value.slice(0, 3000), feiten: d.lang ? '' : feiten.t.value.slice(0, 2000), samenvatting: sam.t.value.slice(0, 2000), stijl: d.lang ? '' : stijl.t.value.slice(0, 2000), modus: (U.store.persona || {}).modus === 'werk' ? 'werk' : 'gesprek', rol: (U.store.persona || {}).rol === 'gewoon' ? 'gewoon' : 'prive', stemming: (U.store.persona || {}).stemming || 'auto' };
       P.logToevoegen(U.store, 'Veronica bijgewerkt (persoonlijkheid).', 'eigenaar', d.nu()); await bewaar(); meld('Veronica is bewaard. De volgende vraag gebruikt het al.');
     };
     for (const v of [kaart, feiten, sam, stijl]) v.t.addEventListener('change', () => { bewaarFenna().catch(() => {}); });

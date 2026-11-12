@@ -89,5 +89,5 @@
     return s;
   }
 
-  return { SLEUTEL: SLEUTEL, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel };
+  return { SLEUTEL: SLEUTEL, namen: namen, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel };
 }));

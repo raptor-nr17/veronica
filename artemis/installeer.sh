@@ -5342,8 +5342,32 @@ schermfoto() {
 # Per toestel: het typenummer (ro.product.model), hoe het verbonden is (kabel / wifi / tailscale) en een korte sleutel (8 hex van
 # een hash van het serienummer -- het serienummer zelf gaat NIET naar buiten). De F8 komt er nooit in. Een toestel in de Tailscale-
 # bruggenlijst telt mee ook als het niet op de kabellijst staat (dat is precies het geval dat Veronica miste).
+# 678 (12 nov): het JARVIS-toestel-id van een telefoon, door de telefoon ZELF verteld (adb-doorsturing naar JARVIS' eigen poort 8080, /jarvis/status). Dat bindt een
+# ARTEMIS-toestel (serienummer) aan de telefoon in Veronica op IDENTITEIT, niet op IP-adres of naam. Alleen lezen, korte time-outs, 10 minuten onthouden (600).
+# Antwoordt JARVIS niet (niet geinstalleerd/niet gestart) dan is het antwoord leeg: nooit een id verzinnen.
+JARVIS_ID_F="$REK_MAP/jarvis-toestel-ids"; JARVIS_ID_TTL="${JARVIS_ID_TTL:-600}"; JARVIS_ID_POORT="${JARVIS_ID_POORT:-18091}"
+jarvis_toestel_id() {
+  local s="$1" sl="$2" nu t id regel
+  nu="$(date +%s 2>/dev/null || echo 0)"
+  regel="$(awk -v k="$sl" '$1==k{print; exit}' "$JARVIS_ID_F" 2>/dev/null)"
+  if [ -n "$regel" ]; then
+    t="$(printf '%s' "$regel" | awk '{print $3}')"; case "$t" in ''|*[!0-9]*) t=0 ;; esac
+    if [ $((nu - t)) -lt "$JARVIS_ID_TTL" ]; then printf '%s' "$regel" | awk '{ if ($2 != "-") print $2 }'; return 0; fi
+  fi
+  command -v curl >/dev/null 2>&1 || return 0
+  "$ADB" -s "$s" forward --remove tcp:"$JARVIS_ID_POORT" >/dev/null 2>&1 || true
+  id=""
+  if timeout 6 "$ADB" -s "$s" forward tcp:"$JARVIS_ID_POORT" tcp:8080 >/dev/null 2>&1; then
+    id="$(curl -fsS -m 3 "http://127.0.0.1:$JARVIS_ID_POORT/jarvis/status" 2>/dev/null | grep -oE '"toestel"[^}]*"id"[[:space:]]*:[[:space:]]*"[a-z0-9]{12,32}"' | grep -oE '"[a-z0-9]{12,32}"$' | tr -d '"' | head -1)"
+  fi
+  "$ADB" -s "$s" forward --remove tcp:"$JARVIS_ID_POORT" >/dev/null 2>&1 || true
+  { awk -v k="$sl" '$1!=k' "$JARVIS_ID_F" 2>/dev/null; printf '%s %s %s\n' "$sl" "${id:--}" "$nu"; } >"$JARVIS_ID_F.t" 2>/dev/null && mv -f "$JARVIS_ID_F.t" "$JARVIS_ID_F" 2>/dev/null || true
+  chmod 600 "$JARVIS_ID_F" 2>/dev/null || true
+  [ -n "$id" ] && printf '%s' "$id"
+  return 0
+}
 rek_aanwezig() {
-  local eerste=1 s naam via sl tmp
+  local eerste=1 s naam via sl tmp jid
   printf '['
   for s in $(verbonden); do
     is_f8 "$s" && continue
@@ -5358,7 +5382,8 @@ rek_aanwezig() {
     tmp="$(timeout 8 "$ADB" -s "$s" shell dumpsys battery 2>/dev/null | tr -d '\r' | grep -m1 -oE 'temperature: *[0-9]+' | grep -oE '[0-9]+$')"
     case "$tmp" in ''|*[!0-9]*) tmp="null" ;; *) tmp="$(awk -v t="$tmp" 'BEGIN{printf "%.1f", t/10}')" ;; esac
     [ "$eerste" = 1 ] || printf ','; eerste=0
-    printf '{"model":%s,"via":%s,"sleutel":%s,"temp":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")" "$tmp"
+    jid="$(jarvis_toestel_id "$s" "$sl")"
+    printf '{"model":%s,"via":%s,"sleutel":%s,"temp":%s,"toestel":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")" "$tmp" "$([ -n "$jid" ] && json_s "$jid" || echo null)"
   done
   printf ']\n'
 }

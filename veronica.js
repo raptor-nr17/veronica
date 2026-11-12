@@ -1557,17 +1557,27 @@
   try { Hv.aan = localStorage.getItem('veronica-handenvrij') === 'aan'; } catch (e) { /* geen opslag */ }
   const kanSpreken = () => !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
   function stemmen() { return kanSpreken() ? window.speechSynthesis.getVoices().filter((v) => /^nl/i.test(v.lang)) : []; }
+  // 678 (12 nov, eigenaar): de stem komt uiteindelijk VOLLEDIG LOKAAL (Piper op de Cat). Tot dan: Veronica spreekt met de browser ALLEEN met een stem die op deze computer
+  // zelf draait (localService); een stem van Chrome die de tekst naar een server stuurt ("Google Nederlands") wordt NOOIT gebruikt, ook niet als standaard. Zijn er wel
+  // Nederlandse stemmen maar geen enkele lokale, dan blijft ze stil (en zegt dat een keer) in plaats van tekst naar buiten te sturen.
+  const lokaleStemmen = () => stemmen().filter((v) => v.localService !== false);
+  const StemV = { gemeld: false };
   function spreek(zin, soort) {
     const tekst = String(zin || '').trim();
     if (!tekst || !kanSpreken()) return false;
     const stil = !!(S.ntfy && K.Ntfy.inStilleUren(new Date(), S.ntfy.stil));
     if (!K.magSpreken({ aan: S.spraak.aan, stil, soort })) return false;
     if (navigator.userActivation && !navigator.userActivation.hasBeenActive) { Spr.wacht.push([tekst, soort]); return false; }
+    const nlStemmen = stemmen(); const lok = lokaleStemmen();
+    if (nlStemmen.length && !lok.length) {
+      if (!StemV.gemeld) { StemV.gemeld = true; meld('Deze computer heeft alleen een stem die via internet werkt. Die gebruik ik niet: de stem komt straks van de Cat, helemaal lokaal.'); }
+      return false;
+    }
     const u = new window.SpeechSynthesisUtterance(tekst.slice(0, 600));
     u.lang = 'nl-NL';
     u.rate = S.spraak.tempo;
     u.volume = S.spraak.volume;
-    const stem = stemmen().find((v) => v.name === S.spraak.stem);
+    const stem = lok.find((v) => v.name === S.spraak.stem) || lok[0];
     if (stem) u.voice = stem;
     // 563: de levende vorm beweegt mee zolang ze praat.
     const vorm = $('veronicaVorm');
@@ -1595,7 +1605,7 @@
     $('spraakVolume').value = String(S.spraak.volume);
     $('spraakTempo').value = String(S.spraak.tempo);
     const keus = $('stemKeus');
-    const lijst = stemmen();
+    const lijst = lokaleStemmen();
     const namen = lijst.map((v) => v.name).join('|');
     if (keus.dataset.namen !== namen) {
       keus.dataset.namen = namen;
@@ -2318,7 +2328,9 @@
         // 544: de geheugen-telefoon aanwijzen (of weer vanzelf laten kiezen). Alleen bij een telefoon met genoeg vrije ruimte.
         const gh = HB.per[r.id]; const gKan = !!(window.GeheugenTel && gh && window.GeheugenTel.kanBewaren(gh, nu()));
         const gStand = GeheugenV.gekozen === r.id ? 'g' : (gKan ? 'k' : '');
-        d.dataset.sleutel = `${r.id}|${r.pauze ? 'p' : ''}|${r.magWerker ? 'w' : ''}|${r.meetbaar ? 'm' : ''}|${gStand}`;
+        d.dataset.sleutel = `${r.id}|${r.pauze ? 'p' : ''}|${r.magWerker ? 'w' : ''}|${r.meetbaar ? 'm' : ''}|${gStand}|${RekRol.rolVan(r.id)}`;
+        // 678: de AI-rol van deze telefoon (Rekrollen), zichtbaar en met EEN tik te wisselen (brein, bibliothecaris, verdeler, ... of geen)
+        { const rl = RekRol.rolVan(r.id); const k = el('button', '', `AI-rol: ${rl || 'geen'} (wissel)`); k.dataset.rolWissel = r.id; d.append(' ', k); }
         if (gStand === 'g') { const k = el('button', '', 'Geheugen-telefoon weer vanzelf'); k.dataset.geheugenKies = ''; d.append(' ', k); }
         else if (gStand === 'k' && GeheugenV.id !== r.id) { const k = el('button', '', 'Maak dit de geheugen-telefoon'); k.dataset.geheugenKies = r.id; d.append(' ', k); }
         if (r.pauze) { const k = el('button', '', 'Noodstop opheffen'); k.dataset.noodstopOp = r.id; d.append(' ', k); }   // 522
@@ -3121,7 +3133,9 @@
   const rekKoel = () => { try { return window.Rekaanwezig.gekoeld(localStorage.getItem(window.Rekaanwezig.KOEL_SLEUTEL)); } catch (e) { return {}; } };
   function rekBekend() {
     const ps = pantserStand(); const hm = new Map((ps.helpen || []).map((h) => [h.naam, h.reden]));
-    return S.telefoons.map((t) => ({ naam: t.naam, klaar: !!S.aan && !hm.has(t.naam), reden: hm.get(t.naam) || (S.aan ? '' : 'het pantser staat uit') }));
+    // 678: ook het toestel-id mee, zodat een ARTEMIS-toestel op IDENTITEIT aan deze telefoon hangt (niet op IP of naam)
+    return S.telefoons.map((t) => { const m = meet(t.adres).status; const mid = m && m.toestel && m.toestel.waarde && m.toestel.waarde.id;
+      return { naam: t.naam, id: t.id || mid || null, klaar: !!S.aan && !hm.has(t.naam), reden: hm.get(t.naam) || (S.aan ? '' : 'het pantser staat uit') }; });
   }
   function tekenRekAanwezig() {
     const vak = $('rekAanwezig'); if (!vak || !window.Rekaanwezig) return;
@@ -3572,6 +3586,16 @@
     if (id === 'instelBewaar') stuurInstel(false).catch(() => {});
     if (id === 'instelStandaard') stuurInstel(true).catch(() => {});
     if (id === 'instelSluit') $('instelPaneel').hidden = true;
+  });
+  // 678: de AI-rol van een telefoon wisselen met een tik in de lijst "Wie rekent nu": geen -> volgende rol -> ... -> geen (lokaal vastgelegd, niets gaat naar de telefoon).
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('[data-rol-wissel]') : null;
+    if (!b || !window.Rekrollen) return;
+    const id = b.dataset.rolWissel; const lijst = [''].concat(window.Rekrollen.namen());
+    const nu_ = RekRol.rolVan(id); const volgende = lijst[(lijst.indexOf(nu_) + 1) % lijst.length];
+    RekRol.zet(id, volgende);
+    const h = HB.per[id] || {}; logRegel(`Rol ${volgende || 'gewist'} voor ${h.naam || 'telefoon'} (lokaal vastgelegd).`);
+    tekenLive();
   });
   // 678 (stap 4): de rol opslaan zodra je 'm kiest (lokaal; los van de roep-gebaseerde "Bewaar").
   document.addEventListener('change', (e) => {
@@ -5868,9 +5892,11 @@
     if (telefoon) fennaTel(telefoon, nu());
     const zinnen = window.Fenna ? window.Fenna.voorTeLezen(antwoord) : [String(antwoord || '')];
     if (!window.speechSynthesis || typeof window.SpeechSynthesisUtterance === 'undefined' || !zinnen.length) return Promise.resolve();
+    // 678: ook in de privé-hoek ALLEEN een lokale stem (nooit een stem die de tekst via internet laat maken)
+    const lok = lokaleStemmen(); if (stemmen().length && !lok.length) return Promise.resolve();
     return new Promise((klaar) => {
       zinnen.forEach((z, i) => {
-        const u = new window.SpeechSynthesisUtterance(z); u.lang = 'nl-NL';
+        const u = new window.SpeechSynthesisUtterance(z); u.lang = 'nl-NL'; const lv = lok.find((v) => v.name === S.spraak.stem) || lok[0]; if (lv) u.voice = lv;
         if (i === 0) u.onstart = () => { FennaV.eersteWoordMs = Math.max(0, nu() - (Number(start) || nu())); tekenFennaMeting(); };
         if (i === zinnen.length - 1) u.onend = () => klaar();
         window.speechSynthesis.speak(u);
@@ -6923,7 +6949,7 @@
   // HET VRAAGVELD. Een opdracht die Veronica kent (status, noodstop, wandstand, ...) doet ze meteen. Al het andere gaat naar Fenna: met het
   // pantser aan en een groene telefoon knipt ze het in stukjes over de telefoons (de trap van 553, zij kiest de soort klus zelf en stuurt
   // dubbel als de controle faalt); anders wordt het een gewone klus in de wachtrij.
-  async function vraagDoe(tekst) {
+  async function vraagDoe(tekst, opties) {
     const t = String(tekst || '').trim();
     if (!t) { meld('Typ of zeg eerst wat je wilt.'); return 'leeg'; }
     const b = K.begrijp(t);
@@ -6932,6 +6958,11 @@
     // vraag naar de trap ("klein-naar-groot") gestuurd zodra het pantser aan stond én een trap-kaartje groen was -- maar de trap
     // toont niets in het hoofdveld, dus "Hoeveel is 12 keer 7?" gaf geen antwoord en niets in beeld. De trap blijft bestaan, maar
     // alleen via zijn EIGEN veld (#trapDoel) en knop (#trapKnop); het hoofdveld antwoordt gewoon (één telefoon) met zichtbare stand.
+    // 678 (12 nov, op verzoek van de eigenaar: de kortste weg naar een werkende lokale AI): een vraag gaat EERST door de trap (geheugen met bron, regels als voorstel,
+    // verdeler, de rektelefoons per rol, de keurmeester) en het antwoord verschijnt ZICHTBAAR in dit veld (dat was de reden van 653: de trap toonde niets). Geeft de
+    // trap geen antwoord (geen telefoon vrij, of niets dat de controle haalt), dan valt hij terug op het gewone antwoordpad hieronder -- er gaat dus nooit een vraag verloren.
+    if (!(opties && opties.zonderTrap)) { const c = await hoofdTrap(t); if (c) return c; }
+    HoofdV.trap = null;
     const gemaakt = await voegTakenToe(t);
     // 643: volg deze getypte vraag als een gesproken vraag -- Veronica spreekt straks het antwoord uit, laat het zien, en
     // zegt onderweg ZICHTBAAR wat er gebeurt (bezig op welke telefoon, of een eerlijke reden als geen telefoon hem oppakt).
@@ -6939,6 +6970,26 @@
     if (eerste) { HoofdV.vraagId = eerste.id; HoofdV.gesproken = false; HoofdV.sinds = nu(); }
     vraagStatusTik();
     return 'wachtrij';
+  }
+  // 678: het hoofdveld door de trap. CascadeV.vraag is een haak (de test zet hem om); standaard cascadeVraag. Schakelaar: localStorage 'veronica-trap-hoofd' = 'uit'.
+  CascadeV.vraag = (t, o) => cascadeVraag(t, o);
+  async function hoofdTrap(t) {
+    let uit = false; try { uit = localStorage.getItem('veronica-trap-hoofd') === 'uit'; } catch (e) { /* aan */ }
+    if (uit || !window.Cascade || !window.Antwoordlog) return null;
+    HoofdV.vraagId = null;
+    HoofdV.trap = { zin: 'Ik denk na… (lokale AI)', soort: 'bezig' }; vraagStatusTik();
+    let r = null;
+    try { r = await CascadeV.vraag(t, { haast: true }); } catch (e) { r = null; }
+    const a = r && typeof r.antwoord === 'string' ? r.antwoord.trim() : '';
+    if (a && ['geheugen', 'regels', 'model', 'f8'].includes(r.bron)) {
+      const wie = r.telefoon ? ((S.telefoons.find((x) => x.id === r.telefoon) || {}).naam || 'een telefoon') : '';
+      const label = r.bron === 'geheugen' ? 'uit mijn geheugen' : r.bron === 'regels' ? 'voorstel, er is niets uitgevoerd' : r.bron === 'f8' ? 'groot brein, lokaal' : `lokaal, ${wie}`;
+      HoofdV.trap = { zin: `Antwoord (${label}): ${a}`, soort: 'klaar' }; vraagStatusTik();
+      spreek(a.replace(/[#*_`>]+/g, ' ').slice(0, 600), 'antwoord');
+      return 'trap';
+    }
+    HoofdV.trap = null; vraagStatusTik();
+    return null;
   }
   // 643: de zichtbare levensloop van de getypte vraag: bezig -> antwoord (ook uitgesproken) -> of een eerlijke reden.
   function vraagStatusReden() {
@@ -6962,6 +7013,7 @@
   function vraagStatusTik() {
     const p = $('vraagStatus');
     if (!p) return;
+    if (HoofdV.trap) { if (p.textContent !== HoofdV.trap.zin) p.textContent = HoofdV.trap.zin; p.className = HoofdV.trap.soort; p.hidden = false; return; }   // 678: de trap antwoordt in dit veld
     if (!HoofdV.vraagId) { if (!p.hidden) { p.hidden = true; p.className = ''; } return; }
     const taak = S.taken.find((x) => x.id === HoofdV.vraagId);
     const zet = (zin, soort) => { if (p.textContent !== zin) p.textContent = zin; p.className = soort || ''; p.hidden = false; };
