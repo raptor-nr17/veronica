@@ -3501,6 +3501,21 @@ voortgang_controle() {   # stil; hoogstens eens per uur een melding; 23:00-07:00
   printf '%s\n' "$nu" >"$VOORTGANG_MELD_F" 2>/dev/null; chmod 600 "$VOORTGANG_MELD_F" 2>/dev/null || true
   relay_meld "Voortgang: er is $min minuten niets gepusht (grens $VOORTGANG_MAX_MIN). Het bouwwerk staat mogelijk stil -- kijk in de console op Voortgang, of vraag Claude door te gaan."
 }
+# 678 (12 nov): een telefoon die alleen via Tailscale (127.0.0.1:560x) verbonden was valt weg als die tunnels verdwijnen (console-herstart, Tailscale-sessie). De beheerder
+# bouwt de tunnels dan opnieuw (rek_via_tailscale), maar: hoogstens eens per 10 minuten, niet terwijl Snelheid meten een lezer heeft (rek_via_tailscale breekt alle tunnels
+# eerst af), en alleen als Tailscale op de Chromebook bestaat en verbonden is. Alleen lezen/verbinden; de F8 blijft uitgesloten (rek_via_tailscale slaat hem al over).
+bh_ts_herstel() {
+  command -v tailscale >/dev/null 2>&1 || return 0
+  tailscale status >/dev/null 2>&1 || return 0
+  local f="$REK_MAP/beheerder-ts.t" nu t lock="$REK_MAP/motor-meet.lock" pid
+  pid="$(cat "$lock/pid" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
+  nu="$(date +%s 2>/dev/null || echo 0)"; t="$(cat "$f" 2>/dev/null || echo 0)"; case "$t" in ''|*[!0-9]*) t=0 ;; esac
+  [ $((nu - t)) -lt "${BEHEERDER_TS_REM:-600}" ] && return 0
+  printf '%s\n' "$nu" >"$f" 2>/dev/null || true
+  zeg "Beheerder: ik bouw de Tailscale-verbindingen met de rektelefoons opnieuw op."
+  rek_via_tailscale >/dev/null 2>&1 || true
+}
 bh_migreer_adres_ids() {
   [ -s "$TOEG" ] || return 0
   local regel adres echt
@@ -3537,6 +3552,7 @@ beheerder_ronde() {
     zeg "Beheerder: $id is weg -- ik haal hem draadloos terug."
     verbind_draadloos >/dev/null 2>&1 || true
     rek_verbind_lijst >/dev/null 2>&1 || true
+    bh_ts_herstel   # 678 (12 nov): ook de Tailscale-weg (de telefoons die alleen via hun vaste 100.x bereikbaar zijn), met rem
     nu_ids2="$(_bh_verbonden_ids | tr '\n' ' ')"
     if case " $nu_ids2 " in *" $id "*) true ;; *) false ;; esac; then
       hersteld=$((hersteld+1)); _bh_set "$id" "$BEHEERDER_GEMIST_F" 0
@@ -3558,7 +3574,7 @@ beheerder_ronde() {
     esc="$(_bh_get "$id" "$BEHEERDER_ESC_F")"; case "$esc" in ''|*[!0-9]*) esc=0 ;; esac
     [ "$esc" -gt 0 ] && [ $((now - esc)) -lt "${BEHEERDER_ESC_RUST:-3600}" ] && continue
     _bh_set "$id" "$BEHEERDER_ESC_F" "$now"
-    relay_meld "Beheerder: ik krijg telefoon $id al $g keer niet draadloos terug. Sluit hem even met de USB-kabel aan de Chromebook aan (dan zet ik hem vanzelf klaar), of tik hem één keer aan. De andere telefoons draaien door." || true
+    relay_meld "Beheerder: ik krijg telefoon $id al $g keer niet draadloos terug. Sluit hem even met de USB-kabel aan de Chromebook aan (dan zet ik hem vanzelf klaar), of zet Tailscale en het scherm op de telefoon aan en tik hem één keer aan. De andere telefoons draaien door." || true
     zeg "Beheerder: $id al $g rondes weg -- aan de eigenaar gevraagd via Veronica (kabel of tik nodig)."
   done
   zeg "Beheerder-ronde klaar: $verwacht verwacht, $hersteld hersteld, $weg nog weg."
