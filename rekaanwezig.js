@@ -39,7 +39,8 @@
       // 678 (12 nov): het JARVIS-toestel-id dat ARTEMIS via adb van de telefoon ZELF las (/jarvis/status). Dat bindt dit ARTEMIS-toestel aan een Veronica-telefoon op
       // IDENTITEIT, niet op een IP-adres of een naam. Onbekend/ongeldig = null (JARVIS draait niet, of meldt zich niet).
       const toestel = /^[a-z0-9]{12,32}$/.test(String(x.toestel || '')) ? String(x.toestel) : null;
-      gezien.add(sleutel); uit.push({ model: model, via: via, sleutel: sleutel, temp: temp, toestel: toestel });
+      const jarvis = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(String(x.jarvis || '')) ? String(x.jarvis) : null;   // de JARVIS-versie die op die telefoon draait
+      gezien.add(sleutel); uit.push({ model: model, via: via, sleutel: sleutel, temp: temp, toestel: toestel, jarvis: jarvis });
       if (uit.length >= MAX) break;
     }
     return uit;
@@ -90,11 +91,11 @@
       const eigen = opId || (nm[a.sleutel] ? bk.find((b) => b && String(b.naam || '').toLowerCase() === nm[a.sleutel].toLowerCase()) : null);
       let pantser; let klaar = null;
       if (eigen) { klaar = eigen.klaar === true; pantser = klaar ? 'klaar in het pantser' : `nog niet klaar: ${eigen.reden || 'geen reden gemeld'}`; }
-      else if (a.toestel) pantser = 'JARVIS draait op deze telefoon, maar meldt zich niet bij Veronica: scan de QR van Veronica op die telefoon (of zet de relay aan)';
+      else if (a.toestel) pantser = `JARVIS${a.jarvis ? ' ' + a.jarvis : ''} draait op deze telefoon, maar meldt zich niet bij Veronica: scan de QR van Veronica op die telefoon (of zet de relay aan)`;
       else pantser = 'ARTEMIS ziet hem, maar JARVIS antwoordt niet op deze telefoon: start JARVIS (of installeer hem) en scan de QR van Veronica';
       const koel = km[a.sleutel] === true;
       return { sleutel: a.sleutel, model: a.model, naam: opId && opId.naam ? opId.naam : naam, benoemd: !!nm[a.sleutel] || !!opId, gekoppeld: !!eigen, toestel: a.toestel || null, aanwezig: true, via: a.via, viaZin: VIA[a.via], klaar: klaar, pantser: pantser,
-        temp: a.temp, gekoeld: koel,
+        temp: a.temp, gekoeld: koel, jarvis: a.jarvis || null,
         zin: `${opId && opId.naam ? opId.naam : naam}: aanwezig ${VIA[a.via]}${a.temp != null ? ` · ${String(a.temp).replace('.', ',')} °C` : ''} · ${koel ? 'op de cooler' : 'niet op de cooler'} · ${pantser}` };
     });
   }

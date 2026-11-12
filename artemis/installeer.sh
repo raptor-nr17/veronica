@@ -5366,16 +5366,19 @@ jarvis_toestel_id() {
   regel="$(awk -v k="$sl" '$1==k{print; exit}' "$JARVIS_ID_F" 2>/dev/null)"
   if [ -n "$regel" ]; then
     t="$(printf '%s' "$regel" | awk '{print $3}')"; case "$t" in ''|*[!0-9]*) t=0 ;; esac
-    if [ $((nu - t)) -lt "$JARVIS_ID_TTL" ]; then printf '%s' "$regel" | awk '{ if ($2 != "-") print $2 }'; return 0; fi
+    if [ $((nu - t)) -lt "$JARVIS_ID_TTL" ]; then JARVIS_VERSIE_LAATST="$(printf '%s' "$regel" | awk '{ if ($4 != "" && $4 != "-") print $4 }')"; printf '%s' "$regel" | awk '{ if ($2 != "-") print $2 }'; return 0; fi
   fi
   command -v curl >/dev/null 2>&1 || return 0
   "$ADB" -s "$s" forward --remove tcp:"$JARVIS_ID_POORT" >/dev/null 2>&1 || true
-  id=""
+  id=""; local stat="" ver=""
   if timeout 6 "$ADB" -s "$s" forward tcp:"$JARVIS_ID_POORT" tcp:8080 >/dev/null 2>&1; then
-    id="$(curl -fsS -m 3 "http://127.0.0.1:$JARVIS_ID_POORT/jarvis/status" 2>/dev/null | grep -oE '"toestel"[^}]*"id"[[:space:]]*:[[:space:]]*"[a-z0-9]{12,32}"' | grep -oE '"[a-z0-9]{12,32}"$' | tr -d '"' | head -1)"
+    stat="$(curl -fsS -m 3 "http://127.0.0.1:$JARVIS_ID_POORT/jarvis/status" 2>/dev/null)"
+    id="$(printf '%s' "$stat" | grep -oE '"toestel"[^}]*"id"[[:space:]]*:[[:space:]]*"[a-z0-9]{12,32}"' | grep -oE '"[a-z0-9]{12,32}"$' | tr -d '"' | head -1)"
+    ver="$(printf '%s' "$stat" | grep -oE '"versie"[[:space:]]*:[[:space:]]*"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}"' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)"
   fi
+  JARVIS_VERSIE_LAATST="$ver"
   "$ADB" -s "$s" forward --remove tcp:"$JARVIS_ID_POORT" >/dev/null 2>&1 || true
-  { awk -v k="$sl" '$1!=k' "$JARVIS_ID_F" 2>/dev/null; printf '%s %s %s\n' "$sl" "${id:--}" "$nu"; } >"$JARVIS_ID_F.t" 2>/dev/null && mv -f "$JARVIS_ID_F.t" "$JARVIS_ID_F" 2>/dev/null || true
+  { awk -v k="$sl" '$1!=k' "$JARVIS_ID_F" 2>/dev/null; printf '%s %s %s %s\n' "$sl" "${id:--}" "$nu" "${ver:--}"; } >"$JARVIS_ID_F.t" 2>/dev/null && mv -f "$JARVIS_ID_F.t" "$JARVIS_ID_F" 2>/dev/null || true
   chmod 600 "$JARVIS_ID_F" 2>/dev/null || true
   [ -n "$id" ] && printf '%s' "$id"
   return 0
@@ -5473,7 +5476,7 @@ duurtest_uitslag() {
         printf "  %s: %d metingen over %.1f uur; motor klaar %d%%; %d keer uitgevallen; hoogste temp %s graden; laagste accu %s%%; %s\n", naam[id], n[id], uren, pct, uitval[id]+0, (id in tmax)? sprintf("%.1f", tmax[id]/10) : "?", (id in amin)? amin[id] : "?", (uren>=23.5 && pct>=95 && uitval[id]+0==0) ? "24 UUR GEHAALD" : (uren>=23.5 ? "24 uur gelopen, maar met uitval" : "nog niet 24 uur") } }' "$DUUR_F"
 }
 rek_aanwezig() {
-  local eerste=1 s naam via sl tmp jid
+  local eerste=1 s naam via sl tmp jid jver
   printf '['
   for s in $(verbonden); do
     is_f8 "$s" && continue
@@ -5488,8 +5491,8 @@ rek_aanwezig() {
     tmp="$(timeout 8 "$ADB" -s "$s" shell dumpsys battery 2>/dev/null | tr -d '\r' | grep -m1 -oE 'temperature: *[0-9]+' | grep -oE '[0-9]+$')"
     case "$tmp" in ''|*[!0-9]*) tmp="null" ;; *) tmp="$(awk -v t="$tmp" 'BEGIN{printf "%.1f", t/10}')" ;; esac
     [ "$eerste" = 1 ] || printf ','; eerste=0
-    jid="$(jarvis_toestel_id "$s" "$sl")"
-    printf '{"model":%s,"via":%s,"sleutel":%s,"temp":%s,"toestel":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")" "$tmp" "$([ -n "$jid" ] && json_s "$jid" || echo null)"
+    jid="$(jarvis_toestel_id "$s" "$sl")"; jver="$(awk -v k="$sl" '$1==k && $4 != "" && $4 != "-" {print $4; exit}' "$JARVIS_ID_F" 2>/dev/null)"
+    printf '{"model":%s,"via":%s,"sleutel":%s,"temp":%s,"toestel":%s,"jarvis":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")" "$tmp" "$([ -n "$jid" ] && json_s "$jid" || echo null)" "$([ -n "$jver" ] && json_s "$jver" || echo null)"
   done
   printf ']\n'
 }
