@@ -534,7 +534,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
@@ -626,6 +626,8 @@ def lus():
                 doe('lokaal-auto')   # 592: lokaal model AANzetten zodra er een lokale server verschijnt ("standaard AAN")
             if RONDE % 10 == 2:
                 doe('meet-hervat')   # 678: een onderbroken Snelheid-meten-lezer na een console-herstart weer oppakken
+            if RONDE % 5 == 1:
+                doe('duurtest-tik')   # 678: de duurtest (alleen als hij aan staat; anders meteen klaar)
             if RONDE % 5 == 3:
                 doe('voortgang-controle')   # 678 (12 nov): kijkt of er langer dan 30 minuten niets gepusht is (stil; melding hoogstens eens per uur)
             if RONDE % 180 == 45:
@@ -643,7 +645,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=voortgang>Voortgang</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -5378,6 +5380,98 @@ jarvis_toestel_id() {
   [ -n "$id" ] && printf '%s' "$id"
   return 0
 }
+# 678 (12 nov, punt 2/4/5 van de toestellenlijst): WAT DRAAIT ER OP DE REKTELEFOONS? Per telefoon, via een adb-doorsturing (alleen lezen, korte time-outs): de eigen
+# motor (poort 8081, vraagt de rij-code uit rek-token.conf; de code gaat nooit in een melding) en de spraakserver (8082: stem en oor). Zo zie je in een regel of
+# "Motor aan" gelukt is, of het model geladen is, en of Piper/Whisper klaar staan. De DUURTEST bouwt daarop: elke 5 minuten een meetregel, 24 uur lang.
+MOTOR_LOK_POORT="${MOTOR_LOK_POORT:-18092}"
+DUUR_F="$REK_MAP/duurtest.log"; DUUR_AAN_F="$REK_MAP/duurtest-aan"
+tel_http() {   # $1 serienummer, $2 poort op de telefoon, $3 pad, $4 token (optioneel) -> de body, of niets
+  local s="$1" p="$2" pad="$3" tok="${4:-}" out rc
+  "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
+  timeout 6 "$ADB" -s "$s" forward tcp:"$MOTOR_LOK_POORT" tcp:"$p" >/dev/null 2>&1 || return 1
+  if [ -n "$tok" ]; then out="$(curl -fsS -m 4 -H "Authorization: Bearer $tok" "http://127.0.0.1:$MOTOR_LOK_POORT$pad" 2>/dev/null)"; rc=$?
+  else out="$(curl -fsS -m 4 "http://127.0.0.1:$MOTOR_LOK_POORT$pad" 2>/dev/null)"; rc=$?; fi
+  "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
+  [ "$rc" -eq 0 ] && [ -n "$out" ] && printf '%s' "$out"
+  return 0
+}
+motor_staat_van() {   # $1 serienummer -> "staat|tps" (staat: klaar|laden|uit|fout|geen-code|niets) ; tps leeg als onbekend
+  local s="$1" tok="" body staat tps
+  [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
+  body="$(tel_http "$s" 8081 /health "$tok")"
+  if [ -z "$body" ]; then
+    if [ -z "$tok" ]; then body="$(tel_http "$s" 8081 /health "")"; [ -n "$body" ] || { printf 'geen-code|'; return 0; }
+    else printf 'niets|'; return 0; fi
+  fi
+  staat="$(printf '%s' "$body" | sed -n 's/.*"staat" *: *"\([a-z]*\)".*/\1/p' | head -1)"
+  tps="$(printf '%s' "$body" | sed -n 's/.*"decode_tokens_per_second" *: *\([0-9.]*\).*/\1/p' | head -1)"
+  printf '%s|%s' "${staat:-niets}" "$tps"
+}
+spraak_staat_van() {   # $1 serienummer -> "stem|oor" (klaar|laden|uit|fout|niets)
+  local s="$1" tok="" body stem oor
+  [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
+  body="$(tel_http "$s" 8082 /health "$tok")"
+  [ -n "$body" ] || { printf 'niets|niets'; return 0; }
+  stem="$(printf '%s' "$body" | sed -n 's/.*"stem" *: *"\([a-z]*\)".*/\1/p' | head -1)"; oor="$(printf '%s' "$body" | sed -n 's/.*"oor" *: *"\([a-z]*\)".*/\1/p' | head -1)"
+  printf '%s|%s' "${stem:-niets}" "${oor:-niets}"
+}
+motor_status() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 0; }
+  local s id naam m st tps sp stem oor n=0 hint
+  zeg "Eigen motor (poort 8081) en spraak (poort 8082) per rektelefoon -- alleen lezen:"
+  [ -s "$REK_MAP/rek-token.conf" ] || zeg "  (Zonder rij-code in het veld \"Rij-code\" kan ik de motor alleen zien als hij open staat.)"
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"; naam="${naam:-onbekend}"; n=$((n+1))
+    m="$(motor_staat_van "$s")"; st="${m%%|*}"; tps="${m##*|}"
+    sp="$(spraak_staat_van "$s")"; stem="${sp%%|*}"; oor="${sp##*|}"
+    case "$st" in
+      klaar) hint="" ;;
+      laden) hint=" -- het model wordt geladen; even wachten" ;;
+      uit) hint=" -- zet in Veronica 'Motor aan' (op wifi en aan de lader)" ;;
+      geen-code) hint=" -- de motor vraagt de rij-code: zet die in het veld \"Rij-code\"" ;;
+      fout) hint=" -- de motor meldt een fout; kijk in Veronica bij deze telefoon" ;;
+      *) hint=" -- geen antwoord van de motor (staat JARVIS aan? is de motor aangezet?)" ;;
+    esac
+    zeg "  $naam: motor $st$([ -n "$tps" ] && echo " (~$tps tok/s geschat)")$hint; stem $stem, oor $oor"
+  done
+  [ "$n" -gt 0 ] || zeg "  Geen rektelefoon verbonden."
+}
+# Duurtest: elke 5 minuten (console-lus) een meetregel per telefoon zolang het vlagbestand er is, hoogstens 25 uur. Alleen getallen; geen inhoud.
+duurtest_start() { date +%s >"$DUUR_AAN_F"; chmod 600 "$DUUR_AAN_F" 2>/dev/null || true; : >"$DUUR_F"; chmod 600 "$DUUR_F" 2>/dev/null || true; zeg "Duurtest gestart: elke 5 minuten een meting per telefoon, 24 uur lang. Kijk met 'Duurtest-uitslag'; stop met 'Duurtest stop'."; duurtest_tik; }
+duurtest_stop() { rm -f "$DUUR_AAN_F"; zeg "Duurtest gestopt. De metingen blijven staan; kijk met 'Duurtest-uitslag'."; }
+duurtest_tik() {
+  [ -f "$DUUR_AAN_F" ] || return 0
+  local t0 nu s id naam sl m st sp stem oor bat lvl tmp
+  t0="$(head -1 "$DUUR_AAN_F" 2>/dev/null)"; nu="$(date +%s)"; case "$t0" in ''|*[!0-9]*) t0="$nu" ;; esac
+  if [ $((nu - t0)) -gt 90000 ]; then rm -f "$DUUR_AAN_F"; return 0; fi
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    naam="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"; sl="$(printf '%s' "$id" | sha256sum | cut -c1-8)"
+    m="$(motor_staat_van "$s")"; st="${m%%|*}"; sp="$(spraak_staat_van "$s")"; stem="${sp%%|*}"; oor="${sp##*|}"
+    bat="$(timeout 8 "$ADB" -s "$s" shell dumpsys battery 2>/dev/null | tr -d '\r')"
+    lvl="$(printf '%s\n' "$bat" | grep -m1 -oE 'level: *[0-9]+' | grep -oE '[0-9]+')"; tmp="$(printf '%s\n' "$bat" | grep -m1 -oE 'temperature: *[0-9]+' | grep -oE '[0-9]+')"
+    printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$nu" "$sl" "${naam:-onbekend}" "${tmp:--}" "${lvl:--}" "$st" "$stem" "$oor" >>"$DUUR_F"
+  done
+  [ "$(wc -l <"$DUUR_F" 2>/dev/null || echo 0)" -gt 20000 ] && tail -n 15000 "$DUUR_F" >"$DUUR_F.t" && mv -f "$DUUR_F.t" "$DUUR_F"
+  return 0
+}
+duurtest_uitslag() {
+  [ -s "$DUUR_F" ] || { zeg "Nog geen duurtest-metingen. Start met 'Duurtest start'."; return 0; }
+  zeg "Duurtest$([ -f "$DUUR_AAN_F" ] && echo ' (loopt nog)'):"
+  awk -F'|' '
+    { id=$2; n[id]++; naam[id]=$3; if (!(id in t0)) t0[id]=$1; t1[id]=$1;
+      if ($4!="-") { if (!(id in tmax) || $4+0>tmax[id]) tmax[id]=$4+0 }
+      if ($5!="-") { if (!(id in amin) || $5+0<amin[id]) amin[id]=$5+0 }
+      if ($6=="klaar") up[id]++;
+      if (id in vorig && vorig[id]=="klaar" && $6!="klaar") uitval[id]++;
+      vorig[id]=$6 }
+    END { for (id in n) { uren=(t1[id]-t0[id])/3600; pct=int(100*up[id]/n[id]);
+        printf "  %s: %d metingen over %.1f uur; motor klaar %d%%; %d keer uitgevallen; hoogste temp %s graden; laagste accu %s%%; %s\n", naam[id], n[id], uren, pct, uitval[id]+0, (id in tmax)? sprintf("%.1f", tmax[id]/10) : "?", (id in amin)? amin[id] : "?", (uren>=23.5 && pct>=95 && uitval[id]+0==0) ? "24 UUR GEHAALD" : (uren>=23.5 ? "24 uur gelopen, maar met uitval" : "nog niet 24 uur") } }' "$DUUR_F"
+}
 rek_aanwezig() {
   local eerste=1 s naam via sl tmp jid
   printf '['
@@ -5711,6 +5805,11 @@ case "${1:-status}" in
   beheerder) beheerder_ronde ;;              # 675: de lokale beheerder -- weggevallen rektelefoon zelf draadloos terughalen, anders de eigenaar via Veronica (kabel/tik)
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?
   motor-meet) motor_meet ;;                   # 678 stap 1b: echte modelsnelheid meten (llama-bench, CPU, grote kernen), nooit de F8
+  motor-status) motor_status ;;                  # 678: motor (8081) en spraak (8082) per rektelefoon, alleen lezen
+  duurtest-start) duurtest_start ;;              # 678: 24-uurs duurtest: elke 5 minuten een meetregel per telefoon
+  duurtest-stop) duurtest_stop ;;
+  duurtest-uitslag) duurtest_uitslag ;;
+  duurtest-tik) duurtest_tik >/dev/null 2>&1 || true ;;
   voortgang) voortgang_toon ;;                 # 678 (12 nov): laatste commit-tijd per tak, uit de publieke API (en met een token ook van privé-repo's)
   voortgang-controle) voortgang_controle ;;    # 678: stil; een melding als er langer dan 30 minuten niets gepusht is
   meet-hervat) meet_hervat ;;                  # 678 (12 nov): de lezer van een losgekoppelde meting weer starten na een console-herstart
