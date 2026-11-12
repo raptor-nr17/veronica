@@ -5888,7 +5888,7 @@
     });
   }
   // start = het moment dat de vraag verstuurd werd; de meting loopt tot het eerste gesproken woord.
-  function fennaSpreek(antwoord, start, telefoon) {
+  function fennaSpreek(antwoord, start, telefoon, profielIn) {
     if (telefoon) fennaTel(telefoon, nu());
     const zinnen = window.Fenna ? window.Fenna.voorTeLezen(antwoord) : [String(antwoord || '')];
     if (!window.speechSynthesis || typeof window.SpeechSynthesisUtterance === 'undefined' || !zinnen.length) return Promise.resolve();
@@ -5897,6 +5897,8 @@
     return new Promise((klaar) => {
       zinnen.forEach((z, i) => {
         const u = new window.SpeechSynthesisUtterance(z); u.lang = 'nl-NL'; const lv = lok.find((v) => v.name === S.spraak.stem) || lok[0]; if (lv) u.voice = lv;
+        // 678: de stem van de rol (butler of privé-hoek met zijn stemming) = tempo en toonhoogte van DEZELFDE lokale stem (stemprofiel.js)
+        if (window.Stemprofiel) { const pf = window.Stemprofiel.profiel(profielIn && profielIn.rol, profielIn && profielIn.stemming); u.rate = (Number(S.spraak.tempo) || 1) * pf.speed; u.pitch = pf.pitch; }
         if (i === 0) u.onstart = () => { FennaV.eersteWoordMs = Math.max(0, nu() - (Number(start) || nu())); tekenFennaMeting(); };
         if (i === zinnen.length - 1) u.onend = () => klaar();
         window.speechSynthesis.speak(u);

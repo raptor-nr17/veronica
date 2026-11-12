@@ -128,7 +128,7 @@
         const sam = Fenna.samenvatBeurten(alle);
         if (sam) d.lang.schrijf({ op: 'samenvatting', dag: new Date(d.nu()).toISOString().slice(0, 10), tekst: sam }).catch(() => {});
       }
-      if (r.ok && typeof d.spreek === 'function' && U.praten) d.spreek(r.antwoord || '', start, r.telefoon);
+      if (r.ok && typeof d.spreek === 'function' && U.praten) d.spreek(r.antwoord || '', start, r.telefoon, { rol: f.rol, stemming: f.stemming });   // 678: de stem krijgt het profiel van de rol (tempo, pauze, toonhoogte)
       else if (r.ok && typeof d.telKlus === 'function') d.telKlus(r.telefoon);
       teken();
     });
