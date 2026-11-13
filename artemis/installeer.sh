@@ -5557,6 +5557,26 @@ kabel_koppel_auto() {   # de console-lus: stil, hoogstens eens per 30 minuten pe
   done
   return 0
 }
+# 678 (13 nov): WAAROM ANTWOORDT JARVIS NIET? Als /jarvis/status via de kabel niets geeft (de S10), kijken we stap voor stap -- alleen lezen, behalve EEN herstart van
+# JARVIS zelf als hij stil ligt: (1) staat het pakket erop, (2) welke versie, (3) draait het proces, (4) luistert er iets op poort 8080 (uit /proc/net/tcp*, zonder
+# root). Elk antwoord krijgt een eerlijke zin met wat er moet gebeuren. Nooit een ander pakket aanraken.
+jarvis_waarom() {   # $1 serienummer -> een zin
+  local s="$1" pad ver pid poort
+  pad="$(timeout 10 "$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r')"
+  case "$pad" in *package:*) : ;; *) printf 'JARVIS staat er niet op. Druk op "Telefoon klaarzetten" (installeert de nieuwste JARVIS via de kabel).'; return 0 ;; esac
+  ver="$(timeout 10 "$ADB" -s "$s" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's/.*versionName=\([0-9.]*\).*/\1/p' | head -1)"
+  pid="$(timeout 10 "$ADB" -s "$s" shell pidof "$JARVIS_PKG" 2>/dev/null | tr -d '\r\n ')"
+  if [ -z "$pid" ]; then
+    timeout 10 "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+    printf 'JARVIS %s staat erop maar draaide niet; ik heb hem gestart. Kijk over een minuut opnieuw (lukt het dan nog niet: het scherm aan en ontgrendeld, en "boven andere apps" toestaan).' "${ver:-?}"; return 0
+  fi
+  poort="$(timeout 10 "$ADB" -s "$s" shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' 2>/dev/null | tr -d '\r' | awk '$4=="0A" && toupper($2) ~ /:1F90$/ {print "ja"; exit}')"
+  if [ "$poort" != ja ]; then
+    printf 'JARVIS %s draait (pid %s), maar zijn webserver (poort 8080) luistert niet. Open JARVIS op de telefoon en zet "Laat JARVIS zien op je Chromebook" aan, of start hem opnieuw (JARVIS waak).' "${ver:-?}" "$pid"; return 0
+  fi
+  case "$ver" in 1.[0-6].*) printf 'JARVIS %s is te oud (geen /jarvis/status). Druk op "JARVIS waak": die zet de nieuwste erop.' "$ver"; return 0 ;; esac
+  printf 'JARVIS %s draait en luistert op 8080, maar gaf geen toestel-id (de adb-doorsturing faalde?). Druk op "Rek via Tailscale" of steek de kabel opnieuw in.' "${ver:-?}"
+}
 meld_status() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
   local s idv naam sl jid m n=0
@@ -5567,7 +5587,7 @@ meld_status() {
     idv="$(toestel_id "$s")"; toegestaan "$idv" || continue
     naam="$(toestel_naam "$s")"; naam="${naam:-onbekend}"; sl="$(printf '%s' "$idv" | sha256sum | cut -c1-8)"; n=$((n+1))
     jid="$(jarvis_toestel_id "$s" "$sl")"
-    if [ -z "$jid" ]; then zeg "  $naam: JARVIS antwoordt niet. Start JARVIS op de telefoon (of druk op 'Telefoon klaarzetten' en 'JARVIS waak')."; continue; fi
+    if [ -z "$jid" ]; then zeg "  $naam: JARVIS antwoordt niet. $(jarvis_waarom "$s")"; continue; fi
     m="$(meld_van "$jid")"
     case "$m" in
       ja*) zeg "  $naam: meldt zich bij de relay (${m#ja } s geleden). Staat hij toch niet in Veronica, ververs Veronica; hij verschijnt binnen enkele minuten." ;;

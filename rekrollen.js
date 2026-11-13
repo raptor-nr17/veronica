@@ -89,5 +89,26 @@
     return s;
   }
 
-  return { SLEUTEL: SLEUTEL, namen: namen, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel };
+  // 678 (13 nov): DE ROLLEN VANZELF, op het MODELNUMMER dat ARTEMIS van de telefoon zelf leest (ro.product.model), volgens de gemeten tabel van 12 november
+  // (docs/lokaal-modelsysteem.md): de snelste telefoon wordt brein, de gekoelde met de opslagkaart bibliothecaris, de niet-gekoelde verdeler, en de telefoon met twee
+  // grote kernen helper. Alleen modelnummers (geen merk of naam). Een rol die de eigenaar zelf koos, wint altijd: dit vult alleen een LEGE rol.
+  const STANDAARD_PER_MODEL = Object.freeze({ 'SM-A546B': 'brein', 'S75': 'bibliothecaris', '22041219PG': 'verdeler', 'SM-G973F': 'helper' });
+  function standaardVoorModel(model) {
+    const m = String(model == null ? '' : model).trim().toUpperCase();
+    for (const k of Object.keys(STANDAARD_PER_MODEL)) if (m === k.toUpperCase() || m.endsWith(' ' + k.toUpperCase())) return STANDAARD_PER_MODEL[k];
+    return null;
+  }
+  // vulVanzelf(opslag, rijen): rijen = [{ toestel, model }] uit ARTEMIS. Terug { opslag, gezet: [{toestel, rol}] }. Een bestaande rol blijft altijd staan.
+  function vulVanzelf(opslag, rijen) {
+    let o = lees(opslag); const gezet = [];
+    for (const r of Array.isArray(rijen) ? rijen : []) {
+      if (!r || !/^[a-z0-9]{12,40}$/.test(String(r.toestel || ''))) continue;
+      if (rolVan(o, r.toestel)) continue;
+      const rol = standaardVoorModel(r.model); if (!rol || !geldigeRol(rol)) continue;
+      o = zet(o, r.toestel, rol); gezet.push({ toestel: r.toestel, rol: rol });
+    }
+    return { opslag: o, gezet: gezet };
+  }
+
+  return { STANDAARD_PER_MODEL: STANDAARD_PER_MODEL, standaardVoorModel: standaardVoorModel, vulVanzelf: vulVanzelf, SLEUTEL: SLEUTEL, namen: namen, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel };
 }));

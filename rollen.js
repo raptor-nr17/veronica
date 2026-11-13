@@ -38,6 +38,12 @@
       titel: 'Verdeler', modelFamilie: 'klein',
       taken: Object.freeze(['verdelen', 'zoek-voorsorteren']),
     },
+    // 678 (13 nov): de HELPER -- nakijken (keurmeester) en licht werk; een klein model, nooit een lang antwoord maken (de trap laat alleen brein en
+    // bibliothecaris antwoorden maken). Voor de telefoon met weinig grote kernen (gemeten ~10 tok/s op 2 draden).
+    helper: {
+      titel: 'Helper (nakijken)', modelFamilie: 'klein',
+      taken: Object.freeze(['nakijken', 'licht-werk']),
+    },
     'groot-brein': {
       titel: 'Groot brein (alleen thuis)', modelFamilie: 'extra-groot',
       alleenThuis: true, nooitBaas: true, nooitBestuurd: true,
@@ -81,8 +87,8 @@
       if (klasse === 'midden') return { model: 'E2B', gok: true, reden: 'middentelefoon' };
       return { model: 'klein', gok: true, reden: 'lichte telefoon, een klein model' };
     }
-    // klein (de verdeler): een klein model, ook op een zware telefoon.
-    return { model: 'klein', gok: true, reden: 'de verdeler heeft genoeg aan een klein model' };
+    // klein (de verdeler, de helper): een klein model, ook op een zware telefoon.
+    return { model: 'klein', gok: true, reden: naam === 'helper' ? 'nakijken lukt met een klein model' : 'de verdeler heeft genoeg aan een klein model' };
   }
 
   // NOOIT TWEE GROTE MODELLEN TEGELIJK OP ÉÉN TELEFOON. 'klein' telt niet als groot; null (geen model) telt niet mee.
