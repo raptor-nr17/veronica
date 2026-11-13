@@ -93,7 +93,7 @@
       let pantser; let klaar = null;
       if (eigen) { klaar = eigen.klaar === true; pantser = klaar ? 'klaar in het pantser' : `nog niet klaar: ${eigen.reden || 'geen reden gemeld'}`; }
       else if (a.toestel && a.meldt === true) pantser = `JARVIS${a.jarvis ? ' ' + a.jarvis : ''} meldt zich wel bij de relay; ververs Veronica, hij verschijnt binnen enkele minuten`;
-      else if (a.toestel) pantser = `JARVIS${a.jarvis ? ' ' + a.jarvis : ''} draait op deze telefoon, maar meldt zich niet bij Veronica: scan de QR van Veronica op die telefoon (of zet de relay aan)`;
+      else if (a.toestel) pantser = `JARVIS${a.jarvis ? ' ' + a.jarvis : ''} draait op deze telefoon, maar meldt zich niet bij Veronica: druk in de ARTEMIS-console op 'Koppel aan Veronica (via de kabel)', of scan op de telefoon de QR van Veronica`;
       else pantser = 'ARTEMIS ziet hem, maar JARVIS antwoordt niet op deze telefoon: start JARVIS (of installeer hem) en scan de QR van Veronica';
       const koel = km[a.sleutel] === true;
       return { sleutel: a.sleutel, model: a.model, naam: opId && opId.naam ? opId.naam : naam, benoemd: !!nm[a.sleutel] || !!opId, gekoppeld: !!eigen, toestel: a.toestel || null, aanwezig: true, via: a.via, viaZin: VIA[a.via], klaar: klaar, pantser: pantser,
