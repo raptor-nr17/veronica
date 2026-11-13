@@ -5591,7 +5591,7 @@ scherm_lees() {
   TAB="$(printf '\t')"
   zeg "Scherm als tekst lezen (uiautomator) -- alleen de rektelefoons, nooit de F8, en nooit terwijl er een gevoelige of persoonlijke app op de voorgrond staat."
   for s in $(verbonden); do
-    case "$s" in *:*) continue ;; esac                      # alleen de kabel
+    case "$s" in 127.0.0.1:56[0-9][0-9]) : ;; *:*) continue ;; esac   # de kabel, of een Tailscale-meettunnel (zoals scherm_tekst); geen draadloos adb
     is_f8 "$s" && continue
     id="$(toestel_id "$s")"; toegestaan "$id" || continue
     naam="$(toestel_naam "$s")"; naam="${naam:-$id}"
@@ -5604,7 +5604,7 @@ scherm_lees() {
     done
     gedaan=$((gedaan+1))
   done
-  [ "$gedaan" -gt 0 ] || zeg "Geen rektelefoon aan de kabel om te lezen (druk op 'Zoek telefoons'; de F8 wordt nooit gelezen)."
+  [ "$gedaan" -gt 0 ] || zeg "Geen rektelefoon aan de kabel of via Tailscale om te lezen (druk op 'Zoek telefoons' of 'Rek via Tailscale'; de F8 wordt nooit gelezen)."
 }
 
 # 678 (eigenaar 11 nov 17:41): het scherm als TEKST voor het MODEL in plaats van een schermafbeelding (de proxy roept dit aan). Een tekstmodel kan zo plannen
