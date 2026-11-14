@@ -1635,15 +1635,17 @@
     const uitK = uitgeslotenDoorKeuze('veronica');
     const t = K.kiesTelefoon(S.telefoons.filter((x) => !uitK.includes(x.adres)), S.staten, nu());
     const lokaalKan = SttM.stand === 'klaar';
+    const oorKan = oorRekKlaar();   // 678: het oor van het rek (Whisper op de telefoon met de rol brein)
     // 1b/641: NEEM EEN KEER OP en route. Eerst een telefoon-verstaander (OlliteRT, snel), anders de lokale Whisper in Veronica
     // zelf (geen telefoon, geen internet nodig). Zo luistert Veronica thuis-offline helemaal lokaal.
     const lokaalBeschikbaar = typeof SttModel !== 'undefined';
     // Is er NU iets om mee te verstaan -- een telefoon-verstaander of een KLAAR lokaal model? Neem dan op en route.
-    if (t || lokaalKan) {
+    if (oorKan || t || lokaalKan) {
       if (!(navigator.mediaDevices && window.MediaRecorder)) return luisterViaChrome();
       let samples = null;
       try { SttM.wacht = false; samples = await naarMono16k(await neemOp(8000)); } catch (e) { samples = null; }
       if (samples === null) { $('spraakZin').textContent = 'Geen microfoon (of geen toestemming).'; return null; }
+      if (oorKan) { const tekst = await oorRekVersta(K.wavVan(samples, 16000)); if (tekst !== null) return verwerkSpraak(tekst, 'het oor van het rek'); }
       if (t) { const tekst = await transcribeer(t, K.wavVan(samples, 16000)); if (tekst !== null) return verwerkSpraak(tekst, 'Gemma'); }
       if (lokaalKan) { const tekst = await transcribeerLokaal(samples); if (tekst !== null) return verwerkSpraak(tekst, 'Whisper'); }
       // Opgenomen, maar telefoon/model gaf niets terug: val door naar de lokaal-eerst-melding hieronder.
@@ -5933,6 +5935,34 @@
       StemRekV.health = r && r.ok ? await r.json().catch(() => null) : null;
     } catch (e) { StemRekV.health = null; } finally { StemRekV.t = nu(); StemRekV.bezig = false; }
   }
+  // 678 (14 nov): HET OOR VAN HET REK. De telefoon met de rol brein verstaat een opname (POST /luister op 8082) zodra zijn /health
+  // "oor: klaar" zegt -- dezelfde regels als de stem: alleen een privé-adres, met de rij-code, elke ~2 min kijken. Mislukt het, dan
+  // valt luister() terug op wat er al was (de Gemma op een telefoon, dan het lokale model op deze computer).
+  const OorRekV = { doel: null, health: null, t: 0, bezig: false };
+  async function oorRekTik() {
+    if (!window.Stemrek || typeof window.Stemrek.kiesOor !== 'function' || OorRekV.bezig || !S.code) return;
+    const doel = window.Stemrek.kiesOor(S.telefoons, (id) => RekRol.rolVan(id));
+    OorRekV.doel = doel;
+    if (!doel || nu() - OorRekV.t < 2 * 60 * 1000) return;
+    OorRekV.bezig = true;
+    try {
+      const r = await haal(`${doel.basis}/health`, { headers: { Authorization: `Bearer ${S.code}` } }, 4000);
+      OorRekV.health = r && r.ok ? await r.json().catch(() => null) : null;
+    } catch (e) { OorRekV.health = null; } finally { OorRekV.t = nu(); OorRekV.bezig = false; }
+  }
+  function oorRekKlaar() { return !!(window.Stemrek && OorRekV.doel && S.code && window.Stemrek.oorKlaar(OorRekV.health, OorRekV.t, nu())); }
+  // oorRekVersta(wav): de verstane tekst, '' bij niets verstaan, of null bij een fout (dan het volgende pad).
+  async function oorRekVersta(wav) {
+    const d = OorRekV.doel;
+    if (!oorRekKlaar() || !window.Stemrek.wavPast(wav)) return null;
+    try {
+      const r = await haal(`${d.basis}/luister`, { method: 'POST', headers: { Authorization: `Bearer ${S.code}`, 'Content-Type': 'audio/wav' }, body: new Blob([wav], { type: 'audio/wav' }) }, 30000);
+      if (!r || !r.ok) { OorRekV.health = null; return null; }
+      const tekst = window.Stemrek.leesVersta(await r.json().catch(() => null));
+      if (tekst === null) OorRekV.health = null;
+      return tekst;
+    } catch (e) { OorRekV.health = null; return null; }
+  }
   async function stemRekSpreek(tekst, profielIn) {
     const d = StemRekV.doel;
     if (!window.Stemrek || !d || !S.code || !window.Stemrek.mag(profielIn) || !window.Stemrek.klaar(StemRekV.health, StemRekV.t, nu())) return false;
@@ -7195,6 +7225,7 @@
     }
     // 1d. 678: staat de stem van de bibliothecaris klaar? (alleen lezen, /health met de rij-code)
     try { await stemRekTik(); } catch (e) { /* volgende minuut */ }
+    try { await oorRekTik(); } catch (e) { /* volgende minuut */ }
     // 2. Het kaartje: elke minuut kijken (was de knop "Kijk opnieuw").
     if (typeof tekenKaartje === 'function') { try { await tekenKaartje(); } catch (e) { /* volgende minuut */ } }
     // 3. Fenna meten: elke nacht, en na een nieuwe versie of een ander model. De score staat daarna in de tegel.
@@ -7672,7 +7703,7 @@
     el2.textContent = stand.regel || '';
   }
 
-  window.__veronica = { rekRollenVanzelf, CascadeV, cascadeVraag, cascadeLog, HoekWand, hoekWandMount, hoekWandStop, RekAanw, tekenRekAanwezig, artemisRekKijk, Proef, priveRekTeken, priveRekZoek, PriveRekV, dokterStand, verbindingsdokterTik, DokterV, verbindingsmetingTik, verbindingsmetingZin, verbindingsmetingSamenvatting, MetingV, Slimmeet: (typeof window !== 'undefined' ? window.Slimmeet : null), zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, vraagStatusTik, vraagStatusReden, HoofdVraag: HoofdV, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, artemisMeldStroom, ArtemisV, zetRelayAdres, PloegV, ploegStroom, ploegGeef, ploegKeur, tekenPloeg, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, naarMono16k, SttM, luisterModelLaden, luisterModelZin, transcribeerLokaal, statusNu, antwoordTik, handenvrijTik, zetHandenvrij, Hv, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, thuisOffline, ThuisV, NetStand, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { rekRollenVanzelf, OorRekV, oorRekTik, oorRekKlaar, oorRekVersta, CascadeV, cascadeVraag, cascadeLog, HoekWand, hoekWandMount, hoekWandStop, RekAanw, tekenRekAanwezig, artemisRekKijk, Proef, priveRekTeken, priveRekZoek, PriveRekV, dokterStand, verbindingsdokterTik, DokterV, verbindingsmetingTik, verbindingsmetingZin, verbindingsmetingSamenvatting, MetingV, Slimmeet: (typeof window !== 'undefined' ? window.Slimmeet : null), zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, vraagStatusTik, vraagStatusReden, HoofdVraag: HoofdV, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, artemisMeldStroom, ArtemisV, zetRelayAdres, PloegV, ploegStroom, ploegGeef, ploegKeur, tekenPloeg, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, naarMono16k, SttM, luisterModelLaden, luisterModelZin, transcribeerLokaal, statusNu, antwoordTik, handenvrijTik, zetHandenvrij, Hv, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, thuisOffline, ThuisV, NetStand, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());

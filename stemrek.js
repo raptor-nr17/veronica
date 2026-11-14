@@ -49,5 +49,35 @@
 
   function zegLijf(tekst) { return JSON.stringify({ tekst: String(tekst == null ? '' : tekst).slice(0, MAX_TEKST) }); }
 
-  return { POORT, KLAAR_VERS_MS, privéAdres, basis, kies, klaar, mag, zegLijf };
+  // ---- HET OOR VAN HET REK (14 nov): de telefoon met de rol brein verstaat een opname (Whisper via sherpa-onnx, POST /luister op 8082,
+  // een PCM16 mono WAV van 16 kHz). Zelfde regels als de stem: alleen een privé-adres, met de rij-code, en alleen als /health "klaar" zegt.
+  const MAX_WAV = 4000000;   // de grens van de telefoon (JarvisSpraakKern.MAX_LUISTER_LIJF)
+  function kiesRol(telefoons, rolVan, rol) {
+    for (const t of Array.isArray(telefoons) ? telefoons : []) {
+      if (!t || !t.id || typeof rolVan !== 'function' || rolVan(t.id) !== rol) continue;
+      const b = basis(t.jarvis);
+      if (b) return { id: t.id, basis: b };
+    }
+    return null;
+  }
+  function kiesOor(telefoons, rolVan) { return kiesRol(telefoons, rolVan, 'brein'); }
+  function oorKlaar(health, t, nu) {
+    return !!(health && health.oor === 'klaar' && typeof t === 'number' && nu - t <= KLAAR_VERS_MS);
+  }
+  // wavPast(wav): een WAV die de telefoon aanneemt (RIFF-kop, niet leeg, niet boven de grens).
+  function wavPast(wav) {
+    const n = wav && typeof wav.byteLength === 'number' ? wav.byteLength : -1;
+    if (n <= 44 || n > MAX_WAV) return false;
+    const b = new Uint8Array(wav.buffer || wav, wav.byteOffset || 0, 4);
+    return b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46;
+  }
+  // leesVersta(antwoord): de verstane tekst uit {"tekst": "..."}, of null. Lege tekst = niets verstaan (geen fout).
+  function leesVersta(antwoord) {
+    let d = antwoord;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { return null; } }
+    if (!d || typeof d.tekst !== 'string') return null;
+    return d.tekst.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_TEKST);
+  }
+
+  return { POORT, KLAAR_VERS_MS, MAX_WAV, privéAdres, basis, kies, klaar, mag, zegLijf, kiesOor, oorKlaar, wavPast, leesVersta };
 }));

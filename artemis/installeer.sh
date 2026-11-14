@@ -2116,19 +2116,60 @@ jarvis_terugval_bewaar() {   # $1 serienummer, $2 de huidige versionCode
 # Voortgang-token), haalt de apk, en controleert grootte en sha256 tegen versie.json. Alleen een code BOVEN de vrijgegeven versie (anders
 # is het geen proef). Het adres komt nooit in een melding of logboek. Echoot het pad van de apk, of niets (met een zin op stderr-loos stdout).
 JARVIS_PROEF_APK="$JAPK_PLEK/proef.apk"
+# Het versleutelde adres van de relay: onderwerp en sleutel komen uit de code van de vaste downloadlink (zelfde berekening als
+# tools/jarvis-proef/leg.js). Schrijft url.txt en versie.json in map $1; niets in een melding.
+jarvis_proef_van_relay() {
+  local w="$1" link code base
+  link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
+  code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
+  [ -n "$code" ] || return 0
+  base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
+  case "$base" in https://*.workers.dev|https://*.workers.dev/) : ;; *) return 0 ;; esac
+  rek_zorg_crypto >/dev/null 2>&1 || true
+  CODE="$code" BASE="$base" UIT="$w" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
+import os, json, hashlib, urllib.request
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+except Exception:
+    raise SystemExit(0)
+code = os.environ['CODE']; base = os.environ['BASE'].rstrip('/'); uit = os.environ['UIT']
+topic = 'jp' + hashlib.sha256(('jarvis-proef-onderwerp:' + code).encode()).hexdigest()[:30]
+key = hashlib.sha256(('jarvis-proef-sleutel:' + code).encode()).digest()
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try:
+    raw = opener.open(urllib.request.Request(base + '/' + topic + '/json?poll=1&since=12h', headers={'User-Agent': 'artemis'}), timeout=20).read().decode('utf-8', 'replace')
+except Exception:
+    raise SystemExit(0)
+beste = None
+for regel in raw.splitlines():
+    try:
+        m = json.loads(regel); e = json.loads(m.get('message', ''))
+        d = json.loads(AESGCM(key).decrypt(bytes.fromhex(e['iv']), bytes.fromhex(e['data']), None).decode())
+    except Exception:
+        continue
+    if d.get('v') == 1 and str(d.get('url', '')).startswith('https://') and (beste is None or int(d.get('code', 0)) >= int(beste.get('code', 0))):
+        beste = d
+if beste:
+    open(os.path.join(uit, 'url.txt'), 'w').write(beste['url'] + '\n')
+    json.dump({k: beste.get(k) for k in ('versie', 'code', 'sha256', 'grootte')}, open(os.path.join(uit, 'versie.json'), 'w'))
+PY
+}
 jarvis_proef_bron() {
   command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || { zeg "Proefversie: curl of python3 ontbreekt."; return 1; }
   local tok repo tak url vj w
   [ -s "$VOORTGANG_TOKEN_F" ] && tok="$(head -1 "$VOORTGANG_TOKEN_F" | tr -d '\r\n ')"
-  [ -n "${tok:-}" ] || { zeg "Proefversie: ARTEMIS heeft geen leestoken (het veld Voortgang-token in de console); zonder kan hij de tak jarvis-proef niet lezen."; return 1; }
   w="$(mktemp -d)" || return 1
-  while read -r repo tak; do
-    [ -n "$repo" ] || continue
-    if curl -fsS -m 20 -H "Authorization: Bearer $tok" -H 'Accept: application/vnd.github.raw' "https://api.github.com/repos/$repo/contents/url.txt?ref=jarvis-proef" -o "$w/url.txt" 2>/dev/null \
-       && curl -fsS -m 20 -H "Authorization: Bearer $tok" -H 'Accept: application/vnd.github.raw' "https://api.github.com/repos/$repo/contents/versie.json?ref=jarvis-proef" -o "$w/versie.json" 2>/dev/null; then break; fi
-    rm -f "$w/url.txt" "$w/versie.json"
-  done < <(voortgang_bronnen)
-  [ -s "$w/url.txt" ] && [ -s "$w/versie.json" ] || { rm -rf "$w"; zeg "Proefversie: geen tak jarvis-proef te lezen (staat er een proefversie klaar? anders: regel 1 van tools/jarvis-proef/verzoek.txt)."; return 1; }
+  if [ -n "${tok:-}" ]; then
+    while read -r repo tak; do
+      [ -n "$repo" ] || continue
+      if curl -fsS -m 20 -H "Authorization: Bearer $tok" -H 'Accept: application/vnd.github.raw' "https://api.github.com/repos/$repo/contents/url.txt?ref=jarvis-proef" -o "$w/url.txt" 2>/dev/null \
+         && curl -fsS -m 20 -H "Authorization: Bearer $tok" -H 'Accept: application/vnd.github.raw' "https://api.github.com/repos/$repo/contents/versie.json?ref=jarvis-proef" -o "$w/versie.json" 2>/dev/null; then break; fi
+      rm -f "$w/url.txt" "$w/versie.json"
+    done < <(voortgang_bronnen)
+  fi
+  # 678 (14 nov): ZONDER TOKEN -- via de relay, versleuteld met een sleutel uit de code van de vaste downloadlink (APK-link, 499)
+  [ -s "$w/url.txt" ] && [ -s "$w/versie.json" ] || jarvis_proef_van_relay "$w"
+  [ -s "$w/url.txt" ] && [ -s "$w/versie.json" ] || { rm -rf "$w"; zeg "Proefversie: niet gevonden -- niet via de relay (staat de vaste downloadlink bij APK-link en het relay-adres in de console? is de proefversie de laatste 12 uur klaargezet?) en niet via een leestoken. Klaarzetten: regel 1 van tools/jarvis-proef/verzoek.txt."; return 1; }
   url="$(head -1 "$w/url.txt" | tr -d '\r\n ')"
   case "$url" in https://*.scw.cloud/*) : ;; *) rm -rf "$w"; zeg "Proefversie: het adres op de tak is geen adres van de privé opslag; niets gedaan."; return 1 ;; esac
   vj="$(VJ="$w/versie.json" python3 -I -c 'import json,os; j=json.load(open(os.environ["VJ"])); print(j.get("versie",""), int(j.get("code",0)), j.get("sha256",""), int(j.get("grootte",0)))' 2>/dev/null)"
