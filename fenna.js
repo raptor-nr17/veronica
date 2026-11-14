@@ -204,6 +204,18 @@
     return { tekst: t, opnieuw: veelEngels || gevoel, redenen };
   }
 
+  // ---- Taalcontrole (stap 9 van het plan, 14 nov): een antwoord in het Engels, of met een verzonnen gevoel, wordt EEN keer opnieuw
+  // gevraagd met een korte regel erbij. Niet als de vraag zelf om Engels of een vertaling vraagt. De code beslist (filter), niet het model.
+  const TAAL_HERKANS = 'Let op: antwoord alleen in het Nederlands, zonder Engelse zinnen, en verzin geen eigen gevoelens. Geef alleen het antwoord.';
+  const VRAAGT_ANDERE_TAAL = /\b(engels|english|duits|deutsch|frans|fran[cç]ais|vertaal|vertaling|translate|translation|in het (?:engels|duits|frans))\b/i;
+  function taalHerkans(vraag, antwoord) {
+    if (VRAAGT_ANDERE_TAAL.test(tekst(vraag))) return null;
+    const f = filter(antwoord);
+    if (!f.opnieuw) return null;
+    return { redenen: f.redenen.filter((r) => r === 'engels' || r === 'gevoel') };
+  }
+  function metHerkans(vraag) { return `${tekst(vraag)}\n\n${TAAL_HERKANS}`; }
+
   // bouw({ persona, beurten: [{wie:'jij'|'fenna', tekst}], vraag, kanaal: 'wifi'|'relay', geheugen: '<systeemtekst van de hoek>' })
   // -> { systeem, vraag, beurt, herinnering, stijlMee }
   function bouw(o) {
@@ -287,5 +299,5 @@
     return { klaar: zinnen(m[0]), rest: b.slice(m[0].length).trimStart() };
   }
 
-  return { NAAM, KAART, KAART_PRIVE, STEMMINGEN, stemmingUitToon, VOORBEELD_BEURTEN_PRIVE, VOORBEELDEN_PRIVE, GEHEUGENSTEUN_PRIVE, SLOTREGEL_PRIVE, VOORBEELDEN, VOORBEELD_BEURTEN, GEHEUGENSTEUN, PERSONA_TEST, EERLIJK, SLOTREGEL, HERINNERING, LETTERLIJK, HERINNER_ELKE, GEREEDSCHAP, leesPersona, zinnen, samenvatBeurten, bouw, controleer, toetsPersonaVorm, geenOverlap, voorTeLezen, haalZinnen, eersteAlinea, filter };
+  return { NAAM, KAART, KAART_PRIVE, STEMMINGEN, stemmingUitToon, VOORBEELD_BEURTEN_PRIVE, VOORBEELDEN_PRIVE, GEHEUGENSTEUN_PRIVE, SLOTREGEL_PRIVE, VOORBEELDEN, VOORBEELD_BEURTEN, GEHEUGENSTEUN, PERSONA_TEST, EERLIJK, SLOTREGEL, HERINNERING, LETTERLIJK, HERINNER_ELKE, GEREEDSCHAP, leesPersona, zinnen, samenvatBeurten, bouw, controleer, toetsPersonaVorm, geenOverlap, voorTeLezen, haalZinnen, eersteAlinea, filter, TAAL_HERKANS, taalHerkans, metHerkans };
 }));

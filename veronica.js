@@ -4675,7 +4675,7 @@
       const r = await fetch(`${t.adres}/v1/chat/completions`, Object.assign({
         method: 'POST', signal: ctrl.signal,
         headers: Object.assign({ 'Content-Type': 'application/json' }, kop(t)),
-        body: JSON.stringify({ model, stream: true, max_tokens: taak.max_tokens || 600, messages: [{ role: 'user', content: taak.tekst }] }),
+        body: JSON.stringify({ model, stream: true, max_tokens: taak.max_tokens || 600, messages: [{ role: 'user', content: taak.taalHerkans && window.Fenna ? window.Fenna.metHerkans(taak.tekst) : taak.tekst }] }),
       }, K.lnaOpties(t.adres)));
       if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
       const lezer = K.maakSseLezer();
@@ -4694,6 +4694,12 @@
       taak.uitkomst = K.zonderDenken(lezer.tekst());
       // 636: FILTER OP ELK ANTWOORDPAD. Een gespreksvraag gaat door Veronica's persona-filter (fenna.js): te lang wordt
       // ingekort en de vorm genormaliseerd, zodat elk antwoord als Veronica klinkt, op welke telefoon het ook rekende.
+      // 678 stap 9: de taalcontrole -- Engels of een verzonnen gevoel = EEN keer terug in de wachtrij met de herkansregel erbij.
+      if (taak.gesprek && !taak.taalHerkans && window.Fenna && typeof window.Fenna.taalHerkans === 'function' && window.Fenna.taalHerkans(taak.tekst, taak.uitkomst)) {
+        taak.taalHerkans = true; taak.status = 'wacht'; taak.telefoon = null; taak.uitkomst = null;
+        logRegel(`Taalcontrole: het antwoord van ${t.naam} was niet in goed Nederlands; de vraag gaat een keer opnieuw.`);
+        return;
+      }
       if (taak.gesprek && window.Fenna && typeof window.Fenna.filter === 'function') {
         try { const f = window.Fenna.filter(taak.uitkomst); if (f && f.tekst) taak.uitkomst = f.tekst; } catch (e) { /* laat de ruwe tekst staan */ }
       }
@@ -6552,7 +6558,17 @@
         model: String((h.motor && (h.motor.model || h.motor.modelNaam)) || ''), backend: backendWoord(h.motor && h.motor.backend), gevraagd: h.instel && h.instel.gpu === true ? 'gpu' : 'cpu' };
     });
     const gast = lijst.find((e) => e.kaart.gast);
-    const vraagAan = async (e, q) => { const t0 = Date.now(); const antwoord = await trapVraag(e, q); return { antwoord, ms: Date.now() - t0, tokens: null }; };
+    const vraagAan0 = async (e, q) => { const t0 = Date.now(); const antwoord = await trapVraag(e, q); return { antwoord, ms: Date.now() - t0, tokens: null }; };
+    // 678 stap 9 (14 nov): DE TAALCONTROLE. Engels of een verzonnen gevoel = EEN keer opnieuw vragen met een korte regel erbij (fenna.js
+    // taalHerkans); het tweede antwoord geldt, ook als het nog niet perfect is (geen lus). Geen inhoud in het logboek.
+    const vraagAan = async (e, q) => {
+      const m = await vraagAan0(e, q);
+      const h = window.Fenna && typeof window.Fenna.taalHerkans === 'function' && typeof q === 'string' ? window.Fenna.taalHerkans(q, m.antwoord) : null;
+      if (!h) return m;
+      const m2 = await vraagAan0(e, window.Fenna.metHerkans(q));
+      logRegel(`Taalcontrole: het antwoord was niet goed (${h.redenen.join(', ')}); een keer opnieuw gevraagd.`);
+      return String(m2.antwoord || '').trim() ? Object.assign(m2, { ms: m.ms + m2.ms, taalHerkans: h.redenen }) : m;
+    };
     const uitv = {
       regels: async (q) => { const r = window.Stekkerstem && window.Stekkerstem.herken(q); return r ? { antwoord: window.Stekkerstem.bevestigZin(r), actie: { doel: r.doel, actie: r.actie } } : null; },
       model: async (t, q) => { const e = lijst.find((x) => x.kaart.id === t.id); if (!e) return { fout: 'telefoon niet in de lijst' }; const m = await vraagAan(e, q); return Object.assign(m, { backend: t.backend }); },
