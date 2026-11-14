@@ -110,5 +110,30 @@
     return { opslag: o, gezet: gezet };
   }
 
-  return { STANDAARD_PER_MODEL: STANDAARD_PER_MODEL, standaardVoorModel: standaardVoorModel, vulVanzelf: vulVanzelf, SLEUTEL: SLEUTEL, namen: namen, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel };
+  // 678 (14 nov): STEM EN OOR VOLGEN DE ROL. De bibliothecaris is de stem, het brein het oor; elke andere rol geen van
+  // beide. spraakTeSturen geeft per telefoon met een verse hartslag (JARVIS 1.9.95 of nieuwer: oudere kennen de roep niet) wat Veronica
+  // moet sturen, alleen als dat anders is dan wat ze al stuurde (gestuurd = { toestel: "stem|oor" }). Puur; de roep doet veronica.js.
+  const SPRAAK_VANAF = '1.9.95';
+  function spraakVoorRol(rol) { return { stem: rol === 'bibliothecaris', oor: rol === 'brein' }; }
+  function spraakSleutel(sp) { return (sp.stem ? 'stem' : '-') + '|' + (sp.oor ? 'oor' : '-'); }
+  function versieMinst(v, min) {
+    const a = String(v || '').split('.').map(Number), b = min.split('.').map(Number);
+    if (a.length !== 3 || a.some((x) => !isFinite(x))) return false;
+    for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i]; }
+    return true;
+  }
+  function spraakTeSturen(opslag, gestuurd, harten) {
+    const o = lees(opslag); const g = gestuurd && typeof gestuurd === 'object' ? gestuurd : {}; const uit = [];
+    for (const h of Array.isArray(harten) ? harten : []) {
+      if (!h || !/^[a-z0-9]{12,40}$/.test(String(h.toestel || '')) || !versieMinst(h.versie, SPRAAK_VANAF) || h.dagelijks) continue;
+      const rol = rolVan(o, h.toestel);
+      if (!rol) continue;   // geen rol = niets sturen (ook geen uit): een mens heeft nog niets gekozen
+      const sp = spraakVoorRol(rol); const sl = spraakSleutel(sp);
+      if (g[h.toestel] === sl) continue;
+      uit.push({ toestel: h.toestel, stem: sp.stem, oor: sp.oor, sleutel: sl, rol: rol });
+    }
+    return uit;
+  }
+
+  return { STANDAARD_PER_MODEL: STANDAARD_PER_MODEL, standaardVoorModel: standaardVoorModel, vulVanzelf: vulVanzelf, SLEUTEL: SLEUTEL, namen: namen, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel, SPRAAK_VANAF: SPRAAK_VANAF, spraakVoorRol: spraakVoorRol, spraakTeSturen: spraakTeSturen };
 }));

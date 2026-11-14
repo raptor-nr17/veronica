@@ -2288,7 +2288,7 @@ jarvis_waak() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
   [ -s "$TOEG" ] || { zeg "Geen rektelefoon op de lijst (sluit er een aan + USB-foutopsporing)."; return 0; }
   jarvis_oogst   # 598: eerst de nieuwste JARVIS oogsten van een telefoon die hem al heeft
-  local s id naam draait any=0
+  local s id naam draait any=0 w
   for s in $(verbonden); do
     id="$(toestel_id "$s")"; [ -n "$id" ] || continue
     toegestaan "$id" || continue
@@ -2304,6 +2304,7 @@ jarvis_waak() {
       fi
     else
       zeg "$naam: JARVIS draait (pid $draait)."
+      w="$(jarvis_web_herstel "$s" "$naam")"; [ -n "$w" ] && zeg "$w"   # 678 (14 nov): draait, maar luistert 8080? Anders zelf herstellen
     fi
     # (2) batterij op Onbeperkt / vrijstellen van doze -- best-effort, meerdere wegen (per Android-versie verschillend).
     "$ADB" -s "$s" shell dumpsys deviceidle whitelist +"$JARVIS_PKG" >/dev/null 2>&1 || true
@@ -5593,6 +5594,47 @@ kabel_koppel_auto() {   # de console-lus: stil, hoogstens eens per 30 minuten pe
 # 678 (13 nov): WAAROM ANTWOORDT JARVIS NIET? Als /jarvis/status via de kabel niets geeft (de S10), kijken we stap voor stap -- alleen lezen, behalve EEN herstart van
 # JARVIS zelf als hij stil ligt: (1) staat het pakket erop, (2) welke versie, (3) draait het proces, (4) luistert er iets op poort 8080 (uit /proc/net/tcp*, zonder
 # root). Elk antwoord krijgt een eerlijke zin met wat er moet gebeuren. Nooit een ander pakket aanraken.
+# 678 (14 nov): luistert de webserver van JARVIS (8080) op deze telefoon? Uit de tcp-tabel van de telefoon zelf (alleen lezen).
+jarvis_8080_luistert() {
+  timeout 10 "$ADB" -s "$1" shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' 2>/dev/null | tr -d '\r' | awk '$4=="0A" && toupper($2) ~ /:1F90$/ {f=1} END{exit !f}'
+}
+# Leeft de PAGINA van JARVIS (de activity met de WebView)? Het proces kan draaien (de dienst) terwijl de pagina dicht is; dan start niemand de
+# webserver (die hangt aan de pagina) en stuurt de pagina geen rijke hartslag.
+jarvis_pagina_leeft() {
+  timeout 10 "$ADB" -s "$1" shell dumpsys activity activities 2>/dev/null | tr -d '\r' | grep -q "ActivityRecord{[^}]* $JARVIS_PKG/"
+}
+# 678 (14 nov): DE WEBSERVER VANZELF TERUG (de S10: JARVIS draaide, maar 8080 luisterde niet). Zonder tik op de telefoon:
+#  (1) "boven andere apps" via appops (alleen het JARVIS-pakket, alleen een rektelefoon, nooit de F8), zodat JARVIS zichzelf na een
+#      herstart of update weer kan openen (JarvisNaUpdate.openApp eist dat op Android 10+);
+#  (2) het scherm wekken en de pagina openen/naar voren halen (dezelfde LAUNCHER-start als "JARVIS lag stil"); de pagina start de server.
+# Staat JARVIS op Uit (de noodstop, een bewuste keuze van een mens), dan blijft de pagina leven en de server uit: dat zet ARTEMIS NIET
+# zelf terug -- het zegt het en meldt het een keer in Veronica. Hoogstens eens per 10 minuten per telefoon.
+jarvis_web_herstel() {   # $1 serienummer, $2 naam -> een zin (leeg = niets te doen)
+  local s="$1" naam="${2:-telefoon}" sl rem nu laatst leefde
+  is_f8 "$s" && return 0
+  [ -n "$(timeout 10 "$ADB" -s "$s" shell pidof "$JARVIS_PKG" 2>/dev/null | tr -d '\r\n ')" ] || return 0
+  jarvis_8080_luistert "$s" && return 0
+  sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"; rem="$REK_MAP/web-herstel-$sl"; nu="$(date +%s)"
+  laatst="$(head -1 "$rem" 2>/dev/null)"; case "$laatst" in ''|*[!0-9]*) laatst=0 ;; esac
+  [ $((nu - laatst)) -lt "${WEB_HERSTEL_REM_S:-600}" ] && return 0
+  printf '%s\n' "$nu" >"$rem" 2>/dev/null; chmod 600 "$rem" 2>/dev/null || true
+  leefde=0; jarvis_pagina_leeft "$s" && leefde=1
+  timeout 10 "$ADB" -s "$s" shell appops set "$JARVIS_PKG" SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1 || true
+  timeout 10 "$ADB" -s "$s" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+  timeout 10 "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+  sleep "${WEB_HERSTEL_WACHT_S:-20}"
+  if jarvis_8080_luistert "$s"; then
+    logregel "$naam: de webserver van JARVIS luisterde niet; pagina $([ "$leefde" = 1 ] && echo 'naar voren gehaald' || echo 'geopend'), nu luistert hij weer."
+    printf '%s: de webserver van JARVIS stond uit; ik heb de pagina %s en nu luistert hij weer (ook "boven andere apps" aangezet, zodat JARVIS zichzelf voortaan opent).' "$naam" "$([ "$leefde" = 1 ] && echo 'naar voren gehaald' || echo 'geopend')"
+  elif [ "$leefde" = 1 ]; then
+    logregel "$naam: JARVIS-pagina leeft maar de webserver blijft uit -- waarschijnlijk de Uit-knop (noodstop); niet zelf opgeheven."
+    relay_meld "$naam: JARVIS staat waarschijnlijk op Uit (noodstop): de pagina leeft, maar de webserver en de hartslag staan uit. Dat zet ARTEMIS bewust niet zelf terug. Zet hem aan op de telefoon, of hef de noodstop op bij de tegel in Veronica."
+    printf '%s: JARVIS staat waarschijnlijk op Uit (de noodstop): de pagina leeft, maar de webserver blijft uit. Dat zet ik bewust niet zelf terug; zet hem aan op de telefoon of hef de noodstop op in Veronica.' "$naam"
+  else
+    logregel "$naam: JARVIS-pagina geopend, maar de webserver luistert nog niet; volgende poging over 10 minuten."
+    printf '%s: ik heb de JARVIS-pagina geopend, maar de webserver luistert nog niet. Over 10 minuten probeer ik het opnieuw (een vergrendeld scherm kan het openen tegenhouden).' "$naam"
+  fi
+}
 jarvis_waarom() {   # $1 serienummer -> een zin
   local s="$1" pad ver pid poort
   pad="$(timeout 10 "$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r')"
@@ -5603,9 +5645,10 @@ jarvis_waarom() {   # $1 serienummer -> een zin
     timeout 10 "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
     printf 'JARVIS %s staat erop maar draaide niet; ik heb hem gestart. Kijk over een minuut opnieuw (lukt het dan nog niet: het scherm aan en ontgrendeld, en "boven andere apps" toestaan).' "${ver:-?}"; return 0
   fi
-  poort="$(timeout 10 "$ADB" -s "$s" shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' 2>/dev/null | tr -d '\r' | awk '$4=="0A" && toupper($2) ~ /:1F90$/ {print "ja"; exit}')"
-  if [ "$poort" != ja ]; then
-    printf 'JARVIS %s draait (pid %s), maar zijn webserver (poort 8080) luistert niet. Open JARVIS op de telefoon en zet "Laat JARVIS zien op je Chromebook" aan, of start hem opnieuw (JARVIS waak).' "${ver:-?}" "$pid"; return 0
+  if ! jarvis_8080_luistert "$s"; then
+    printf 'JARVIS %s draait (pid %s), maar zijn webserver (poort 8080) luistert niet. ' "${ver:-?}" "$pid"
+    poort="$(WEB_HERSTEL_REM_S=0 jarvis_web_herstel "$s" "JARVIS")"
+    printf '%s' "${poort:-Ik kon de pagina nu niet openen; JARVIS waak probeert het elke paar minuten.}"; return 0
   fi
   case "$ver" in 1.[0-6].*) printf 'JARVIS %s is te oud (geen /jarvis/status). Druk op "JARVIS waak": die zet de nieuwste erop.' "$ver"; return 0 ;; esac
   printf 'JARVIS %s draait en luistert op 8080, maar gaf geen toestel-id (de adb-doorsturing faalde?). Druk op "Rek via Tailscale" of steek de kabel opnieuw in.' "${ver:-?}"

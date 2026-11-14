@@ -7133,6 +7133,21 @@
       if (b && b.doe === 'vervang') { s.vanzelfVervangen = true; vervang(t.adres); logRegel(`Onderdeel vanzelf vervangen: ${t.naam} is ${b.zin}.`); }
       else if (b && b.doe === 'terug') { s.vervangen = false; s.vanzelfVervangen = false; logRegel(`${t.naam} is ${b.zin}.`); tekenLive(); }
     }
+    // 1b. 678 (14 nov): stem en oor volgen de rol (Rekrollen.spraakTeSturen): de bibliothecaris zet de stem aan, het brein het oor. Alleen
+    //     bij een verandering, alleen naar een telefoon met een verse hartslag en JARVIS 1.9.95+, en pas als gestuurd onthouden als de roep aankwam.
+    if (window.Rekrollen && typeof window.Rekrollen.spraakTeSturen === 'function' && S.code) {
+      let gestuurd = {};
+      try { gestuurd = JSON.parse(localStorage.getItem('veronica-spraak-gestuurd') || '{}') || {}; } catch (e) { gestuurd = {}; }
+      const harten = Object.entries(HB.per || {}).filter(([, h]) => h && h.t && tijd - h.t <= K.HARTSLAG_VERS_MS).map(([id, h]) => ({ toestel: id, versie: h.versie, dagelijks: !!h.dagelijks }));
+      for (const x of window.Rekrollen.spraakTeSturen(localStorage.getItem(RekRol.s), gestuurd, harten)) {
+        const ok = await roepNaarId(x.toestel, { soort: 'spraak', van: 'veronica', stem: x.stem, oor: x.oor }, true);
+        if (!ok) continue;
+        gestuurd[x.toestel] = x.sleutel;
+        try { localStorage.setItem('veronica-spraak-gestuurd', JSON.stringify(gestuurd)); } catch (e) { /* alleen voor nu */ }
+        const h = HB.per[x.toestel];
+        logRegel(`${(h && h.naam) || 'Een telefoon'} (${x.rol}): ${x.stem ? 'de stem gaat aan' : x.oor ? 'het oor gaat aan' : 'stem en oor gaan uit'}. Het model komt binnen op wifi en aan de lader.`);
+      }
+    }
     // 2. Het kaartje: elke minuut kijken (was de knop "Kijk opnieuw").
     if (typeof tekenKaartje === 'function') { try { await tekenKaartje(); } catch (e) { /* volgende minuut */ } }
     // 3. Fenna meten: elke nacht, en na een nieuwe versie of een ander model. De score staat daarna in de tegel.
