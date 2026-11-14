@@ -7135,7 +7135,10 @@
     }
     // 1b. 678 (14 nov): stem en oor volgen de rol (Rekrollen.spraakTeSturen): de bibliothecaris zet de stem aan, het brein het oor. Alleen
     //     bij een verandering, alleen naar een telefoon met een verse hartslag en JARVIS 1.9.95+, en pas als gestuurd onthouden als de roep aankwam.
-    if (window.Rekrollen && typeof window.Rekrollen.spraakTeSturen === 'function' && S.code) {
+    // 678 (14 nov, eigenaar): GEEN risico op crashende telefoons -- de stem/het oor (native sherpa-onnx) gaan pas vanzelf aan na een goede
+    // proef op de proeftelefoon. Tot dan staat dit UIT; aanzetten = localStorage 'veronica-spraak-vanzelf' = 'aan' (een bewuste keuze).
+    let spraakVanzelf = false; try { spraakVanzelf = localStorage.getItem('veronica-spraak-vanzelf') === 'aan'; } catch (e) { spraakVanzelf = false; }
+    if (spraakVanzelf && window.Rekrollen && typeof window.Rekrollen.spraakTeSturen === 'function' && S.code) {
       let gestuurd = {};
       try { gestuurd = JSON.parse(localStorage.getItem('veronica-spraak-gestuurd') || '{}') || {}; } catch (e) { gestuurd = {}; }
       const harten = Object.entries(HB.per || {}).filter(([, h]) => h && h.t && tijd - h.t <= K.HARTSLAG_VERS_MS).map(([id, h]) => ({ toestel: id, versie: h.versie, dagelijks: !!h.dagelijks }));
