@@ -259,13 +259,27 @@
   }
   // server: leeg = ntfy.sh, anders een geldig relay-adres (529); een ongeldig adres = geen verzoek.
   const naarServer = (server) => (server ? relayGeldig(server) : SERVER);
+  // 678 (14 nov): EEN HARTSLAG PAST ALTIJD. Het bericht is versleuteld als hex (twee tekens per byte); een rijke hartslag NA EEN UPDATE
+  // (bijwerk-stap, stops, herstel, werk, gids, motorproef) werd ~5,6 KB en de relay en ntfy.sh (allebei 4096) weigerden hem: de telefoon
+  // meldde zich niet meer. Past hij niet, dan gaan eerst de vrije zinnen eruit, dan de lijsten; id, adressen, versie, motor en rol blijven.
+  const HARTSLAG_MAX = 4000;
+  const INKORTEN = [
+    (d) => { d.werk = ''; d.herstel = ''; },
+    (d) => { if (d.bijwerk) d.bijwerk.stap = ''; if (d.motor && d.motor.proef) d.motor.proef.zin = ''; if (d.locatie) d.locatie.naam = ''; },
+    (d) => { if (d.gids && d.gids.laatst) d.gids.laatst.reden = ''; },
+    (d) => { d.slaap = []; d.stops = []; },
+    (d) => { d.meetuur = null; d.gastbudget = null; d.locatie = null; d.lijnen = null; },
+    (d) => { d.gids = null; d.instel = null; },
+  ];
   async function hartslagVerzoek(o, h, c, server) {
     const topic = await onderwerp(o, 'hartslag', c);
     const url = naarServer(server);
     if (!topic || !url) return null;
     const d = schoonHartslag(h);
     if (!d.id) return null;
-    return { method: 'POST', url, data: JSON.stringify({ topic, message: await sluit(o, 'hartslag', d, c) }) };
+    let message = await sluit(o, 'hartslag', d, c);
+    for (let k = 0; message.length > HARTSLAG_MAX && k < INKORTEN.length; k++) { INKORTEN[k](d); message = await sluit(o, 'hartslag', d, c); }
+    return { method: 'POST', url, data: JSON.stringify({ topic, message }) };
   }
   // Wat er in een hartslag verandert telt (niet de tijd en niet het precieze accuprocent); anders eens per uur.
   function hartslagSleutel(h) {
@@ -469,5 +483,5 @@
     return delen.length ? `lijnen: ${delen.join(' · ')}` : '';
   }
 
-  return { schoonGezond, gezondSleutel, gezondVerzoek, leesGezond, GEZOND_MAX, lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, meetuurUit, meetuurBlok, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, codeVinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, ploegVerzoek, leesPloeg, pollUrl, diagnose, motorZin, minutenZin };
+  return { HARTSLAG_MAX, schoonGezond, gezondSleutel, gezondVerzoek, leesGezond, GEZOND_MAX, lijnZin, SERVER, MIN_MS, VERS_MS, HOOGST_MS, CODE_OVERNEMEN, RELAY_MIN_MS, RELAY_VERS_MS, relayGeldig, meetuurUit, meetuurBlok, ROEP_GELDIG_MS, VOOR_IEDEREEN, onderwerp, vinger, codeVinger, schoonHartslag, hartslagVerzoek, hartslagSleutel, hartslagNodig, leesHartslag, roepVerzoek, leesRoep, ploegVerzoek, leesPloeg, pollUrl, diagnose, motorZin, minutenZin };
 }));

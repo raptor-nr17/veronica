@@ -5720,7 +5720,9 @@ kabel_koppel_een() {
   case "$uit" in
     *'data="OK"'*) printf 'OK' ;;
     *'data="FOUT'*) printf 'FOUT %s' "$(printf '%s' "$uit" | sed -n 's/.*data="FOUT \([a-z]*\)".*/\1/p')" ;;
-    *) printf 'OUD' ;;
+    *'Broadcast completed: result=0'*) printf 'OUD' ;;   # geen ontvanger die antwoordt: een JARVIS van voor 1.9.94
+    '') printf 'ADB geen antwoord (telefoon niet bereikbaar via adb?)' ;;
+    *) printf 'ADB %s' "$(printf '%s' "$uit" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-160)" ;;   # 678 (14 nov): de echte regel van adb
   esac
 }
 kabel_koppel() {   # knop: alle verbonden rektelefoons (nooit de F8) die zich nog niet melden, het onderwerp van Veronica geven
@@ -5736,7 +5738,9 @@ kabel_koppel() {   # knop: alle verbonden rektelefoons (nooit de F8) die zich no
     case "$m" in ja*) zeg "  $naam: meldt zich al (${m#ja } s geleden); niets te doen."; continue ;; esac
     u="$(kabel_koppel_een "$s")"; n=$((n+1))
     case "$u" in
-      OK) zeg "  $naam: gekoppeld. Binnen een minuut meldt hij zich bij Veronica (druk dan op 'Melden bij Veronica: controle')." ; rm -f "$REK_MAP/rek-lijst.cache" ;;
+      OK) rm -f "$REK_MAP/rek-lijst.cache"; sleep "${KOPPEL_WACHT_S:-20}"
+          zeg "  $naam: gekoppeld (JARVIS nam het onderwerp$([ -s "$REK_RELAY_F" ] && echo ' en het relay-adres') aan). Wat zijn hartslag daarna deed: $(jarvis_hartslag_waarom "$s")" ;;
+      ADB*) zeg "  $naam: adb gaf geen gewoon antwoord: ${u#ADB }" ;;
       OUD) oud=$((oud+1)); zeg "  $naam: deze JARVIS kent koppelen via de kabel nog niet. Zet de nieuwste JARVIS erop ('JARVIS waak' installeert hem zodra hij klaarligt)." ;;
       FOUT*) zeg "  $naam: JARVIS weigerde (${u#FOUT }); het onderwerp of het relay-adres klopt niet." ;;
       *) zeg "  $naam: geen onderwerp bekend." ;;
@@ -5878,7 +5882,7 @@ meld_status() {
       ja*) zeg "  $naam: meldt zich bij de relay (${m#ja } s geleden). Staat hij toch niet in Veronica, ververs Veronica; hij verschijnt binnen enkele minuten." ;;
       nee) zeg "  $naam: JARVIS draait, maar meldt zich NIET bij de relay: $(jarvis_hartslag_waarom "$s")"
            u="$(kabel_koppel_een "$s")"   # 678 (14 nov): meteen opnieuw koppelen -- werkt via de kabel EN via de Tailscale-tunnel (adb is adb)
-           case "$u" in OK) zeg "    -> opnieuw gekoppeld (onderwerp$([ -s "$REK_RELAY_F" ] && echo ' en relay-adres') van Veronica). Druk over een minuut nog eens op deze knop." ;; OUD) zeg "    -> deze JARVIS kent koppelen via de kabel nog niet." ;; *) zeg "    -> koppelen lukte niet ($u)." ;; esac
+           case "$u" in OK) zeg "    -> opnieuw gekoppeld (onderwerp$([ -s "$REK_RELAY_F" ] && echo ' en relay-adres') van Veronica). Druk over een minuut nog eens op deze knop." ;; OUD) zeg "    -> deze JARVIS kent koppelen via de kabel nog niet." ;; ADB*) zeg "    -> adb gaf geen gewoon antwoord: ${u#ADB }" ;; *) zeg "    -> koppelen lukte niet ($u)." ;; esac
            [ -s "$REK_RELAY_F" ] || zeg "    (ARTEMIS kent het relay-adres niet: open Meer in Veronica op deze computer, dan zet zij het hier; zonder relay valt de hartslag terug op ntfy.sh, met een dagbudget.)" ;;
       *) zeg "  $naam: JARVIS draait; of hij zich meldt kan ik niet zien (geen relay-onderwerp bekend)." ;;
     esac
