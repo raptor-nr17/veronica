@@ -198,7 +198,7 @@ JARVIS_PKG="nl.eigen.jarvis"   # 590: het ENIGE pakket dat de JARVIS-waakhond oo
 # 678 (14 nov, eigenaar): EERST EEN PROEF OP EEN TELEFOON. ARTEMIS zet op een rektelefoon nooit een JARVIS boven de VRIJGEGEVEN versie,
 # behalve op de PROEFTELEFOON (die een mens in de console aanwijst, aan de USB-kabel). Een proefversie wordt ook nooit geoogst om naar
 # de andere telefoons te gaan. Vrijgeven = deze code verhogen (gelijk met tools/gemma-telefoonrij/app/vrijgegeven.txt).
-JARVIS_VRIJ_CODE=101   # 1.9.94
+JARVIS_VRIJ_CODE=102   # 1.9.95 (vrijgegeven 14 nov na de proef op de S10)
 JARVIS_PROEF_F="$REK_MAP/jarvis-proef"   # het toestel-id (serienummer) van de proeftelefoon; leeg/afwezig = geen proef
 LOKAAL_POORT="${ARTEMIS_LOKAAL_POORT:-8791}"   # 592: lokale poort op deze computer die via adb naar het model op een rektelefoon wijst
 # 592h: een kleine VERTAAL- EN VANGNET-proxy tussen ARTEMIS en het lokale model (OlliteRT/Gemma). Gemma geeft een actie terug
