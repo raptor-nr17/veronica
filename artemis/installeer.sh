@@ -2111,22 +2111,78 @@ jarvis_terugval_bewaar() {   # $1 serienummer, $2 de huidige versionCode
     rm -f "$JAPK_PLEK/terugval.apk.nieuw" 2>/dev/null || true
   fi
 }
+# 678 (14 nov): DE PROEFVERSIE OPHALEN ZONDER GITHUB-LOGIN. De workflow jarvis-proef-link.yml zet een ondertekend adres (48 uur) naar de
+# proefversie in de privé opslag op de tak jarvis-proef (url.txt + versie.json). ARTEMIS leest die tak met zijn leestoken (het veld
+# Voortgang-token), haalt de apk, en controleert grootte en sha256 tegen versie.json. Alleen een code BOVEN de vrijgegeven versie (anders
+# is het geen proef). Het adres komt nooit in een melding of logboek. Echoot het pad van de apk, of niets (met een zin op stderr-loos stdout).
+JARVIS_PROEF_APK="$JAPK_PLEK/proef.apk"
+jarvis_proef_bron() {
+  command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || { zeg "Proefversie: curl of python3 ontbreekt."; return 1; }
+  local tok repo tak url vj w
+  [ -s "$VOORTGANG_TOKEN_F" ] && tok="$(head -1 "$VOORTGANG_TOKEN_F" | tr -d '\r\n ')"
+  [ -n "${tok:-}" ] || { zeg "Proefversie: ARTEMIS heeft geen leestoken (het veld Voortgang-token in de console); zonder kan hij de tak jarvis-proef niet lezen."; return 1; }
+  w="$(mktemp -d)" || return 1
+  while read -r repo tak; do
+    [ -n "$repo" ] || continue
+    if curl -fsS -m 20 -H "Authorization: Bearer $tok" -H 'Accept: application/vnd.github.raw' "https://api.github.com/repos/$repo/contents/url.txt?ref=jarvis-proef" -o "$w/url.txt" 2>/dev/null \
+       && curl -fsS -m 20 -H "Authorization: Bearer $tok" -H 'Accept: application/vnd.github.raw' "https://api.github.com/repos/$repo/contents/versie.json?ref=jarvis-proef" -o "$w/versie.json" 2>/dev/null; then break; fi
+    rm -f "$w/url.txt" "$w/versie.json"
+  done < <(voortgang_bronnen)
+  [ -s "$w/url.txt" ] && [ -s "$w/versie.json" ] || { rm -rf "$w"; zeg "Proefversie: geen tak jarvis-proef te lezen (staat er een proefversie klaar? anders: regel 1 van tools/jarvis-proef/verzoek.txt)."; return 1; }
+  url="$(head -1 "$w/url.txt" | tr -d '\r\n ')"
+  case "$url" in https://*.scw.cloud/*) : ;; *) rm -rf "$w"; zeg "Proefversie: het adres op de tak is geen adres van de privé opslag; niets gedaan."; return 1 ;; esac
+  vj="$(VJ="$w/versie.json" python3 -I -c 'import json,os; j=json.load(open(os.environ["VJ"])); print(j.get("versie",""), int(j.get("code",0)), j.get("sha256",""), int(j.get("grootte",0)))' 2>/dev/null)"
+  set -- $vj
+  local versie="${1:-}" code="${2:-0}" sha="${3:-}" grootte="${4:-0}"
+  case "$code" in ''|*[!0-9]*) code=0 ;; esac
+  if [ "$code" -le "$JARVIS_VRIJ_CODE" ]; then rm -rf "$w"; zeg "Proefversie: op de tak staat $versie (code $code), niet nieuwer dan de vrijgegeven versie; geen proef nodig."; return 1; fi
+  if [ -s "$JARVIS_PROEF_APK" ] && [ "$(sha256sum "$JARVIS_PROEF_APK" | cut -d' ' -f1)" = "$sha" ]; then rm -rf "$w"; printf '%s\n' "$code" > "$JARVIS_PROEF_APK.code"; JARVIS_PROEF_VERSIE="$versie"; return 0; fi
+  zeg "Proefversie $versie (code $code) ophalen uit de privé opslag ..."
+  if ! curl -fsS -m 600 -o "$JARVIS_PROEF_APK.part" "$url" 2>/dev/null; then rm -f "$JARVIS_PROEF_APK.part"; rm -rf "$w"; zeg "Proefversie: ophalen mislukte (verlopen adres? het geldt 48 uur)."; return 1; fi
+  if [ "$(stat -c %s "$JARVIS_PROEF_APK.part" 2>/dev/null)" != "$grootte" ] || [ "$(sha256sum "$JARVIS_PROEF_APK.part" | cut -d' ' -f1)" != "$sha" ]; then
+    rm -f "$JARVIS_PROEF_APK.part"; rm -rf "$w"; zeg "Proefversie: de controlesom klopt niet; weggegooid, niets geïnstalleerd."; return 1
+  fi
+  cp -f "$JARVIS_PROEF_APK.part" "$JARVIS_PROEF_APK" && rm -f "$JARVIS_PROEF_APK.part"; chmod 600 "$JARVIS_PROEF_APK" 2>/dev/null || true
+  printf '%s\n' "$code" > "$JARVIS_PROEF_APK.code"; rm -rf "$w"; JARVIS_PROEF_VERSIE="$versie"
+  zeg "Proefversie $versie binnen en gecontroleerd (sha256 klopt)."
+  return 0
+}
 # Knop: de rektelefoon die NU aan de USB-kabel zit (precies een, nooit de F8) wordt de proeftelefoon.
 jarvis_proef_zet() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
-  local s id kandidaat='' n=0
-  for s in $(verbonden); do
-    case "$s" in *:*) continue ;; esac   # alleen de kabel
-    is_f8 "$s" && continue
-    id="$(toestel_id "$s")"; toegestaan "$id" || continue
-    n=$((n + 1)); kandidaat="$s"
-  done
-  if [ "$n" -ne 1 ]; then zeg "Proef: er moet precies een rektelefoon aan de USB-kabel zitten (nu $n). Sluit alleen de proeftelefoon aan en druk opnieuw."; return 0; fi
-  printf '%s\n' "$(toestel_id "$kandidaat")" > "$JARVIS_PROEF_F"; chmod 600 "$JARVIS_PROEF_F" 2>/dev/null || true
-  zeg "Proeftelefoon: $(toestel_naam "$kandidaat"). Alleen deze krijgt een JARVIS boven de vrijgegeven versie (code $JARVIS_VRIJ_CODE); de andere drie niet. Zijn huidige apk wordt eerst bewaard als terugval."
+  local s id kandidaat='' n=0 p
+  # 678 (14 nov): is er al een proeftelefoon en is die verbonden (kabel OF Tailscale-tunnel), dan gaat de proefversie DAARHEEN -- ook als er
+  # nu een andere rektelefoon aan de kabel ligt. Een andere proeftelefoon kiezen = eerst "Proef stoppen".
+  p="$(head -1 "$JARVIS_PROEF_F" 2>/dev/null | tr -d '\r\n ')"
+  if [ -n "$p" ]; then
+    for s in $(verbonden); do is_f8 "$s" && continue; [ "$(toestel_id "$s")" = "$p" ] && { kandidaat="$s"; break; }; done
+    [ -n "$kandidaat" ] || { zeg "Proef: de proeftelefoon is nu niet verbonden (kabel of Tailscale). Verbind hem, of druk op 'Proef stoppen' om een andere te kiezen."; return 0; }
+    zeg "Proeftelefoon (al gekozen): $(toestel_naam "$kandidaat")."
+  else
+    for s in $(verbonden); do
+      case "$s" in *:*) continue ;; esac   # alleen de kabel
+      is_f8 "$s" && continue
+      id="$(toestel_id "$s")"; toegestaan "$id" || continue
+      n=$((n + 1)); kandidaat="$s"
+    done
+    if [ "$n" -ne 1 ]; then zeg "Proef: er moet precies een rektelefoon aan de USB-kabel zitten (nu $n). Sluit alleen de proeftelefoon aan en druk opnieuw."; return 0; fi
+    printf '%s\n' "$(toestel_id "$kandidaat")" > "$JARVIS_PROEF_F"; chmod 600 "$JARVIS_PROEF_F" 2>/dev/null || true
+    zeg "Proeftelefoon: $(toestel_naam "$kandidaat"). Alleen deze krijgt een JARVIS boven de vrijgegeven versie (code $JARVIS_VRIJ_CODE); de andere drie niet. Zijn huidige apk wordt eerst bewaard als terugval."
+  fi
   jarvis_terugval_bewaar "$kandidaat" "$(jarvis_apk_code "$kandidaat")"
-  jarvis_oogst 1 >/dev/null 2>&1 || true
-  jarvis_bijwerk_een "$kandidaat" "$(toestel_naam "$kandidaat")"
+  # 678 (14 nov): eerst de proefversie van de tak jarvis-proef (zonder GitHub-login); lukt dat niet, dan wat er al klaarligt (oogst/download)
+  if jarvis_proef_bron; then
+    local op uit; op="$(jarvis_apk_code "$kandidaat")"; case "$op" in ''|*[!0-9]*) op=0 ;; esac
+    if [ "$op" -ge "$(tr -dc 0-9 < "$JARVIS_PROEF_APK.code")" ]; then zeg "De proeftelefoon heeft $JARVIS_PROEF_VERSIE (of nieuwer) al."
+    else
+      uit="$("$ADB" -s "$kandidaat" install -r "$JARVIS_PROEF_APK" 2>&1)"
+      if printf '%s' "$uit" | grep -qi 'Success'; then logregel "Proef: JARVIS $JARVIS_PROEF_VERSIE op $(toestel_naam "$kandidaat")."
+      else zeg "Installeren lukte niet: $(printf '%s' "$uit" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-160)"; fi
+    fi
+  else
+    jarvis_oogst 1 >/dev/null 2>&1 || true
+    jarvis_bijwerk_een "$kandidaat" "$(toestel_naam "$kandidaat")"
+  fi
   zeg "Nu op de proeftelefoon: JARVIS $(jarvis_apk_versie "$kandidaat") (code $(jarvis_apk_code "$kandidaat"))."
 }
 jarvis_proef_uit() { rm -f "$JARVIS_PROEF_F" 2>/dev/null || true; zeg "Geen proeftelefoon meer: alle rektelefoons blijven op de vrijgegeven versie (code $JARVIS_VRIJ_CODE)."; }
