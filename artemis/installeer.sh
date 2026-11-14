@@ -513,6 +513,12 @@ WantedBy=default.target
 UNIT
   systemctl --user daemon-reload >/dev/null 2>&1 || true
   systemctl --user enable --now artemis-rek.service >/dev/null 2>&1 || true
+  # 678 (14 nov): de console was een uur weg tot iemand de Terminal opende. Zonder "linger" start systemd --user pas bij een INLOG (de
+  # Terminal); met linger start de dienst zodra de Linux-container opstart -- ook als dat door iets anders komt (Bestanden > Linux-bestanden,
+  # een Linux-app). Linux zelf aanzetten na een herstart van de Chromebook kan alleen ChromeOS; dat blijft een eerlijke beperking.
+  if command -v loginctl >/dev/null 2>&1 && [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" != yes ]; then
+    loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || sudo -n loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || true
+  fi
   if ! grep -q 'artemis-rek console' "$prof" 2>/dev/null; then
     printf '\n# ARTEMIS-rek console vanzelf starten (terugval als systemd --user er niet is)\npgrep -f "artemis-rek console" >/dev/null 2>&1 || setsid %s/artemis-rek console </dev/null >>%s/console.log 2>&1 &\n' "$BIN_SELF" "$REK_MAP" >>"$prof"
   fi
@@ -5818,10 +5824,48 @@ jarvis_waarom() {   # $1 serienummer -> een zin
   case "$ver" in 1.[0-6].*) printf 'JARVIS %s is te oud (geen /jarvis/status). Druk op "JARVIS waak": die zet de nieuwste erop.' "$ver"; return 0 ;; esac
   printf 'JARVIS %s draait en luistert op 8080, maar gaf geen toestel-id (de adb-doorsturing faalde?). Druk op "Rek via Tailscale" of steek de kabel opnieuw in.' "${ver:-?}"
 }
+# 678 (14 nov): WAAROM MELDT EEN TELEFOON ZICH NIET, terwijl JARVIS draait (twee rektelefoons na de 1.9.95-update)? JARVIS zegt het zelf in
+# /jarvis/status (via 8080, ook over de Tailscale-tunnel): de laatste uitkomst van zijn hartslag, wanneer, en een vingerafdruk van het
+# onderwerp dat hij gebruikt. Die vergelijken we met het onderwerp van Veronica (dezelfde berekening als hartslag.js). Alleen lezen.
+jarvis_hartslag_waarom() {   # $1 serienummer -> een zin (leeg = niets te lezen)
+  local s="$1" stat o
+  command -v python3 >/dev/null 2>&1 || return 0
+  stat="$(tel_http "$s" 8080 /jarvis/status)"
+  [ -n "$stat" ] || { printf 'zijn status (8080) was niet te lezen.'; return 0; }
+  o="$(head -1 "$REK_ONDERWERP_F" 2>/dev/null | tr -d '\r\n ')"
+  STAT="$stat" ONDERWERP="$o" python3 -I - <<'PY' 2>/dev/null || true
+import os, json, time, hashlib
+try:
+    d = json.loads(os.environ.get('STAT', ''))
+except Exception:
+    print('zijn status was geen geldige JSON.'); raise SystemExit(0)
+b = d.get('brievenbus') if isinstance(d, dict) else None
+if not isinstance(b, dict):
+    print('deze JARVIS meldt nog niets over zijn hartslag (te oud?).'); raise SystemExit(0)
+o = os.environ.get('ONDERWERP', '')
+verwacht = hashlib.sha256(('brievenbus-vinger:' + o).encode()).hexdigest()[:8] if o else None
+delen = []
+if b.get('onderwerp') is not True:
+    delen.append('hij kent het onderwerp van Veronica niet')
+elif verwacht and b.get('vinger') and b.get('vinger') != verwacht:
+    delen.append('hij gebruikt een ANDER onderwerp dan Veronica (oude koppeling)')
+h = b.get('hartslag')
+t = b.get('t')
+if isinstance(h, str) and h:
+    w = ''
+    if isinstance(t, (int, float)) and t > 0:
+        m = int((time.time() * 1000 - t) / 60000)
+        w = ' (%d min geleden)' % m if m >= 0 else ''
+    delen.append('laatste hartslag: "%s"%s' % (h[:80], w))
+else:
+    delen.append('nog geen hartslag sinds hij opstartte')
+print('; '.join(delen) + '.')
+PY
+}
 meld_status() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
-  local s idv naam sl jid m n=0
-  zeg "Melden bij Veronica, per rektelefoon (alleen lezen):"
+  local s idv naam sl jid m u n=0
+  zeg "Melden bij Veronica, per rektelefoon (via de kabel of de Tailscale-tunnel):"
   [ -s "$REK_ONDERWERP_F" ] || zeg "  (Zonder relay-onderwerp kan ik niet zien wie zich meldt: open Meer in Veronica; die zet het onderwerp hier.)"
   for s in $(verbonden); do
     is_f8 "$s" && continue
@@ -5832,7 +5876,10 @@ meld_status() {
     m="$(meld_van "$jid")"
     case "$m" in
       ja*) zeg "  $naam: meldt zich bij de relay (${m#ja } s geleden). Staat hij toch niet in Veronica, ververs Veronica; hij verschijnt binnen enkele minuten." ;;
-      nee) zeg "  $naam: JARVIS draait, maar meldt zich NIET bij de relay. Druk op 'Koppel aan Veronica (via de kabel)' (geen tik op de telefoon); lukt dat niet, scan dan op de telefoon de QR van Veronica." ;;
+      nee) zeg "  $naam: JARVIS draait, maar meldt zich NIET bij de relay: $(jarvis_hartslag_waarom "$s")"
+           u="$(kabel_koppel_een "$s")"   # 678 (14 nov): meteen opnieuw koppelen -- werkt via de kabel EN via de Tailscale-tunnel (adb is adb)
+           case "$u" in OK) zeg "    -> opnieuw gekoppeld (onderwerp$([ -s "$REK_RELAY_F" ] && echo ' en relay-adres') van Veronica). Druk over een minuut nog eens op deze knop." ;; OUD) zeg "    -> deze JARVIS kent koppelen via de kabel nog niet." ;; *) zeg "    -> koppelen lukte niet ($u)." ;; esac
+           [ -s "$REK_RELAY_F" ] || zeg "    (ARTEMIS kent het relay-adres niet: open Meer in Veronica op deze computer, dan zet zij het hier; zonder relay valt de hartslag terug op ntfy.sh, met een dagbudget.)" ;;
       *) zeg "  $naam: JARVIS draait; of hij zich meldt kan ik niet zien (geen relay-onderwerp bekend)." ;;
     esac
   done
@@ -5979,6 +6026,7 @@ waakbewaker() {
 # (alleen opnieuw bouwen als hij niet op 3.12 staat) en de startpogingen van ARTEMIS wissen, zodat de console hem vanzelf weer opstart.
 na_update() {
   rm -f "$REK_MAP/na-update" 2>/dev/null || true
+  [ -n "${ARTEMIS_GEEN_HERSTART:-}" ] || autostart_installeren >/dev/null 2>&1 || true   # 678: de dienst-instellingen bijwerken (o.a. linger)
   zorg_venv >/dev/null 2>&1 || true
   rm -f "$REK_MAP/start-pogingen" "$REK_MAP/start-gestopt" 2>/dev/null || true
   logregel "Nieuwe versie vanzelf geladen; venv nagelopen, ARTEMIS start binnen een minuut weer als hij aan stond."

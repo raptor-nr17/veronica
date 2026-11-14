@@ -3122,7 +3122,7 @@
     let draait = false;
     try { await fetch(ARTEMIS_ADRES, { mode: 'no-cors', cache: 'no-store', signal: ab.signal }); draait = true; } catch (e) { draait = false; } finally { clearTimeout(klok); }
     r.textContent = draait ? 'De console draait: open hem en gebruik de knoppen (Start, Stop, Status, Zoek telefoons, Bijwerken). Claude kan dat ook.'
-      : 'De console is niet te bereiken. Hij hoort vanzelf te draaien; is de computer net aan, wacht dan even, of installeer ARTEMIS opnieuw (de ene regel).';
+      : 'De console is niet te bereiken. Hij hoort vanzelf te draaien; meestal staat Linux uit: na een herstart van de Chromebook start ChromeOS Linux niet vanzelf. Open dan één keer Bestanden > Linux-bestanden (of de Terminal); de console en ARTEMIS starten daarna zelf. Helpt dat niet, installeer ARTEMIS dan opnieuw (de ene regel).';
     return draait;
   }
   // 678 (punt 22): de telefoonlijst toont per rektelefoon of hij AANWEZIG is (wat ARTEMIS via kabel/wifi/Tailscale ziet, dus niet alleen de
