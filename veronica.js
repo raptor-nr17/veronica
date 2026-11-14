@@ -5919,8 +5919,43 @@
     });
   }
   // start = het moment dat de vraag verstuurd werd; de meting loopt tot het eerste gesproken woord.
+  // 678 (14 nov): DE STEM VAN HET REK (stemrek.js). De bibliothecaris leest voor als zijn stem klaarstaat (/health elke ~2 min, alleen
+  // over het eigen wifi, met de rij-code); anders, of als het misgaat, de lokale stem van deze computer. Nooit voor de privé-hoek.
+  const StemRekV = { doel: null, health: null, t: 0, bezig: false };
+  async function stemRekTik() {
+    if (!window.Stemrek || StemRekV.bezig || !S.code) return;
+    const doel = window.Stemrek.kies(S.telefoons, (id) => RekRol.rolVan(id));
+    StemRekV.doel = doel;
+    if (!doel || nu() - StemRekV.t < 2 * 60 * 1000) return;
+    StemRekV.bezig = true;
+    try {
+      const r = await haal(`${doel.basis}/health`, { headers: { Authorization: `Bearer ${S.code}` } }, 4000);
+      StemRekV.health = r && r.ok ? await r.json().catch(() => null) : null;
+    } catch (e) { StemRekV.health = null; } finally { StemRekV.t = nu(); StemRekV.bezig = false; }
+  }
+  async function stemRekSpreek(tekst, profielIn) {
+    const d = StemRekV.doel;
+    if (!window.Stemrek || !d || !S.code || !window.Stemrek.mag(profielIn) || !window.Stemrek.klaar(StemRekV.health, StemRekV.t, nu())) return false;
+    try {
+      const r = await haal(`${d.basis}/zeg`, { method: 'POST', headers: { Authorization: `Bearer ${S.code}`, 'Content-Type': 'application/json' }, body: window.Stemrek.zegLijf(tekst) }, 15000);
+      if (!r || !r.ok) return false;
+      const url = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: 'audio/wav' }));
+      const a = new Audio(url);
+      if (window.Stemprofiel) { const pf = window.Stemprofiel.profiel(profielIn && profielIn.rol, profielIn && profielIn.stemming); a.playbackRate = (Number(S.spraak.tempo) || 1) * pf.speed; }
+      await new Promise((klaar) => { a.onended = klaar; a.onerror = klaar; a.play().catch(klaar); });
+      URL.revokeObjectURL(url);
+      return true;
+    } catch (e) { return false; }
+  }
   function fennaSpreek(antwoord, start, telefoon, profielIn) {
     if (telefoon) fennaTel(telefoon, nu());
+    if (window.Stemrek && StemRekV.doel && window.Stemrek.mag(profielIn) && window.Stemrek.klaar(StemRekV.health, StemRekV.t, nu())) {
+      return stemRekSpreek(window.Fenna ? window.Fenna.voorTeLezen(antwoord).join(' ') : String(antwoord || ''), profielIn)
+        .then((ok) => { if (ok) { FennaV.eersteWoordMs = Math.max(0, nu() - (Number(start) || nu())); tekenFennaMeting(); return undefined; } StemRekV.health = null; return fennaSpreekLokaal(antwoord, start, profielIn); });
+    }
+    return fennaSpreekLokaal(antwoord, start, profielIn);
+  }
+  function fennaSpreekLokaal(antwoord, start, profielIn) {
     const zinnen = window.Fenna ? window.Fenna.voorTeLezen(antwoord) : [String(antwoord || '')];
     if (!window.speechSynthesis || typeof window.SpeechSynthesisUtterance === 'undefined' || !zinnen.length) return Promise.resolve();
     // 678: ook in de privé-hoek ALLEEN een lokale stem (nooit een stem die de tekst via internet laat maken)
@@ -7151,6 +7186,15 @@
         logRegel(`${(h && h.naam) || 'Een telefoon'} (${x.rol}): ${x.stem ? 'de stem gaat aan' : x.oor ? 'het oor gaat aan' : 'stem en oor gaan uit'}. Het model komt binnen op wifi en aan de lader.`);
       }
     }
+    // 1c. 678 (14 nov, eigenaar): het geheugen van de vier staat op de kaart van de bibliothecaris. Zolang geen mens een geheugen-telefoon
+    //     koos, wijst Veronica die telefoon EEN keer aan (dezelfde roep als de knop; JARVIS kent hem sinds 544).
+    if (window.Rekrollen && typeof window.Rekrollen.geheugenVoorRol === 'function' && S.code && typeof kiesGeheugen === 'function') {
+      const harten = Object.entries(HB.per || {}).filter(([, h]) => h && h.t && tijd - h.t <= K.HARTSLAG_VERS_MS).map(([id, h]) => ({ toestel: id, dagelijks: !!h.dagelijks }));
+      const gid = window.Rekrollen.geheugenVoorRol(localStorage.getItem(RekRol.s), harten, GeheugenV.gekozen);
+      if (gid) { await kiesGeheugen(gid); logRegel('Het geheugen van de rektelefoons staat voortaan op de kaart van de bibliothecaris (keuze van de eigenaar).'); }
+    }
+    // 1d. 678: staat de stem van de bibliothecaris klaar? (alleen lezen, /health met de rij-code)
+    try { await stemRekTik(); } catch (e) { /* volgende minuut */ }
     // 2. Het kaartje: elke minuut kijken (was de knop "Kijk opnieuw").
     if (typeof tekenKaartje === 'function') { try { await tekenKaartje(); } catch (e) { /* volgende minuut */ } }
     // 3. Fenna meten: elke nacht, en na een nieuwe versie of een ander model. De score staat daarna in de tegel.

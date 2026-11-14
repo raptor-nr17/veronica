@@ -135,5 +135,17 @@
     return uit;
   }
 
-  return { STANDAARD_PER_MODEL: STANDAARD_PER_MODEL, standaardVoorModel: standaardVoorModel, vulVanzelf: vulVanzelf, SLEUTEL: SLEUTEL, namen: namen, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel, SPRAAK_VANAF: SPRAAK_VANAF, spraakVoorRol: spraakVoorRol, spraakTeSturen: spraakTeSturen };
+  // 678 (14 nov, eigenaar: "de opslagkaart van de bibliothecaris mag hun geheugen zijn"): de geheugen-telefoon = de telefoon met de rol
+  // bibliothecaris, als die een verse hartslag heeft en geen mens al iets anders koos. Puur; de roep (geheugen-kies) doet veronica.js.
+  function geheugenVoorRol(opslag, harten, gekozen) {
+    if (gekozen) return null;   // een keuze van een mens blijft staan
+    const o = lees(opslag);
+    for (const h of Array.isArray(harten) ? harten : []) {
+      if (!h || !/^[a-z0-9]{12,40}$/.test(String(h.toestel || '')) || h.dagelijks) continue;
+      if (rolVan(o, h.toestel) === 'bibliothecaris') return h.toestel;
+    }
+    return null;
+  }
+
+  return { STANDAARD_PER_MODEL: STANDAARD_PER_MODEL, standaardVoorModel: standaardVoorModel, vulVanzelf: vulVanzelf, SLEUTEL: SLEUTEL, namen: namen, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel, SPRAAK_VANAF: SPRAAK_VANAF, spraakVoorRol: spraakVoorRol, spraakTeSturen: spraakTeSturen, geheugenVoorRol: geheugenVoorRol };
 }));
