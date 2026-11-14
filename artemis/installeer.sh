@@ -195,6 +195,11 @@ TOEG="$REK_MAP/toegestaan"
 VERB="$REK_MAP/verboden-apps.txt"
 LOG="$REK_MAP/waakhond.log"
 JARVIS_PKG="nl.eigen.jarvis"   # 590: het ENIGE pakket dat de JARVIS-waakhond ooit aanraakt (nooit bank/betaal/wachtwoord/authenticator)
+# 678 (14 nov, eigenaar): EERST EEN PROEF OP EEN TELEFOON. ARTEMIS zet op een rektelefoon nooit een JARVIS boven de VRIJGEGEVEN versie,
+# behalve op de PROEFTELEFOON (die een mens in de console aanwijst, aan de USB-kabel). Een proefversie wordt ook nooit geoogst om naar
+# de andere telefoons te gaan. Vrijgeven = deze code verhogen (gelijk met tools/gemma-telefoonrij/app/vrijgegeven.txt).
+JARVIS_VRIJ_CODE=101   # 1.9.94
+JARVIS_PROEF_F="$REK_MAP/jarvis-proef"   # het toestel-id (serienummer) van de proeftelefoon; leeg/afwezig = geen proef
 LOKAAL_POORT="${ARTEMIS_LOKAAL_POORT:-8791}"   # 592: lokale poort op deze computer die via adb naar het model op een rektelefoon wijst
 # 592h: een kleine VERTAAL- EN VANGNET-proxy tussen ARTEMIS en het lokale model (OlliteRT/Gemma). Gemma geeft een actie terug
 # als TEKST ("call:click{target: 'NOODSTOP'}", JS-achtige args) i.p.v. een echte OpenAI-tool_call -> ARTEMIS' tekst-parser liep
@@ -535,10 +540,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde', 'jarvis-proef', 'jarvis-proef-uit', 'jarvis-terugval'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
+LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -669,7 +674,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -2038,6 +2043,131 @@ jarvis_apk_code() {   # de versionCode van het JARVIS-pakket op EEN telefoon (le
 jarvis_apk_versie() {   # 678p: de versionName (1.9.xx) van JARVIS op EEN telefoon (leeg = niet geïnstalleerd)
   "$ADB" -s "$1" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | sed -n 's/.*versionName=\([0-9][0-9.]*\).*/\1/p' | head -1 | tr -d '\r'
 }
+# >>> PROEF (678, 14 nov)
+# De versionCode UIT DE APK ZELF (het binaire AndroidManifest.xml in de zip), zodat een gedownloade apk geen "onbekende code" meer is
+# en de vrijgavepoort precies weet of het een proefversie is. Alleen lezen; leeg = niet te lezen (dan geldt de voorzichtige regel).
+apk_code() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 -I - "$1" <<'PY' 2>/dev/null || true
+import sys, zipfile, struct
+try:
+    b = zipfile.ZipFile(sys.argv[1]).read('AndroidManifest.xml')
+except Exception:
+    raise SystemExit(0)
+if len(b) < 8 or struct.unpack_from('<H', b, 0)[0] != 0x0003: raise SystemExit(0)
+p = 8; strs = []; ids = []
+while p + 8 <= len(b):
+    typ, hs, size = struct.unpack_from('<HHI', b, p)
+    if size < 8: break
+    if typ == 0x0001:   # string pool
+        n, _st, flags, sstart = struct.unpack_from('<IIII', b, p + 8)
+        utf8 = bool(flags & 0x100); offs = struct.unpack_from('<%dI' % n, b, p + hs)
+        for o in offs:
+            q = p + sstart + o
+            if utf8:
+                l = b[q]; q += 2 if l & 0x80 else 1
+                l = b[q]; 
+                if l & 0x80: l = ((l & 0x7f) << 8) | b[q + 1]; q += 2
+                else: q += 1
+                strs.append(b[q:q + l].decode('utf-8', 'replace'))
+            else:
+                l = struct.unpack_from('<H', b, q)[0]; strs.append(b[q + 2:q + 2 + 2 * l].decode('utf-16le', 'replace'))
+    elif typ == 0x0180:   # resource map
+        ids = list(struct.unpack_from('<%dI' % ((size - hs) // 4), b, p + hs))
+    elif typ == 0x0102:   # start element
+        name = struct.unpack_from('<I', b, p + 20)[0]
+        astart, asize, acount = struct.unpack_from('<HHH', b, p + 24)
+        if name < len(strs) and strs[name] == 'manifest':
+            for k in range(acount):
+                a = p + 16 + astart + k * asize
+                an = struct.unpack_from('<I', b, a + 4)[0]
+                data = struct.unpack_from('<I', b, a + 16)[0]
+                if (an < len(ids) and ids[an] == 0x0101021b) or (an < len(strs) and strs[an] == 'versionCode'):
+                    print(data); raise SystemExit(0)
+            raise SystemExit(0)
+    p += size
+PY
+}
+jarvis_is_proef() { local p; p="$(head -1 "$JARVIS_PROEF_F" 2>/dev/null | tr -d '\r\n ')"; [ -n "$p" ] && [ "$(toestel_id "$1")" = "$p" ]; }
+# De apk die NU op de proeftelefoon staat (de vrijgegeven versie) bewaren als terugval, een keer per versie; alleen een vrijgegeven code.
+jarvis_terugval_bewaar() {   # $1 serienummer, $2 de huidige versionCode
+  local s="$1" code="$2" pad
+  case "$code" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$code" -le "$JARVIS_VRIJ_CODE" ] || return 0
+  [ -s "$JAPK_PLEK/terugval.apk" ] && [ "$(tr -dc 0-9 < "$JAPK_PLEK/terugval.apk.code" 2>/dev/null)" = "$code" ] && return 0
+  pad="$("$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | grep -i 'base\.apk' | head -1)"
+  [ -n "$pad" ] || return 0
+  if "$ADB" -s "$s" pull "$pad" "$JAPK_PLEK/terugval.apk.nieuw" >/dev/null 2>&1 && [ -s "$JAPK_PLEK/terugval.apk.nieuw" ]; then
+    cp -f "$JAPK_PLEK/terugval.apk.nieuw" "$JAPK_PLEK/terugval.apk" && rm -f "$JAPK_PLEK/terugval.apk.nieuw"
+    printf '%s\n' "$code" > "$JAPK_PLEK/terugval.apk.code"; chmod 600 "$JAPK_PLEK/terugval.apk" 2>/dev/null || true
+    logregel "Terugval bewaard: JARVIS code $code van de proeftelefoon."
+  else
+    rm -f "$JAPK_PLEK/terugval.apk.nieuw" 2>/dev/null || true
+  fi
+}
+# Knop: de rektelefoon die NU aan de USB-kabel zit (precies een, nooit de F8) wordt de proeftelefoon.
+jarvis_proef_zet() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  local s id kandidaat='' n=0
+  for s in $(verbonden); do
+    case "$s" in *:*) continue ;; esac   # alleen de kabel
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    n=$((n + 1)); kandidaat="$s"
+  done
+  if [ "$n" -ne 1 ]; then zeg "Proef: er moet precies een rektelefoon aan de USB-kabel zitten (nu $n). Sluit alleen de proeftelefoon aan en druk opnieuw."; return 0; fi
+  printf '%s\n' "$(toestel_id "$kandidaat")" > "$JARVIS_PROEF_F"; chmod 600 "$JARVIS_PROEF_F" 2>/dev/null || true
+  zeg "Proeftelefoon: $(toestel_naam "$kandidaat"). Alleen deze krijgt een JARVIS boven de vrijgegeven versie (code $JARVIS_VRIJ_CODE); de andere drie niet. Zijn huidige apk wordt eerst bewaard als terugval."
+  jarvis_terugval_bewaar "$kandidaat" "$(jarvis_apk_code "$kandidaat")"
+  jarvis_oogst 1 >/dev/null 2>&1 || true
+  jarvis_bijwerk_een "$kandidaat" "$(toestel_naam "$kandidaat")"
+  zeg "Nu op de proeftelefoon: JARVIS $(jarvis_apk_versie "$kandidaat") (code $(jarvis_apk_code "$kandidaat"))."
+}
+jarvis_proef_uit() { rm -f "$JARVIS_PROEF_F" 2>/dev/null || true; zeg "Geen proeftelefoon meer: alle rektelefoons blijven op de vrijgegeven versie (code $JARVIS_VRIJ_CODE)."; }
+# Knop: TERUGVAL. De bewaarde vrijgegeven apk terug op de proeftelefoon (install -r -d: gegevens blijven; -d mag omdat JARVIS een
+# debug-build is). Daarna is hij geen proeftelefoon meer en wordt de proefversie niet opnieuw geplaatst.
+jarvis_terugval() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  local s uit p
+  p="$(head -1 "$JARVIS_PROEF_F" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$p" ] || { zeg "Terugval: er is geen proeftelefoon aangewezen."; return 0; }
+  [ -s "$JAPK_PLEK/terugval.apk" ] || { zeg "Terugval: er is geen bewaarde vrijgegeven apk (die wordt bewaard bij het aanwijzen van de proeftelefoon)."; return 0; }
+  for s in $(verbonden); do
+    [ "$(toestel_id "$s")" = "$p" ] || continue
+    is_f8 "$s" && continue
+    uit="$("$ADB" -s "$s" install -r -d "$JAPK_PLEK/terugval.apk" 2>&1)"
+    if printf '%s' "$uit" | grep -qi 'Success'; then
+      rm -f "$JARVIS_PROEF_F" 2>/dev/null || true
+      logregel "Terugval: $(toestel_naam "$s") staat weer op JARVIS code $(tr -dc 0-9 < "$JAPK_PLEK/terugval.apk.code" 2>/dev/null)."
+      zeg "Terugval gelukt: $(toestel_naam "$s") staat weer op JARVIS $(jarvis_apk_versie "$s") (code $(jarvis_apk_code "$s")). Hij is geen proeftelefoon meer."
+    else
+      zeg "Terugval lukte niet: $(printf '%s' "$uit" | tr '\n' ' ' | cut -c1-160)"
+    fi
+    return 0
+  done
+  zeg "Terugval: de proeftelefoon is nu niet verbonden. Sluit hem aan de USB-kabel aan en druk opnieuw."
+}
+# ALLEEN LEZEN: wat er in de JARVIS op een telefoon zit. GEZIEN = de native bibliotheken die op de telefoon zelf staan (uitgepakt,
+# extractNativeLibs); VOLGENS DE VERSIE = wat bij die versionCode hoort (uit de bouwgeschiedenis). Niets wordt veranderd.
+jarvis_onderdelen() {   # $1 serienummer, $2 versionCode -> een regel
+  local s="$1" code="${2:-0}" pad map libs delen=""
+  pad="$("$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | grep -i 'base\.apk' | head -1)"
+  map="${pad%/base.apk}"
+  libs=""; [ -n "$pad" ] && libs="$("$ADB" -s "$s" shell ls "$map/lib/arm64" 2>/dev/null | tr -d '\r' | tr '\n' ' ')"
+  case "$libs" in *libllamaserver.so*) delen="${delen}llama.cpp (tweede motor), " ;; esac
+  case "$libs" in *litertlm*) delen="${delen}LiteRT-LM (eigen motor), " ;; esac
+  case "$libs" in *libsherpa-onnx-jni.so*) delen="${delen}sherpa-onnx (stem en oor), " ;; esac
+  delen="${delen%, }"
+  if [ -n "$libs" ]; then printf 'gezien: %s' "${delen:-geen bekende motor-bibliotheek}"; else printf 'gezien: niet te lezen'; fi
+  case "$code" in ''|*[!0-9]*) code=0 ;; esac
+  printf '; volgens de versie:'
+  [ "$code" -ge 101 ] && printf ' koppelen via de kabel'
+  [ "$code" -ge 102 ] && printf ', stem/oor (aan via Veronica), pagina vanzelf terug, llama-server gestript'
+  [ "$code" -lt 101 ] && printf ' ouder dan 1.9.94'
+  if [ "$code" -gt "$JARVIS_VRIJ_CODE" ]; then printf ' -- PROEFVERSIE (nog niet vrijgegeven)'; else printf ' -- vrijgegeven'; fi
+}
+# <<< PROEF
+
 # 678p: DE VERSIE-REGEL PER TELEFOON. Toont van elke rektelefoon aan de kabel (nooit de F8) welke JARVIS er ECHT op staat
 # (versionName + versionCode). Wordt bovenaan de uitkomst van 'Telefoon klaarzetten' gezet (zodat hij niet uit het korte
 # console-log valt) en bewaard in $REK_MAP/klaarzet-versies, zodat Status hem ook laat zien. Alleen lezen (dumpsys).
@@ -2051,7 +2181,7 @@ jarvis_versies() {
     id="$(toestel_id "$s")"; toegestaan "$id" || continue
     naam="$(toestel_naam "$s")"; naam="${naam:-$id}"
     v="$(jarvis_apk_versie "$s")"; c="$(jarvis_apk_code "$s")"
-    if [ -n "$v" ]; then regel="  $naam: JARVIS $v (code ${c:-?})"; else regel="  $naam: JARVIS niet geïnstalleerd"; fi
+    if [ -n "$v" ]; then regel="  $naam: JARVIS $v (code ${c:-?})$(jarvis_is_proef "$s" && printf ' [proeftelefoon]'). $(jarvis_onderdelen "$s" "$c")"; else regel="  $naam: JARVIS niet geïnstalleerd"; fi
     zeg "$regel"; alles="$alles$regel"$'\n'; n=$((n+1))
   done
   [ "$n" -gt 0 ] || zeg "  (geen rektelefoon aan de kabel; sluit er een aan en druk op 'Zoek telefoons')"
@@ -2233,6 +2363,7 @@ jarvis_oogst() {
     is_f8 "$s" && continue
     code="$(jarvis_apk_code "$s")"
     case "$code" in ''|*[!0-9]*) continue ;; esac
+    [ "$code" -gt "$JARVIS_VRIJ_CODE" ] && continue   # 678 (14 nov): een proefversie wordt nooit geoogst om te verspreiden
     if [ "$code" -gt "$best_code" ]; then best_code="$code"; best_s="$s"; fi
   done
   [ -n "$best_s" ] || return 0   # niemand heeft iets nieuwers dan de cache
@@ -2261,6 +2392,17 @@ jarvis_bijwerk_een() {
   fi
   # bekende code en de telefoon is al gelijk of nieuwer: niets doen.
   if [ -n "$apkcode" ] && [ -n "$opcode" ] && [ "$opcode" -ge "$apkcode" ]; then return 0; fi
+  # 678 (14 nov): DE VRIJGAVEPOORT. Op een gewone rektelefoon nooit boven de vrijgegeven versie, en een apk met ONBEKENDE code alleen op
+  # een telefoon zonder JARVIS (niets te verliezen). Op de proeftelefoon wel -- maar eerst de huidige apk bewaren als terugval.
+  if [ -z "$apkcode" ]; then apkcode="$(apk_code "$JAPK_PLEK/jarvis.apk" | tr -dc 0-9)"; [ -n "$apkcode" ] && printf '%s\n' "$apkcode" > "$JAPK_PLEK/jarvis.apk.code"; fi
+  if [ -n "$apkcode" ] && [ -n "$opcode" ] && [ "$opcode" -ge "$apkcode" ]; then return 0; fi
+  if ! jarvis_is_proef "$s"; then
+    if [ -n "$apkcode" ] && [ "$apkcode" -gt "$JARVIS_VRIJ_CODE" ]; then return 0; fi
+    # onbekende code (niet uit de apk te lezen): alleen naar een telefoon zonder JARVIS of een die ACHTERLOOPT op de vrijgegeven versie
+    if [ -z "$apkcode" ] && [ -n "$opcode" ] && [ "$opcode" -ge "$JARVIS_VRIJ_CODE" ]; then return 0; fi
+  else
+    jarvis_terugval_bewaar "$s" "$opcode"
+  fi
   # install -r: gegevens blijven, alleen onze JARVIS (Android weigert een andere handtekening op hetzelfde pakket). 598b: een
   # gedownloade apk heeft nog geen bekende code -- die leiden we hierna van de telefoon af.
   uit="$("$ADB" -s "$s" install -r "$JAPK_PLEK/jarvis.apk" 2>&1)"
@@ -6134,6 +6276,9 @@ case "${1:-status}" in
   motor-meet) motor_meet ;;                   # 678 stap 1b: echte modelsnelheid meten (llama-bench, CPU, grote kernen), nooit de F8
   kabel-koppel) kabel_koppel ;;                  # 678 (13 nov): het onderwerp van Veronica via adb aan JARVIS geven (geen tik op de telefoon)
   kabel-koppel-auto) kabel_koppel_auto >/dev/null 2>&1 || true ;;
+  jarvis-proef) jarvis_proef_zet ;;               # 678 (14 nov): de telefoon aan de USB-kabel wordt de proeftelefoon (krijgt als enige een nieuwe JARVIS)
+  jarvis-proef-uit) jarvis_proef_uit ;;
+  jarvis-terugval) jarvis_terugval ;;             # 678: de bewaarde vrijgegeven JARVIS terug op de proeftelefoon (install -r -d)
   zelfronde) zelfronde ;;                        # 678 (14 nov): de rondes die Cowork met de hand deed, nu zelf (alleen lezen + veilig herstel)
   waakbewaker) waakbewaker ;;                    # 678: start een weggevallen console opnieuw
   na-update) na_update ;;                        # 678: afmaken wat Bijwerken verder doet, na een vanzelf geladen nieuwe versie
