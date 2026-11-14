@@ -2258,7 +2258,7 @@
     const ps = pantserStand();
     $('pantserZin').textContent = `${ps.regel}${S.aan ? ` · wachtrij ${S.taken.filter((x) => x.status === 'wacht').length}` : ''}`;
     morphKinderen($('pantserHelp'), S.aan ? ps.helpen.map((h) => { const d = el('div', 'pantserHelpRegel', h.zin); d.dataset.sleutel = h.adres; return d; }) : []);
-    tekenRekAanwezig(); artemisRekKijk().catch(() => {});
+    tekenRekAanwezig(); artemisRekKijk().catch(() => {}); artemisZelfrondeKijk().catch(() => {});
     {
       // 484: ALLES KOPPELEN. Met Pantser aan: de telefoons die de eigen motor kunnen draaien maar hem nog niet aan hebben, met EEN tik.
       const kand = motorKandidaten();
@@ -3161,6 +3161,23 @@
     } catch (e) { RekAanw.lijst = []; } finally { clearTimeout(klok); RekAanw.bezig = false; }
     rekRollenVanzelf();
     tekenRekAanwezig();
+  }
+  // 678 (14 nov): DE ZELFRONDE van ARTEMIS -- wat Cowork vroeger met de hand nakeek (draait ARTEMIS, bijwerken, melden, werkt Claude door,
+  // komt Cowork nog, bewaker). Alleen LEZEN van de console (/zelfronde.json), op hetzelfde moment als /rek.json; de regels maakt Zelfronde.
+  const ZelfR = { t: 0, bezig: false };
+  async function artemisZelfrondeKijk() {
+    if (!artemisGebruikt() || ZelfR.bezig || !window.Zelfronde || volLokaal()) return;
+    if (Date.now() - ZelfR.t < 15000) return;
+    ZelfR.bezig = true; ZelfR.t = Date.now();
+    const url = ARTEMIS_ADRES + 'zelfronde.json';
+    const ab = new AbortController(); const klok = setTimeout(() => ab.abort(), 5000);
+    let z = null;
+    try { const resp = await fetch(url, Object.assign({ cache: 'no-store', signal: ab.signal }, K.lnaOpties(url))); z = resp.ok ? window.Zelfronde.lees(await resp.text()) : null; }
+    catch (e) { z = null; } finally { clearTimeout(klok); ZelfR.bezig = false; }
+    const vak = $('zelfronde'); if (!vak) return;
+    const r = window.Zelfronde.regels(z, Date.now());
+    vak.hidden = !r.length;
+    morphKinderen(vak, r.map((zin, i) => { const d = el('div', 'pantserHelpRegel', zin); d.dataset.sleutel = `${i}|${zin}`; return d; }));
   }
   // 678 (13 nov): DE ROLLEN VANZELF. Een telefoon die ARTEMIS ziet (met zijn JARVIS-toestel-id) en nog geen rol heeft, krijgt de rol uit de gemeten tabel op zijn
   // modelnummer (Rekrollen.vulVanzelf). Een rol die de eigenaar zelf koos blijft altijd staan; dit vult alleen lege rollen. Lokaal; niets gaat naar de telefoon.

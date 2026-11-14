@@ -363,6 +363,7 @@ zelf_bijwerken() {
   if ! grep -q 'artemis-rek' "$tmp" || ! grep -q 'ARTEMIS_REPO=' "$tmp"; then zeg "Bijwerken: het opgehaalde script lijkt niet op ARTEMIS; niets veranderd."; rm -f "$tmp"; return 1; fi
   if ARTEMIS_BRON="$base" bash "$tmp" --alleen-bestanden "$REK_MAP" "$BIN_SELF" >/dev/null 2>&1; then
     logregel "Bijgewerkt vanaf de site (http $code)."
+    date +%s >"$REK_MAP/laatst-bijgewerkt" 2>/dev/null; chmod 600 "$REK_MAP/laatst-bijgewerkt" 2>/dev/null || true   # 678: voor de zelfronde
     # 592g: herschrijf artemis.jsonc met de ZOJUIST opgehaalde generator (zelfherstel is de standaard). Zo landt een nieuw
     # config-formaat -- bv. elke rol lokaal i.p.v. alleen de default -- VANZELF op een al draaiende Chromebook, zonder dat
     # iemand opnieuw 'Lokaal model' hoeft te tikken. schrijf-jsonc is puur een bestand schrijven (geen start/venv/herstart).
@@ -534,7 +535,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
@@ -577,6 +578,9 @@ def herstart_als_nieuwer():
     # zou een eindeloze herstart-lus geven. Met de hash herstart hij ALLEEN bij een echte nieuwe versie; gelijk = niets doen.
     h = _hash(AREK)
     if not h or h == START_HASH: return
+    try:   # 678: de verse console maakt af wat Bijwerken verder doet (na-update), zonder dat iemand op de knop drukt
+        with open(os.path.join(REK, 'na-update'), 'w') as fh: fh.write(str(int(time.time())))
+    except Exception: pass
     if os.environ.get('INVOCATION_ID'):
         os._exit(0)   # onder systemd: Restart=always start de console meteen opnieuw met de nieuwe code
     try: subprocess.Popen([AREK, 'console'], stdin=subprocess.DEVNULL, start_new_session=True)
@@ -600,6 +604,19 @@ def schijfwacht():
     if (RONDE - LAATST_OPRUIM) < 30: return
     LAATST_OPRUIM = RONDE
     doe('opruimen')
+def leeft_pid(pad):
+    try:
+        with open(pad) as fh: pid = int(fh.read().strip() or '0')
+        if pid <= 0: return False
+        os.kill(pid, 0); return True
+    except Exception:
+        return False
+def waak_zorg():
+    # 678: de bewaker (artemis-rek waakbewaker) start een weggevallen console opnieuw. Een test zet ARTEMIS_GEEN_HERSTART: dan niets starten.
+    if os.environ.get('ARTEMIS_GEEN_HERSTART'): return
+    if leeft_pid(os.path.join(REK, 'waakbewaker.pid')): return
+    try: subprocess.Popen([AREK, 'waakbewaker'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception: pass
 def lus():
     # elke minuut: nieuwe telefoons zoeken; en ARTEMIS aanhouden als de gewenste stand "aan" is.
     # 583: NIET meer blind 'start' aanroepen (dat startte ARTEMIS elke minuut opnieuw, en ARTEMIS opende elke keer een
@@ -608,8 +625,13 @@ def lus():
     # 587: EN elke ~10 min zichzelf bijwerken vanaf de site (stil: alleen ONZE bestanden ophalen, geen venv-rebuild). Zo hoeft
     # niemand meer op Bijwerken te klikken voor een nieuwe versie -- herstart_als_nieuwer laadt de nieuwe code daarna vanzelf.
     global RONDE
+    if os.path.exists(os.path.join(REK, 'na-update')):
+        threading.Thread(target=doe, args=('na-update',), daemon=True).start()   # 678: een vanzelf geladen nieuwe versie afmaken
     while True:
         try:
+            waak_zorg()   # 678: de bewaker van de console in leven houden (die houdt op zijn beurt de console in leven)
+            if RONDE % 15 == 9:
+                threading.Thread(target=doe, args=('zelfronde',), daemon=True).start()   # 678 (14 nov): de rondes van Cowork, nu zelf; op een eigen draad (adb/relay kosten even)
             if RONDE % 10 == 0:
                 doe('zelf-bijwerken-stil')
             RONDE += 1
@@ -647,7 +669,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -959,6 +981,13 @@ class H(BaseHTTPRequestHandler):
             # 678 punt 22: alleen LEZEN -- welke rektelefoons ARTEMIS nu ziet (kabel/wifi/Tailscale), voor de lijst in Veronica.
             t = doe_args(['rek-aanwezig'], 45)
             self._cors_json(200, t if t.startswith('[') else '[]')
+        elif p.path == '/zelfronde.json':
+            # 678 (14 nov): de laatste zelfronde, alleen LEZEN, voor Meer in Veronica (CORS zoals /rek.json)
+            try:
+                with open(os.path.join(REK, 'zelfronde.json')) as fh: t = fh.read().strip()
+            except Exception:
+                t = ''
+            self._cors_json(200, t if t.startswith('{') else '{}')
         elif p.path == '/status.json':
             aan = os.path.exists(os.path.join(REK, 'artemis.pid'))
             self._schrijf(200, '{"console":true,"artemis":%s}' % ('true' if aan else 'false'), 'application/json')
@@ -1347,7 +1376,11 @@ class H(BaseHTTPRequestHandler):
             self._cors(200, ('Relay %s ingesteld door Veronica -- ARTEMIS leest de telefoons nu via de relay.' % ' en '.join(gedaan)) if gedaan else 'Niets ingesteld (Veronica gaf geen onderwerp of adres).')
             return
         cmd = (q.get('cmd', [''])[0]) if p.path == '/doe' else ''
-        if cmd in TOEGESTAAN: self._schrijf(200, doe(cmd))
+        if cmd in TOEGESTAAN:
+            try:   # 678: wanneer een MENS (Cowork of de eigenaar) voor het laatst een knop gebruikte -- voor de zelfronde; de lus komt hier nooit langs
+                with open(os.path.join(REK, 'laatste-klik'), 'w') as fh: fh.write(str(int(time.time())))
+            except Exception: pass
+            self._schrijf(200, doe(cmd))
         else: self._schrijf(400, 'onbekende opdracht')
 threading.Thread(target=lus, daemon=True).start()
 # 587: bind met korte herhaling. Na een zelf-herstart (herstart_als_nieuwer) start deze verse console terwijl de OUDE de poort
@@ -5619,6 +5652,131 @@ rek_aanwezig() {
   done
   printf ']\n'
 }
+# >>> ZELFRONDE (678, 14 nov: de lokale kant neemt het over als Cowork er niet bij kan)
+# Wat Cowork met de hand nakeek, kijkt ARTEMIS nu ZELF na, elke ~15 minuten (console-lus) of met de knop "Zelfronde nu": draait ARTEMIS,
+# werkt de console zichzelf bij, meldt elke rektelefoon zich bij de relay, werkt Claude door (laatste push), komt Cowork of de eigenaar
+# nog in de console, en draait de bewaker van de console. De uitslag staat in $REK_MAP/zelfronde.json (Veronica leest hem op Meer via
+# /zelfronde.json) en in het log; verandert er iets, dan EEN melding naar Veronica via de relay (niet 's nachts, 23-07).
+# ALLEEN LEZEN en ALLEEN VEILIG HERSTELLEN: wat hier hersteld wordt is precies wat ook een knop in de console zou doen (ARTEMIS opnieuw
+# laten proberen te starten). Nooit de F8, nooit iets op een telefoon installeren of wissen, nooit iets naar buiten behalve de melding.
+ZR_JSON_F="$REK_MAP/zelfronde.json"; ZR_TXT_F="$REK_MAP/zelfronde.txt"; ZR_SIG_F="$REK_MAP/zelfronde.sig"
+ZR_MENS_F="$REK_MAP/laatste-klik"; ZR_BIJGEWERKT_F="$REK_MAP/laatst-bijgewerkt"; ZR_WAAK_PID="$REK_MAP/waakbewaker.pid"
+ZR_ARTEMIS_HERPROBEER_S="${ZR_ARTEMIS_HERPROBEER_S:-7200}"   # na 3 mislukte starts: na twee uur zelf opnieuw (geen browsertabs-lus)
+ZR_BIJWERK_MAX_S="${ZR_BIJWERK_MAX_S:-10800}"                 # langer dan drie uur niet vanzelf bijgewerkt = aandacht
+ZR_MENS_MAX_S="${ZR_MENS_MAX_S:-21600}"                       # zes uur geen klik in de console = Cowork/eigenaar staat stil (alleen melden)
+zr_duur() {   # seconden -> "12 min" of "3 uur"
+  local d="${1:-0}"; [ "$d" -lt 0 ] 2>/dev/null && d=0
+  if [ "$d" -lt 5400 ]; then printf '%s min' "$((d / 60))"; else printf '%s uur' "$((d / 3600))"; fi
+}
+zr_epoch() { local t; t="$(head -1 "$1" 2>/dev/null | tr -d '\r\n ')"; case "$t" in ''|*[!0-9]*) echo "" ;; *) echo "$t" ;; esac; }
+zr_punt() {   # naam ok(true|false|null) zin
+  ZR_N=$((ZR_N + 1)); [ "$2" = false ] && ZR_NEE="${ZR_NEE}${ZR_NEE:+, }$1"
+  ZR_PUNTEN="${ZR_PUNTEN}${ZR_PUNTEN:+,}{\"naam\":$(json_s "$1"),\"ok\":$2,\"zin\":$(json_s "$3")}"
+  case "$2" in true) ZR_TEKST="${ZR_TEKST}OK   $1: $3"$'\n' ;; false) ZR_TEKST="${ZR_TEKST}NEE  $1: $3"$'\n' ;; *) ZR_TEKST="${ZR_TEKST}?    $1: $3"$'\n' ;; esac
+}
+zelfronde() {
+  local nu t d s idv naam sl jid m n=0 ok=0 nee="" repo tak nieuwste=0 leesbaar=0 sig oud uur
+  nu="$(date +%s)"; ZR_N=0; ZR_NEE=""; ZR_PUNTEN=""; ZR_TEKST=""
+  # 1. ARTEMIS -- en het enige herstel hier: na drie mislukte starts en twee uur rust de pogingenteller wissen (zoals de Start-knop doet)
+  if [ ! -f "$AANF" ]; then zr_punt artemis true "ARTEMIS staat uit; zo gekozen."
+  elif artemis_draait; then zr_punt artemis true "ARTEMIS draait."
+  elif [ -f "$REK_MAP/start-gestopt" ]; then
+    d=$(( nu - $(stat -c %Y "$REK_MAP/start-gestopt" 2>/dev/null || echo "$nu") ))
+    if [ "$d" -ge "$ZR_ARTEMIS_HERPROBEER_S" ]; then
+      rm -f "$REK_MAP/start-gestopt" "$REK_MAP/start-pogingen" 2>/dev/null || true
+      zr_punt artemis false "ARTEMIS startte niet en lag $(zr_duur "$d") stil; ik laat hem nu zelf opnieuw proberen (binnen een minuut)."
+    else
+      zr_punt artemis false "ARTEMIS startte drie keer niet; over $(zr_duur $((ZR_ARTEMIS_HERPROBEER_S - d))) probeer ik het zelf opnieuw. Waarom: kijk bij Log."
+    fi
+  else zr_punt artemis false "ARTEMIS draait nu niet; de console start hem binnen een minuut opnieuw."
+  fi
+  # 2. bijwerken: de console haalt elke ~10 min zelf de nieuwste versie (zelf-bijwerken-stil); hier alleen of dat ook lukt
+  if [ ! -s "$BRONF" ]; then zr_punt bijwerken null "Geen bron om bij te werken ingesteld (niet meegegeven bij de installatie)."
+  else
+    t="$(zr_epoch "$ZR_BIJGEWERKT_F")"
+    if [ -z "$t" ]; then zr_punt bijwerken false "Vanzelf bijwerken is nog niet gelukt sinds deze versie; kijk bij Log."
+    elif [ $((nu - t)) -gt "$ZR_BIJWERK_MAX_S" ]; then zr_punt bijwerken false "Vanzelf bijwerken lukt al $(zr_duur $((nu - t))) niet; kijk bij Log (vaak: geen internet)."
+    else zr_punt bijwerken true "Vanzelf bijgewerkt, $(zr_duur $((nu - t))) geleden nagekeken."
+    fi
+  fi
+  # 3. melden bij Veronica: per rektelefoon (nooit de F8) -- wat de knop "Melden bij Veronica: controle" laat zien
+  if command -v "$ADB" >/dev/null 2>&1; then
+    for s in $(verbonden); do
+      is_f8 "$s" && continue
+      idv="$(toestel_id "$s")"; toegestaan "$idv" || continue
+      naam="$(toestel_naam "$s")"; naam="${naam:-onbekend}"; sl="$(printf '%s' "$idv" | sha256sum | cut -c1-8)"; n=$((n + 1))
+      jid="$(jarvis_toestel_id "$s" "$sl")"
+      if [ -z "$jid" ]; then nee="${nee}${nee:+; }$naam: JARVIS antwoordt niet"; continue; fi
+      m="$(meld_van "$jid")"
+      case "$m" in ja*) ok=$((ok + 1)) ;; nee) nee="${nee}${nee:+; }$naam: meldt zich niet bij de relay" ;; *) : ;; esac
+    done
+  fi
+  if [ "$n" -eq 0 ]; then zr_punt melden null "Geen rektelefoon verbonden met deze Chromebook; melden kan ik nu niet nakijken."
+  elif [ -n "$nee" ]; then zr_punt melden false "$ok van $n rektelefoons melden zich. $nee. (Koppelen via de kabel probeert de console zelf, hoogstens eens per half uur per telefoon.)"
+  elif [ ! -s "$REK_ONDERWERP_F" ]; then zr_punt melden null "JARVIS draait op $n rektelefoons; of ze zich melden zie ik pas met het relay-onderwerp (open Meer in Veronica)."
+  else zr_punt melden true "Alle $n rektelefoons melden zich bij de relay."
+  fi
+  # 4. Claude: de laatste push op de gevolgde takken (zelfde bron als de Voortgang-knop)
+  while read -r repo tak; do
+    [ -n "$repo" ] || continue; t="$(voortgang_laatste "$repo" "$tak")"
+    case "$t" in ''|*[!0-9]*) continue ;; esac
+    leesbaar=$((leesbaar + 1)); [ "$t" -gt "$nieuwste" ] && nieuwste="$t"
+  done < <(voortgang_bronnen)
+  if [ "$leesbaar" -eq 0 ]; then zr_punt claude null "Of Claude doorwerkt zie ik niet (geen leesbare voortgang-bron)."
+  elif [ $(( (nu - nieuwste) / 60 )) -gt "$VOORTGANG_MAX_MIN" ]; then zr_punt claude false "Claude: al $(zr_duur $((nu - nieuwste))) geen push (grens $VOORTGANG_MAX_MIN min). Het bouwwerk staat mogelijk stil."
+  else zr_punt claude true "Claude werkt door: laatste push $(zr_duur $((nu - nieuwste))) geleden."
+  fi
+  # 5. Cowork of de eigenaar: de laatste knop in de console (alleen melden; ARTEMIS doet het nakijken intussen zelf)
+  t="$(zr_epoch "$ZR_MENS_F")"
+  if [ -z "$t" ]; then zr_punt cowork null "Nog geen knop in de console gezien."
+  elif [ $((nu - t)) -gt "$ZR_MENS_MAX_S" ]; then zr_punt cowork false "Cowork of de eigenaar: al $(zr_duur $((nu - t))) geen knop in de console. Het nakijken gaat door; alleen wat ARTEMIS niet zelf mag, wacht."
+  else zr_punt cowork true "Cowork of de eigenaar was $(zr_duur $((nu - t))) geleden in de console."
+  fi
+  # 6. de bewaker van de console (start een weggevallen console opnieuw)
+  if leeft "$ZR_WAAK_PID"; then zr_punt bewaker true "De bewaker van de console draait."
+  else zr_punt bewaker null "De bewaker van de console draait niet; de console start hem binnen een minuut."
+  fi
+  printf '{"t":%s,"n":%s,"nee":%s,"punten":[%s]}\n' "$nu" "$ZR_N" "$(printf '%s' "$ZR_NEE" | awk -F', ' 'NF{print NF; exit} END{if(!NR)print 0}')" "$ZR_PUNTEN" >"$ZR_JSON_F.tmp" 2>/dev/null \
+    && mv -f "$ZR_JSON_F.tmp" "$ZR_JSON_F" 2>/dev/null; chmod 600 "$ZR_JSON_F" 2>/dev/null || true
+  printf 'Zelfronde %s\n%s' "$(date -d "@$nu" '+%d-%m %H:%M' 2>/dev/null)" "$ZR_TEKST" >"$ZR_TXT_F" 2>/dev/null; chmod 600 "$ZR_TXT_F" 2>/dev/null || true
+  logregel "Zelfronde: $ZR_N punten nagekeken$([ -n "$ZR_NEE" ] && echo ", aandacht voor: $ZR_NEE" || echo ", niets dat aandacht vraagt")."
+  # EEN melding naar Veronica, alleen als het lijstje aandachtspunten VERANDERT, en niet 's nachts (dan blijft het oude lijstje staan en komt de melding 's ochtends)
+  sig="${ZR_NEE:-niets}"; oud="$(head -1 "$ZR_SIG_F" 2>/dev/null)"; uur="${ZR_UUR:-$(date +%H)}"; uur=$((10#${uur:-12}))
+  if [ "$sig" != "${oud:-niets}" ] && [ "$uur" -ge 7 ] && [ "$uur" -lt 23 ]; then
+    printf '%s\n' "$sig" >"$ZR_SIG_F" 2>/dev/null; chmod 600 "$ZR_SIG_F" 2>/dev/null || true
+    if [ -n "$ZR_NEE" ]; then relay_meld "Zelfronde: aandacht nodig voor $ZR_NEE. Details op Meer in Veronica of in de console (Zelfronde nu)."
+    else relay_meld "Zelfronde: alles weer in orde."; fi
+  fi
+  printf '%s' "$ZR_TEKST"
+}
+# De BEWAKER: een klein bash-lusje (slaapt bijna altijd) dat elke minuut kijkt of de console antwoordt, en hem na twee gemiste keren
+# opnieuw start -- onder systemd met een restart, anders met een verse console. De console houdt op zijn beurt de bewaker in leven.
+# Zo komt een weggevallen console terug zonder dat iemand de browser of de terminal nodig heeft.
+waakbewaker() {
+  leeft "$ZR_WAAK_PID" && { zeg "De bewaker draait al."; return 0; }
+  printf '%s' "$$" >"$ZR_WAAK_PID"; chmod 600 "$ZR_WAAK_PID" 2>/dev/null || true
+  local gemist=0
+  while :; do
+    sleep "${WAAK_SLAAP_S:-60}"
+    [ "$(head -1 "$ZR_WAAK_PID" 2>/dev/null)" = "$$" ] || exit 0   # een nieuwere bewaker nam het over
+    if command -v curl >/dev/null 2>&1 && curl -fsS -m 5 -o /dev/null "http://127.0.0.1:$CONSOLE_POORT/status.json" 2>/dev/null; then gemist=0; continue; fi
+    gemist=$((gemist + 1)); [ "$gemist" -ge 2 ] || continue
+    gemist=0
+    logregel "Bewaker: de console antwoordde twee minuten niet; ik start hem opnieuw."
+    if command -v systemctl >/dev/null 2>&1 && systemctl --user is-enabled --quiet artemis-rek.service 2>/dev/null; then systemctl --user restart artemis-rek.service >/dev/null 2>&1 || true
+    else setsid "$BIN_SELF/artemis-rek" console </dev/null >>"$REK_MAP/console.log" 2>&1 & fi
+  done
+}
+# Na een nieuwe versie (herstart_als_nieuwer zette het merkteken): afmaken wat de Bijwerken-knop verder nog doet -- de venv nalopen
+# (alleen opnieuw bouwen als hij niet op 3.12 staat) en de startpogingen van ARTEMIS wissen, zodat de console hem vanzelf weer opstart.
+na_update() {
+  rm -f "$REK_MAP/na-update" 2>/dev/null || true
+  zorg_venv >/dev/null 2>&1 || true
+  rm -f "$REK_MAP/start-pogingen" "$REK_MAP/start-gestopt" 2>/dev/null || true
+  logregel "Nieuwe versie vanzelf geladen; venv nagelopen, ARTEMIS start binnen een minuut weer als hij aan stond."
+}
+# <<< ZELFRONDE
+
 schermenwand() {
   local eerste=1 s id naam reden
   printf '['
@@ -5933,6 +6091,9 @@ case "${1:-status}" in
   motor-meet) motor_meet ;;                   # 678 stap 1b: echte modelsnelheid meten (llama-bench, CPU, grote kernen), nooit de F8
   kabel-koppel) kabel_koppel ;;                  # 678 (13 nov): het onderwerp van Veronica via adb aan JARVIS geven (geen tik op de telefoon)
   kabel-koppel-auto) kabel_koppel_auto >/dev/null 2>&1 || true ;;
+  zelfronde) zelfronde ;;                        # 678 (14 nov): de rondes die Cowork met de hand deed, nu zelf (alleen lezen + veilig herstel)
+  waakbewaker) waakbewaker ;;                    # 678: start een weggevallen console opnieuw
+  na-update) na_update ;;                        # 678: afmaken wat Bijwerken verder doet, na een vanzelf geladen nieuwe versie
   meld-status) meld_status ;;                    # 678 (13 nov): meldt elke rektelefoon zich bij de relay? (alleen lezen)
   motor-status) motor_status ;;                  # 678: motor (8081) en spraak (8082) per rektelefoon, alleen lezen
   duurtest-start) duurtest_start ;;              # 678: 24-uurs duurtest: elke 5 minuten een meetregel per telefoon
