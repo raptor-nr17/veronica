@@ -566,6 +566,26 @@ def brein_gezond():
 def brein_forward():
     # via artemis-rek zelf (die kent adb), naar het bewaarde serienummer van de brein-telefoon
     return 'OK' in doe_args(['brein-doorsturing'], 15)
+# 678 (15 nov, 19:45): VERONICA ZONDER CODE AAN HET BREIN. Een eigen brein-sleutel (32 hex, 600, alleen hier) gaat met EEN klik op de knop in deze
+# console mee naar Veronica, achter het hekje (#artemis-brein=...; een hekje gaat nooit naar een server). /veronica-open antwoordt ALLEEN als de klik van
+# deze console-pagina zelf komt (Referer = dit adres): een andere website kan de sleutel dus niet ophalen. /brein/chat neemt de rij-code OF deze sleutel.
+def brein_sleutel():
+    pad = os.path.join(REK, 'brein-sleutel')
+    try:
+        with open(pad) as fh: k = fh.read().strip()
+        if re.fullmatch(r'[0-9a-f]{32}', k): return k
+    except Exception: pass
+    k = os.urandom(16).hex()
+    with open(pad, 'w') as fh: fh.write(k + '\n')
+    os.chmod(pad, 0o600)
+    return k
+def veronica_adres():
+    # het adres van Veronica = de bron waar ARTEMIS vandaan komt (ARTEMIS_BRON bij de installatie); alleen https
+    try:
+        with open(os.path.join(REK, 'bron')) as fh: b = fh.read().strip().rstrip('/')
+    except Exception:
+        return ''
+    return b + '/' if re.fullmatch(r'https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~-]+)*', b) else ''
 def brein_tekst(m):
     # 678 (15 nov): het antwoord zonder denkstappen; bleef het antwoord leeg (alles ging op aan nadenken), dan het nadenken zelf, eerlijk gemarkeerd
     t = re.sub(r'(?s)<think>.*?</think>', '', str((m or {}).get('content') or '')).strip()
@@ -723,6 +743,7 @@ button{{font-size:18px;padding:12px 16px;margin:6px 6px 6px 0;border:0;border-ra
 button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;padding:12px;border-radius:10px;white-space:pre-wrap;min-height:120px}}
 .rij{{display:flex;flex-wrap:wrap}}a{{color:#8fb7ff}}</style></head><body>
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
+<p><a id=veronicaBrein href="/veronica-open" target=_blank style="display:inline-block;font-size:20px;padding:14px 18px;border-radius:12px;background:#1f6f43;color:#fff;text-decoration:none;min-height:48px">&#129504; Open Veronica, gekoppeld aan het brein</a><br><span style="font-size:18px">Een klik: Veronica op deze computer typt daarna rechtstreeks naar de lokale AI. Geen code nodig.</span></p>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
 <button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=brein-rol>Brein op de brein-telefoon (ook draadloos, veegt hem schoon)</button><button data-cmd=brein-kabel>Brein op de telefoon aan de USB-kabel (veegt hem schoon)</button><button data-cmd=brein-start>Brein starten (typen naar een telefoon)</button><button data-cmd=brein-status>Brein: status</button><button data-cmd=brein-stop>Brein stoppen</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
@@ -1044,6 +1065,15 @@ class H(BaseHTTPRequestHandler):
         p = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(p.query)
         if p.path in ('/', '/index.html'):
             self._schrijf(200, PAGINA.format(ap=int(os.environ.get('ARTEMIS_POORT', '8000'))), 'text/html; charset=utf-8')
+        elif p.path == '/veronica-open':
+            eigen = 'http://%s/' % (self.headers.get('Host') or '')
+            if not (self.headers.get('Referer') or '').startswith(eigen) or eigen == 'http:///':
+                self._schrijf(403, 'Open dit via de knop in de ARTEMIS-console op deze computer.'); return
+            v = veronica_adres()
+            if not v:
+                self._schrijf(200, 'Ik weet het adres van Veronica niet (de installatie gaf geen bron). Open Veronica zelf; dit lukt na de volgende installatie met de ene regel.'); return
+            self.send_response(302); self.send_header('Location', v + '#artemis-brein=' + brein_sleutel())
+            self.send_header('Cache-Control', 'no-store'); self.send_header('Referrer-Policy', 'no-referrer'); self.send_header('Content-Length', '0'); self.end_headers()
         elif p.path == '/rek.json':
             # 678 punt 22: alleen LEZEN -- welke rektelefoons ARTEMIS nu ziet (kabel/wifi/Tailscale), voor de lijst in Veronica.
             t = doe_args(['rek-aanwezig'], 45)
@@ -1438,13 +1468,18 @@ class H(BaseHTTPRequestHandler):
             ln = int(self.headers.get('Content-Length', 0) or 0)
             try: d = json.loads(self.rfile.read(min(ln, 200000)).decode('utf-8', 'replace') if ln else '{}')
             except Exception: d = {}
-            c = str(d.get('code') or '')
+            c = str(d.get('code') or ''); sl = str(d.get('sleutel') or '')
             try:
                 with open(os.path.join(REK, 'rek-token.conf')) as fh: tok = fh.read().strip()
             except Exception:
                 tok = ''
-            if not tok or not c or not hmac.compare_digest(c.encode(), tok.encode()):
-                self._cors_json(403, json.dumps({'fout': 'De rij-code klopt niet (open Meer in Veronica).'})); return
+            try:
+                with open(os.path.join(REK, 'brein-sleutel')) as fh: bsl = fh.read().strip()
+            except Exception:
+                bsl = ''
+            goed = (tok and c and hmac.compare_digest(c.encode(), tok.encode())) or (bsl and sl and hmac.compare_digest(sl.encode(), bsl.encode()))
+            if not goed:
+                self._cors_json(403, json.dumps({'fout': 'Niet gekoppeld: klik in de ARTEMIS-console op "Open Veronica, gekoppeld aan het brein".'})); return
             msgs = [m for m in (d.get('messages') or []) if isinstance(m, dict) and m.get('role') in ('system', 'user', 'assistant') and isinstance(m.get('content'), str)][-24:]
             if not msgs:
                 self._cors_json(400, json.dumps({'fout': 'Geen vraag.'})); return
