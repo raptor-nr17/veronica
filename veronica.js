@@ -7315,7 +7315,9 @@
       if (!r.ok) { if (r.status === 503) BreinV.antwoordt = false; return null; }
       const d = await r.json();
       const tekst = K.zonderDenken(String(d.tekst || '')).trim();
-      return tekst ? { tekst, tps: typeof d.tps === 'number' ? d.tps : null, ms: Number(d.ms) || 0 } : null;
+      const c = d.controle && typeof d.controle === 'object' && ['klopt', 'twijfel', 'onduidelijk'].includes(d.controle.oordeel)
+        ? { oordeel: d.controle.oordeel, zin: String(d.controle.zin || '').slice(0, 240), model: String(d.controle.model || '').slice(0, 60) } : null;
+      return tekst ? { tekst, tps: typeof d.tps === 'number' ? d.tps : null, ms: Number(d.ms) || 0, controle: c } : null;
     } catch (e) { return null; } finally { clearTimeout(klok); }
   }
   async function breinHoofd(t) {
@@ -7333,7 +7335,11 @@
       BreinV.geschiedenis = BreinV.geschiedenis.slice(-8);
       BreinV.laatsteTps = a.tps;
       const snel = a.tps ? `, ${String(Math.round(a.tps * 10) / 10).replace('.', ',')} tok/s` : '';
-      HoofdV.trap = { zin: `Antwoord (brein${BreinV.telefoon ? ` op ${BreinV.telefoon}` : ''}${snel}): ${a.tekst}`, soort: 'klaar', tekst: a.tekst }; vraagStatusTik();
+      // 678 (15 nov): het oordeel van de controle-telefoon (een ander model) komt ERBIJ; bij twijfel zegt Veronica dat eerlijk
+      const ctl = a.controle ? (a.controle.oordeel === 'klopt' ? ` · nagekeken door de controle${a.controle.model ? ` (${a.controle.model})` : ''}: klopt`
+        : a.controle.oordeel === 'twijfel' ? ` · LET OP, de controle${a.controle.model ? ` (${a.controle.model})` : ''} twijfelt: ${a.controle.zin || 'geen reden gegeven'}`
+          : ' · de controle gaf geen duidelijk oordeel') : '';
+      HoofdV.trap = { zin: `Antwoord (brein${BreinV.telefoon ? ` op ${BreinV.telefoon}` : ''}${snel}): ${a.tekst}${ctl}`, soort: a.controle && a.controle.oordeel === 'twijfel' ? 'fout' : 'klaar', tekst: a.tekst }; vraagStatusTik();
       spreek(a.tekst.replace(/[#*_`>]+/g, ' ').slice(0, 600), 'antwoord');
       return 'brein';
     } finally { BreinV.bezig = false; }
@@ -7410,7 +7416,7 @@
   function vraagStatusTik() {
     const p = $('vraagStatus');
     if (!p) return;
-    voorleesZet(HoofdV.trap ? (HoofdV.trap.soort === 'klaar' ? HoofdV.trap.tekst : '') : (() => { const tk = HoofdV.vraagId && S.taken.find((x) => x.id === HoofdV.vraagId); return tk && tk.status === 'klaar' ? String(tk.uitkomst || '') : ''; })());
+    voorleesZet(HoofdV.trap ? (HoofdV.trap.tekst || '') : (() => { const tk = HoofdV.vraagId && S.taken.find((x) => x.id === HoofdV.vraagId); return tk && tk.status === 'klaar' ? String(tk.uitkomst || '') : ''; })());
     if (HoofdV.trap) { if (p.textContent !== HoofdV.trap.zin) p.textContent = HoofdV.trap.zin; p.className = HoofdV.trap.soort; p.hidden = false; return; }   // 678: de trap antwoordt in dit veld
     if (!HoofdV.vraagId) { if (!p.hidden) { p.hidden = true; p.className = ''; } return; }
     const taak = S.taken.find((x) => x.id === HoofdV.vraagId);
