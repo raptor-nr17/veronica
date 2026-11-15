@@ -426,11 +426,14 @@
   // 638: ZELF DE OUDE RIJ-CODE HERSTELLEN. Een werker meldt in zijn hartslag een eenrichtings-vinger van zijn rij-code (codeVinger).
   // Wijkt die af van de vinger van de HUIDIGE code, dan heeft hij een oude code: een andere telefoon zet hem telkens een minuut buiten (552). Dan
   // stuurt Veronica die ENE telefoon een word-werker-roep met alleenCode (527 CODE_OVERNEMEN): de telefoon neemt de huidige code over
-  // zonder dat zijn rol verandert. Alleen een WERKER (nooit de beheerder, die heeft de juiste code), met een geldige, afwijkende, niet-
+  // zonder dat zijn rol verandert. Alleen een REKTELEFOON (nooit de beheerder, die heeft de juiste code, en nooit de dagelijkse telefoon), met een geldige, afwijkende, niet-
   // lege vinger, hoogstens eens per kwartier. Lege vinger = oude JARVIS zonder dit veld: overslaan. Geen code = niets te vergelijken.
   async function codeHerstel(h) {
     if (!h || !h.id || !S.code || !window.Hartslag || !window.Hartslag.codeVinger || !S.ntfy || !S.ntfy.onderwerp) return;
-    if (!h.codeVinger || h.voorkeur === 'kern' || h.rol === 'baas') return;   // geen vinger, of het is de beheerder: met rust laten
+    // 678 (15 nov): NIET meer overslaan op rol 'baas'. Een rektelefoon die alleen via de kabel gekoppeld is (onderwerp + relay, geen
+    // rij-code) leidt zijn eigen rij van een en meldt rol 'baas' -- zo kon de proeftelefoon zijn stem en oor (sleutel = zijn rij-code) niet
+    // laten nakijken. Alleen de BEHEERDER (voorkeur kern) en de dagelijkse telefoon blijven altijd met rust.
+    if (!h.codeVinger || h.voorkeur === 'kern' || h.dagelijks) return;   // geen vinger, de beheerder of de dagelijkse telefoon: met rust laten
     const sleutel = `${S.ntfy.onderwerp}:${S.code}`;
     if (CodeHerstelV.vingerCode !== sleutel) { CodeHerstelV.vinger = await window.Hartslag.codeVinger(S.ntfy.onderwerp, S.code); CodeHerstelV.vingerCode = sleutel; }
     if (!CodeHerstelV.vinger || h.codeVinger === CodeHerstelV.vinger) return;   // de code klopt al, of we konden geen vinger maken

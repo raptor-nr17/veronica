@@ -2332,7 +2332,7 @@ jarvis_spraak_bewijs() {   # $1 serienummer -> een zin
 SPRAAK_TEST_F="$REK_MAP/spraak-test.txt"
 jarvis_spraak_test() {
   command -v "$ADB" >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || { zeg "Rondgang: adb of curl ontbreekt."; return 0; }
-  local tok p s w t0 t1 t2 uit zin="Goedemorgen. De stem en het oor van het rek werken samen."
+  local tok p s w c t0 t1 t2 uit stat rol vk hs stem oor zin="Goedemorgen. De stem en het oor van het rek werken samen."
   [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
   [ -n "${tok:-}" ] || { zeg "Rondgang: ARTEMIS kent de rij-code nog niet. Open Meer in Veronica op deze computer: die geeft hem vanzelf door (alleen op deze computer). Tot dan zie je bij 'Motor en spraak: status' wat adb laat zien."; return 0; }
   p="$(head -1 "$JARVIS_PROEF_F" 2>/dev/null | tr -d '\r\n ')"
@@ -2341,40 +2341,75 @@ jarvis_spraak_test() {
     [ "$(toestel_id "$s")" = "$p" ] || continue
     is_f8 "$s" && return 0
     w="$(mktemp -d)" || return 0
-    "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
-    timeout 6 "$ADB" -s "$s" forward tcp:"$MOTOR_LOK_POORT" tcp:8082 >/dev/null 2>&1 || { rm -rf "$w"; zeg "Rondgang: geen doorsturing naar de telefoon."; return 0; }
-    t0="$(date +%s%3N)"
-    curl -fsS -m 60 -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' --data "{\"tekst\":\"$zin\"}" "http://127.0.0.1:$MOTOR_LOK_POORT/zeg" -o "$w/zeg.wav" 2>/dev/null
-    t1="$(date +%s%3N)"
-    [ -s "$w/zeg.wav" ] && curl -fsS -m 90 -H "Authorization: Bearer $tok" -H 'Content-Type: audio/wav' --data-binary @"$w/zeg.wav" "http://127.0.0.1:$MOTOR_LOK_POORT/luister" -o "$w/luister.json" 2>/dev/null
-    t2="$(date +%s%3N)"
-    "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
-    uit="$(W="$w" ZIN="$zin" MS1="$((t1 - t0))" MS2="$((t2 - t1))" python3 -I - <<'PY' 2>/dev/null
+    # STAP 1 -- /health MET de rij-code. Elke uitkomst krijgt een eigen, eerlijke zin; pas bij 200 gaat de rondgang verder.
+    c="$(tel_code "$s" 8082 /health "$tok" "$w/h.json")"
+    case "$c" in
+      200) : ;;
+      401)
+        # de rij-code van Veronica is niet de sleutel van deze telefoon: zijn sleutel is ZIJN rij-code (motor_token = Web.code). Rol en voorkeur
+        # staan zonder code in /jarvis/status (8080), zodat de zin zegt wat er gebeurt en wat er (eventueel) moet gebeuren.
+        tel_code "$s" 8080 /jarvis/status "" "$w/st.json" >/dev/null
+        stat="$(ST="$w/st.json" python3 -I -c 'import json,os
+try: j=json.load(open(os.environ["ST"]))
+except Exception: j={}
+print(str(j.get("rol") or "?"), str(j.get("voorkeur") or "?"))' 2>/dev/null)"; rol="${stat%% *}"; vk="${stat##* }"
+        if [ "$vk" = kern ]; then hs="Deze telefoon staat als BEHEERDER van een eigen rij (voorkeur kern); Veronica laat een beheerder met rust. Tik in Veronica bij deze telefoon op 'Maak werker' -- dan neemt hij de rij-code van Veronica over -- en druk deze knop daarna opnieuw."
+        else hs="Deze telefoon volgt nog een eigen rij (rol ${rol:-?}). Veronica zet dat vanzelf recht zodra ze open staat (zij stuurt hem de rij-code via de brievenbus; dat duurt een paar minuten). Druk deze knop daarna opnieuw; lukt het na een kwartier nog niet, tik dan in Veronica bij deze telefoon op 'Maak werker'."; fi
+        uit="NIET GETEST: de rij-code van Veronica past niet op deze telefoon (de spraakserver zegt 401: verkeerde sleutel). De stem en het oor zelf kunnen best draaien. $hs" ;;
+      429) uit="NIET GETEST: de telefoon laat even niemand toe (te vaak een verkeerde code). Druk over een minuut opnieuw." ;;
+      000) uit="NIET GETEST: geen verbinding met poort 8082 via de doorsturing (adb forward). Staat de telefoon nog aan de kabel of in Tailscale?" ;;
+      *) uit="NIET GETEST: de spraakserver gaf een onverwacht antwoord (HTTP $c)." ;;
+    esac
+    if [ "$c" = 200 ]; then
+      stem="$(sed -n 's/.*"stem" *: *"\([a-z-]*\)".*/\1/p' "$w/h.json" | head -1)"; oor="$(sed -n 's/.*"oor" *: *"\([a-z-]*\)".*/\1/p' "$w/h.json" | head -1)"
+      if [ "$stem" != klaar ]; then
+        uit="Stem: staat NIET klaar (${stem:-onbekend}). Oor: ${oor:-onbekend}. Oordeel: stem werkt niet -- kijk bij 'Motor en spraak: status' en in JARVIS op de telefoon waar hij op wacht (wifi en lader voor het model)."
+      else
+        # STAP 2 -- de rondgang: /zeg maakt de zin, /luister verstaat diezelfde WAV weer.
+        "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
+        timeout 6 "$ADB" -s "$s" forward tcp:"$MOTOR_LOK_POORT" tcp:8082 >/dev/null 2>&1
+        t0="$(date +%s%3N)"
+        c="$(curl -sS -m 60 -o "$w/zeg.wav" -w '%{http_code}' -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' --data "{\"tekst\":\"$zin\"}" "http://127.0.0.1:$MOTOR_LOK_POORT/zeg" 2>/dev/null)"
+        t1="$(date +%s%3N)"
+        [ "$c" = 200 ] || { cp "$w/zeg.wav" "$w/zeg.fout" 2>/dev/null; : >"$w/zeg.wav"; }
+        if [ "$c" = 200 ] && [ "$oor" = klaar ]; then
+          curl -sS -m 90 -o "$w/luister.json" -H "Authorization: Bearer $tok" -H 'Content-Type: audio/wav' --data-binary @"$w/zeg.wav" "http://127.0.0.1:$MOTOR_LOK_POORT/luister" 2>/dev/null
+        fi
+        t2="$(date +%s%3N)"
+        "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
+        uit="$(W="$w" ZIN="$zin" CODE="$c" OOR="${oor:-onbekend}" MS1="$((t1 - t0))" MS2="$((t2 - t1))" python3 -I - <<'PY' 2>/dev/null
 import os, json, re, struct
-w = os.environ['W']; zin = os.environ['ZIN']; ms1 = int(os.environ['MS1']); ms2 = int(os.environ['MS2'])
+w = os.environ['W']; zin = os.environ['ZIN']; ms1 = int(os.environ['MS1']); ms2 = int(os.environ['MS2']); code = os.environ['CODE']; oor = os.environ['OOR']
 def woorden(t): return re.findall(r"[a-zà-ÿ0-9]+", t.lower())
 try:
     b = open(os.path.join(w, 'zeg.wav'), 'rb').read()
 except Exception:
     b = b''
 if len(b) < 44 or b[:4] != b'RIFF' or b[8:12] != b'WAVE':
-    print('Stem: GEEN geluid terug (staat de stem klaar? zie Motor en spraak: status). Oor: niet getest.'); raise SystemExit(0)
+    reden = ''
+    try: reden = json.load(open(os.path.join(w, 'zeg.fout'))).get('error', {}).get('message', '')
+    except Exception: pass
+    print('Stem: GEEN geluid terug (HTTP %s%s). Oor: niet getest. Oordeel: stem werkt niet.' % (code, (': ' + reden[:120]) if reden else '')); raise SystemExit(0)
 rate = struct.unpack('<I', b[24:28])[0]; bps = struct.unpack('<H', b[34:36])[0] or 16; kan = struct.unpack('<H', b[22:24])[0] or 1
 sec = (len(b) - 44) / float(max(1, rate * kan * bps // 8))
 stem = 'Stem: %.1f s spraak (%d Hz) in %.1f s gemaakt.' % (sec, rate, ms1 / 1000.0)
+if oor != 'klaar':
+    print(stem + ' Oor: staat NIET klaar (%s). Oordeel: stem werkt, oor niet.' % oor); raise SystemExit(0)
 try:
     t = json.load(open(os.path.join(w, 'luister.json'))).get('tekst')
 except Exception:
     t = None
 if not isinstance(t, str):
-    print(stem + ' Oor: GEEN tekst terug (staat het oor klaar?). Oordeel: stem werkt, oor niet.'); raise SystemExit(0)
+    print(stem + ' Oor: GEEN tekst terug. Oordeel: stem werkt, oor niet.'); raise SystemExit(0)
 doel = woorden(zin); kreeg = set(woorden(t)); goed = sum(1 for x in doel if x in kreeg)
 oordeel = 'goed' if goed >= 0.8 * len(doel) else ('twijfel' if goed >= 0.5 * len(doel) else 'slecht')
 print('%s Oor: verstond "%s" in %.1f s (%d van %d woorden goed). Oordeel: %s.' % (stem, t.strip()[:160], ms2 / 1000.0, goed, len(doel), oordeel))
 PY
 )"
+        [ -n "$uit" ] || uit="Rondgang mislukt: geen uitslag (python3 ontbreekt?)."
+      fi
+    fi
     rm -rf "$w"
-    [ -n "$uit" ] || uit="Rondgang mislukt: geen uitslag (python3 ontbreekt?)."
     printf '%s %s: %s\n' "$(date '+%d-%m %H:%M')" "$(toestel_naam "$s")" "$uit" >"$SPRAAK_TEST_F"; chmod 600 "$SPRAAK_TEST_F" 2>/dev/null || true
     zeg "Rondgang op de proeftelefoon ($(toestel_naam "$s")): $uit"
     return 0
@@ -5791,13 +5826,25 @@ tel_http() {   # $1 serienummer, $2 poort op de telefoon, $3 pad, $4 token (opti
   [ "$rc" -eq 0 ] && [ -n "$out" ] && printf '%s' "$out"
   return 0
 }
+# 678 (15 nov): als tel_http, maar geeft de HTTP-STATUS terug (000 = geen verbinding) en zet de body in een bestand. Zo kan ARTEMIS een
+# verkeerde rij-code (401) onderscheiden van "niets draait" (000) en "niet klaar" (503).
+tel_code() {   # $1 serienummer, $2 poort, $3 pad, $4 token (mag leeg), $5 bestand voor de body -> drie cijfers
+  local s="$1" p="$2" pad="$3" tok="${4:-}" uit="$5" c
+  "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
+  timeout 6 "$ADB" -s "$s" forward tcp:"$MOTOR_LOK_POORT" tcp:"$p" >/dev/null 2>&1 || { printf '000'; return 0; }
+  if [ -n "$tok" ]; then c="$(curl -sS -m 6 -o "$uit" -w '%{http_code}' -H "Authorization: Bearer $tok" "http://127.0.0.1:$MOTOR_LOK_POORT$pad" 2>/dev/null)"
+  else c="$(curl -sS -m 6 -o "$uit" -w '%{http_code}' "http://127.0.0.1:$MOTOR_LOK_POORT$pad" 2>/dev/null)"; fi
+  "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
+  case "$c" in [0-9][0-9][0-9]) printf '%s' "$c" ;; *) printf '000' ;; esac
+}
 motor_staat_van() {   # $1 serienummer -> "staat|tps" (staat: klaar|laden|uit|fout|geen-code|niets) ; tps leeg als onbekend
   local s="$1" tok="" body staat tps
   [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
   body="$(tel_http "$s" 8081 /health "$tok")"
   if [ -z "$body" ]; then
     if [ -z "$tok" ]; then body="$(tel_http "$s" 8081 /health "")"; [ -n "$body" ] || { printf 'geen-code|'; return 0; }
-    else printf 'niets|'; return 0; fi
+    else local f c; f="$(mktemp)"; c="$(tel_code "$s" 8081 /health "$tok" "$f")"; rm -f "$f"
+      case "$c" in 401) printf 'code-past-niet|' ;; 429) printf 'even-dicht|' ;; *) printf 'niets|' ;; esac; return 0; fi
   fi
   staat="$(printf '%s' "$body" | sed -n 's/.*"staat" *: *"\([a-z]*\)".*/\1/p' | head -1)"
   tps="$(printf '%s' "$body" | sed -n 's/.*"decode_tokens_per_second" *: *\([0-9.]*\).*/\1/p' | head -1)"
@@ -5807,7 +5854,12 @@ spraak_staat_van() {   # $1 serienummer -> "stem|oor" (klaar|laden|uit|fout|niet
   local s="$1" tok="" body stem oor
   [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
   body="$(tel_http "$s" 8082 /health "$tok")"
-  [ -n "$body" ] || { printf 'niets|niets'; return 0; }
+  if [ -z "$body" ]; then
+    # 678 (15 nov): waarom niets? Een verkeerde rij-code (401) is iets anders dan een spraakserver die niet draait.
+    local f c; f="$(mktemp)"; c="$(tel_code "$s" 8082 /health "$tok" "$f")"; rm -f "$f"
+    case "$c" in 401) printf 'code-past-niet|code-past-niet' ;; 429) printf 'even-dicht|even-dicht' ;; *) printf 'niets|niets' ;; esac
+    return 0
+  fi
   stem="$(printf '%s' "$body" | sed -n 's/.*"stem" *: *"\([a-z]*\)".*/\1/p' | head -1)"; oor="$(printf '%s' "$body" | sed -n 's/.*"oor" *: *"\([a-z]*\)".*/\1/p' | head -1)"
   printf '%s|%s' "${stem:-niets}" "${oor:-niets}"
 }
@@ -5828,6 +5880,8 @@ motor_status() {
       laden) hint=" -- het model wordt geladen; even wachten" ;;
       uit) hint=" -- zet in Veronica 'Motor aan' (op wifi en aan de lader)" ;;
       geen-code) hint=" -- de motor vraagt de rij-code: zet die in het veld \"Rij-code\"" ;;
+      code-past-niet) hint=" -- de rij-code van Veronica past niet op deze telefoon (hij volgt nog een eigen rij); Veronica zet dat vanzelf recht zodra ze open staat, anders in Veronica bij deze telefoon 'Maak werker'" ;;
+      even-dicht) hint=" -- te vaak een verkeerde code; de telefoon laat even niemand toe (een minuut)" ;;
       fout) hint=" -- de motor meldt een fout; kijk in Veronica bij deze telefoon" ;;
       *) hint=" -- geen antwoord van de motor (staat JARVIS aan? is de motor aangezet?)" ;;
     esac
