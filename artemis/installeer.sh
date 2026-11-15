@@ -740,6 +740,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <input id=vgToken type=password autocomplete=off spellcheck=false placeholder="leestoken (privé-repo, optioneel)" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:260px;min-height:48px">
 <button id=vgBewaar>Bewaar voortgang</button></p>
 <p style="margin-top:6px">Rij-code (laat ARTEMIS de EIGEN motor van een rektelefoon op poort 8081 gebruiken als lokaal model; staat alleen hier, 600): <input id=rijCode type=password autocomplete=off spellcheck=false placeholder="rij-code" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:200px;min-height:48px"> <button id=rijBewaar>Bewaar rij-code</button></p>
+<p style="margin-top:6px">Brein-telefoon (zijn SERIENUMMER, uit Instellingen &gt; Over de telefoon &gt; Statusinformatie; nooit de F8): <input id=breinSerie type=text autocomplete=off spellcheck=false placeholder="serienummer" style="font-size:18px;padding:12px;border-radius:10px;border:1px solid #233;background:#0a0f1e;color:#e8ecf5;min-width:200px;min-height:48px"> <button id=breinSerieBewaar>Zet het brein op deze telefoon</button></p>
 <pre id=uit>Klaar. Kies een knop.</pre>
 <pre id=meetUit hidden></pre>
 <p style="margin:8px 0 2px;color:#8aa">Live (Log/Status vernieuwen hier, zonder je knop-uitkomst te overschrijven):</p>
@@ -834,6 +835,16 @@ if(rjb)rjb.addEventListener('click',async()=>{{
     const r=await fetch('/rij-code',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'code='+encodeURIComponent(code)}});
     uit.textContent=nu()+' — '+(await r.text());
     document.getElementById('rijCode').value='';
+  }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
+}});
+// 678 (15 nov): het serienummer van de brein-telefoon kiezen; de console start meteen een poging (op de achtergrond).
+const bsb=document.getElementById('breinSerieBewaar');
+if(bsb)bsb.addEventListener('click',async()=>{{
+  const serie=(document.getElementById('breinSerie').value||'').trim();
+  uit.textContent=nu()+' — brein-telefoon kiezen…';
+  try{{
+    const r=await fetch('/brein-serie',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'serie='+encodeURIComponent(serie)}});
+    uit.textContent=nu()+' — '+(await r.text());
   }}catch(e){{uit.textContent=nu()+' — kon het niet bewaren ('+e+')';}}
 }});
 const vgb=document.getElementById('vgBewaar');
@@ -1314,6 +1325,23 @@ class H(BaseHTTPRequestHandler):
                 with open(pad, 'w') as fh: fh.write(code + '\n')
                 os.chmod(pad, 0o600)
                 self._schrijf(200, 'Rij-code bewaard, alleen hier op de Chromebook. Druk nu op Lokaal model: ik zoek ook de eigen motor (poort 8081) van de rektelefoons.')
+            except Exception as e:
+                self._schrijf(500, 'fout: ' + str(e))
+            return
+        if p.path == '/brein-serie':
+            # 678 (15 nov): de eigenaar kiest de brein-telefoon op SERIENUMMER (geen serienummer in de code). Strikt gevalideerd, 600; dan meteen een poging.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            serie = (f.get('serie', [''])[0]).strip().upper()
+            if not re.match(r'^[A-Z0-9]{6,20}$', serie):
+                self._schrijf(200, 'Dat lijkt geen serienummer (6 tot 20 letters en cijfers, zonder spaties).'); return
+            try:
+                pad = os.path.join(REK, 'brein-vast')
+                with open(pad, 'w') as fh: fh.write(serie + '\n')
+                os.chmod(pad, 0o600)
+                try: os.remove(os.path.join(REK, 'brein-tid'))   # een oude brein-telefoon telt niet meer
+                except Exception: pass
+                self._schrijf(200, 'Brein-telefoon gekozen (serie %s). %s' % (serie, doe('brein-rol')))
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
@@ -6345,12 +6373,13 @@ brein_is_vast() {   # $1 serienummer: is dit de vaste brein-telefoon (brein-vast
 brein_bereik() {
   local tid="$1" s id nu laatst
   s="$(brein_adb "$tid")"; [ -n "$s" ] && { printf '%s' "$s"; return 0; }
+  [ -n "${BREIN_ALLEEN_KIJKEN:-}" ] && return 0   # Brein: status kijkt alleen (snel); de poging zelf loopt op de achtergrond
   id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
   if [ -n "$id" ]; then s="$(brein_zoek_rol "$id")"; [ -n "$s" ] && [ "$(toestel_id "$s")" = "$tid" ] && { printf '%s' "$s"; return 0; }; fi
   nu="$(date +%s)"; laatst="$(head -1 "$TS_BRUG_T" 2>/dev/null | tr -d '\r\n ')"; case "$laatst" in ''|*[!0-9]*) laatst=0 ;; esac
   [ $((nu - laatst)) -ge 120 ] || return 0
-  printf '%s\n' "$nu" >"$TS_BRUG_T" 2>/dev/null || true
-  command -v tailscale >/dev/null 2>&1 && rek_via_tailscale >/dev/null 2>&1 || true
+  [ -n "${BREIN_ALLEEN_KIJKEN:-}" ] && return 0   # Brein: status bouwt zelf niets op (snel antwoord); hij start een poging op de achtergrond
+  brein_ts_herbouw
   brein_adb "$tid"
 }
 brein_route() {   # $1 adb-adres -> kabel / draadloos (Tailscale) / draadloos (wifi)
@@ -6602,33 +6631,67 @@ brein_kabel() {
 # 678 (15 nov, eigenaar: "laat het brein ook zonder USB-kabel werken"): de telefoon met de rol brein in Veronica (brein-id.conf) wordt de VASTE
 # brein-telefoon, bereikbaar over ELKE adb-route (kabel, of draadloos via Tailscale/wifi). Dan starten (met schoonvegen). Geen rol = niets raden.
 brein_rol() {
-  local id s tid lijn ips ip lport poging
-  id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
-  [ -n "$id" ] || { zeg "Brein: in Veronica heeft nog geen telefoon de rol brein (of Veronica gaf hem nog niet door: open Meer in Veronica op deze computer)."; return 0; }
+  local id vast s t tid
+  mkdir "$REK_MAP/brein-rol.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/brein-rol.lock" -maxdepth 0 -mmin +30 2>/dev/null)" ] && rm -rf "$REK_MAP/brein-rol.lock" && mkdir "$REK_MAP/brein-rol.lock" 2>/dev/null; } || { zeg "Brein: er loopt al een poging (zie Brein: status)."; return 0; }
+  brein_rol_kern; rm -rf "$REK_MAP/brein-rol.lock"
+}
+brein_rol_kern() {
+  local id vast s t tid
+  printf '%s\n' "$(date +%s)" >"$REK_MAP/brein-poging.t" 2>/dev/null || true
   : >"$BREIN_DIAG_F" 2>/dev/null || true
-  s="$(brein_zoek_rol "$id")"
-  if [ -z "$s" ]; then
-    zeg "Brein: de telefoon met de rol brein is nu niet in adb; ik bouw de Tailscale-bruggen een keer opnieuw op."
-    rek_via_tailscale >/dev/null 2>&1 || true; printf '%s\n' "$(date +%s)" >"$TS_BRUG_T" 2>/dev/null || true
-    s="$(brein_zoek_rol "$id")"
+  id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
+  vast="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
+  bdiag "Poging: de brein-telefoon zoeken.$([ -n "$vast" ] && echo " Gekozen serienummer: $vast.")$([ -n "$id" ] && echo " Rol brein in Veronica: $id.")"
+  if [ -z "$id" ] && [ -z "$vast" ]; then
+    bdiag "Er is nog GEEN brein-telefoon gekozen: Veronica gaf de rol brein niet door en er staat geen serienummer. Typ het serienummer van de brein-telefoon in het veld 'Brein-telefoon' in deze console (of geef in Veronica een telefoon de rol brein en open Meer)."
+    brein_niet_bereikt; return 0
   fi
+  s="$(brein_kies_adres "$vast" "$id")"
   if [ -z "$s" ]; then
-    zeg "Brein: de telefoon met de rol brein is nu niet bereikbaar via adb (niet aan de kabel, niet via Tailscale/wifi). $(brein_zoek_uitleg "$id")"
-    [ -s "$BREIN_DIAG_F" ] && { zeg "  Wat er gebeurde, stap voor stap:"; while IFS= read -r L; do zeg "    $L"; done <"$BREIN_DIAG_F"; }
-    logregel "Brein: brein-telefoon niet bereikbaar -- $(tail -n 1 "$BREIN_DIAG_F" 2>/dev/null | cut -c10-)"
-    return 0
+    bdiag "Nog niet in adb. Ik bouw de Tailscale-bruggen opnieuw op (Rek via Tailscale); per telefoon:"
+    brein_ts_herbouw
+    s="$(brein_kies_adres "$vast" "$id")"
   fi
+  [ -n "$s" ] || { brein_niet_bereikt; return 0; }
   tid="$(toestel_id "$s")"
-  case "$tid" in ''|adb:*) zeg "Brein: de telefoon antwoordt niet op adb (geen serienummer te lezen)."; return 0 ;; esac
-  # de brein-telefoon op de veiligheidslijst (op serienummer), met het bewijs: zijn JARVIS-toestel-id IS de rol brein in Veronica. Nooit de F8.
+  case "$tid" in ''|adb:*) bdiag "De telefoon op $s antwoordt niet op adb (geen serienummer te lezen)."; brein_niet_bereikt; return 0 ;; esac
+  # de brein-telefoon op de veiligheidslijst (op serienummer): gekozen door de eigenaar (serienummer) of aangewezen door de rol brein in Veronica. Nooit de F8.
   if ! toegestaan "$tid"; then
     touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
     printf '%s\n' "$tid" >>"$TOEG"
-    logregel "Op de lijst gezet: $(toestel_naam "$s") (serie $tid) -- het is de telefoon met de rol brein in Veronica (zijn JARVIS-toestel-id of zijn hartslag wijst hem aan)."
+    logregel "Op de lijst gezet: $(toestel_naam "$s") (serie $tid) -- de brein-telefoon (gekozen serienummer of de rol brein in Veronica)."
+    bdiag "Op de veiligheidslijst gezet: $(toestel_naam "$s") (serie $tid)."
   fi
   printf '%s\n' "$tid" >"$BREIN_VAST_F"; chmod 600 "$BREIN_VAST_F" 2>/dev/null || true
+  bdiag "Bereikt: $(toestel_naam "$s") (serie $tid) via $s, route $(brein_route "$s"). Nu het brein starten."
   zeg "Brein: $(toestel_naam "$s") ($tid, route: $(brein_route "$s")) is nu de vaste brein-telefoon."
   brein_start
+}
+# het adb-adres van de brein-telefoon: eerst het GEKOZEN serienummer (elke adb-route), dan de rol brein uit Veronica (alleen als die bij het
+# gekozen serienummer past, of als er geen gekozen is). Nooit de F8.
+brein_kies_adres() {
+  local vast="$1" id="$2" s t
+  if [ -n "$vast" ]; then s="$(brein_adb "$vast")"; [ -n "$s" ] && { printf '%s' "$s"; return 0; }; fi
+  [ -n "$id" ] || return 0
+  s="$(brein_zoek_rol "$id")"; [ -n "$s" ] || return 0
+  t="$(toestel_id "$s")"
+  if [ -n "$vast" ] && [ "$t" != "$vast" ]; then bdiag "De telefoon met de rol brein in Veronica (serie $t) is NIET het gekozen serienummer ($vast); ik houd het gekozen serienummer aan."; return 0; fi
+  printf '%s' "$s"
+}
+brein_ts_herbouw() {
+  printf '%s\n' "$(date +%s)" >"$TS_BRUG_T" 2>/dev/null || true
+  command -v tailscale >/dev/null 2>&1 || { bdiag "  Tailscale ontbreekt op deze Chromebook: druk op 'Tailscale op deze Chromebook (inloggen)'."; return 0; }
+  rek_via_tailscale 2>&1 | while IFS= read -r L; do [ -n "$L" ] && bdiag "  $L"; done
+  return 0
+}
+# niet bereikt: wat adb NU ziet erbij (unauthorized/offline staan daar ook), dan de samenvatting in de uitvoer, de Log en Brein: status
+brein_niet_bereikt() {
+  local r
+  r="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {printf "%s=%s ", $1, $2}')"
+  bdiag "adb ziet nu: ${r:-geen enkel toestel}."
+  zeg "Brein: de brein-telefoon is nu NIET bereikbaar via adb. Wat er gebeurde, stap voor stap:"
+  while IFS= read -r L; do zeg "  $L"; done <"$BREIN_DIAG_F"
+  logregel "Brein: brein-telefoon niet bereikbaar -- $(grep -v 'adb ziet nu' "$BREIN_DIAG_F" 2>/dev/null | tail -n 1 | cut -c10- | cut -c1-300)"
 }
 # brein_zoek_rol <JARVIS-id>: het adb-adres van de telefoon met die rol, via (1) zijn JARVIS-toestel-id over elke adb-route, of (2) zijn HARTSLAG
 # (relay): het Tailscale-adres (100.x) of wifi-adres daarin, gekoppeld aan de Tailscale-brug (TS_BRUG_F) of een adb-wifi-adres. Nooit de F8.
@@ -6704,12 +6767,6 @@ brein_wifi_adb() {   # $1 = een wifi-adres uit de hartslag: rechtstreeks adb con
   bdiag "adb rechtstreeks via wifi $ip:5555: ${uit:-geen antwoord} (stand: ${st:-geen})."
   return 0
 }
-brein_zoek_uitleg() {   # waarom niet gevonden: een zin uit de hartslag en de bruggen
-  local id="$1" lijn
-  lijn="$(rek_lijst_rauw 2>/dev/null | awk -F'\t' -v i="$id" '$3==i {print; exit}')"
-  [ -n "$lijn" ] || { printf 'De relay heeft geen verse hartslag van die telefoon (staat JARVIS daar aan?).'; return 0; }
-  printf 'Zijn hartslag noemt de adressen %s; daarvoor staat geen werkende brug (Rek via Tailscale) of adb-wifi-verbinding.' "$(printf '%s' "$lijn" | cut -f1)"
-}
 # het adb-adres van de brein-telefoon NU (het draadloze adres kan na een herstart veranderen): via zijn serienummer, anders het laatst gebruikte adres.
 brein_nu() {
   local tid s
@@ -6761,8 +6818,18 @@ brein_stop() {
   rm -f "$BREIN_AAN_F"
   brein_stand uit "Het brein is gestopt." "$s"; zeg "Brein gestopt (alleen de llama-server van ARTEMIS; JARVIS draait gewoon door)."
 }
+# geen route: een nieuwe poging op de achtergrond (hoogstens eens per 90 s, nooit twee tegelijk), zodat Brein: status zelf snel blijft
+brein_poging_achtergrond() {
+  local t nu; nu="$(date +%s)"; t="$(head -1 "$REK_MAP/brein-poging.t" 2>/dev/null | tr -d '\r\n ')"; case "$t" in ''|*[!0-9]*) t=0 ;; esac
+  [ $((nu - t)) -ge 90 ] || { zeg "    (een nieuwe poging loopt al of is net gedaan; druk over een minuut weer op Brein: status)"; return 0; }
+  [ -s "$BREIN_VAST_F" ] || [ -s "$BREIN_ID_F" ] || return 0
+  printf '%s\n' "$nu" >"$REK_MAP/brein-poging.t"
+  ( setsid "$0" brein-rol </dev/null >>"$REK_MAP/console-brein-rol.log" 2>&1 & ) 2>/dev/null
+  zeg "    -> ik probeer hem nu opnieuw te bereiken (op de achtergrond); druk over een minuut weer op Brein: status."
+}
 brein_status() {
   local h st s nu
+  export BREIN_ALLEEN_KIJKEN=1
   h="$(curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null)"
   st="$(STAND="$BREIN_STAND_F" python3 -I -c 'import json,os
 try: d=json.load(open(os.environ["STAND"]))
@@ -6773,7 +6840,13 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
   zeg "Brein: $(printf '%s\n' "$st" | sed -n 4p)"
   zeg "  telefoon: $(printf '%s\n' "$st" | sed -n 1p)$([ -s "$BREIN_VAST_F" ] && echo " ($(head -1 "$BREIN_VAST_F"), vast gekozen)")"
   zeg "  route: $([ -n "$s" ] && brein_route "$s" || echo 'geen -- de brein-telefoon is nu niet bereikbaar via adb (niet aan de kabel, niet draadloos)')"
-  if [ -z "$s" ] && [ -s "$BREIN_DIAG_F" ]; then zeg "  waarom (laatste poging om hem te bereiken):"; tail -n 12 "$BREIN_DIAG_F" | while IFS= read -r L; do zeg "    $L"; done; fi
+  if [ -z "$s" ]; then
+    zeg "  waarom niet bereikbaar (laatste poging, stap voor stap):"
+    if [ -s "$BREIN_DIAG_F" ]; then tail -n 25 "$BREIN_DIAG_F" | while IFS= read -r L; do zeg "    $L"; done
+    elif [ ! -s "$BREIN_VAST_F" ] && [ ! -s "$BREIN_ID_F" ]; then zeg "    Er is nog GEEN brein-telefoon gekozen. Typ zijn serienummer in het veld 'Brein-telefoon' in deze console."
+    else zeg "    nog geen poging gedaan."; fi
+    brein_poging_achtergrond
+  fi
   zeg "  model: $(printf '%s\n' "$st" | sed -n 2p)"
   zeg "  vrij geheugen: $(case "$nu" in ''|*[!0-9]*) echo 'nu niet te meten' ;; *) echo "$((nu / 1024)) MB nu" ;; esac)$([ -n "$(printf '%s\n' "$st" | sed -n 3p)" ] && echo ", $(printf '%s\n' "$st" | sed -n 3p) MB bij het starten")"
   zeg "  antwoordt: $([ -n "$h" ] && echo 'ja' || echo 'NEE')$([ -f "$BREIN_AAN_F" ] && echo ' -- de waakhond houdt hem in leven (ook zonder internet)')"
