@@ -33,6 +33,7 @@ Deze acties raken echte dingen (privé-inhoud wissen, een herstel, geld of beric
 | `meer-openen` | kop | klik Meer | het Meer-scherm (`#scherm-meer`) komt in beeld | |
 | `vorm` | Live | klik op de levende vorm | Veronica gaat luisteren (de spraakzin verandert naar "Luisteren…" of "kan hier niet") | geen telefoon nodig |
 | `mic` | Live | klik de microfoon | zelfde als de vorm: ze luistert (vraagt pas dán toestemming) | |
+| `voorlezen` | Live | stel een vraag; klik ▶ Lees voor bij het antwoord | de Chromebook leest het antwoord voor met een Nederlandse stem die op deze computer zelf draait; nog eens klikken = stoppen; zonder lokale stem een eerlijke zin | |
 | `vraag` | Live | typ iets in het hoofdveld en klik Vraag | de vraag verschijnt; zonder telefoon een eerlijke zin "geen telefoon" | |
 | `start-stop` | Live | klik Start/Stop | de stand wisselt (aan↔uit), de vorm kleurt mee | |
 | `stemproef` | Live | klik Stemproef | je hoort een zin in Veronica's stijl ("De Cat is weer koel…") met de gekozen stem | geluid aan |

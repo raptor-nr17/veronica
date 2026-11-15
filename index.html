@@ -107,6 +107,8 @@
   .rekDokRegel { font-size: 18px; margin: 6px 0 0; }
   #vraagStatus.fout { border-color: #e5a24a; }
   #vraagStatus[hidden] { display: none; }
+  #voorleesKnop { margin: 8px 0 0; min-height: 48px; min-width: 48px; font-size: 19px; padding: 8px 16px; }
+  #voorleesKnop[hidden] { display: none; }
   #startStopKnop { font-size: 20px; font-weight: 800; padding: 12px 22px; border: 3px solid #b8860b; }
   #startStopKnop[aria-pressed="true"] { border-color: var(--rood); }
   #lokaalKeus { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 4px; }
@@ -304,6 +306,7 @@
     <p id="veronicaZin" aria-live="polite"></p>
     <div id="vraagRij"><label for="hoofdVraag" class="verborgen">Vraag of opdracht</label><input id="hoofdVraag" type="text" autocomplete="off" maxlength="12000" placeholder="Vraag iets, of geef een opdracht"> <button id="micKnop" data-proef="mic" aria-pressed="false" aria-label="Spreek een opdracht in">🎤</button> <button type="button" id="vraagKnop" data-proef="vraag">Vraag</button></div>
     <p id="vraagStatus" role="status" aria-live="polite" hidden></p>
+    <button type="button" id="voorleesKnop" data-proef="voorlezen" aria-label="Lees het antwoord voor" hidden>▶ Lees voor</button>
     <div id="rekDokter" hidden></div>
     <p id="rekDokRegel" class="rekDokRegel" hidden></p>
     <span id="spraakZin" aria-live="polite"></span>

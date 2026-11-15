@@ -573,6 +573,14 @@ def brein_tekst(m):
         r = str((m or {}).get('reasoning_content') or '').strip()
         if r: t = '(nog aan het nadenken toen de ruimte op was) ' + r[-1500:]
     return t
+def brein_wie():
+    # 678 (15 nov): de echte modelnaam en telefoon voor de systeemtekst (een klein model verzint anders wie het is)
+    try:
+        with open(os.path.join(REK, 'brein-stand.json')) as fh: d = json.load(fh)
+    except Exception:
+        return ''
+    m = re.sub(r'\.gguf$', '', str(d.get('model') or ''))
+    return ('Jij bent het taalmodel %s%s; noem jezelf zo als ernaar gevraagd wordt.' % (m, (', en je draait op de telefoon ' + str(d.get('telefoon'))) if d.get('telefoon') else '')) if m else ''
 def brein_vraag(lijf):
     data = json.dumps(lijf).encode()
     for poging in (0, 1):
@@ -1440,6 +1448,10 @@ class H(BaseHTTPRequestHandler):
             msgs = [m for m in (d.get('messages') or []) if isinstance(m, dict) and m.get('role') in ('system', 'user', 'assistant') and isinstance(m.get('content'), str)][-24:]
             if not msgs:
                 self._cors_json(400, json.dumps({'fout': 'Geen vraag.'})); return
+            wie = brein_wie()
+            if wie:
+                if msgs[0].get('role') == 'system': msgs[0] = {'role': 'system', 'content': msgs[0]['content'] + ' ' + wie}
+                else: msgs.insert(0, {'role': 'system', 'content': wie})
             mt = d.get('max_tokens'); mt = mt if isinstance(mt, int) and 1 <= mt <= 2048 else 512
             t0 = time.time(); r = brein_vraag({'messages': msgs, 'max_tokens': mt, 'stream': False, 'temperature': 0.7, 'chat_template_kwargs': {'enable_thinking': False}})   # 678: Qwen3 denkt anders eerst honderden tokens hardop
             if r is None:
@@ -6926,6 +6938,9 @@ except Exception:
     stand = {}
 rol = ('Je bent de lokale AI van een rij oude telefoons (Veronica). Claude Code, de AI die deze opstelling bouwt, stelt je een vraag. '
        'Antwoord in het Nederlands, eerlijk en zo goed als je kunt; verzin niets en zeg het als je iets niet weet. Je kunt niets uitvoeren: je antwoordt alleen.')
+# 678 (15 nov, v1): het brein noemde zich "Llama 3 (7B)" -- een klein model kent zijn eigen naam niet. Dus zeggen we het erbij.
+_m = re.sub(r'\.gguf$', '', str(stand.get('model') or ''))
+if _m: rol += ' Jij bent het taalmodel %s%s; noem jezelf zo als ernaar gevraagd wordt.' % (_m, (', en je draait op de telefoon ' + str(stand.get('telefoon'))) if stand.get('telefoon') else '')
 lijf = json.dumps({'messages': [{'role': 'system', 'content': rol}, {'role': 'user', 'content': vraag['vraag'][:4000]}], 'max_tokens': 1024, 'stream': False, 'temperature': 0.7, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
 antwoord = None; tps = None; fout = ''
 try:
