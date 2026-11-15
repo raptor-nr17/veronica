@@ -1573,7 +1573,7 @@ waak_ronde() {
     # daar al uitgesloten + ontdubbeld). Zulke tunnel-toestellen staan NIET op de kabel-lijst (TOEG) en hun adb-shell is tijdens
     # een meting BEZIG (dus soms even geen modelnaam). Geen van beide is een reden voor een STOP of een disconnect -- dat doodde
     # de meting (een tunnel-telefoon via 127.0.0.1:5600 werd als 'onbekend' gezien; ARTEMIS + de meet-lezer gingen uit, de tunnels vielen weg).
-    via_ts=0; case "$s" in 127.0.0.1:56[0-9][0-9]) { [ -f "$TS_BRUG_F" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$TS_BRUG_F" 2>/dev/null; } && via_ts=1 ;; esac
+    via_ts=0; case "$s" in 127.0.0.1:56[0-9][0-9]) { { [ -f "$TS_BRUG_F" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$TS_BRUG_F" 2>/dev/null; } || { [ -f "$REK_MAP/brein-brug" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$REK_MAP/brein-brug" 2>/dev/null; }; } && via_ts=1 ;; esac
     naam="$(toestel_naam "$s")"
     # 675: een toestel dat GEEN modelnaam teruggeeft is half-verbonden/offline (de adb-shell antwoordt niet). Geen veiligheidsrisico
     # (niet te besturen, geen schermfoto) en dus GEEN reden om ARTEMIS te stoppen. Een DOOD draadloos adres ruimen we op; een BEZIGE
@@ -4263,7 +4263,7 @@ motor_meet() {
     # 678 (10 nov): een Tailscale-brug (127.0.0.1:560x uit TS_BRUG_F) is per definitie een rektelefoon -- rek_via_tailscale zette hem
     # op (de F8 is daar al uitgesloten en ontdubbeld). Die hoeft niet OOK op de 'Zoek telefoons'-lijst (die alleen de kabel scant);
     # anders is geen enkele Tailscale-telefoon te meten (ze stonden niet op de kabel-lijst -> onterecht "staat niet op de lijst").
-    local via_ts=0; case "$s" in 127.0.0.1:56[0-9][0-9]) { [ -f "$TS_BRUG_F" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$TS_BRUG_F" 2>/dev/null; } && via_ts=1 ;; esac
+    local via_ts=0; case "$s" in 127.0.0.1:56[0-9][0-9]) { { [ -f "$TS_BRUG_F" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$TS_BRUG_F" 2>/dev/null; } || { [ -f "$REK_MAP/brein-brug" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$REK_MAP/brein-brug" 2>/dev/null; }; } && via_ts=1 ;; esac
     if [ "$via_ts" -eq 0 ] && ! toegestaan "$id"; then
       zeg "  ($naam) staat niet op de lijst -- druk eerst op 'Zoek telefoons', of verbind hem via 'Rek via Tailscale'."; continue
     fi
@@ -6312,6 +6312,10 @@ BREIN_VAST_F="$REK_MAP/brein-vast"           # 678 (15 nov, eigenaar): een VASTE
 BREIN_AAN_F="$REK_MAP/brein-aan"             # het brein hoort te draaien: de waakhond (console-lus) herstart hem dan zelf, ook zonder internet
 BREIN_ID_F="$REK_MAP/brein-id.conf"        # het JARVIS-toestel-id van de telefoon met de rol brein (Veronica geeft hem door, /relay-zet)
 BREIN_STAND_F="$REK_MAP/brein-stand.json"
+BREIN_BRUG_F="$REK_MAP/brein-brug"          # 678: de eigen Tailscale-brug van het brein ("poort 100.x pid"), buiten 5600-5609
+BREIN_BRUG_POORT="${BREIN_BRUG_POORT:-5620}"
+BREIN_DIAG_F="$REK_MAP/brein-route.log"     # 678: wat er bij het zoeken van de brein-telefoon gebeurde, stap voor stap (Brein: status laat het zien)
+bdiag() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*" >>"$BREIN_DIAG_F" 2>/dev/null; tail -n 40 "$BREIN_DIAG_F" >"$BREIN_DIAG_F.t" 2>/dev/null && mv "$BREIN_DIAG_F.t" "$BREIN_DIAG_F"; zeg "  $*" >&2; }
 # het JARVIS-toestel-id van een telefoon (zelfde bron als rek.json: jarvis_toestel_id met de sleutel van het toestel)
 toestel_id_jarvis() { local s="$1" sl; sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"; jarvis_toestel_id "$s" "$sl"; }
 mem_vrij_kb() { "$ADB" -s "$1" shell cat /proc/meminfo 2>/dev/null | tr -d '\r' | awk '/^MemAvailable:/ {print $2}'; }
@@ -6601,13 +6605,19 @@ brein_rol() {
   local id s tid lijn ips ip lport poging
   id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
   [ -n "$id" ] || { zeg "Brein: in Veronica heeft nog geen telefoon de rol brein (of Veronica gaf hem nog niet door: open Meer in Veronica op deze computer)."; return 0; }
+  : >"$BREIN_DIAG_F" 2>/dev/null || true
   s="$(brein_zoek_rol "$id")"
   if [ -z "$s" ]; then
     zeg "Brein: de telefoon met de rol brein is nu niet in adb; ik bouw de Tailscale-bruggen een keer opnieuw op."
     rek_via_tailscale >/dev/null 2>&1 || true; printf '%s\n' "$(date +%s)" >"$TS_BRUG_T" 2>/dev/null || true
     s="$(brein_zoek_rol "$id")"
   fi
-  [ -n "$s" ] || { zeg "Brein: de telefoon met de rol brein is nu niet bereikbaar via adb (niet aan de kabel, niet via Tailscale/wifi). $(brein_zoek_uitleg "$id")"; return 0; }
+  if [ -z "$s" ]; then
+    zeg "Brein: de telefoon met de rol brein is nu niet bereikbaar via adb (niet aan de kabel, niet via Tailscale/wifi). $(brein_zoek_uitleg "$id")"
+    [ -s "$BREIN_DIAG_F" ] && { zeg "  Wat er gebeurde, stap voor stap:"; while IFS= read -r L; do zeg "    $L"; done <"$BREIN_DIAG_F"; }
+    logregel "Brein: brein-telefoon niet bereikbaar -- $(tail -n 1 "$BREIN_DIAG_F" 2>/dev/null | cut -c10-)"
+    return 0
+  fi
   tid="$(toestel_id "$s")"
   case "$tid" in ''|adb:*) zeg "Brein: de telefoon antwoordt niet op adb (geen serienummer te lezen)."; return 0 ;; esac
   # de brein-telefoon op de veiligheidslijst (op serienummer), met het bewijs: zijn JARVIS-toestel-id IS de rol brein in Veronica. Nooit de F8.
@@ -6630,11 +6640,69 @@ brein_zoek_rol() {
   done
   lijn="$(rek_lijst_rauw 2>/dev/null | awk -F'\t' -v i="$id" '$3==i {print; exit}')"
   ips="$(printf '%s' "$lijn" | cut -f1 | tr ',' ' ')"
+  [ -n "$lijn" ] || { bdiag "De relay heeft geen verse hartslag van de telefoon met de rol brein ($id) -- staat JARVIS daar aan?"; return 0; }
+  bdiag "Hartslag van de brein-telefoon ($(printf '%s' "$lijn" | cut -f4), $(printf '%s' "$lijn" | cut -f5) s oud): adressen $(printf '%s' "$lijn" | cut -f1)."
   for ip in $ips; do
     lport="$(awk -v ip="$ip" '$2==ip {print $1; exit}' "$TS_BRUG_F" 2>/dev/null)"
     if [ -n "$lport" ] && verbonden | grep -qx "127.0.0.1:$lport"; then is_f8 "127.0.0.1:$lport" || { printf '%s' "127.0.0.1:$lport"; return 0; }; fi
+    lport="$(awk -v ip="$ip" '$2==ip {print $1; exit}' "$BREIN_BRUG_F" 2>/dev/null)"
+    if [ -n "$lport" ] && verbonden | grep -qx "127.0.0.1:$lport"; then is_f8 "127.0.0.1:$lport" || { printf '%s' "127.0.0.1:$lport"; return 0; }; fi
     if verbonden | grep -qx "$ip:5555"; then is_f8 "$ip:5555" || { printf '%s' "$ip:5555"; return 0; }; fi
   done
+  # 678 (15 nov, tweede ronde): nog niets in adb -- dan ZELF verbinden, met een eigen brug die de Tailscale-herbouw niet afbreekt, en per stap zeggen wat er gebeurt
+  for ip in $ips; do
+    case "$ip" in
+      100.*) s="$(brein_eigen_brug "$ip")" ;;
+      *) s="$(brein_wifi_adb "$ip")" ;;
+    esac
+    [ -n "$s" ] && { printf '%s' "$s"; return 0; }
+  done
+}
+# 678 (15 nov): DE EIGEN BRUG VAN HET BREIN. Een vaste poort (5620) BUITEN 5600-5609, zodat "Rek via Tailscale" en de minuut-scan hem nooit
+# afbreken. socat -> tailscale nc <100.x> 5555 -> adb connect, en dan wachten tot adb 'device' zegt. Elke stap komt in brein-route.log (en de Log),
+# met wat adb LETTERLIJK antwoordde: geen gok meer over waarom de brein-telefoon niet te bereiken is. Nooit de F8.
+brein_eigen_brug() {
+  local ip="$1" lp="$BREIN_BRUG_POORT" regel pid oud uit st i q
+  command -v tailscale >/dev/null 2>&1 || { bdiag "Tailscale ontbreekt op deze Chromebook (druk op 'Tailscale op deze Chromebook (inloggen)')."; return 0; }
+  command -v socat >/dev/null 2>&1 || sudo -n apt-get install -y socat >/dev/null 2>&1 || { bdiag "socat ontbreekt op deze Chromebook."; return 0; }
+  regel="$(tailscale status 2>/dev/null | awk -v ip="$ip" '$1==ip')"
+  [ -n "$regel" ] || { bdiag "Tailscale op deze Chromebook kent $ip niet (niet in hetzelfde tailnet, of Tailscale is hier uitgelogd)."; return 0; }
+  if printf '%s' "$regel" | grep -qiw offline; then bdiag "Tailscale zegt: $ip ($(printf '%s' "$regel" | awk '{print $2}')) is OFFLINE -- Tailscale staat op de telefoon uit of de telefoon slaapt diep."; return 0; fi
+  bdiag "Tailscale: $ip = $(printf '%s' "$regel" | awk '{print $2}'), online."
+  "$ADB" disconnect "127.0.0.1:$lp" >/dev/null 2>&1 || true
+  if [ -f "$BREIN_BRUG_F" ]; then oud="$(awk '{print $3}' "$BREIN_BRUG_F" 2>/dev/null)"; [ -n "$oud" ] && kill "$oud" 2>/dev/null || true; fi
+  for q in $(pids_op_poort "$lp" 2>/dev/null); do kill "$q" 2>/dev/null || true; done
+  socat "TCP-LISTEN:$lp,reuseaddr,fork,bind=127.0.0.1" "EXEC:tailscale nc $ip 5555" </dev/null >/dev/null 2>&1 &
+  pid=$!
+  printf '%s %s %s\n' "$lp" "$ip" "$pid" >"$BREIN_BRUG_F" 2>/dev/null || true; chmod 600 "$BREIN_BRUG_F" 2>/dev/null || true
+  sleep 1
+  uit="$("$ADB" connect "127.0.0.1:$lp" </dev/null 2>&1 | tr -d '\r' | head -2 | tr '\n' ' ')"
+  bdiag "adb connect 127.0.0.1:$lp (eigen brug naar $ip:5555) zegt: ${uit:-niets}"
+  st=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    st="$("$ADB" devices 2>/dev/null | awk -v a="127.0.0.1:$lp" '$1==a {print $2; exit}')"
+    [ "$st" = device ] && break
+    sleep 2
+  done
+  case "$st" in
+    device)
+      if is_f8 "127.0.0.1:$lp"; then "$ADB" disconnect "127.0.0.1:$lp" >/dev/null 2>&1; kill "$pid" 2>/dev/null || true; bdiag "$ip is de F8 -- losgekoppeld (nooit besturen)."; return 0; fi
+      bdiag "adb: verbonden met $(toestel_naam "127.0.0.1:$lp") (serie $(toestel_id "127.0.0.1:$lp")) via de eigen brug."
+      printf '%s' "127.0.0.1:$lp"; return 0 ;;
+    unauthorized) bdiag "adb zegt UNAUTHORIZED: de telefoon kent de adb-sleutel van deze Chromebook niet (meer). Dat kan alleen op de telefoon zelf: een keer 'Toestaan' tikken (vinkje 'Altijd'), of een keer een kabel MET data." ;;
+    offline) bdiag "adb zegt OFFLINE: Tailscale bereikt de telefoon, maar adb op poort 5555 antwoordt niet (adb over tcp staat uit, meestal na een herstart van de telefoon)." ;;
+    *) bdiag "adb ziet de brug niet als toestel (stand: ${st:-geen}). Poort 5555 op $ip staat dicht: adb over tcp staat uit op de telefoon (meestal na een herstart)." ;;
+  esac
+  "$ADB" disconnect "127.0.0.1:$lp" >/dev/null 2>&1 || true
+  return 0
+}
+brein_wifi_adb() {   # $1 = een wifi-adres uit de hartslag: rechtstreeks adb connect op 5555 (alleen als de Chromebook in hetzelfde net zit)
+  local ip="$1" uit st i
+  uit="$(timeout 8 "$ADB" connect "$ip:5555" </dev/null 2>&1 | tr -d '\r' | head -1)"
+  for i in 1 2 3; do st="$("$ADB" devices 2>/dev/null | awk -v a="$ip:5555" '$1==a {print $2; exit}')"; [ "$st" = device ] && break; sleep 1; done
+  if [ "$st" = device ] && ! is_f8 "$ip:5555"; then bdiag "adb rechtstreeks via wifi: $ip:5555 verbonden."; printf '%s' "$ip:5555"; return 0; fi
+  bdiag "adb rechtstreeks via wifi $ip:5555: ${uit:-geen antwoord} (stand: ${st:-geen})."
+  return 0
 }
 brein_zoek_uitleg() {   # waarom niet gevonden: een zin uit de hartslag en de bruggen
   local id="$1" lijn
@@ -6705,6 +6773,7 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
   zeg "Brein: $(printf '%s\n' "$st" | sed -n 4p)"
   zeg "  telefoon: $(printf '%s\n' "$st" | sed -n 1p)$([ -s "$BREIN_VAST_F" ] && echo " ($(head -1 "$BREIN_VAST_F"), vast gekozen)")"
   zeg "  route: $([ -n "$s" ] && brein_route "$s" || echo 'geen -- de brein-telefoon is nu niet bereikbaar via adb (niet aan de kabel, niet draadloos)')"
+  if [ -z "$s" ] && [ -s "$BREIN_DIAG_F" ]; then zeg "  waarom (laatste poging om hem te bereiken):"; tail -n 12 "$BREIN_DIAG_F" | while IFS= read -r L; do zeg "    $L"; done; fi
   zeg "  model: $(printf '%s\n' "$st" | sed -n 2p)"
   zeg "  vrij geheugen: $(case "$nu" in ''|*[!0-9]*) echo 'nu niet te meten' ;; *) echo "$((nu / 1024)) MB nu" ;; esac)$([ -n "$(printf '%s\n' "$st" | sed -n 3p)" ] && echo ", $(printf '%s\n' "$st" | sed -n 3p) MB bij het starten")"
   zeg "  antwoordt: $([ -n "$h" ] && echo 'ja' || echo 'NEE')$([ -f "$BREIN_AAN_F" ] && echo ' -- de waakhond houdt hem in leven (ook zonder internet)')"
