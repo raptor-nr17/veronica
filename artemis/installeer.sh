@@ -566,6 +566,13 @@ def brein_gezond():
 def brein_forward():
     # via artemis-rek zelf (die kent adb), naar het bewaarde serienummer van de brein-telefoon
     return 'OK' in doe_args(['brein-doorsturing'], 15)
+def brein_tekst(m):
+    # 678 (15 nov): het antwoord zonder denkstappen; bleef het antwoord leeg (alles ging op aan nadenken), dan het nadenken zelf, eerlijk gemarkeerd
+    t = re.sub(r'(?s)<think>.*?</think>', '', str((m or {}).get('content') or '')).strip()
+    if not t:
+        r = str((m or {}).get('reasoning_content') or '').strip()
+        if r: t = '(nog aan het nadenken toen de ruimte op was) ' + r[-1500:]
+    return t
 def brein_vraag(lijf):
     data = json.dumps(lijf).encode()
     for poging in (0, 1):
@@ -1434,11 +1441,11 @@ class H(BaseHTTPRequestHandler):
             if not msgs:
                 self._cors_json(400, json.dumps({'fout': 'Geen vraag.'})); return
             mt = d.get('max_tokens'); mt = mt if isinstance(mt, int) and 1 <= mt <= 2048 else 512
-            t0 = time.time(); r = brein_vraag({'messages': msgs, 'max_tokens': mt, 'stream': False, 'temperature': 0.7})
+            t0 = time.time(); r = brein_vraag({'messages': msgs, 'max_tokens': mt, 'stream': False, 'temperature': 0.7, 'chat_template_kwargs': {'enable_thinking': False}})   # 678: Qwen3 denkt anders eerst honderden tokens hardop
             if r is None:
                 self._cors_json(503, json.dumps({'fout': 'Het brein antwoordt niet. Druk in ARTEMIS op Brein starten.'})); return
             try:
-                tekst = r['choices'][0]['message'].get('content') or ''
+                tekst = brein_tekst(r['choices'][0]['message'])
                 tps = (r.get('timings') or {}).get('predicted_per_second')
             except Exception:
                 self._cors_json(502, json.dumps({'fout': 'Het brein gaf een onleesbaar antwoord.'})); return
@@ -6329,13 +6336,16 @@ rek_aanwezig() {
 # 678 (15 nov, eigenaar: "zoveel mogelijk intelligentie, snelheid is bijzaak"): het SLIMSTE model dat in het vrije geheugen past, in deze
 # volgorde (repo kwantisatie). Per model lezen we naam, sha256 en grootte uit de lijst van Hugging Face; past het niet (grootte + 1 GB boven
 # MemAvailable van de telefoon) of staat het er niet, dan het volgende. Een andere lijst: BREIN_MODELLEN in de omgeving ("repo kwant;repo kwant").
-BREIN_MODELLEN="${BREIN_MODELLEN:-ggml-org/gemma-4-E4B-it-GGUF Q4_K_M;Qwen/Qwen3-4B-GGUF Q4_K_M;ggml-org/gemma-4-E2B-it-GGUF Q4_K_M}"
+# 678 (15 nov, 17:46): van slim naar klein; de kleinere zijn de vangnetten als er weinig geheugen vrij is (de brein-telefoon had op 15 nov 3,0-3,7 GB vrij).
+BREIN_MODELLEN="${BREIN_MODELLEN:-ggml-org/gemma-4-E4B-it-GGUF Q4_K_M;Qwen/Qwen3-4B-GGUF Q4_K_M;ggml-org/gemma-4-E2B-it-GGUF Q4_K_M;Qwen/Qwen3-1.7B-GGUF Q8_0;unsloth/Qwen3-1.7B-GGUF Q4_K_M;Qwen/Qwen3-0.6B-GGUF Q8_0}"
 BREIN_MAP_TEL="/data/local/tmp/brein"
 BREIN_POORT_TEL=8093                       # op de telefoon, alleen 127.0.0.1
 BREIN_POORT_LOK="${BREIN_POORT_LOK:-18093}" # de adb-doorsturing op deze computer
 BREIN_DRADEN="${BREIN_DRADEN:-4}"
 BREIN_CONTEXT="${BREIN_CONTEXT:-4096}"
-BREIN_MARGE_KB=1048576                     # 1 GB boven het model: KV-cache (context 4096), de server zelf, Android
+BREIN_MARGE_KB=1048576                     # DREMPEL 1: model + 1024 MB bij context 4096 (KV-cache ~600 MB voor een 4B-model, de server zelf, Android)
+BREIN_MARGE_KLEIN_KB=655360                # DREMPEL 2: model + 640 MB bij context 2048 (de helft van de KV-cache); een slimmer model met een kortere context gaat voor een dommer
+brein_drempel_zin() { printf 'model + %s MB vrij (context 4096), anders model + %s MB (context 2048)' $((BREIN_MARGE_KB / 1024)) $((BREIN_MARGE_KLEIN_KB / 1024)); }
 BREIN_VAST_F="$REK_MAP/brein-vast"           # 678 (15 nov, eigenaar): een VASTE brein-telefoon (serienummer); de knop "Brein op de telefoon aan de USB-kabel" zet hem
 BREIN_AAN_F="$REK_MAP/brein-aan"             # het brein hoort te draaien: de waakhond (console-lus) herstart hem dan zelf, ook zonder internet
 BREIN_ID_F="$REK_MAP/brein-id.conf"        # het JARVIS-toestel-id van de telefoon met de rol brein (Veronica geeft hem door, /relay-zet)
@@ -6347,6 +6357,14 @@ bdiag() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*" >>"$BREIN_DIAG_F" 2>/dev/nul
 # het JARVIS-toestel-id van een telefoon (zelfde bron als rek.json: jarvis_toestel_id met de sleutel van het toestel)
 toestel_id_jarvis() { local s="$1" sl; sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"; jarvis_toestel_id "$s" "$sl"; }
 mem_vrij_kb() { "$ADB" -s "$1" shell cat /proc/meminfo 2>/dev/null | tr -d '\r' | awk '/^MemAvailable:/ {print $2}'; }
+brein_geheugen_rust() {   # $1 adb-adres, $2 eerste meting (kB): ~30 s lang elke 3 s meten, het HOOGSTE telt (Android geeft geheugen traag vrij)
+  local s="$1" m="${2:-0}" n i; case "$m" in ''|*[!0-9]*) m=0 ;; esac
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 3; n="$(mem_vrij_kb "$s")"; case "$n" in ''|*[!0-9]*) continue ;; esac
+    [ "$n" -gt "$m" ] && m="$n"
+  done
+  printf '%s' "$m"
+}
 # brein_serial: de rektelefoon (nooit de F8, alleen een toegestane met JARVIS) met het MEESTE vrije geheugen; bij gelijke stand (binnen 256 MB)
 # de telefoon met de rol brein. Schrijft "serie vrij_kb" naar stdout.
 # 678 (15 nov, eigenaar: "de kabel geeft alleen stroom; laat het ook draadloos werken"): een telefoon wordt herkend aan zijn EIGEN serienummer
@@ -6443,8 +6461,9 @@ PY
 )"
     [ -n "$keus" ] || { zeg "  $repo: geen $kw-model met een controlesom; volgende." >&2; continue; }
     groot="${keus##* }"
-    if [ $((groot / 1024 + BREIN_MARGE_KB)) -le "$vrij" ]; then printf '%s %s' "$repo" "$keus"; return 0; fi
-    zeg "  $repo ($kw, $((groot / 1000000)) MB) past niet in $((vrij / 1024)) MB vrij geheugen; het volgende (kleinere) model." >&2
+    if [ $((groot / 1024 + BREIN_MARGE_KB)) -le "$vrij" ]; then printf '%s %s 4096' "$repo" "$keus"; return 0; fi
+    if [ $((groot / 1024 + BREIN_MARGE_KLEIN_KB)) -le "$vrij" ]; then zeg "  $repo ($kw, $((groot / 1000000)) MB) past met context 2048 (drempel model + $((BREIN_MARGE_KLEIN_KB / 1024)) MB)." >&2; printf '%s %s 2048' "$repo" "$keus"; return 0; fi
+    zeg "  $repo ($kw, $((groot / 1000000)) MB) past niet in $((vrij / 1024)) MB vrij geheugen (nodig: $((groot / 1048576 + BREIN_MARGE_KLEIN_KB / 1024)) MB); het volgende (kleinere) model." >&2
   done
   return 1
 }
@@ -6562,7 +6581,7 @@ brein_start() {
 }
 brein_start_kern() {
   command -v "$ADB" >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || { zeg "Brein: adb, curl of python3 ontbreekt."; return 0; }
-  local s naam lib bin model mnaam groot vrij mem i ok=0 sm keus repo
+  local s naam lib bin model mnaam groot vrij mem i ok=0 sm keus repo ctx marge
   sm="$(brein_serial)"; s="${sm%% *}"; mem="${sm##* }"
   [ -n "$sm" ] || { zeg "Brein: geen rektelefoon met JARVIS verbonden (kabel of Tailscale)."; brein_stand uit "Geen rektelefoon verbonden." ""; return 0; }
   is_f8 "$s" && return 0
@@ -6571,9 +6590,11 @@ brein_start_kern() {
   zeg "Brein op $naam ($(toestel_id "$s"), route: $(brein_route "$s")). Eerst het geheugen vrijmaken, dan het slimste model dat past."
   [ "$(toestel_id "$s")" = "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && brein_schoonvegen "$s"   # 678: alleen de VASTE brein-telefoon
   mem="$(brein_vrijmaken "$s")"; case "$mem" in ''|*[!0-9]*) mem="$(mem_vrij_kb "$s")" ;; esac; case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
-  keus="$(brein_model_kies "$mem")" || { zeg "  geen enkel model past in $((mem / 1024)) MB vrij geheugen, ook niet na het vrijmaken."; brein_stand fout "Geen model past in $((mem / 1024)) MB vrij geheugen." "$s" "" "$mem"; return 0; }
-  set -- $keus; repo="$1"
-  zeg "  gekozen: $repo ($2, $(( $4 / 1000000 )) MB), $BREIN_DRADEN draden, alleen op de telefoon zelf (127.0.0.1)."
+  mem="$(brein_geheugen_rust "$s" "$mem")"   # 678 (17:46): het geheugen komt pas na een paar seconden vrij (3081 -> 3668 MB); het hoogste getal telt
+  zeg "  drempel: $(brein_drempel_zin); nu $((mem / 1024)) MB vrij."
+  keus="$(brein_model_kies "$mem")" || { zeg "  geen enkel model past in $((mem / 1024)) MB vrij geheugen, ook niet na het vrijmaken (drempel: $(brein_drempel_zin))."; brein_stand fout "Geen model past in $((mem / 1024)) MB vrij geheugen (drempel: $(brein_drempel_zin))." "$s" "" "$mem"; return 0; }
+  set -- $keus; repo="$1"; ctx="${5:-$BREIN_CONTEXT}"
+  zeg "  gekozen: $repo ($2, $(( $4 / 1000000 )) MB), context $ctx, $BREIN_DRADEN draden, alleen op de telefoon zelf (127.0.0.1)."
   # 1. llama-server uit JARVIS (statisch) naar /data/local/tmp kopieren -- daar mag de shell hem uitvoeren
   lib="$("$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's#^package:\(.*\)/base\.apk$#\1#p' | head -1)"
   [ -n "$lib" ] || { zeg "  JARVIS staat niet op deze telefoon."; brein_stand fout "JARVIS staat niet op de brein-telefoon." "$s" "" "$mem"; return 0; }
@@ -6592,12 +6613,14 @@ brein_start_kern() {
   fi
   # 3. het vrije geheugen opnieuw meten vlak voor het starten (het push-moment kan iets veranderd hebben)
   mem="$(mem_vrij_kb "$s")"; case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
-  if [ "$mem" -lt $((groot / 1024 + BREIN_MARGE_KB)) ]; then
-    zeg "  te weinig vrij geheugen ($((mem / 1024)) MB vrij; nodig ~$((groot / 1000000 + 1024)) MB). Druk opnieuw: dan maak ik eerst weer vrij."
+  marge="$BREIN_MARGE_KB"; [ "$ctx" = 2048 ] && marge="$BREIN_MARGE_KLEIN_KB"
+  [ "$mem" -lt $((groot / 1024 + marge)) ] && mem="$(brein_geheugen_rust "$s" "$mem")"
+  if [ "$mem" -lt $((groot / 1024 + marge)) ]; then
+    zeg "  te weinig vrij geheugen ($((mem / 1024)) MB vrij; nodig ~$((groot / 1048576 + marge / 1024)) MB). Druk opnieuw: dan maak ik eerst weer vrij."
     brein_stand fout "Te weinig vrij geheugen vlak voor het starten ($((mem / 1024)) MB)." "$s" "$mnaam" "$mem"; return 0
   fi
   # 4. starten (een eerdere van ONS eerst stoppen), los van de adb-sessie, alleen op 127.0.0.1
-  "$ADB" -s "$s" shell "cd $BREIN_MAP_TEL && (setsid nohup ./llama-server -m $mnaam -t $BREIN_DRADEN -c $BREIN_CONTEXT --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)" >/dev/null 2>&1
+  "$ADB" -s "$s" shell "cd $BREIN_MAP_TEL && (setsid nohup ./llama-server -m $mnaam -t $BREIN_DRADEN -c $ctx --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)" >/dev/null 2>&1
   "$ADB" -s "$s" forward --remove tcp:"$BREIN_POORT_LOK" >/dev/null 2>&1 || true
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
   for i in $(seq 1 80); do
@@ -6606,8 +6629,8 @@ brein_start_kern() {
   done
   if [ "$ok" = 1 ]; then
     printf '%s\n' "$s" >"$REK_MAP/brein-serial"; chmod 600 "$REK_MAP/brein-serial" 2>/dev/null || true
-    printf '%s\n' "$mnaam" >"$REK_MAP/brein-model"; : >"$BREIN_AAN_F"; toestel_id "$s" >"$REK_MAP/brein-tid"   # 678: de waakhond herstart het brein zelf, ook zonder internet
-    zeg "  klaar: het brein antwoordt (route: $(brein_route "$s")). Typ nu in Veronica."; brein_stand klaar "Het brein draait op $naam ($((mem / 1024)) MB vrij bij het starten)." "$s" "$mnaam" "$mem"
+    printf '%s\n' "$mnaam" >"$REK_MAP/brein-model"; printf '%s\n' "$ctx" >"$REK_MAP/brein-ctx"; : >"$BREIN_AAN_F"; toestel_id "$s" >"$REK_MAP/brein-tid"   # 678: de waakhond herstart het brein zelf, ook zonder internet
+    zeg "  klaar: het brein antwoordt (route: $(brein_route "$s")). Typ nu in Veronica."; brein_stand klaar "Het brein draait op $naam (context $ctx; $((mem / 1024)) MB vrij bij het starten)." "$s" "$mnaam" "$mem"
   else
     zeg "  de server kwam niet op binnen 4 minuten. Laatste regels van de telefoon: $("$ADB" -s "$s" shell tail -n 3 "$BREIN_MAP_TEL/server.log" 2>/dev/null | tr -d '\r' | tr '\n' ' ' | cut -c1-300)"
     brein_stand fout "De server kwam niet op (zie Log)." "$s" "$mnaam" "$mem"
@@ -6797,7 +6820,7 @@ brein_waak() {
   if [ -n "$("$ADB" -s "$s" shell "pgrep -f $bin" 2>/dev/null | tr -d '\r\n ')" ]; then rm -rf "$REK_MAP/brein.lock"; return 0; fi   # draait nog (laadt misschien): niet dubbel starten
   "$ADB" -s "$s" shell "[ -x $bin ] && [ -s $BREIN_MAP_TEL/$m ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja || { rm -rf "$REK_MAP/brein.lock"; return 0; }
   mem="$(brein_vrijmaken "$s" 2>/dev/null)"
-  "$ADB" -s "$s" shell "cd $BREIN_MAP_TEL && (setsid nohup ./llama-server -m $m -t $BREIN_DRADEN -c $BREIN_CONTEXT --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)" >/dev/null 2>&1
+  "$ADB" -s "$s" shell "cd $BREIN_MAP_TEL && (setsid nohup ./llama-server -m $m -t $BREIN_DRADEN -c $(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9' | grep . || echo "$BREIN_CONTEXT") --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)" >/dev/null 2>&1
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
   for i in $(seq 1 80); do curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { ok=1; break; }; sleep 3; done
   if [ "$ok" = 1 ]; then brein_stand klaar "Het brein draait op $(toestel_naam "$s") (vanzelf herstart)." "$s" "$m" "$mem"; zeg "Brein: vanzelf herstart op $(toestel_naam "$s")."
@@ -6847,7 +6870,8 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
     else zeg "    nog geen poging gedaan."; fi
     brein_poging_achtergrond
   fi
-  zeg "  model: $(printf '%s\n' "$st" | sed -n 2p)"
+  zeg "  model: $(printf '%s\n' "$st" | sed -n 2p)$([ -s "$REK_MAP/brein-ctx" ] && echo ", context $(head -1 "$REK_MAP/brein-ctx" | tr -cd '0-9')")"
+  zeg "  drempel: $(brein_drempel_zin)"
   zeg "  vrij geheugen: $(case "$nu" in ''|*[!0-9]*) echo 'nu niet te meten' ;; *) echo "$((nu / 1024)) MB nu" ;; esac)$([ -n "$(printf '%s\n' "$st" | sed -n 3p)" ] && echo ", $(printf '%s\n' "$st" | sed -n 3p) MB bij het starten")"
   zeg "  antwoordt: $([ -n "$h" ] && echo 'ja' || echo 'NEE')$([ -f "$BREIN_AAN_F" ] && echo ' -- de waakhond houdt hem in leven (ook zonder internet)')"
 }
@@ -6902,12 +6926,13 @@ except Exception:
     stand = {}
 rol = ('Je bent de lokale AI van een rij oude telefoons (Veronica). Claude Code, de AI die deze opstelling bouwt, stelt je een vraag. '
        'Antwoord in het Nederlands, eerlijk en zo goed als je kunt; verzin niets en zeg het als je iets niet weet. Je kunt niets uitvoeren: je antwoordt alleen.')
-lijf = json.dumps({'messages': [{'role': 'system', 'content': rol}, {'role': 'user', 'content': vraag['vraag'][:4000]}], 'max_tokens': 1024, 'stream': False, 'temperature': 0.7}).encode()
+lijf = json.dumps({'messages': [{'role': 'system', 'content': rol}, {'role': 'user', 'content': vraag['vraag'][:4000]}], 'max_tokens': 1024, 'stream': False, 'temperature': 0.7, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
 antwoord = None; tps = None; fout = ''
 try:
     r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=300)
     j = json.loads(r.read(4000000).decode('utf-8', 'replace'))
-    antwoord = re.sub(r'(?s)<think>.*?</think>', '', j['choices'][0]['message'].get('content') or '').strip()
+    m = j['choices'][0]['message']
+    antwoord = re.sub(r'(?s)<think>.*?</think>', '', m.get('content') or '').strip() or (('(nog aan het nadenken toen de ruimte op was) ' + str(m.get('reasoning_content'))[-1500:]) if m.get('reasoning_content') else '')
     t = (j.get('timings') or {}).get('predicted_per_second'); tps = round(t, 2) if isinstance(t, (int, float)) else None
 except Exception as x:
     fout = 'het brein gaf geen antwoord (%s)' % type(x).__name__
