@@ -546,10 +546,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde', 'jarvis-proef', 'jarvis-proef-uit', 'jarvis-terugval', 'spraak-proef', 'spraak-proef-uit', 'spraak-test', 'brein-start', 'brein-stop', 'brein-status', 'brein-kabel'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde', 'jarvis-proef', 'jarvis-proef-uit', 'jarvis-terugval', 'spraak-proef', 'spraak-proef-uit', 'spraak-test', 'brein-start', 'brein-stop', 'brein-status', 'brein-kabel', 'brein-rol'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef', 'spraak-test', 'brein-start', 'brein-kabel'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
+LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef', 'spraak-test', 'brein-start', 'brein-kabel', 'brein-rol'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
 # 678 (15 nov): wat de rekdokter van Veronica hier mag vragen (/rekdok, met de rij-code). Elke handeling is een bestaande opdracht die de F8
 # overslaat en alleen het JARVIS-pakket aanraakt; jarvis-terugval alleen op de proeftelefoon (zet de bewaarde vrijgegeven JARVIS terug).
 REKDOK_ACTIES = ('jarvis-waak', 'meld-status', 'motor-status', 'jarvis-terugval')
@@ -710,7 +710,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=brein-kabel>Brein op de telefoon aan de USB-kabel (veegt hem schoon)</button><button data-cmd=brein-start>Brein starten (typen naar een telefoon)</button><button data-cmd=brein-status>Brein: status</button><button data-cmd=brein-stop>Brein stoppen</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=brein-rol>Brein op de brein-telefoon (ook draadloos, veegt hem schoon)</button><button data-cmd=brein-kabel>Brein op de telefoon aan de USB-kabel (veegt hem schoon)</button><button data-cmd=brein-start>Brein starten (typen naar een telefoon)</button><button data-cmd=brein-status>Brein: status</button><button data-cmd=brein-stop>Brein stoppen</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -6294,27 +6294,56 @@ toestel_id_jarvis() { local s="$1" sl; sl="$(printf '%s' "$(toestel_id "$s")" | 
 mem_vrij_kb() { "$ADB" -s "$1" shell cat /proc/meminfo 2>/dev/null | tr -d '\r' | awk '/^MemAvailable:/ {print $2}'; }
 # brein_serial: de rektelefoon (nooit de F8, alleen een toegestane met JARVIS) met het MEESTE vrije geheugen; bij gelijke stand (binnen 256 MB)
 # de telefoon met de rol brein. Schrijft "serie vrij_kb" naar stdout.
-brein_serial() {
-  local id s m beste="" bestm=0 id_s vast kabel="" nkabel=0
-  # 678 (15 nov, eigenaar): EERST een vastgezette telefoon (brein-vast), DAN de enige rektelefoon aan de USB-kabel, pas DAN de meeste vrije geheugen.
-  vast="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
+# 678 (15 nov, eigenaar: "de kabel geeft alleen stroom; laat het ook draadloos werken"): een telefoon wordt herkend aan zijn EIGEN serienummer
+# (ro.serialno, via toestel_id), NIET aan het adb-adres: dat is aan de kabel het serienummer en draadloos 127.0.0.1:56xx (de Tailscale-brug) of ip:5555.
+# brein_adb <toestel-id>: het adb-adres van die telefoon, de kabel als die er is, anders draadloos. Nooit de F8.
+brein_adb() {
+  local tid="$1" s draad=""
+  [ -n "$tid" ] || return 0
   for s in $(verbonden); do
     is_f8 "$s" && continue
-    if [ -n "$vast" ] && [ "$s" = "$vast" ]; then m="$(mem_vrij_kb "$s")"; printf '%s %s' "$s" "${m:-0}"; return 0; fi
+    [ "$(toestel_id "$s")" = "$tid" ] || continue
+    case "$s" in *:*) [ -n "$draad" ] || draad="$s" ;; *) printf '%s' "$s"; return 0 ;; esac
+  done
+  [ -n "$draad" ] && printf '%s' "$draad"
+}
+brein_route() {   # $1 adb-adres -> kabel / draadloos (Tailscale) / draadloos (wifi)
+  case "$1" in 127.0.0.1:*) printf 'draadloos (Tailscale)' ;; *:*) printf 'draadloos (wifi)' ;; '') printf 'geen' ;; *) printf 'kabel' ;; esac
+}
+# brein_serial: welke telefoon het brein draagt, in deze volgorde: (1) de VASTE (brein-vast = zijn serienummer), (2) de telefoon met de rol brein in
+# Veronica (brein-id.conf, het JARVIS-toestel-id), (3) de enige rektelefoon aan de kabel, (4) het meeste vrije geheugen. Kabel of draadloos maakt niet uit.
+# Schrijft "adb-adres vrij_kb".
+brein_serial() {
+  local vast id s m beste="" bestm=0 id_s kabel="" nkabel=0 tid
+  vast="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
+  if [ -n "$vast" ]; then
+    case "$vast" in *:*) tid="$(toestel_id "$vast" 2>/dev/null)"; [ -n "$tid" ] && case "$tid" in adb:*) : ;; *) vast="$tid"; printf '%s\n' "$vast" >"$BREIN_VAST_F" ;; esac ;; esac
+    s="$(brein_adb "$vast")"
+    [ -n "$s" ] || { zeg "  de vaste brein-telefoon ($vast) is nu niet bereikbaar via adb (kabel of draadloos)." >&2; return 0; }
+    m="$(mem_vrij_kb "$s")"; printf '%s %s' "$s" "${m:-0}"; return 0
+  fi
+  id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
+  if [ -n "$id" ]; then
+    for s in $(verbonden); do
+      is_f8 "$s" && continue
+      toegestaan "$(toestel_id "$s")" || continue
+      [ "$(toestel_id_jarvis "$s")" = "$id" ] || continue
+      s="$(brein_adb "$(toestel_id "$s")")"; m="$(mem_vrij_kb "$s")"; printf '%s %s' "$s" "${m:-0}"; return 0
+    done
+  fi
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
     case "$s" in *:*) continue ;; esac
     toegestaan "$(toestel_id "$s")" || continue
     kabel="$s"; nkabel=$((nkabel + 1))
   done
-  if [ -z "$vast" ] && [ "$nkabel" = 1 ]; then m="$(mem_vrij_kb "$kabel")"; printf '%s %s' "$kabel" "${m:-0}"; return 0; fi
-  [ -n "$vast" ] && { zeg "  de vaste brein-telefoon ($vast) is nu niet verbonden." >&2; return 0; }
-  id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
+  if [ "$nkabel" = 1 ]; then m="$(mem_vrij_kb "$kabel")"; printf '%s %s' "$kabel" "${m:-0}"; return 0; fi
   for s in $(verbonden); do
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
     "$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | grep -q '^package:' || continue
     m="$(mem_vrij_kb "$s")"; case "$m" in ''|*[!0-9]*) continue ;; esac
-    id_s=""; [ -n "$id" ] && id_s="$(toestel_id_jarvis "$s")"
-    if [ -z "$beste" ] || [ "$m" -gt $((bestm + 262144)) ] || { [ "$m" -ge $((bestm - 262144)) ] && [ -n "$id" ] && [ "$id_s" = "$id" ]; }; then beste="$s"; bestm="$m"; fi
+    if [ -z "$beste" ] || [ "$m" -gt "$bestm" ]; then beste="$s"; bestm="$m"; fi
   done
   [ -n "$beste" ] && printf '%s %s' "$beste" "$bestm"
 }
@@ -6418,7 +6447,7 @@ brein_houd() {   # $1 pakket, $2 extra te houden pakketten -> 0 = blijven
 brein_schoonvegen() {   # $1 serienummer van de VASTE brein-telefoon
   local s="$1" vast pkg r weg="" uit="" bleef="" voor na thuis toets extra logf="$REK_MAP/brein-schoonveeg.log"
   vast="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
-  [ -n "$vast" ] && [ "$s" = "$vast" ] || { zeg "  schoonvegen: alleen op de vaste brein-telefoon (knop: Brein op de telefoon aan de USB-kabel); hier niet." >&2; return 0; }
+  [ -n "$vast" ] && [ "$(toestel_id "$s")" = "$vast" ] || { zeg "  schoonvegen: alleen op de vaste brein-telefoon (knop: Brein op de brein-telefoon of Brein op de telefoon aan de USB-kabel); hier niet." >&2; return 0; }
   is_f8 "$s" && return 0
   voor="$(mem_vrij_kb "$s")"
   thuis="$("$ADB" -s "$s" shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null | tr -d '\r' | sed -n 's#^\([a-z][A-Za-z0-9_.]*\)/.*#\1#p' | tail -1)"
@@ -6451,7 +6480,7 @@ brein_schoonvegen() {   # $1 serienummer van de VASTE brein-telefoon
 }
 brein_stand() {   # $1 klaar|uit|fout, $2 zin, $3 serienummer, $4 modelnaam, $5 vrij geheugen (kB) bij het starten
   local tid=""; [ -n "${3:-}" ] && tid="$(toestel_id_jarvis "$3")"
-  printf '{"stand":%s,"zin":%s,"telefoon":%s,"toestel":%s,"model":%s,"vrij_mb":%s,"t":%s}\n' "$(json_s "$1")" "$(json_s "$2")" "$(json_s "$([ -n "${3:-}" ] && toestel_naam "$3")")" "$(json_s "$tid")" "$(json_s "${4:-}")" "$(case "${5:-}" in ''|*[!0-9]*) echo null ;; *) echo $(( ${5} / 1024 )) ;; esac)" "$(date +%s)" >"$BREIN_STAND_F"
+  printf '{"stand":%s,"zin":%s,"telefoon":%s,"toestel":%s,"route":%s,"model":%s,"vrij_mb":%s,"t":%s}\n' "$(json_s "$1")" "$(json_s "$2")" "$(json_s "$([ -n "${3:-}" ] && toestel_naam "$3")")" "$(json_s "$tid")" "$(json_s "$([ -n "${3:-}" ] && brein_route "$3")")" "$(json_s "${4:-}")" "$(case "${5:-}" in ''|*[!0-9]*) echo null ;; *) echo $(( ${5} / 1024 )) ;; esac)" "$(date +%s)" >"$BREIN_STAND_F"
   chmod 600 "$BREIN_STAND_F" 2>/dev/null || true
 }
 brein_start() {
@@ -6462,8 +6491,8 @@ brein_start() {
   is_f8 "$s" && return 0
   naam="$(toestel_naam "$s")"
   "$ADB" -s "$s" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true   # een eerder brein van ONS telt niet mee in het vrije geheugen
-  zeg "Brein op $naam ($s). Eerst het geheugen vrijmaken, dan het slimste model dat past."
-  [ "$s" = "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && brein_schoonvegen "$s"   # 678: alleen de VASTE brein-telefoon
+  zeg "Brein op $naam ($(toestel_id "$s"), route: $(brein_route "$s")). Eerst het geheugen vrijmaken, dan het slimste model dat past."
+  [ "$(toestel_id "$s")" = "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && brein_schoonvegen "$s"   # 678: alleen de VASTE brein-telefoon
   mem="$(brein_vrijmaken "$s")"; case "$mem" in ''|*[!0-9]*) mem="$(mem_vrij_kb "$s")" ;; esac; case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
   keus="$(brein_model_kies "$mem")" || { zeg "  geen enkel model past in $((mem / 1024)) MB vrij geheugen, ook niet na het vrijmaken."; brein_stand fout "Geen model past in $((mem / 1024)) MB vrij geheugen." "$s" "" "$mem"; return 0; }
   set -- $keus; repo="$1"
@@ -6500,8 +6529,8 @@ brein_start() {
   done
   if [ "$ok" = 1 ]; then
     printf '%s\n' "$s" >"$REK_MAP/brein-serial"; chmod 600 "$REK_MAP/brein-serial" 2>/dev/null || true
-    printf '%s\n' "$mnaam" >"$REK_MAP/brein-model"; : >"$BREIN_AAN_F"   # 678: de waakhond herstart het brein zelf, ook zonder internet
-    zeg "  klaar: het brein antwoordt. Typ nu in Veronica."; brein_stand klaar "Het brein draait op $naam ($((mem / 1024)) MB vrij bij het starten)." "$s" "$mnaam" "$mem"
+    printf '%s\n' "$mnaam" >"$REK_MAP/brein-model"; : >"$BREIN_AAN_F"; toestel_id "$s" >"$REK_MAP/brein-tid"   # 678: de waakhond herstart het brein zelf, ook zonder internet
+    zeg "  klaar: het brein antwoordt (route: $(brein_route "$s")). Typ nu in Veronica."; brein_stand klaar "Het brein draait op $naam ($((mem / 1024)) MB vrij bij het starten)." "$s" "$mnaam" "$mem"
   else
     zeg "  de server kwam niet op binnen 4 minuten. Laatste regels van de telefoon: $("$ADB" -s "$s" shell tail -n 3 "$BREIN_MAP_TEL/server.log" 2>/dev/null | tr -d '\r' | tr '\n' ' ' | cut -c1-300)"
     brein_stand fout "De server kwam niet op (zie Log)." "$s" "$mnaam" "$mem"
@@ -6518,9 +6547,33 @@ brein_kabel() {
     kabel="$s"; n=$((n + 1))
   done
   [ "$n" = 1 ] || { zeg "Brein: er hangt $n rektelefoon(s) aan de USB-kabel; ik kies alleen als het er precies een is (nooit de F8)."; return 0; }
-  printf '%s\n' "$kabel" >"$BREIN_VAST_F"; chmod 600 "$BREIN_VAST_F" 2>/dev/null || true
-  zeg "Brein: $(toestel_naam "$kabel") ($kabel) is nu de vaste brein-telefoon."
+  printf '%s\n' "$(toestel_id "$kabel")" >"$BREIN_VAST_F"; chmod 600 "$BREIN_VAST_F" 2>/dev/null || true
+  zeg "Brein: $(toestel_naam "$kabel") ($(toestel_id "$kabel")) is nu de vaste brein-telefoon."
   brein_start
+}
+# 678 (15 nov, eigenaar: "laat het brein ook zonder USB-kabel werken"): de telefoon met de rol brein in Veronica (brein-id.conf) wordt de VASTE
+# brein-telefoon, bereikbaar over ELKE adb-route (kabel, of draadloos via Tailscale/wifi). Dan starten (met schoonvegen). Geen rol = niets raden.
+brein_rol() {
+  local id s gevonden=""
+  id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$id" ] || { zeg "Brein: in Veronica heeft nog geen telefoon de rol brein (of Veronica gaf hem nog niet door: open Meer in Veronica op deze computer)."; return 0; }
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    toegestaan "$(toestel_id "$s")" || continue
+    [ "$(toestel_id_jarvis "$s")" = "$id" ] && { gevonden="$s"; break; }
+  done
+  [ -n "$gevonden" ] || { zeg "Brein: de telefoon met de rol brein is nu niet bereikbaar via adb (niet aan de kabel en niet draadloos via Tailscale/wifi). Druk op Zoek telefoons of Rek via Tailscale."; return 0; }
+  printf '%s\n' "$(toestel_id "$gevonden")" >"$BREIN_VAST_F"; chmod 600 "$BREIN_VAST_F" 2>/dev/null || true
+  zeg "Brein: $(toestel_naam "$gevonden") ($(toestel_id "$gevonden"), route: $(brein_route "$(brein_adb "$(toestel_id "$gevonden")")")) is nu de vaste brein-telefoon."
+  brein_start
+}
+# het adb-adres van de brein-telefoon NU (het draadloze adres kan na een herstart veranderen): via zijn serienummer, anders het laatst gebruikte adres.
+brein_nu() {
+  local tid s
+  tid="$(head -1 "$REK_MAP/brein-tid" 2>/dev/null | tr -d '\r\n ')"; [ -n "$tid" ] || tid="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
+  s="$(brein_adb "$tid")"
+  [ -n "$s" ] || { s="$(head -1 "$REK_MAP/brein-serial" 2>/dev/null | tr -d '\r\n ')"; verbonden | grep -qx "$s" || s=""; }
+  printf '%s' "$s"
 }
 # 678 (15 nov, eigenaar: "de lokale AI moet blijven werken als Claude of internet wegvalt"): DE WAAKHOND VAN HET BREIN (console-lus, elke ~2 min).
 # Hoort het brein te draaien (brein-aan) en antwoordt het niet, dan eerst de doorsturing opnieuw; helpt dat niet en draait de server niet meer,
@@ -6532,10 +6585,10 @@ brein_waak() {
   brein_doorsturing >/dev/null 2>&1
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && return 0
   local s m bin i ok=0 vorig mem
-  s="$(head -1 "$REK_MAP/brein-serial" 2>/dev/null | tr -d '\r\n ')"; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
-  [ -n "$s" ] && [ -n "$m" ] || return 0
+  s="$(brein_nu)"; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$s" ] && [ -n "$m" ] || return 0   # de telefoon is nu niet bereikbaar via adb (kabel of draadloos): dan kan ik niets
   is_f8 "$s" && return 0
-  verbonden | grep -qx "$s" || return 0   # de telefoon is nu niet bereikbaar via adb: dan kan ik niets
+  printf '%s\n' "$s" >"$REK_MAP/brein-serial"
   vorig="$(cat "$REK_MAP/brein-herstart" 2>/dev/null || echo 0)"; case "$vorig" in ''|*[!0-9]*) vorig=0 ;; esac
   [ $(( $(date +%s) - vorig )) -ge 300 ] || return 0
   mkdir "$REK_MAP/brein.lock" 2>/dev/null || return 0
@@ -6552,12 +6605,12 @@ brein_waak() {
   rm -rf "$REK_MAP/brein.lock"
 }
 brein_doorsturing() {
-  local s; s="$(head -1 "$REK_MAP/brein-serial" 2>/dev/null | tr -d '\r\n ')"
+  local s; s="$(brein_nu)"
   [ -n "$s" ] && ! is_f8 "$s" || return 0
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1 && echo OK
 }
 brein_stop() {
-  local s; s="$(head -1 "$REK_MAP/brein-serial" 2>/dev/null | tr -d '\r\n ')"
+  local s; s="$(brein_nu)"
   if [ -n "$s" ] && ! is_f8 "$s"; then
     "$ADB" -s "$s" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true
     "$ADB" -s "$s" forward --remove tcp:"$BREIN_POORT_LOK" >/dev/null 2>&1 || true
@@ -6572,10 +6625,11 @@ brein_status() {
 try: d=json.load(open(os.environ["STAND"]))
 except Exception: d={}
 print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get("vrij_mb") is None else d.get("vrij_mb")); print(d.get("zin") or "")' 2>/dev/null)"
-  s="$(head -1 "$REK_MAP/brein-serial" 2>/dev/null | tr -d '\r\n ')"; [ -n "$s" ] || s="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
-  nu=""; [ -n "$s" ] && verbonden | grep -qx "$s" && nu="$(mem_vrij_kb "$s")"
+  s="$(brein_nu)"
+  nu=""; [ -n "$s" ] && nu="$(mem_vrij_kb "$s")"
   zeg "Brein: $(printf '%s\n' "$st" | sed -n 4p)"
-  zeg "  telefoon: $(printf '%s\n' "$st" | sed -n 1p)$([ -n "$s" ] && echo " ($s)")$([ -f "$BREIN_VAST_F" ] && echo ', vast gekozen')"
+  zeg "  telefoon: $(printf '%s\n' "$st" | sed -n 1p)$([ -s "$BREIN_VAST_F" ] && echo " ($(head -1 "$BREIN_VAST_F"), vast gekozen)")"
+  zeg "  route: $([ -n "$s" ] && brein_route "$s" || echo 'geen -- de brein-telefoon is nu niet bereikbaar via adb (niet aan de kabel, niet draadloos)')"
   zeg "  model: $(printf '%s\n' "$st" | sed -n 2p)"
   zeg "  vrij geheugen: $(case "$nu" in ''|*[!0-9]*) echo 'nu niet te meten' ;; *) echo "$((nu / 1024)) MB nu" ;; esac)$([ -n "$(printf '%s\n' "$st" | sed -n 3p)" ] && echo ", $(printf '%s\n' "$st" | sed -n 3p) MB bij het starten")"
   zeg "  antwoordt: $([ -n "$h" ] && echo 'ja' || echo 'NEE')$([ -f "$BREIN_AAN_F" ] && echo ' -- de waakhond houdt hem in leven (ook zonder internet)')"
@@ -7098,7 +7152,8 @@ case "${1:-status}" in
   jarvis-terugval) jarvis_terugval ;;
   spraak-proef) jarvis_spraak_proef aan ;;      # 678: stem en oor aan, alleen op de proeftelefoon (vanaf 1.9.96)
   brein-start) brein_start ;;
-  brein-kabel) brein_kabel ;;                      # 678 (15 nov): het brein op de rektelefoon aan de USB-kabel (vast), dan starten
+  brein-kabel) brein_kabel ;;
+  brein-rol) brein_rol ;;                          # 678 (15 nov): het brein op de telefoon met de rol brein, ook draadloos (Tailscale/wifi-adb)                      # 678 (15 nov): het brein op de rektelefoon aan de USB-kabel (vast), dan starten
   brein-waak) brein_waak ;;                        # intern (de console-lus): het brein in leven houden, zonder internet                      # 678 (15 nov): het brein (llama-server + Gemma 4 E2B) op de brein-telefoon
   brein-stop) brein_stop ;;
   brein-doorsturing) brein_doorsturing ;;
