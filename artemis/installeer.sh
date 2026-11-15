@@ -541,7 +541,7 @@ console() {
     local q; for q in $(pids_op_poort "$ARTEMIS_POORT" 2>/dev/null); do kill "$q" 2>/dev/null || true; done
   fi
   AREK="$BIN_SELF/artemis-rek" POORT="$CONSOLE_POORT" ARTEMIS_POORT="$ARTEMIS_POORT" REK_MAP="$REK_MAP" MIN_MB="$ARTEMIS_MIN_MB" KB_HOST="$KBHOST" python3 - <<'PY'
-import os, subprocess, threading, time, html, urllib.parse, hashlib, re, json, urllib.request
+import os, subprocess, threading, time, html, urllib.parse, hashlib, hmac, re, json, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
@@ -550,6 +550,10 @@ TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', '
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
 LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef', 'spraak-test'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
+# 678 (15 nov): wat de rekdokter van Veronica hier mag vragen (/rekdok, met de rij-code). Elke handeling is een bestaande opdracht die de F8
+# overslaat en alleen het JARVIS-pakket aanraakt; jarvis-terugval alleen op de proeftelefoon (zet de bewaarde vrijgegeven JARVIS terug).
+REKDOK_ACTIES = ('jarvis-waak', 'meld-status', 'motor-status', 'jarvis-terugval')
+REKDOK_LOPEND = {}
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -1349,6 +1353,40 @@ class H(BaseHTTPRequestHandler):
                 self._schrijf(200, 'APK-link opgeslagen. Druk nu op "Telefoon klaarzetten" (telefoon aan de kabel); ARTEMIS haalt de nieuwste JARVIS van de server en zet hem erop.')
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
+            return
+        if p.path in ('/rekdok', '/rekdok-uitslag'):
+            # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
+            # (CORS houdt een andere site wel van het LEZEN af, niet van het STUREN; de code wel). Elke handeling is een bestaande knop
+            # die zelf de F8 overslaat en alleen het JARVIS-pakket aanraakt. Achtergrond met een eigen logboek; /rekdok-uitslag leest dat.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
+            c = (f.get('code', [''])[0]).strip(); a = (f.get('actie', [''])[0]).strip()
+            try:
+                with open(os.path.join(REK, 'rek-token.conf')) as fh: tok = fh.read().strip()
+            except Exception:
+                tok = ''
+            if not tok or not c or not hmac.compare_digest(c.encode(), tok.encode()):
+                self._cors(403, 'Niet toegestaan: de rij-code klopt niet (open Meer in Veronica, dan geeft zij hem door).'); return
+            if a not in REKDOK_ACTIES:
+                self._cors(400, 'Onbekende handeling.'); return
+            pad = os.path.join(REK, 'rekdok-%s.log' % a)
+            if p.path == '/rekdok':
+                oud = REKDOK_LOPEND.get(a)
+                if oud is not None and oud.poll() is None:
+                    self._cors(200, 'bezig'); return
+                try:
+                    fh = open(pad, 'wb')
+                    REKDOK_LOPEND[a] = subprocess.Popen([AREK, a], stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+                    self._cors(200, 'gestart')
+                except Exception as e:
+                    self._cors(500, 'fout: ' + str(e))
+                return
+            pr = REKDOK_LOPEND.get(a)
+            try:
+                with open(pad, 'rb') as fh: tekst = fh.read()[-6000:].decode('utf-8', 'replace')
+            except Exception:
+                tekst = ''
+            self._cors_json(200, json.dumps({'bezig': pr is not None and pr.poll() is None, 'tekst': tekst}))
             return
         if p.path == '/relay-zet':
             # 623c: Veronica geeft het relay-ONDERWERP (jv+30) EN -ADRES in EEN POST door -- met CORS, zoals /lokaal-zet, want
