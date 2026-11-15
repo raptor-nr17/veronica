@@ -546,14 +546,37 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde', 'jarvis-proef', 'jarvis-proef-uit', 'jarvis-terugval', 'spraak-proef', 'spraak-proef-uit', 'spraak-test'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde', 'jarvis-proef', 'jarvis-proef-uit', 'jarvis-terugval', 'spraak-proef', 'spraak-proef-uit', 'spraak-test', 'brein-start', 'brein-stop', 'brein-status'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef', 'spraak-test'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
+LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef', 'spraak-test', 'brein-start'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
 # 678 (15 nov): wat de rekdokter van Veronica hier mag vragen (/rekdok, met de rij-code). Elke handeling is een bestaande opdracht die de F8
 # overslaat en alleen het JARVIS-pakket aanraakt; jarvis-terugval alleen op de proeftelefoon (zet de bewaarde vrijgegeven JARVIS terug).
 REKDOK_ACTIES = ('jarvis-waak', 'meld-status', 'motor-status', 'jarvis-terugval')
 REKDOK_LOPEND = {}
+# 678 (15 nov): het brein -- de llama-server op de brein-telefoon, bereikbaar via een adb-doorsturing op deze computer (BREIN_POORT_LOK).
+# Valt de doorsturing weg (adb opnieuw verbonden), dan zet brein_vraag hem een keer opnieuw op naar het bewaarde serienummer.
+BREIN_LOK = int(os.environ.get('BREIN_POORT_LOK', '18093'))
+def brein_gezond():
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=3) as r:
+            return b'ok' in r.read(200)
+    except Exception:
+        return False
+def brein_forward():
+    # via artemis-rek zelf (die kent adb), naar het bewaarde serienummer van de brein-telefoon
+    return 'OK' in doe_args(['brein-doorsturing'], 15)
+def brein_vraag(lijf):
+    data = json.dumps(lijf).encode()
+    for poging in (0, 1):
+        try:
+            req = urllib.request.Request('http://127.0.0.1:%d/v1/chat/completions' % BREIN_LOK, data=data, headers={'Content-Type': 'application/json'})
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=180) as r:
+                return json.loads(r.read(4000000).decode('utf-8', 'replace'))
+        except Exception:
+            if poging == 0 and brein_forward(): continue
+            return None
+    return None
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -645,6 +668,7 @@ def lus():
     while True:
         try:
             waak_zorg()   # 678: de bewaker van de console in leven houden (die houdt op zijn beurt de console in leven)
+            threading.Thread(target=doe_args, args=(['kanaal-tik'], 330), daemon=True).start()   # 678 (15 nov): een vraag van Claude Code aan het brein? (eigen draad: een antwoord kan minuten duren; een slot voorkomt dubbel)
             if RONDE % 15 == 9:
                 threading.Thread(target=doe, args=('zelfronde',), daemon=True).start()   # 678 (14 nov): de rondes van Cowork, nu zelf; op een eigen draad (adb/relay kosten even)
             if RONDE % 10 == 0:
@@ -684,7 +708,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=brein-start>Brein starten (typen naar een telefoon)</button><button data-cmd=brein-status>Brein: status</button><button data-cmd=brein-stop>Brein stoppen</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -996,6 +1020,14 @@ class H(BaseHTTPRequestHandler):
             # 678 punt 22: alleen LEZEN -- welke rektelefoons ARTEMIS nu ziet (kabel/wifi/Tailscale), voor de lijst in Veronica.
             t = doe_args(['rek-aanwezig'], 45)
             self._cors_json(200, t if t.startswith('[') else '[]')
+        elif p.path == '/brein/status':
+            # 678 (15 nov): staat het brein klaar? Alleen LEZEN (CORS): de stand die brein-start schreef, plus of hij NU antwoordt.
+            try:
+                with open(os.path.join(REK, 'brein-stand.json')) as fh: st = json.loads(fh.read() or '{}')
+            except Exception:
+                st = {}
+            st['antwoordt'] = brein_gezond()
+            self._cors_json(200, json.dumps(st))
         elif p.path == '/zelfronde.json':
             # 678 (14 nov): de laatste zelfronde, alleen LEZEN, voor Meer in Veronica (CORS zoals /rek.json)
             try:
@@ -1354,6 +1386,34 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
+        if p.path == '/brein/chat':
+            # 678 (15 nov): TYPEN NAAR HET BREIN. Veronica stuurt {code, messages, max_tokens}; alleen met de rij-code. ARTEMIS stuurt het door
+            # naar de llama-server op de brein-telefoon (via de adb-doorsturing, 127.0.0.1) en geeft {tekst, tps, ms} terug -- tps is GEMETEN
+            # (timings.predicted_per_second van llama.cpp), niet geschat. De inhoud komt in geen enkel logboek.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            try: d = json.loads(self.rfile.read(min(ln, 200000)).decode('utf-8', 'replace') if ln else '{}')
+            except Exception: d = {}
+            c = str(d.get('code') or '')
+            try:
+                with open(os.path.join(REK, 'rek-token.conf')) as fh: tok = fh.read().strip()
+            except Exception:
+                tok = ''
+            if not tok or not c or not hmac.compare_digest(c.encode(), tok.encode()):
+                self._cors_json(403, json.dumps({'fout': 'De rij-code klopt niet (open Meer in Veronica).'})); return
+            msgs = [m for m in (d.get('messages') or []) if isinstance(m, dict) and m.get('role') in ('system', 'user', 'assistant') and isinstance(m.get('content'), str)][-24:]
+            if not msgs:
+                self._cors_json(400, json.dumps({'fout': 'Geen vraag.'})); return
+            mt = d.get('max_tokens'); mt = mt if isinstance(mt, int) and 1 <= mt <= 2048 else 512
+            t0 = time.time(); r = brein_vraag({'messages': msgs, 'max_tokens': mt, 'stream': False, 'temperature': 0.7})
+            if r is None:
+                self._cors_json(503, json.dumps({'fout': 'Het brein antwoordt niet. Druk in ARTEMIS op Brein starten.'})); return
+            try:
+                tekst = r['choices'][0]['message'].get('content') or ''
+                tps = (r.get('timings') or {}).get('predicted_per_second')
+            except Exception:
+                self._cors_json(502, json.dumps({'fout': 'Het brein gaf een onleesbaar antwoord.'})); return
+            self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': int((time.time() - t0) * 1000)}))
+            return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
             # (CORS houdt een andere site wel van het LEZEN af, niet van het STUREN; de code wel). Elke handeling is een bestaande knop
@@ -1400,7 +1460,20 @@ class H(BaseHTTPRequestHandler):
             o = (f.get('onderwerp', [''])[0]).strip()
             a = (f.get('relay', [''])[0]).strip().rstrip('/')
             c = (f.get('code', [''])[0]).strip()
+            b = (f.get('brein', [''])[0]).strip()
             gedaan = []
+            # 678 (15 nov): het JARVIS-toestel-id van de telefoon met de rol brein (uit de rollen in Veronica). Alleen een geldig id.
+            if b:
+                if not re.match(r'^[a-z0-9]{12,40}$', b):
+                    self._cors(400, 'Het brein-toestel van Veronica is ongeldig.'); return
+                try:
+                    p4 = os.path.join(REK, 'brein-id.conf')
+                    with open(p4, 'w') as fh: fh.write(b + '\n')
+                    try: os.chmod(p4, 0o600)
+                    except Exception: pass
+                    gedaan.append('brein')
+                except Exception as e:
+                    self._cors(500, 'fout: ' + str(e)); return
             # 678 (15 nov): ook de RIJ-CODE, zodat 'Motor en spraak: status' en de rondgang stem en oor kunnen lezen zonder dat iemand iets plakt.
             # Dezelfde regels als het veld Rij-code: strikt gevalideerd, 600, nooit teruggegeven of in een melding. Leeg = laten staan.
             if c:
@@ -6193,6 +6266,229 @@ rek_aanwezig() {
   done
   printf ']\n'
 }
+# >>> BREIN (678, 15 nov, eigenaar: "begin met een enkele telefoon waar ik naartoe kan typen")
+# EEN telefoon -- de telefoon met de rol brein in Veronica -- draait llama-server (llama.cpp, OpenAI-vorm op /v1) met Gemma 4 E2B (Q4_K_M,
+# ggml-org). Zonder nieuwe APK: de llama-server zit al statisch in JARVIS (libllamaserver.so, vastgezette llama.cpp-commit met Gemma 4 en
+# --jinja); ARTEMIS kopieert hem naar /data/local/tmp/brein en zet het model ernaast. Het model haalt ARTEMIS op deze computer van
+# Hugging Face: de bestandsnaam en de sha256 komen uit de lijst van Hugging Face (NOOIT geraden), en de sha256 wordt nagerekend.
+# De server luistert ALLEEN op loopback van de telefoon (127.0.0.1); Veronica praat ermee via de console (/brein/chat, met de rij-code) en een
+# adb-doorsturing -- dus over de kabel of Tailscale, los van het wifi. Nooit de F8. Alleen het eigen bestand van ARTEMIS wordt gestopt.
+# 678 (15 nov, eigenaar: "zoveel mogelijk intelligentie, snelheid is bijzaak"): het SLIMSTE model dat in het vrije geheugen past, in deze
+# volgorde (repo kwantisatie). Per model lezen we naam, sha256 en grootte uit de lijst van Hugging Face; past het niet (grootte + 1,2 GB boven
+# MemAvailable van de telefoon) of staat het er niet, dan het volgende. Een andere lijst: BREIN_MODELLEN in de omgeving ("repo kwant;repo kwant").
+BREIN_MODELLEN="${BREIN_MODELLEN:-ggml-org/gemma-4-E4B-it-GGUF Q4_K_M;Qwen/Qwen3-4B-GGUF Q4_K_M;ggml-org/gemma-4-E2B-it-GGUF Q4_K_M}"
+BREIN_MAP_TEL="/data/local/tmp/brein"
+BREIN_POORT_TEL=8093                       # op de telefoon, alleen 127.0.0.1
+BREIN_POORT_LOK="${BREIN_POORT_LOK:-18093}" # de adb-doorsturing op deze computer
+BREIN_DRADEN="${BREIN_DRADEN:-4}"
+BREIN_CONTEXT="${BREIN_CONTEXT:-4096}"
+BREIN_MARGE_KB=1258291                     # 1,2 GB boven het model: KV-cache, de server zelf, Android
+BREIN_ID_F="$REK_MAP/brein-id.conf"        # het JARVIS-toestel-id van de telefoon met de rol brein (Veronica geeft hem door, /relay-zet)
+BREIN_STAND_F="$REK_MAP/brein-stand.json"
+# het JARVIS-toestel-id van een telefoon (zelfde bron als rek.json: jarvis_toestel_id met de sleutel van het toestel)
+toestel_id_jarvis() { local s="$1" sl; sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"; jarvis_toestel_id "$s" "$sl"; }
+mem_vrij_kb() { "$ADB" -s "$1" shell cat /proc/meminfo 2>/dev/null | tr -d '\r' | awk '/^MemAvailable:/ {print $2}'; }
+# brein_serial: de rektelefoon (nooit de F8, alleen een toegestane met JARVIS) met het MEESTE vrije geheugen; bij gelijke stand (binnen 256 MB)
+# de telefoon met de rol brein. Schrijft "serie vrij_kb" naar stdout.
+brein_serial() {
+  local id s m beste="" bestm=0 id_s
+  id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    toegestaan "$(toestel_id "$s")" || continue
+    "$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | grep -q '^package:' || continue
+    m="$(mem_vrij_kb "$s")"; case "$m" in ''|*[!0-9]*) continue ;; esac
+    id_s=""; [ -n "$id" ] && id_s="$(toestel_id_jarvis "$s")"
+    if [ -z "$beste" ] || [ "$m" -gt $((bestm + 262144)) ] || { [ "$m" -ge $((bestm - 262144)) ] && [ -n "$id" ] && [ "$id_s" = "$id" ]; }; then beste="$s"; bestm="$m"; fi
+  done
+  [ -n "$beste" ] && printf '%s %s' "$beste" "$bestm"
+}
+# brein_model_kies <vrij_kb>: het eerste (slimste) model uit BREIN_MODELLEN dat past -> "repo naam sha grootte"
+brein_model_kies() {
+  local vrij="$1" paar repo kw lijst keus groot
+  local IFS_OUD="$IFS"; IFS=';'; set -- $BREIN_MODELLEN; IFS="$IFS_OUD"
+  for paar in "$@"; do
+    repo="${paar%% *}"; kw="${paar##* }"
+    printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || continue
+    lijst="$(curl -fsSL -m 60 "https://huggingface.co/api/models/$repo?blobs=true" 2>/dev/null)" || lijst=""
+    [ -n "$lijst" ] || { zeg "  $repo: de lijst van Hugging Face is niet te lezen; volgende." >&2; continue; }
+    keus="$(LIJST="$lijst" KW="$kw" python3 -I - <<'PY' 2>/dev/null
+import json, os, re
+try: d = json.loads(os.environ['LIJST'])
+except Exception: raise SystemExit(0)
+kw = os.environ['KW'].lower(); beste = None
+for x in d.get('siblings') or []:
+    n = str(x.get('rfilename') or ''); l = n.lower(); f = x.get('lfs') or {}
+    if not l.endswith('.gguf') or '/' in n or 'mmproj' in l or re.search(r'-0000[0-9]-of-', l) or kw not in l: continue
+    sha = str(f.get('sha256') or f.get('oid') or ''); g = f.get('size')
+    if not re.fullmatch(r'[0-9a-f]{64}', sha) or not isinstance(g, int) or g < 100000000: continue
+    if beste is None or len(n) < len(beste[0]): beste = (n, sha, g)
+if beste: print(beste[0], beste[1], beste[2])
+PY
+)"
+    [ -n "$keus" ] || { zeg "  $repo: geen $kw-model met een controlesom; volgende." >&2; continue; }
+    groot="${keus##* }"
+    if [ $((groot / 1024 + BREIN_MARGE_KB)) -le "$vrij" ]; then printf '%s %s' "$repo" "$keus"; return 0; fi
+    zeg "  $repo ($kw, $((groot / 1000000)) MB) past niet in $((vrij / 1024)) MB vrij geheugen; het volgende (kleinere) model." >&2
+  done
+  return 1
+}
+# brein_model_haal <repo> <naam> <sha> <grootte>: op deze computer ophalen (hervatbaar), de sha256 narekenen -> het pad
+brein_model_haal() {
+  local repo="$1" naam="$2" sha="$3" groot="$4" map="$JAPK_PLEK/brein" doel
+  mkdir -p "$map" 2>/dev/null || true; doel="$map/$naam"
+  if [ -s "$doel" ] && [ "$(stat -c %s "$doel" 2>/dev/null)" = "$groot" ]; then printf '%s' "$doel"; return 0; fi
+  zeg "  model ophalen: $naam ($((groot / 1000000)) MB) -- dit duurt even; de download gaat verder waar hij stopte." >&2
+  curl -fsSL -C - -m 7200 "https://huggingface.co/$repo/resolve/main/$naam" -o "$doel.deel" 2>/dev/null || true
+  [ "$(stat -c %s "$doel.deel" 2>/dev/null)" = "$groot" ] || { zeg "  de download is nog niet compleet ($(stat -c %s "$doel.deel" 2>/dev/null || echo 0) van $groot bytes); druk later opnieuw." >&2; return 1; }
+  [ "$(sha256sum "$doel.deel" | cut -c1-64)" = "$sha" ] || { rm -f "$doel.deel"; zeg "  de controlesom van het model klopt niet; weggegooid." >&2; return 1; }
+  mv -f "$doel.deel" "$doel" && printf '%s' "$doel"
+}
+brein_stand() {   # $1 klaar|uit|fout, $2 zin, $3 serienummer, $4 modelnaam
+  printf '{"stand":%s,"zin":%s,"telefoon":%s,"model":%s,"t":%s}\n' "$(json_s "$1")" "$(json_s "$2")" "$(json_s "$([ -n "${3:-}" ] && toestel_naam "$3")")" "$(json_s "${4:-}")" "$(date +%s)" >"$BREIN_STAND_F"
+  chmod 600 "$BREIN_STAND_F" 2>/dev/null || true
+}
+brein_start() {
+  command -v "$ADB" >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || { zeg "Brein: adb, curl of python3 ontbreekt."; return 0; }
+  local s naam lib bin model mnaam groot vrij mem i ok=0 sm keus repo
+  sm="$(brein_serial)"; s="${sm%% *}"; mem="${sm##* }"
+  [ -n "$sm" ] || { zeg "Brein: geen rektelefoon met JARVIS verbonden (kabel of Tailscale)."; brein_stand uit "Geen rektelefoon verbonden." ""; return 0; }
+  is_f8 "$s" && return 0
+  naam="$(toestel_naam "$s")"
+  "$ADB" -s "$s" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true   # een eerder brein van ONS telt niet mee in het vrije geheugen
+  mem="$(mem_vrij_kb "$s")"; case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
+  zeg "Brein: $naam heeft het meeste vrije geheugen ($((mem / 1024)) MB). Ik kies het slimste model dat daar past."
+  keus="$(brein_model_kies "$mem")" || { zeg "  geen enkel model past in $((mem / 1024)) MB. Zet in Veronica de eigen motor van deze telefoon uit (die laadt ook een model) en druk opnieuw."; brein_stand fout "Geen model past in het vrije geheugen (eerst de eigen motor uit)." "$s"; return 0; }
+  set -- $keus; repo="$1"
+  zeg "  gekozen: $repo ($2, $(( $4 / 1000000 )) MB), $BREIN_DRADEN draden, alleen op de telefoon zelf (127.0.0.1)."
+  # 1. llama-server uit JARVIS (statisch) naar /data/local/tmp kopieren -- daar mag de shell hem uitvoeren
+  lib="$("$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's#^package:\(.*\)/base\.apk$#\1#p' | head -1)"
+  [ -n "$lib" ] || { zeg "  JARVIS staat niet op deze telefoon."; brein_stand fout "JARVIS staat niet op de brein-telefoon." "$s"; return 0; }
+  bin="$BREIN_MAP_TEL/llama-server"
+  "$ADB" -s "$s" shell "mkdir -p $BREIN_MAP_TEL && cp $lib/lib/arm64/libllamaserver.so $bin && chmod 755 $bin" >/dev/null 2>&1
+  "$ADB" -s "$s" shell "[ -x $bin ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja || { zeg "  deze JARVIS heeft geen llama-server (libllamaserver.so); werk JARVIS bij."; brein_stand fout "Geen llama-server in deze JARVIS." "$s"; return 0; }
+  # 2. het model: op deze computer ophalen, naar de telefoon zetten als hij er nog niet (helemaal) staat
+  model="$(brein_model_haal $keus)" || { brein_stand fout "Het model is er nog niet (download loopt of mislukte)." "$s"; return 0; }
+  mnaam="$(basename "$model")"; groot="$(stat -c %s "$model")"
+  if [ "$("$ADB" -s "$s" shell stat -c %s "$BREIN_MAP_TEL/$mnaam" 2>/dev/null | tr -d '\r ')" != "$groot" ]; then
+    vrij="$("$ADB" -s "$s" shell df -k /data/local/tmp 2>/dev/null | tr -d '\r' | awk 'NR==2 {print $4}')"
+    case "$vrij" in ''|*[!0-9]*) vrij=0 ;; esac
+    [ "$vrij" -gt $((groot / 1024 + 524288)) ] || { zeg "  te weinig ruimte op de telefoon ($((vrij / 1024)) MB vrij; het model is $((groot / 1000000)) MB)."; brein_stand fout "Te weinig ruimte op de brein-telefoon." "$s" "$mnaam"; return 0; }
+    zeg "  model naar de telefoon zetten ($((groot / 1000000)) MB; over Tailscale duurt dat langer)..."
+    "$ADB" -s "$s" push "$model" "$BREIN_MAP_TEL/$mnaam" >/dev/null 2>&1 || { zeg "  het model naar de telefoon zetten mislukte."; brein_stand fout "Het model kwam niet op de telefoon." "$s" "$mnaam"; return 0; }
+  fi
+  # 3. het vrije geheugen opnieuw meten vlak voor het starten (het push-moment kan iets veranderd hebben)
+  mem="$(mem_vrij_kb "$s")"; case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
+  if [ "$mem" -lt $((groot / 1024 + BREIN_MARGE_KB)) ]; then
+    zeg "  te weinig vrij geheugen ($((mem / 1024)) MB vrij; nodig ~$((groot / 1000000 + 1200)) MB). Zet in Veronica de eigen motor van deze telefoon uit en druk opnieuw."
+    brein_stand fout "Te weinig vrij geheugen op de brein-telefoon (eerst de eigen motor uit)." "$s" "$mnaam"; return 0
+  fi
+  # 4. starten (een eerdere van ONS eerst stoppen), los van de adb-sessie, alleen op 127.0.0.1
+  "$ADB" -s "$s" shell "cd $BREIN_MAP_TEL && (setsid nohup ./llama-server -m $mnaam -t $BREIN_DRADEN -c $BREIN_CONTEXT --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)" >/dev/null 2>&1
+  "$ADB" -s "$s" forward --remove tcp:"$BREIN_POORT_LOK" >/dev/null 2>&1 || true
+  "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
+  for i in $(seq 1 80); do
+    curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { ok=1; break; }
+    sleep 3
+  done
+  if [ "$ok" = 1 ]; then
+    printf '%s\n' "$s" >"$REK_MAP/brein-serial"; chmod 600 "$REK_MAP/brein-serial" 2>/dev/null || true
+    zeg "  klaar: het brein antwoordt. Typ nu in Veronica."; brein_stand klaar "Het brein draait op $naam." "$s" "$mnaam"
+  else
+    zeg "  de server kwam niet op binnen 4 minuten. Laatste regels van de telefoon: $("$ADB" -s "$s" shell tail -n 3 "$BREIN_MAP_TEL/server.log" 2>/dev/null | tr -d '\r' | tr '\n' ' ' | cut -c1-300)"
+    brein_stand fout "De server kwam niet op (zie Log)." "$s" "$mnaam"
+  fi
+}
+brein_doorsturing() {
+  local s; s="$(head -1 "$REK_MAP/brein-serial" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$s" ] && ! is_f8 "$s" || return 0
+  "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1 && echo OK
+}
+brein_stop() {
+  local s; s="$(head -1 "$REK_MAP/brein-serial" 2>/dev/null | tr -d '\r\n ')"
+  if [ -n "$s" ] && ! is_f8 "$s"; then
+    "$ADB" -s "$s" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true
+    "$ADB" -s "$s" forward --remove tcp:"$BREIN_POORT_LOK" >/dev/null 2>&1 || true
+  fi
+  brein_stand uit "Het brein is gestopt." "$s"; zeg "Brein gestopt (alleen de llama-server van ARTEMIS; JARVIS draait gewoon door)."
+}
+brein_status() {
+  local h; h="$(curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null)"
+  zeg "Brein: $(sed -n 's/.*"zin":"\([^"]*\)".*/\1/p' "$BREIN_STAND_F" 2>/dev/null | head -1)$([ -n "$h" ] && echo ' -- antwoordt nu.' || echo ' -- antwoordt nu NIET.')"
+}
+# 678 (15 nov, eigenaar: "laat Claude Code direct met de lokale AI praten"): HET KANAAL. Claude Code legt via een runner (lokale-ai-gesprek.yml) een
+# vraag VERSLEUTELD op de relay; hier leest ARTEMIS hem (elke minuut, alleen als het brein antwoordt), vraagt het brein en legt het antwoord
+# versleuteld terug. Sleutel en onderwerpen uit de code van de vaste downloadlink (veld APK-link). Het brein ANTWOORDT alleen: hier wordt niets
+# uitgevoerd wat in een vraag staat. Een vraag tegelijk (slot), elke vraag een keer (kanaal-gezien), geen inhoud in een logboek.
+KANAAL_GEZIEN_F="$REK_MAP/kanaal-gezien"
+kanaal_tik() {
+  local link code base
+  link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
+  code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
+  base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$code" ] || return 0
+  case "$base" in https://*.workers.dev|https://*.workers.dev/) : ;; *) return 0 ;; esac
+  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  mkdir "$REK_MAP/kanaal.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/kanaal.lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] && rm -rf "$REK_MAP/kanaal.lock"; return 0; }
+  rek_zorg_crypto >/dev/null 2>&1 || true
+  CODE="$code" BASE="$base" GEZIEN="$KANAAL_GEZIEN_F" STAND="$BREIN_STAND_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
+import os, json, hashlib, time, re, urllib.request
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+except Exception:
+    raise SystemExit(0)
+code = os.environ['CODE']; base = os.environ['BASE'].rstrip('/')
+h = lambda s: hashlib.sha256(s.encode()).hexdigest()
+tv = 'lv' + h('lokale-ai-vraag:' + code)[:30]; ta = 'la' + h('lokale-ai-antwoord:' + code)[:30]
+key = hashlib.sha256(('lokale-ai-sleutel:' + code).encode()).digest()
+op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try:
+    gezien = set(open(os.environ['GEZIEN']).read().split())
+except Exception:
+    gezien = set()
+try:
+    raw = op.open(urllib.request.Request(base + '/' + tv + '/json?poll=1&since=12h', headers={'User-Agent': 'artemis'}), timeout=20).read().decode('utf-8', 'replace')
+except Exception:
+    raise SystemExit(0)
+vraag = None
+for regel in raw.splitlines():
+    try:
+        m = json.loads(regel); e = json.loads(m.get('message', ''))
+        d = json.loads(AESGCM(key).decrypt(bytes.fromhex(e['iv']), bytes.fromhex(e['data']), None).decode())
+    except Exception:
+        continue
+    if d.get('v') == 1 and isinstance(d.get('vraag'), str) and re.fullmatch(r'v[0-9]{1,9}', str(d.get('id', ''))) and d['id'] not in gezien:
+        vraag = d; break
+if not vraag:
+    raise SystemExit(0)
+try:
+    stand = json.load(open(os.environ['STAND']))
+except Exception:
+    stand = {}
+rol = ('Je bent de lokale AI van een rij oude telefoons (Veronica). Claude Code, de AI die deze opstelling bouwt, stelt je een vraag. '
+       'Antwoord in het Nederlands, eerlijk en zo goed als je kunt; verzin niets en zeg het als je iets niet weet. Je kunt niets uitvoeren: je antwoordt alleen.')
+lijf = json.dumps({'messages': [{'role': 'system', 'content': rol}, {'role': 'user', 'content': vraag['vraag'][:4000]}], 'max_tokens': 1024, 'stream': False, 'temperature': 0.7}).encode()
+antwoord = None; tps = None; fout = ''
+try:
+    r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=300)
+    j = json.loads(r.read(4000000).decode('utf-8', 'replace'))
+    antwoord = re.sub(r'(?s)<think>.*?</think>', '', j['choices'][0]['message'].get('content') or '').strip()
+    t = (j.get('timings') or {}).get('predicted_per_second'); tps = round(t, 2) if isinstance(t, (int, float)) else None
+except Exception as x:
+    fout = 'het brein gaf geen antwoord (%s)' % type(x).__name__
+uit = {'v': 1, 'id': vraag['id'], 'antwoord': antwoord, 'fout': fout, 'model': stand.get('model') or '', 'telefoon': stand.get('telefoon') or '', 'tps': tps, 't': int(time.time() * 1000)}
+iv = os.urandom(12); ct = AESGCM(key).encrypt(iv, json.dumps(uit).encode(), None)
+try:
+    op.open(urllib.request.Request(base + '/', data=json.dumps({'topic': ta, 'message': json.dumps({'iv': iv.hex(), 'data': ct.hex()})}).encode(),
+            headers={'Content-Type': 'application/json', 'User-Agent': 'artemis'}), timeout=20).read()
+    with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
+except Exception:
+    pass
+PY
+  rm -rf "$REK_MAP/kanaal.lock"
+}
+# <<< BREIN
+
 # >>> ZELFRONDE (678, 14 nov: de lokale kant neemt het over als Cowork er niet bij kan)
 # Wat Cowork met de hand nakeek, kijkt ARTEMIS nu ZELF na, elke ~15 minuten (console-lus) of met de knop "Zelfronde nu": draait ARTEMIS,
 # werkt de console zichzelf bij, meldt elke rektelefoon zich bij de relay, werkt Claude door (laatste push), komt Cowork of de eigenaar
@@ -6637,6 +6933,11 @@ case "${1:-status}" in
   jarvis-proef-uit) jarvis_proef_uit ;;
   jarvis-terugval) jarvis_terugval ;;
   spraak-proef) jarvis_spraak_proef aan ;;      # 678: stem en oor aan, alleen op de proeftelefoon (vanaf 1.9.96)
+  brein-start) brein_start ;;                      # 678 (15 nov): het brein (llama-server + Gemma 4 E2B) op de brein-telefoon
+  brein-stop) brein_stop ;;
+  brein-doorsturing) brein_doorsturing ;;
+  kanaal-tik) kanaal_tik ;;                        # intern (de console-lus): een vraag van Claude Code naar het brein, het antwoord terug          # intern (de console): de adb-doorsturing naar het brein opnieuw
+  brein-status) brein_status ;;
   spraak-test) jarvis_spraak_test ;;                # 678 (15 nov): de rondgang stem -> oor op de proeftelefoon (met de rij-code van Veronica)
   spraak-proef-uit) jarvis_spraak_proef uit ;;             # 678: de bewaarde vrijgegeven JARVIS terug op de proeftelefoon (install -r -d)
   zelfronde) zelfronde ;;                        # 678 (14 nov): de rondes die Cowork met de hand deed, nu zelf (alleen lezen + veilig herstel)
