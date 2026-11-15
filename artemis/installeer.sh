@@ -1592,6 +1592,12 @@ waak_ronde() {
       return 1
     fi
     # een tunnel-toestel dat niet op de kabel-lijst staat is GEEN reden voor een STOP (de verboden-app-controle hieronder geldt wél).
+    # 678 (15 nov): de VASTE brein-telefoon (serienummer in brein-vast/brein-tid, alleen gezet door een knop van de eigenaar) is geen onbekend
+    # toestel: op de lijst zetten in plaats van STOP + losmaken (dat brak het brein af, 14:59 15 nov). Nooit de F8 (hierboven al gestopt).
+    if [ "$via_ts" -eq 0 ] && ! toegestaan "$id" && brein_is_vast "$id"; then
+      touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true; printf '%s\n' "$id" >>"$TOEG"
+      logregel "Op de lijst gezet: $naam (serie $id) -- de vaste brein-telefoon; geen STOP."
+    fi
     if [ "$via_ts" -eq 0 ] && ! toegestaan "$id"; then
       logregel "STOP: een toestel dat niet op de lijst staat ($naam). ARTEMIS is uitgezet."
       case "$s" in *:*) "$ADB" disconnect "$s" >/dev/null 2>&1 || true ;; esac
@@ -5563,8 +5569,25 @@ rek_via_tailscale_rem() {
   local nu laatst; nu="$(date +%s 2>/dev/null || echo 0)"
   if [ -f "$TS_BRUG_T" ]; then laatst="$(cat "$TS_BRUG_T" 2>/dev/null || echo 0)"; else laatst=0; fi
   [ $((nu - laatst)) -lt 300 ] 2>/dev/null && return 0
+  # 678 (15 nov): NIET herbouwen als alle bruggen nog leven (socat draait en adb ziet het toestel): herbouwen breekt alle verbindingen af, ook de
+  # adb-doorsturing van het brein, en kan de poorten laten wisselen. Dan hoogstens eens per 30 min, en nooit zolang het brein over een levende brug draait.
+  [ -n "$(find "$REK_MAP/brein-bezig" -maxdepth 0 -mmin -90 2>/dev/null)" ] && return 0
+  if ts_bruggen_gezond; then
+    [ -f "$BREIN_AAN_F" ] && return 0
+    [ $((nu - laatst)) -lt 1800 ] 2>/dev/null && return 0
+  fi
   printf '%s\n' "$nu" >"$TS_BRUG_T" 2>/dev/null || true
   rek_via_tailscale >/dev/null 2>&1 || true
+}
+ts_bruggen_gezond() {   # 0 = er zijn bruggen en ze leven allemaal
+  [ -s "$TS_BRUG_F" ] || return 1
+  local lp ip pid st
+  while read -r lp ip pid; do
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+    st="$("$ADB" devices 2>/dev/null | awk -v s="127.0.0.1:$lp" '$1==s {print $2}')"
+    [ "$st" = device ] || return 1
+  done <"$TS_BRUG_F"
+  return 0
 }
 tailscale_telefoon() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
@@ -6307,6 +6330,25 @@ brein_adb() {
   done
   [ -n "$draad" ] && printf '%s' "$draad"
 }
+brein_is_vast() {   # $1 serienummer: is dit de vaste brein-telefoon (brein-vast of brein-tid)?
+  local t; [ -n "$1" ] || return 1
+  for t in "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" "$(head -1 "$REK_MAP/brein-tid" 2>/dev/null | tr -d '\r\n ')"; do
+    [ -n "$t" ] && [ "$t" = "$1" ] && return 0
+  done
+  return 1
+}
+# brein_bereik <toestel-id>: het adb-adres, en zo niet: via de hartslag (rol brein) of, hoogstens eens per 2 min, de Tailscale-bruggen opnieuw opbouwen.
+brein_bereik() {
+  local tid="$1" s id nu laatst
+  s="$(brein_adb "$tid")"; [ -n "$s" ] && { printf '%s' "$s"; return 0; }
+  id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
+  if [ -n "$id" ]; then s="$(brein_zoek_rol "$id")"; [ -n "$s" ] && [ "$(toestel_id "$s")" = "$tid" ] && { printf '%s' "$s"; return 0; }; fi
+  nu="$(date +%s)"; laatst="$(head -1 "$TS_BRUG_T" 2>/dev/null | tr -d '\r\n ')"; case "$laatst" in ''|*[!0-9]*) laatst=0 ;; esac
+  [ $((nu - laatst)) -ge 120 ] || return 0
+  printf '%s\n' "$nu" >"$TS_BRUG_T" 2>/dev/null || true
+  command -v tailscale >/dev/null 2>&1 && rek_via_tailscale >/dev/null 2>&1 || true
+  brein_adb "$tid"
+}
 brein_route() {   # $1 adb-adres -> kabel / draadloos (Tailscale) / draadloos (wifi)
   case "$1" in 127.0.0.1:*) printf 'draadloos (Tailscale)' ;; *:*) printf 'draadloos (wifi)' ;; '') printf 'geen' ;; *) printf 'kabel' ;; esac
 }
@@ -6318,18 +6360,14 @@ brein_serial() {
   vast="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
   if [ -n "$vast" ]; then
     case "$vast" in *:*) tid="$(toestel_id "$vast" 2>/dev/null)"; [ -n "$tid" ] && case "$tid" in adb:*) : ;; *) vast="$tid"; printf '%s\n' "$vast" >"$BREIN_VAST_F" ;; esac ;; esac
-    s="$(brein_adb "$vast")"
+    s="$(brein_bereik "$vast")"
     [ -n "$s" ] || { zeg "  de vaste brein-telefoon ($vast) is nu niet bereikbaar via adb (kabel of draadloos)." >&2; return 0; }
     m="$(mem_vrij_kb "$s")"; printf '%s %s' "$s" "${m:-0}"; return 0
   fi
   id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
   if [ -n "$id" ]; then
-    for s in $(verbonden); do
-      is_f8 "$s" && continue
-      toegestaan "$(toestel_id "$s")" || continue
-      [ "$(toestel_id_jarvis "$s")" = "$id" ] || continue
-      s="$(brein_adb "$(toestel_id "$s")")"; m="$(mem_vrij_kb "$s")"; printf '%s %s' "$s" "${m:-0}"; return 0
-    done
+    s="$(brein_zoek_rol "$id")"
+    [ -n "$s" ] && { m="$(mem_vrij_kb "$s")"; printf '%s %s' "$s" "${m:-0}"; return 0; }
   fi
   for s in $(verbonden); do
     is_f8 "$s" && continue
@@ -6483,7 +6521,13 @@ brein_stand() {   # $1 klaar|uit|fout, $2 zin, $3 serienummer, $4 modelnaam, $5 
   printf '{"stand":%s,"zin":%s,"telefoon":%s,"toestel":%s,"route":%s,"model":%s,"vrij_mb":%s,"t":%s}\n' "$(json_s "$1")" "$(json_s "$2")" "$(json_s "$([ -n "${3:-}" ] && toestel_naam "$3")")" "$(json_s "$tid")" "$(json_s "$([ -n "${3:-}" ] && brein_route "$3")")" "$(json_s "${4:-}")" "$(case "${5:-}" in ''|*[!0-9]*) echo null ;; *) echo $(( ${5} / 1024 )) ;; esac)" "$(date +%s)" >"$BREIN_STAND_F"
   chmod 600 "$BREIN_STAND_F" 2>/dev/null || true
 }
+# 678 (15 nov): zolang het brein start (model naar de telefoon zetten over Tailscale duurt minuten) breekt de minuut-scan de bruggen NIET af.
 brein_start() {
+  : >"$REK_MAP/brein-bezig" 2>/dev/null || true
+  brein_start_kern
+  rm -f "$REK_MAP/brein-bezig"
+}
+brein_start_kern() {
   command -v "$ADB" >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || { zeg "Brein: adb, curl of python3 ontbreekt."; return 0; }
   local s naam lib bin model mnaam groot vrij mem i ok=0 sm keus repo
   sm="$(brein_serial)"; s="${sm%% *}"; mem="${sm##* }"
@@ -6554,24 +6598,55 @@ brein_kabel() {
 # 678 (15 nov, eigenaar: "laat het brein ook zonder USB-kabel werken"): de telefoon met de rol brein in Veronica (brein-id.conf) wordt de VASTE
 # brein-telefoon, bereikbaar over ELKE adb-route (kabel, of draadloos via Tailscale/wifi). Dan starten (met schoonvegen). Geen rol = niets raden.
 brein_rol() {
-  local id s gevonden=""
+  local id s tid lijn ips ip lport poging
   id="$(head -1 "$BREIN_ID_F" 2>/dev/null | tr -d '\r\n ')"
   [ -n "$id" ] || { zeg "Brein: in Veronica heeft nog geen telefoon de rol brein (of Veronica gaf hem nog niet door: open Meer in Veronica op deze computer)."; return 0; }
+  s="$(brein_zoek_rol "$id")"
+  if [ -z "$s" ]; then
+    zeg "Brein: de telefoon met de rol brein is nu niet in adb; ik bouw de Tailscale-bruggen een keer opnieuw op."
+    rek_via_tailscale >/dev/null 2>&1 || true; printf '%s\n' "$(date +%s)" >"$TS_BRUG_T" 2>/dev/null || true
+    s="$(brein_zoek_rol "$id")"
+  fi
+  [ -n "$s" ] || { zeg "Brein: de telefoon met de rol brein is nu niet bereikbaar via adb (niet aan de kabel, niet via Tailscale/wifi). $(brein_zoek_uitleg "$id")"; return 0; }
+  tid="$(toestel_id "$s")"
+  case "$tid" in ''|adb:*) zeg "Brein: de telefoon antwoordt niet op adb (geen serienummer te lezen)."; return 0 ;; esac
+  # de brein-telefoon op de veiligheidslijst (op serienummer), met het bewijs: zijn JARVIS-toestel-id IS de rol brein in Veronica. Nooit de F8.
+  if ! toegestaan "$tid"; then
+    touch "$TOEG"; chmod 600 "$TOEG" 2>/dev/null || true
+    printf '%s\n' "$tid" >>"$TOEG"
+    logregel "Op de lijst gezet: $(toestel_naam "$s") (serie $tid) -- het is de telefoon met de rol brein in Veronica (zijn JARVIS-toestel-id of zijn hartslag wijst hem aan)."
+  fi
+  printf '%s\n' "$tid" >"$BREIN_VAST_F"; chmod 600 "$BREIN_VAST_F" 2>/dev/null || true
+  zeg "Brein: $(toestel_naam "$s") ($tid, route: $(brein_route "$s")) is nu de vaste brein-telefoon."
+  brein_start
+}
+# brein_zoek_rol <JARVIS-id>: het adb-adres van de telefoon met die rol, via (1) zijn JARVIS-toestel-id over elke adb-route, of (2) zijn HARTSLAG
+# (relay): het Tailscale-adres (100.x) of wifi-adres daarin, gekoppeld aan de Tailscale-brug (TS_BRUG_F) of een adb-wifi-adres. Nooit de F8.
+brein_zoek_rol() {
+  local id="$1" s lijn ips ip lport
   for s in $(verbonden); do
     is_f8 "$s" && continue
-    toegestaan "$(toestel_id "$s")" || continue
-    [ "$(toestel_id_jarvis "$s")" = "$id" ] && { gevonden="$s"; break; }
+    [ "$(toestel_id_jarvis "$s")" = "$id" ] && { brein_adb "$(toestel_id "$s")"; return 0; }
   done
-  [ -n "$gevonden" ] || { zeg "Brein: de telefoon met de rol brein is nu niet bereikbaar via adb (niet aan de kabel en niet draadloos via Tailscale/wifi). Druk op Zoek telefoons of Rek via Tailscale."; return 0; }
-  printf '%s\n' "$(toestel_id "$gevonden")" >"$BREIN_VAST_F"; chmod 600 "$BREIN_VAST_F" 2>/dev/null || true
-  zeg "Brein: $(toestel_naam "$gevonden") ($(toestel_id "$gevonden"), route: $(brein_route "$(brein_adb "$(toestel_id "$gevonden")")")) is nu de vaste brein-telefoon."
-  brein_start
+  lijn="$(rek_lijst_rauw 2>/dev/null | awk -F'\t' -v i="$id" '$3==i {print; exit}')"
+  ips="$(printf '%s' "$lijn" | cut -f1 | tr ',' ' ')"
+  for ip in $ips; do
+    lport="$(awk -v ip="$ip" '$2==ip {print $1; exit}' "$TS_BRUG_F" 2>/dev/null)"
+    if [ -n "$lport" ] && verbonden | grep -qx "127.0.0.1:$lport"; then is_f8 "127.0.0.1:$lport" || { printf '%s' "127.0.0.1:$lport"; return 0; }; fi
+    if verbonden | grep -qx "$ip:5555"; then is_f8 "$ip:5555" || { printf '%s' "$ip:5555"; return 0; }; fi
+  done
+}
+brein_zoek_uitleg() {   # waarom niet gevonden: een zin uit de hartslag en de bruggen
+  local id="$1" lijn
+  lijn="$(rek_lijst_rauw 2>/dev/null | awk -F'\t' -v i="$id" '$3==i {print; exit}')"
+  [ -n "$lijn" ] || { printf 'De relay heeft geen verse hartslag van die telefoon (staat JARVIS daar aan?).'; return 0; }
+  printf 'Zijn hartslag noemt de adressen %s; daarvoor staat geen werkende brug (Rek via Tailscale) of adb-wifi-verbinding.' "$(printf '%s' "$lijn" | cut -f1)"
 }
 # het adb-adres van de brein-telefoon NU (het draadloze adres kan na een herstart veranderen): via zijn serienummer, anders het laatst gebruikte adres.
 brein_nu() {
   local tid s
   tid="$(head -1 "$REK_MAP/brein-tid" 2>/dev/null | tr -d '\r\n ')"; [ -n "$tid" ] || tid="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
-  s="$(brein_adb "$tid")"
+  s="$(brein_bereik "$tid")"
   [ -n "$s" ] || { s="$(head -1 "$REK_MAP/brein-serial" 2>/dev/null | tr -d '\r\n ')"; verbonden | grep -qx "$s" || s=""; }
   printf '%s' "$s"
 }
