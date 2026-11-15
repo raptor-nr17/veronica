@@ -546,10 +546,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde', 'jarvis-proef', 'jarvis-proef-uit', 'jarvis-terugval', 'spraak-proef', 'spraak-proef-uit'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde', 'jarvis-proef', 'jarvis-proef-uit', 'jarvis-terugval', 'spraak-proef', 'spraak-proef-uit', 'spraak-test'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
+LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef', 'spraak-test'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -680,7 +680,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <header>ARTEMIS-console &mdash; de rektelefoons besturen zonder de terminal</header><main>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -1361,7 +1361,21 @@ class H(BaseHTTPRequestHandler):
             f = urllib.parse.parse_qs(self.rfile.read(ln).decode('utf-8', 'replace') if ln else '')
             o = (f.get('onderwerp', [''])[0]).strip()
             a = (f.get('relay', [''])[0]).strip().rstrip('/')
+            c = (f.get('code', [''])[0]).strip()
             gedaan = []
+            # 678 (15 nov): ook de RIJ-CODE, zodat 'Motor en spraak: status' en de rondgang stem en oor kunnen lezen zonder dat iemand iets plakt.
+            # Dezelfde regels als het veld Rij-code: strikt gevalideerd, 600, nooit teruggegeven of in een melding. Leeg = laten staan.
+            if c:
+                if not re.match(r'^[A-Za-z0-9_-]{6,128}$', c):
+                    self._cors(400, 'De rij-code van Veronica is ongeldig.'); return
+                try:
+                    p3 = os.path.join(REK, 'rek-token.conf')
+                    with open(p3, 'w') as fh: fh.write(c + '\n')
+                    try: os.chmod(p3, 0o600)
+                    except Exception: pass
+                    gedaan.append('rij-code')
+                except Exception as e:
+                    self._cors(500, 'fout: ' + str(e)); return
             if o:
                 if not re.match(r'^jv[a-z0-9]{30}$', o):
                     self._cors(400, 'Het relay-onderwerp van Veronica is ongeldig (hoort jv + 30 tekens te zijn).'); return
@@ -1384,7 +1398,7 @@ class H(BaseHTTPRequestHandler):
                     gedaan.append('adres')
                 except Exception as e:
                     self._cors(500, 'fout: ' + str(e)); return
-            self._cors(200, ('Relay %s ingesteld door Veronica -- ARTEMIS leest de telefoons nu via de relay.' % ' en '.join(gedaan)) if gedaan else 'Niets ingesteld (Veronica gaf geen onderwerp of adres).')
+            self._cors(200, ('%s ingesteld door Veronica -- ARTEMIS leest de telefoons nu via de relay.' % ' en '.join(gedaan)) if gedaan else 'Niets ingesteld (Veronica gaf geen onderwerp, adres of rij-code).')
             return
         cmd = (q.get('cmd', [''])[0]) if p.path == '/doe' else ''
         if cmd in TOEGESTAAN:
@@ -2291,6 +2305,81 @@ jarvis_spraak_proef() {
     return 0
   done
   zeg "Stem en oor: de proeftelefoon is nu niet verbonden. Sluit hem aan de USB-kabel aan en druk opnieuw."
+}
+# 678 (15 nov): WAT ADB LAAT ZIEN, OOK ZONDER RIJ-CODE. De spraakserver (8082) vraagt de rij-code; zonder die code zegt hij niets. Maar adb
+# ziet wel: draait JARVIS en hoe lang al zonder herstart, luistert poort 8082 (de server start ALLEEN als de stem of het oor klaar staat), en
+# hoe vaak het proces de laatste 24 uur afbrak (crash, native crash, ANR). Alleen lezen; niets op de telefoon verandert.
+jarvis_spraak_bewijs() {   # $1 serienummer -> een zin
+  local s="$1" pid et luistert vanaf exits crash laatst
+  pid="$(timeout 6 "$ADB" -s "$s" shell pidof "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}')"
+  case "$pid" in ''|*[!0-9]*) printf 'JARVIS draait nu niet'; return 0 ;; esac
+  et="$(timeout 6 "$ADB" -s "$s" shell ps -o ETIME= -p "$pid" 2>/dev/null | tr -d '\r ' | tail -1)"
+  luistert="$(timeout 6 "$ADB" -s "$s" shell cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | tr -d '\r' | awk '$2 ~ /:1F92$/ && $4=="0A" {n++} END {print n+0}')"
+  vanaf="$(date -d '24 hours ago' '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
+  exits="$(timeout 8 "$ADB" -s "$s" shell dumpsys activity exit-info "$JARVIS_PKG" 2>/dev/null | tr -d '\r')"
+  crash="$(printf '%s\n' "$exits" | awk -v vanaf="$vanaf" '
+    /timestamp=/ { t=$0; sub(/.*timestamp=/, "", t); t=substr(t, 1, 19) }
+    /reason=[0-9]+ \((APP CRASH|ANR|CRASH)/ { if (vanaf == "" || t >= vanaf) n++ }
+    END { print n+0 }')"
+  laatst="$(printf '%s\n' "$exits" | grep -m1 -oE 'reason=[0-9]+ \([^)]*\)' | sed 's/reason=[0-9]* (\(.*\))/\1/')"
+  printf 'JARVIS draait %s zonder herstart; poort 8082 %s; %s keer afgebroken in 24 uur%s' \
+    "${et:-?}" "$([ "${luistert:-0}" -gt 0 ] && echo 'luistert (dat kan alleen als de stem of het oor klaar staat)' || echo 'luistert NIET (stem en oor staan geen van beide klaar)')" \
+    "${crash:-?}" "$([ -n "$laatst" ] && echo " (laatste afsluiting: $laatst)")"
+}
+# 678 (15 nov): DE RONDGANG op de proeftelefoon. De stem maakt een vaste zin (POST /zeg), en het oor verstaat diezelfde WAV weer (POST /luister).
+# Zo zie je in een regel of allebei echt werken, met de tijden. Via een adb-doorsturing (loopback: de spraakserver laat dat toe) en met de
+# rij-code (die gaat nooit in een melding). De zin is vast en niet persoonlijk. De uitslag komt ook in spraak-test.txt (voor Motor en spraak).
+SPRAAK_TEST_F="$REK_MAP/spraak-test.txt"
+jarvis_spraak_test() {
+  command -v "$ADB" >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || { zeg "Rondgang: adb of curl ontbreekt."; return 0; }
+  local tok p s w t0 t1 t2 uit zin="Goedemorgen. De stem en het oor van het rek werken samen."
+  [ -s "$REK_MAP/rek-token.conf" ] && tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "${tok:-}" ] || { zeg "Rondgang: ARTEMIS kent de rij-code nog niet. Open Meer in Veronica op deze computer: die geeft hem vanzelf door (alleen op deze computer). Tot dan zie je bij 'Motor en spraak: status' wat adb laat zien."; return 0; }
+  p="$(head -1 "$JARVIS_PROEF_F" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$p" ] || { zeg "Rondgang: er is geen proeftelefoon aangewezen."; return 0; }
+  for s in $(verbonden); do
+    [ "$(toestel_id "$s")" = "$p" ] || continue
+    is_f8 "$s" && return 0
+    w="$(mktemp -d)" || return 0
+    "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
+    timeout 6 "$ADB" -s "$s" forward tcp:"$MOTOR_LOK_POORT" tcp:8082 >/dev/null 2>&1 || { rm -rf "$w"; zeg "Rondgang: geen doorsturing naar de telefoon."; return 0; }
+    t0="$(date +%s%3N)"
+    curl -fsS -m 60 -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' --data "{\"tekst\":\"$zin\"}" "http://127.0.0.1:$MOTOR_LOK_POORT/zeg" -o "$w/zeg.wav" 2>/dev/null
+    t1="$(date +%s%3N)"
+    [ -s "$w/zeg.wav" ] && curl -fsS -m 90 -H "Authorization: Bearer $tok" -H 'Content-Type: audio/wav' --data-binary @"$w/zeg.wav" "http://127.0.0.1:$MOTOR_LOK_POORT/luister" -o "$w/luister.json" 2>/dev/null
+    t2="$(date +%s%3N)"
+    "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
+    uit="$(W="$w" ZIN="$zin" MS1="$((t1 - t0))" MS2="$((t2 - t1))" python3 -I - <<'PY' 2>/dev/null
+import os, json, re, struct
+w = os.environ['W']; zin = os.environ['ZIN']; ms1 = int(os.environ['MS1']); ms2 = int(os.environ['MS2'])
+def woorden(t): return re.findall(r"[a-zà-ÿ0-9]+", t.lower())
+try:
+    b = open(os.path.join(w, 'zeg.wav'), 'rb').read()
+except Exception:
+    b = b''
+if len(b) < 44 or b[:4] != b'RIFF' or b[8:12] != b'WAVE':
+    print('Stem: GEEN geluid terug (staat de stem klaar? zie Motor en spraak: status). Oor: niet getest.'); raise SystemExit(0)
+rate = struct.unpack('<I', b[24:28])[0]; bps = struct.unpack('<H', b[34:36])[0] or 16; kan = struct.unpack('<H', b[22:24])[0] or 1
+sec = (len(b) - 44) / float(max(1, rate * kan * bps // 8))
+stem = 'Stem: %.1f s spraak (%d Hz) in %.1f s gemaakt.' % (sec, rate, ms1 / 1000.0)
+try:
+    t = json.load(open(os.path.join(w, 'luister.json'))).get('tekst')
+except Exception:
+    t = None
+if not isinstance(t, str):
+    print(stem + ' Oor: GEEN tekst terug (staat het oor klaar?). Oordeel: stem werkt, oor niet.'); raise SystemExit(0)
+doel = woorden(zin); kreeg = set(woorden(t)); goed = sum(1 for x in doel if x in kreeg)
+oordeel = 'goed' if goed >= 0.8 * len(doel) else ('twijfel' if goed >= 0.5 * len(doel) else 'slecht')
+print('%s Oor: verstond "%s" in %.1f s (%d van %d woorden goed). Oordeel: %s.' % (stem, t.strip()[:160], ms2 / 1000.0, goed, len(doel), oordeel))
+PY
+)"
+    rm -rf "$w"
+    [ -n "$uit" ] || uit="Rondgang mislukt: geen uitslag (python3 ontbreekt?)."
+    printf '%s %s: %s\n' "$(date '+%d-%m %H:%M')" "$(toestel_naam "$s")" "$uit" >"$SPRAAK_TEST_F"; chmod 600 "$SPRAAK_TEST_F" 2>/dev/null || true
+    zeg "Rondgang op de proeftelefoon ($(toestel_naam "$s")): $uit"
+    return 0
+  done
+  zeg "Rondgang: de proeftelefoon is nu niet verbonden (kabel of Tailscale)."
 }
 # <<< PROEF
 
@@ -5743,8 +5832,12 @@ motor_status() {
       *) hint=" -- geen antwoord van de motor (staat JARVIS aan? is de motor aangezet?)" ;;
     esac
     zeg "  $naam: motor $st$([ -n "$tps" ] && echo " (~$tps tok/s geschat)")$hint; stem $stem, oor $oor"
+    # 678 (15 nov): zonder rij-code (stem/oor "niets") of op de proeftelefoon: wat adb ziet, zonder code
+    if [ "$stem" = niets ] || [ "$id" = "$(head -1 "$JARVIS_PROEF_F" 2>/dev/null | tr -d '\r\n ')" ]; then zeg "    adb: $(jarvis_spraak_bewijs "$s")"; fi
   done
   [ "$n" -gt 0 ] || zeg "  Geen rektelefoon verbonden."
+  [ -s "$SPRAAK_TEST_F" ] && zeg "  Laatste rondgang (stem -> oor): $(head -1 "$SPRAAK_TEST_F")"
+  [ -s "$REK_MAP/rek-token.conf" ] || zeg "  (De rij-code geeft Veronica vanzelf door zodra Meer in Veronica op deze computer opengaat; dan zie je hier ook stem en oor.)"
 }
 # Duurtest: elke 5 minuten (console-lus) een meetregel per telefoon zolang het vlagbestand er is, hoogstens 25 uur. Alleen getallen; geen inhoud.
 duurtest_start() { date +%s >"$DUUR_AAN_F"; chmod 600 "$DUUR_AAN_F" 2>/dev/null || true; : >"$DUUR_F"; chmod 600 "$DUUR_F" 2>/dev/null || true; zeg "Duurtest gestart: elke 5 minuten een meting per telefoon, 24 uur lang. Kijk met 'Duurtest-uitslag'; stop met 'Duurtest stop'."; duurtest_tik; }
@@ -6452,6 +6545,7 @@ case "${1:-status}" in
   jarvis-proef-uit) jarvis_proef_uit ;;
   jarvis-terugval) jarvis_terugval ;;
   spraak-proef) jarvis_spraak_proef aan ;;      # 678: stem en oor aan, alleen op de proeftelefoon (vanaf 1.9.96)
+  spraak-test) jarvis_spraak_test ;;                # 678 (15 nov): de rondgang stem -> oor op de proeftelefoon (met de rij-code van Veronica)
   spraak-proef-uit) jarvis_spraak_proef uit ;;             # 678: de bewaarde vrijgegeven JARVIS terug op de proeftelefoon (install -r -d)
   zelfronde) zelfronde ;;                        # 678 (14 nov): de rondes die Cowork met de hand deed, nu zelf (alleen lezen + veilig herstel)
   waakbewaker) waakbewaker ;;                    # 678: start een weggevallen console opnieuw

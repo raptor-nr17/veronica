@@ -3250,8 +3250,11 @@
     if (!artemisGebruikt()) return null;
     const o = (S.ntfy && S.ntfy.onderwerp) || '';
     const a = RelayV.adres || '';
-    if (!o && !a) return null;
-    const body = []; if (o) body.push('onderwerp=' + encodeURIComponent(o)); if (a) body.push('relay=' + encodeURIComponent(a));
+    // 678 (15 nov): ook de RIJ-CODE, zodat ARTEMIS de stem en het oor (poort 8082) en de motor kan lezen zonder dat iemand iets plakt.
+    // Alleen naar de console op DEZE computer (artemisGebruikt); de console bewaart hem 600 en geeft hem nooit terug.
+    const c = /^[A-Za-z0-9_-]{6,128}$/.test(String(S.code || '')) ? String(S.code) : '';
+    if (!o && !a && !c) return null;
+    const body = []; if (o) body.push('onderwerp=' + encodeURIComponent(o)); if (a) body.push('relay=' + encodeURIComponent(a)); if (c) body.push('code=' + encodeURIComponent(c));
     const url = ARTEMIS_ADRES + 'relay-zet';
     const ab = new AbortController(); const klok = setTimeout(() => ab.abort(), 8000);
     try {
@@ -7218,7 +7221,8 @@
     //     bij een verandering, alleen naar een telefoon met een verse hartslag en JARVIS 1.9.95+, en pas als gestuurd onthouden als de roep aankwam.
     // 678 (14 nov, eigenaar): GEEN risico op crashende telefoons -- de stem/het oor (native sherpa-onnx) gaan pas vanzelf aan na een goede
     // proef op de proeftelefoon. Tot dan staat dit UIT; aanzetten = localStorage 'veronica-spraak-vanzelf' = 'aan' (een bewuste keuze).
-    let spraakVanzelf = false; try { spraakVanzelf = localStorage.getItem('veronica-spraak-vanzelf') === 'aan'; } catch (e) { spraakVanzelf = false; }
+    // 678 (15 nov): na de vrijgave (Rekrollen.SPRAAK_VRIJ) gaat het vanzelf, alleen op de geteste versie of nieuwer; 'uit' houdt het tegen.
+    let spraakVanzelf = false; try { const keuze = localStorage.getItem('veronica-spraak-vanzelf'); spraakVanzelf = window.Rekrollen && typeof window.Rekrollen.spraakVanzelfAan === 'function' ? window.Rekrollen.spraakVanzelfAan(keuze) : keuze === 'aan'; } catch (e) { spraakVanzelf = false; }
     if (spraakVanzelf && window.Rekrollen && typeof window.Rekrollen.spraakTeSturen === 'function' && S.code) {
       let gestuurd = {};
       try { gestuurd = JSON.parse(localStorage.getItem('veronica-spraak-gestuurd') || '{}') || {}; } catch (e) { gestuurd = {}; }

@@ -114,6 +114,12 @@
   // beide. spraakTeSturen geeft per telefoon met een verse hartslag (JARVIS 1.9.95 of nieuwer: oudere kennen de roep niet) wat Veronica
   // moet sturen, alleen als dat anders is dan wat ze al stuurde (gestuurd = { toestel: "stem|oor" }). Puur; de roep doet veronica.js.
   const SPRAAK_VANAF = '1.9.95';
+  // 678 (15 nov): DE VRIJGAVE VAN STEM EN OOR. null = nog niet vrijgegeven: Veronica stuurt stem en oor alleen als een mens dat zelf
+  // aanzette (localStorage 'veronica-spraak-vanzelf' = 'aan'). Een versie = vrijgegeven na een goede proef: stem en oor gaan dan VANZELF aan
+  // volgens de rol, maar alleen op telefoons die minstens die (geteste) versie draaien. 'uit' in de opslag houdt het altijd tegen.
+  // Gezet door tools/jarvis-vrijgave/vrijgeef.js --spraak.
+  const SPRAAK_VRIJ = null;
+  function spraakVanzelfAan(keuze) { return keuze === 'aan' || (keuze !== 'uit' && !!SPRAAK_VRIJ); }
   function spraakVoorRol(rol) { return { stem: rol === 'bibliothecaris', oor: rol === 'brein' }; }
   function spraakSleutel(sp) { return (sp.stem ? 'stem' : '-') + '|' + (sp.oor ? 'oor' : '-'); }
   function versieMinst(v, min) {
@@ -125,7 +131,7 @@
   function spraakTeSturen(opslag, gestuurd, harten) {
     const o = lees(opslag); const g = gestuurd && typeof gestuurd === 'object' ? gestuurd : {}; const uit = [];
     for (const h of Array.isArray(harten) ? harten : []) {
-      if (!h || !/^[a-z0-9]{12,40}$/.test(String(h.toestel || '')) || !versieMinst(h.versie, SPRAAK_VANAF) || h.dagelijks) continue;
+      if (!h || !/^[a-z0-9]{12,40}$/.test(String(h.toestel || '')) || !versieMinst(h.versie, SPRAAK_VRIJ || SPRAAK_VANAF) || h.dagelijks) continue;
       const rol = rolVan(o, h.toestel);
       if (!rol) continue;   // geen rol = niets sturen (ook geen uit): een mens heeft nog niets gekozen
       const sp = spraakVoorRol(rol); const sl = spraakSleutel(sp);
@@ -147,5 +153,5 @@
     return null;
   }
 
-  return { STANDAARD_PER_MODEL: STANDAARD_PER_MODEL, standaardVoorModel: standaardVoorModel, vulVanzelf: vulVanzelf, SLEUTEL: SLEUTEL, namen: namen, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel, SPRAAK_VANAF: SPRAAK_VANAF, spraakVoorRol: spraakVoorRol, spraakTeSturen: spraakTeSturen, geheugenVoorRol: geheugenVoorRol };
+  return { STANDAARD_PER_MODEL: STANDAARD_PER_MODEL, standaardVoorModel: standaardVoorModel, vulVanzelf: vulVanzelf, SLEUTEL: SLEUTEL, namen: namen, geldigeRol: geldigeRol, lees: lees, zet: zet, rolVan: rolVan, passend: passend, regel: regel, SPRAAK_VANAF: SPRAAK_VANAF, SPRAAK_VRIJ: SPRAAK_VRIJ, spraakVanzelfAan: spraakVanzelfAan, spraakVoorRol: spraakVoorRol, spraakTeSturen: spraakTeSturen, geheugenVoorRol: geheugenVoorRol };
 }));
