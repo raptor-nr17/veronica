@@ -794,7 +794,7 @@ def lus():
                 threading.Thread(target=doe_args, args=(['brein-waak'], 330), daemon=True).start()   # 678 (15 nov): het brein in leven houden (eigen slot), ook zonder internet
                 threading.Thread(target=doe_args, args=(['controle-waak'], 330), daemon=True).start()   # 678 (15 nov): en de controle-telefoon
             if RONDE % 5 == 3:
-                threading.Thread(target=doe_args, args=(['stand-tik'], 300), daemon=True).start()   # 678 (16 nov): het standverslag (alleen bij verandering of na een uur)
+                threading.Thread(target=doe_args, args=(['stand-tik'], 420), daemon=True).start()   # 678 (16 nov): het standverslag (alleen bij verandering of na een uur)
             threading.Thread(target=doe_args, args=(['kanaal-tik'], 330), daemon=True).start()   # 678 (15 nov): een vraag van Claude Code aan het brein? (eigen draad: een antwoord kan minuten duren; een slot voorkomt dubbel)
             if RONDE % 15 == 9:
                 threading.Thread(target=doe, args=('zelfronde',), daemon=True).start()   # 678 (14 nov): de rondes van Cowork, nu zelf; op een eigen draad (adb/relay kosten even)
@@ -6816,7 +6816,7 @@ brein_start_kern() {
   if [ "$ok" = 1 ]; then
     printf '%s\n' "$s" >"$REK_MAP/brein-serial"; chmod 600 "$REK_MAP/brein-serial" 2>/dev/null || true
     printf '%s\n' "$mnaam" >"$REK_MAP/brein-model"; printf '%s\n' "$ctx" >"$REK_MAP/brein-ctx"; : >"$BREIN_AAN_F"; toestel_id "$s" >"$REK_MAP/brein-tid"   # 678: de waakhond herstart het brein zelf, ook zonder internet
-    zeg "  klaar: het brein antwoordt (route: $(brein_route "$s")). Typ nu in Veronica."; brein_stand klaar "Het brein draait op $naam (context $ctx; $((mem / 1024)) MB vrij bij het starten)." "$s" "$mnaam" "$mem"
+    zeg "  klaar: het brein antwoordt (route: $(brein_route "$s")). Typ nu in Veronica."; brein_stand klaar "${BREIN_HET:-Het brein} draait op $naam (context $ctx; $((mem / 1024)) MB vrij bij het starten)." "$s" "$mnaam" "$mem"
   else
     zeg "  de server kwam niet op binnen 4 minuten. Laatste regels van de telefoon: $("$ADB" -s "$s" shell tail -n 3 "$BREIN_MAP_TEL/server.log" 2>/dev/null | tr -d '\r' | tr '\n' ' ' | cut -c1-300)"
     brein_stand fout "De server kwam niet op (zie Log)." "$s" "$mnaam" "$mem"
@@ -7020,8 +7020,8 @@ brein_waak() {
   "$ADB" -s "$s" shell "cd $BREIN_MAP_TEL && (setsid nohup ./llama-server -m $m -t $BREIN_DRADEN -c $(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9' | grep . || echo "$BREIN_CONTEXT") --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)" >/dev/null 2>&1
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
   for i in $(seq 1 80); do curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { ok=1; break; }; sleep 3; done
-  if [ "$ok" = 1 ]; then brein_stand klaar "Het brein draait op $(toestel_naam "$s") (vanzelf herstart)." "$s" "$m" "$mem"; zeg "Brein: vanzelf herstart op $(toestel_naam "$s")."
-  else brein_stand fout "Het brein lag stil en kwam bij het herstarten niet op (zie Log)." "$s" "$m" "$mem"; fi
+  if [ "$ok" = 1 ]; then brein_stand klaar "${BREIN_HET:-Het brein} draait op $(toestel_naam "$s") (vanzelf herstart)." "$s" "$m" "$mem"; zeg "Brein: vanzelf herstart op $(toestel_naam "$s")."
+  else brein_stand fout "${BREIN_HET:-Het brein} lag stil en kwam bij het herstarten niet op (zie Log)." "$s" "$m" "$mem"; fi
   rm -rf "$REK_MAP/brein.lock"
 }
 brein_doorsturing() {
@@ -7058,7 +7058,7 @@ except Exception: d={}
 print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get("vrij_mb") is None else d.get("vrij_mb")); print(d.get("zin") or "")' 2>/dev/null)"
   s="$(brein_nu)"
   nu=""; [ -n "$s" ] && nu="$(mem_vrij_kb "$s")"
-  zeg "Brein: $(printf '%s\n' "$st" | sed -n 4p)"
+  zeg "${BREIN_LABEL:-Brein}: $(printf '%s\n' "$st" | sed -n 4p)"
   zeg "  telefoon: $(printf '%s\n' "$st" | sed -n 1p)$([ -s "$BREIN_VAST_F" ] && echo " ($(head -1 "$BREIN_VAST_F"), vast gekozen)")"
   zeg "  route: $([ -n "$s" ] && brein_route "$s" || echo 'geen -- de brein-telefoon is nu niet bereikbaar via adb (niet aan de kabel, niet draadloos)')"
   if [ -z "$s" ]; then
@@ -7098,7 +7098,7 @@ als_controle() {   # draai een brein-functie als de controle-rol (in een subshel
     BREIN_POORT_TEL=8095; BREIN_POORT_LOK="$CONTROLE_POORT_LOK"; BREIN_MAP_TEL="/data/local/tmp/controle"; BREIN_CONTEXT=2048
     BREIN_VAST_F="$REK_MAP/brein-vast"; BREIN_AAN_F="$REK_MAP/brein-aan"; BREIN_ID_F="$REK_MAP/brein-id.conf"; BREIN_STAND_F="$REK_MAP/brein-stand.json"
     BREIN_BRUG_F="$REK_MAP/brein-brug"; BREIN_BRUG_POORT=5621; BREIN_DIAG_F="$REK_MAP/brein-route.log"
-    BREIN_GEEN_VEGEN=1; BREIN_CMD_ROL=controle-rol; BREIN_LABEL=Controle; BREIN_ROLNAAM=controle
+    BREIN_GEEN_VEGEN=1; BREIN_CMD_ROL=controle-rol; BREIN_LABEL=Controle; BREIN_ROLNAAM=controle; BREIN_HET="De controle"
     "$@"
   )
 }
@@ -7282,7 +7282,7 @@ for x in n["lessen"]:
     if not x["goed"]: print("    fout na: %s (%s): %s" % (x["id"], x["waarom"], (x["antwoord"] or "")[:120].replace("\n"," ")))' 2>/dev/null
   printf '\n## Zelfronde\n'; sed 's/^/    /' "$ZR_TXT_F" 2>/dev/null | head -20
   printf '\n## Log (laatste regels)\n'
-  tail -n 20 "$LOG" 2>/dev/null | grep -viE 'token|sleutel|wachtwoord|password|code=|authkey|https?://' | tail -n 15 | sed 's/^/    /'
+  tail -n 40 "$LOG" 2>/dev/null | grep -E '^[0-9]{2}:[0-9]{2}:[0-9]{2} ' | grep -viE 'token|sleutel|wachtwoord|password|code=|authkey|https?://' | tail -n 15 | sed 's/^/    /'
 }
 # stand_tik [--nu]: het verslag maken; verandert het (of na een uur), dan versleuteld naar de relay. --nu = altijd (na Bijwerken, na een les).
 stand_tik() {
@@ -7300,14 +7300,14 @@ stand_tik() {
   # de samenvatting door de lokale AI (alleen als het brein antwoordt en er geen les loopt); anders zonder
   sam=""
   if [ ! -d "$REK_MAP/brein-les.lock" ] && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
-    sam="$(TEKST="$tekst" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" python3 -I - <<'PY' 2>/dev/null
+    sam="$(TEKST="$(printf '%s' "$tekst" | sed '/^## Log/,$d' | head -c 3000)" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" python3 -I - <<'PY' 2>/dev/null
 import os, json, re, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 v = ('Hieronder staat de stand van het rek telefoons. Vat hem samen voor Claude Code in hoogstens drie korte zinnen in het Nederlands: wat werkt, '
-     'wat niet werkt, en wat ARTEMIS zelf opnieuw probeert. Verzin niets dat er niet staat.\n\n' + os.environ['TEKST'][:5000])
+     'wat niet werkt, en wat ARTEMIS zelf opnieuw probeert. Verzin niets dat er niet staat.\n\n' + os.environ['TEKST'][:3000])
 lijf = json.dumps({'messages': [{'role': 'user', 'content': v}], 'max_tokens': 160, 'temperature': 0.2, 'stream': False, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
 try:
-    r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=150)
+    r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=240)
     print(re.sub(r'(?s)<think>.*?</think>', '', json.loads(r.read(500000))['choices'][0]['message'].get('content') or '').strip()[:800])
 except Exception:
     pass
@@ -7467,9 +7467,11 @@ zelfronde() {
   fi
   # 3. melden bij Veronica: per rektelefoon (nooit de F8) -- wat de knop "Melden bij Veronica: controle" laat zien
   if command -v "$ADB" >/dev/null 2>&1; then
+    local zr_gezien=" "
     for s in $(verbonden); do
       is_f8 "$s" && continue
       idv="$(toestel_id "$s")"; toegestaan "$idv" || continue
+      case "$zr_gezien" in *" $idv "*) continue ;; esac; zr_gezien="$zr_gezien$idv "   # 678 (16 nov): een telefoon met kabel EN Tailscale-brug telt EEN keer
       naam="$(toestel_naam "$s")"; naam="${naam:-onbekend}"; sl="$(printf '%s' "$idv" | sha256sum | cut -c1-8)"; n=$((n + 1))
       jid="$(jarvis_toestel_id "$s" "$sl")"
       if [ -z "$jid" ]; then nee="${nee}${nee:+; }$naam: JARVIS antwoordt niet"; continue; fi
