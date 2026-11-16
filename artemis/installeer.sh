@@ -342,6 +342,21 @@ vergeet() {
 # 571: ZELF BIJWERKEN vanaf de site. Haalt het nieuwste installeer.sh op (de bron staat in ~/.artemis-rek/bron), controleert dat
 # het geldige bash is EN op ARTEMIS lijkt, en laat het ALLEEN de bestanden herschrijven (--alleen-bestanden). Bij elke twijfel:
 # niets veranderd. De bron wordt doorgegeven zodat hij blijft staan. Nooit iets uitvoeren uit het opgehaalde script zelf.
+# 678 (16 nov): SNELLER BIJWERKEN. Naast het script staat artemis/versie.txt (de vingerafdruk, 64 tekens). De console kijkt elke minuut naar dat
+# kleine bestand en werkt pas bij als het verschilt van de versie die draait (bron-sha) -- in plaats van eens per ~30 minuten het hele script.
+versie_kijk() {
+  [ -s "$BRONF" ] || return 0
+  local base v eigen t0 nu
+  base="$(cat "$BRONF")"; eigen="$(head -1 "$REK_MAP/bron-sha" 2>/dev/null | tr -d '\r\n ')"
+  v="$(curl -fsS -m 15 -H 'Cache-Control: no-cache' "$base/artemis/versie.txt?nc=$(date +%s)" 2>/dev/null | head -1 | tr -cd '0-9a-f')"
+  [ "${#v}" = 64 ] || return 0
+  [ "$v" = "$eigen" ] && return 0
+  nu="$(date +%s)"; t0="$(head -1 "$REK_MAP/versie-kijk.t" 2>/dev/null | tr -cd '0-9')"; t0="${t0:-0}"
+  [ $((nu - t0)) -ge 180 ] || return 0   # hoogstens eens per 3 minuten een poging (de site kan even achterlopen)
+  printf '%s\n' "$nu" >"$REK_MAP/versie-kijk.t"
+  logregel "Nieuwe versie op de site ($(printf '%s' "$v" | cut -c1-12)); ik werk meteen bij."
+  zelf_bijwerken >/dev/null 2>&1 || true
+}
 zelf_bijwerken() {
   [ -s "$BRONF" ] || { zeg "Geen bron voor bijwerken ingesteld (niet meegegeven bij de installatie)."; return 1; }
   command -v curl >/dev/null 2>&1 || { zeg "Bijwerken: curl ontbreekt."; return 1; }
@@ -823,6 +838,7 @@ def lus():
                 threading.Thread(target=doe_args, args=(['brein-waak'], 330), daemon=True).start()   # 678 (15 nov): het brein in leven houden (eigen slot), ook zonder internet
                 threading.Thread(target=doe_args, args=(['controle-waak'], 330), daemon=True).start()   # 678 (15 nov): en de controle-telefoon
                 threading.Thread(target=doe_args, args=(['verdeler-waak'], 330), daemon=True).start()   # 678 (16 nov): en de verdeler
+            threading.Thread(target=doe_args, args=(['versie-kijk'], 200), daemon=True).start()   # 678 (16 nov): een nieuwe versie binnen een paar minuten
             if RONDE % 5 == 3:
                 threading.Thread(target=doe_args, args=(['stand-tik'], 420), daemon=True).start()   # 678 (16 nov): het standverslag (alleen bij verandering of na een uur)
             threading.Thread(target=doe_args, args=(['kanaal-tik'], 330), daemon=True).start()   # 678 (15 nov): een vraag van Claude Code aan het brein? (eigen draad: een antwoord kan minuten duren; een slot voorkomt dubbel)
@@ -7124,6 +7140,11 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
   zeg "  drempel: $(brein_drempel_zin)"
   zeg "  vrij geheugen: $(case "$nu" in ''|*[!0-9]*) echo 'nu niet te meten' ;; *) echo "$((nu / 1024)) MB nu" ;; esac)$([ -n "$(printf '%s\n' "$st" | sed -n 3p)" ] && echo ", $(printf '%s\n' "$st" | sed -n 3p) MB bij het starten")"
   zeg "  antwoordt: $([ -n "$h" ] && echo 'ja' || echo 'NEE')$([ -f "$BREIN_AAN_F" ] && echo ' -- de waakhond houdt hem in leven (ook zonder internet)')"
+  # 678 (16 nov): antwoordt hij niet, dan de laatste regels van het (vanzelf) opstarten -- zo staat in het verslag WAAROM niet
+  if [ -z "$h" ] && [ -s "$REK_MAP/console-${BREIN_CMD_ROL:-brein-rol}.log" ]; then
+    zeg "  laatste regels van het opstarten:"
+    grep -v '^===' "$REK_MAP/console-${BREIN_CMD_ROL:-brein-rol}.log" | grep -viE 'token|sleutel|wachtwoord|https?://' | grep -v '^ *$' | tail -n 6 | while IFS= read -r x; do zeg "    $x"; done
+  fi
   # 678 (16 nov, eigenaar: "waarom is het brein zo veel trager geworden?"): warmte, de laatst GEMETEN snelheid, en onder 2 tok/s de waarschijnlijke oorzaak
   local w tps tt oorz=""
   [ -n "$s" ] && w="$(brein_warmte "$s")"
@@ -8089,7 +8110,8 @@ case "${1:-status}" in
   verdeler-waak) verdeler_waak ;;
   verdeler-stop) als_verdeler brein_stop ;;
   verdeler-doorsturing) als_verdeler brein_doorsturing ;;
-  stand-tik) stand_tik "${2:-}" ;;                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
+  stand-tik) stand_tik "${2:-}" ;;
+  versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
   stand-na-update) sleep 60; brein_waak; als_controle brein_waak; sleep 120; stand_tik --nu ;;   # 678: na een nieuwe versie: rollen nalopen, dan het verslag                 # 678 (15 nov): de lokale AI leren: kennisbank op de Cat + lesrij voor/na, nagekeken door code                          # 678 (15 nov): het brein op de telefoon met de rol brein, ook draadloos (Tailscale/wifi-adb)                      # 678 (15 nov): het brein op de rektelefoon aan de USB-kabel (vast), dan starten
   brein-waak) brein_waak ;;                        # intern (de console-lus): het brein in leven houden, zonder internet                      # 678 (15 nov): het brein (llama-server + Gemma 4 E2B) op de brein-telefoon
   brein-stop) brein_stop ;;
