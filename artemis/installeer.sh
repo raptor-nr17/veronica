@@ -6680,6 +6680,14 @@ BREIN_MAP_TEL="/data/local/tmp/brein"
 BREIN_POORT_TEL=8093                       # op de telefoon, alleen 127.0.0.1
 BREIN_POORT_LOK="${BREIN_POORT_LOK:-18093}" # de adb-doorsturing op deze computer
 BREIN_DRADEN="${BREIN_DRADEN:-4}"
+# 678 (16 nov, eigenaar: "zoek de traagheid in iets anders: geheugen, -np, draden, of iets dat tegelijk rekent"): DE GROTE KERNEN. llama-server
+# draaide met -t 4 zonder vaste kernen; Android schuift de draden dan naar de kleine kernen zodra er iets anders loopt (JARVIS, het scherm) en
+# EEN draad op een kleine kern remt alle andere af (ze wachten op elkaar). Nu: de grote kernen tellen OP DE TELEFOON (max-frequentie minstens
+# 90% van de hoogste, dezelfde regel als Snelheid meten), draden = dat aantal (nooit meer dan BREIN_DRADEN), en de server erop vastgezet met
+# taskset (het hex-masker; kent de telefoon dat niet, dan zonder). Wat er gekozen is staat in kernen.txt naast de server ("masker draden").
+brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
+  printf '%s' "cd $BREIN_MAP_TEL && m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); k=0; n=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P ./llama-server -m $1 -t \$n -c $2 -np 1 --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
+}
 BREIN_CONTEXT="${BREIN_CONTEXT:-4096}"
 BREIN_MARGE_KB=1048576                     # DREMPEL 1: model + 1024 MB bij context 4096 (KV-cache ~600 MB voor een 4B-model, de server zelf, Android)
 BREIN_MARGE_KLEIN_KB=655360                # DREMPEL 2: model + 640 MB bij context 2048 (de helft van de KV-cache); een slimmer model met een kortere context gaat voor een dommer
@@ -6963,7 +6971,7 @@ brein_start_kern() {
     brein_stand fout "Te weinig vrij geheugen vlak voor het starten ($((mem / 1024)) MB)." "$s" "$mnaam" "$mem"; return 0
   fi
   # 4. starten (een eerdere van ONS eerst stoppen), los van de adb-sessie, alleen op 127.0.0.1
-  "$ADB" -s "$s" shell "cd $BREIN_MAP_TEL && (setsid nohup ./llama-server -m $mnaam -t $BREIN_DRADEN -c $ctx -np 1 --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)" >/dev/null 2>&1
+  "$ADB" -s "$s" shell "$(brein_start_cmd "$mnaam" "$ctx")" >/dev/null 2>&1
   "$ADB" -s "$s" forward --remove tcp:"$BREIN_POORT_LOK" >/dev/null 2>&1 || true
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
   for i in $(seq 1 80); do
@@ -7167,12 +7175,15 @@ brein_waak() {
 try: print(int(json.load(sys.stdin).get("total_slots") or 0))
 except Exception: print(0)' 2>/dev/null)"
     nu1="$(date +%s)"; t1="$(head -1 "$REK_MAP/brein-vakken.t" 2>/dev/null | tr -cd '0-9')"; t1="${t1:-0}"
-    if [ "${vak:-0}" -gt 1 ] 2>/dev/null && [ ! -d "$REK_MAP/brein-les.lock" ] && [ $((nu1 - t1)) -ge 3600 ]; then
-      local s1; s1="$(brein_nu)"
+    local s1 oud=''; s1="$(brein_nu)"
+    # 678 (16 nov): een server van voor het vastzetten op de grote kernen (geen kernen.txt) ook een keer opnieuw
+    [ -n "$s1" ] && ! "$ADB" -s "$s1" shell "[ -s $BREIN_MAP_TEL/kernen.txt ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja && oud=1
+    if { [ "${vak:-0}" -gt 1 ] 2>/dev/null || [ -n "$oud" ]; } && [ ! -d "$REK_MAP/brein-les.lock" ] && [ $((nu1 - t1)) -ge 3600 ]; then
       if [ -n "$s1" ] && ! is_f8 "$s1"; then
         printf '%s\n' "$nu1" >"$REK_MAP/brein-vakken.t"
         "$ADB" -s "$s1" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true
-        logregel "${BREIN_LABEL:-Brein}: de server had $vak vakken (de context gedeeld, vragen delen de rekenkracht); opnieuw gestart met een vak."
+        if [ -n "$oud" ]; then logregel "${BREIN_LABEL:-Brein}: de server draaide nog niet vast op de grote kernen; opnieuw gestart (grote kernen, een vak)."
+        else logregel "${BREIN_LABEL:-Brein}: de server had $vak vakken (de context gedeeld, vragen delen de rekenkracht); opnieuw gestart met een vak."; fi
       fi
     fi
     return 0
@@ -7192,7 +7203,7 @@ except Exception: print(0)' 2>/dev/null)"
   if [ -n "$("$ADB" -s "$s" shell "pgrep -f $bin" 2>/dev/null | tr -d '\r\n ')" ]; then rm -rf "$REK_MAP/brein.lock"; return 0; fi   # draait nog (laadt misschien): niet dubbel starten
   "$ADB" -s "$s" shell "[ -x $bin ] && [ -s $BREIN_MAP_TEL/$m ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja || { rm -rf "$REK_MAP/brein.lock"; return 0; }
   mem="$(brein_vrijmaken "$s" 2>/dev/null)"
-  "$ADB" -s "$s" shell "cd $BREIN_MAP_TEL && (setsid nohup ./llama-server -m $m -t $BREIN_DRADEN -c $(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9' | grep . || echo "$BREIN_CONTEXT") -np 1 --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)" >/dev/null 2>&1
+  "$ADB" -s "$s" shell "$(brein_start_cmd "$m" "$(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9' | grep . || echo "$BREIN_CONTEXT")")" >/dev/null 2>&1
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
   for i in $(seq 1 80); do curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { ok=1; break; }; sleep 3; done
   if [ "$ok" = 1 ]; then brein_stand klaar "${BREIN_HET:-Het brein} draait op $(toestel_naam "$s") (vanzelf herstart)." "$s" "$m" "$mem"; zeg "Brein: vanzelf herstart op $(toestel_naam "$s")."
@@ -7261,12 +7272,26 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
     local top; top="$("$ADB" -s "$s" shell dumpsys meminfo 2>/dev/null | tr -d '\r' | awk '/Total PSS by process:/{f=1;next} f&&/K: /{gsub(/,/,"",$1); sub(/K:$/,"",$1); n++; printf "%s %d MB; ", $2, $1/1024} n>=5{exit}')"
     [ -n "$top" ] && zeg "  grootste geheugengebruikers: $top"
   fi
+  # 678 (16 nov): op welke kernen het brein rekent, en wat er NU tegelijk rekent (de drukste processen volgens top; alleen lezen)
+  if [ -n "$s" ] && [ -z "${STAND_KORT:-}" ]; then
+    local kern cpu
+    kern="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/kernen.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
+    case "$kern" in
+      '') zeg "  kernen: niet vastgezet (een server van voor 16 nov; de waakhond start hem een keer opnieuw)" ;;
+      ' '*) zeg "  kernen: ${kern# } draden, niet vastgezet (taskset kon niet op deze telefoon)" ;;
+      *) zeg "  kernen: vast op de grote kernen (masker ${kern%% *}), ${kern##* } draden" ;;
+    esac
+    cpu="$("$ADB" -s "$s" shell top -b -n 1 -m 8 -o %CPU,NAME 2>/dev/null | tr -d '\r' | awk '$1 ~ /^[0-9.]+$/ && $1+0 >= 5 {printf "%s %d%%; ", $2, $1}' | head -c 300)"
+    [ -n "$cpu" ] && zeg "  wat er nu rekent (procent van een kern): $cpu"
+  fi
   read -r tps tt <"$REK_MAP/brein-tps" 2>/dev/null || true
   if [ -n "${tps:-}" ]; then
     zeg "  snelheid: $tps tok/s (laatst gemeten $(date -d "@${tt:-0}" '+%d-%m %H:%M' 2>/dev/null))"
     if awk "BEGIN{exit !(${tps} < 2)}" 2>/dev/null; then
       case "$nu" in ''|*[!0-9]*) : ;; *) [ "$nu" -lt 2700000 ] && oorz="${oorz}weinig vrij geheugen ($((nu / 1024)) MB); " ;; esac
-      [ -n "${w:-}" ] && [ "$w" -ge 400 ] && oorz="${oorz}warm ($((w / 10)) graden: Android remt dan af); "
+      [ -n "${w:-}" ] && [ "$w" -ge 450 ] && oorz="${oorz}te warm ($((w / 10)) graden, boven de grens van 45); "
+      [ -z "${STAND_KORT:-}" ] && case "${kern:-}" in ''|' '*) oorz="${oorz}niet vast op de grote kernen; " ;; esac
+      [ -n "${cpu:-}" ] && oorz="${oorz}rekent er iets mee? (zie: wat er nu rekent); "
       zeg "  TRAAG (onder 2 tok/s): ${oorz:-geen duidelijke oorzaak in geheugen of warmte (rekent er iets anders mee?)}"
     fi
   fi
@@ -7466,21 +7491,17 @@ if os.environ.get('RIJ') == '2': LESSEN = LESSEN2
 NL = set('de het een en ik je jij is ben niet wat dat van op te in mag nooit denk na beantwoord vragen rek brein telefoon telefoons dit voor'.split())
 EN = set('the and i am you your my this rack think brain answer questions what do'.split())
 import subprocess
-GEKOELD = [0]
-def koel():
-    # 678 (16 nov): twintig vragen achter elkaar maken de telefoon warm, en een warme telefoon remt af. Vanaf 42 graden eerst afkoelen
-    # (hoogstens 5 minuten per vraag); de wachttijd staat in de uitslag.
-    if not os.environ.get('SERIE'): return
-    for _ in range(5):
-        try:
-            u = subprocess.run([os.environ['ADBP'], '-s', os.environ['SERIE'], 'shell', 'dumpsys', 'battery'], capture_output=True, text=True, timeout=15).stdout
-            t = int(re.search(r'temperature:\s*(\d+)', u).group(1))
-        except Exception:
-            return
-        if t < 420: return
-        time.sleep(60); GEKOELD[0] += 60
+TE_WARM = [0]
+def te_warm():
+    # 678 (16 nov, eigenaar: "dat afkoelen is onzin, de rektelefoons liggen op de ventilator"): GEEN afkoel-wachttijd meer. Temperatuur is
+    # alleen BEWAKING: vanaf de grens van 45 graden wordt een vraag NIET gesteld (eerlijk zo in de uitslag), nooit gewacht.
+    if not os.environ.get('SERIE'): return False
+    try:
+        u = subprocess.run([os.environ['ADBP'], '-s', os.environ['SERIE'], 'shell', 'dumpsys', 'battery'], capture_output=True, text=True, timeout=15).stdout
+        return int(re.search(r'temperature:\s*(\d+)', u).group(1)) >= 450
+    except Exception:
+        return False
 def vraag(tekst, met):
-    koel()
     sysm = ROL + ((' ' + kennis) if met and kennis else '')
     lijf = json.dumps({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': tekst}], 'max_tokens': 200, 'stream': False, 'temperature': 0.2, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
     t0 = time.time()
@@ -7498,7 +7519,6 @@ def vraag_echt(tekst):
     try: sl = open(os.environ.get('SLEUTELF', '')).read().strip()
     except Exception: sl = ''
     if not sl or not re.fullmatch(r'\d{2,5}', os.environ.get('CPOORT', '')): return None
-    koel()
     lijf = json.dumps({'sleutel': sl, 'les': True, 'messages': [{'role': 'user', 'content': tekst}], 'max_tokens': 200}).encode()
     t0 = time.time()
     try:
@@ -7524,6 +7544,10 @@ uitslag = {'rij': int(os.environ.get('RIJ') or 1), 'model': model, 'telefoon': s
 for ronde, met in (('voor', False), ('na', True)):
     rij = []
     for les in LESSEN:
+        if te_warm():
+            TE_WARM[0] += 1
+            rij.append({'id': les['id'], 'goed': False, 'waarom': 'niet gevraagd: 45 graden of warmer', 'antwoord': '', 'tps': None, 's': 0, 'bron': '-'})
+            print('%s %-10s NIET GEVRAAGD (45 graden)' % (ronde, les['id'])); continue
         e = vraag_echt(les['vraag']) if met else None
         if e: a, tps, s, bron = e
         else: (a, tps, s), bron = vraag(les['vraag'], met), ('kennisbank' if met else 'kaal')
@@ -7532,13 +7556,13 @@ for ronde, met in (('voor', False), ('na', True)):
         print('%s %-10s %s %s' % (ronde, les['id'], 'GOED' if goed else 'FOUT', waarom))
     uitslag['rondes'][ronde] = {'goed': sum(1 for x in rij if x['goed']), 'van': len(rij), 'lessen': rij}
 v, n = uitslag['rondes']['voor'], uitslag['rondes']['na']
-uitslag['gekoeld_s'] = GEKOELD[0]
+uitslag['te_warm'] = TE_WARM[0]
 _t = [x['tps'] for x in n['lessen'] if isinstance(x['tps'], (int, float))]
 if _t:
     try:
         with open(os.environ['TPSF'], 'w') as fh: fh.write('%.2f %d\n' % (sum(_t) / len(_t), int(time.time())))
     except Exception: pass
-print('Uitslag (lesrij %d): voor %d van %d goed, na (met de kennisbank) %d van %d goed.%s' % (uitslag['rij'], v['goed'], v['van'], n['goed'], n['van'], (' Eerst %d s afgekoeld (42 graden of warmer).' % GEKOELD[0]) if GEKOELD[0] else ''))
+print('Uitslag (lesrij %d): voor %d van %d goed, na (met de kennisbank) %d van %d goed.%s' % (uitslag['rij'], v['goed'], v['van'], n['goed'], n['van'], (' %d vragen niet gesteld: de telefoon was 45 graden of warmer.' % TE_WARM[0]) if TE_WARM[0] else ''))
 with open(os.environ['UIT'], 'w') as fh: json.dump(uitslag, fh, ensure_ascii=False, indent=1)
 os.chmod(os.environ['UIT'], 0o600)
 # terug via het kanaal (alleen met een kanaal-id, een code en een relay)
