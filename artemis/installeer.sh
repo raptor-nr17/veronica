@@ -6679,12 +6679,52 @@ BREIN_EXTRA="${BREIN_EXTRA:-}"   # 678: extra vlaggen voor llama-server (de proe
 # EEN draad op een kleine kern remt alle andere af (ze wachten op elkaar). Nu: de grote kernen tellen OP DE TELEFOON (max-frequentie minstens
 # 90% van de hoogste, dezelfde regel als Snelheid meten), draden = dat aantal (nooit meer dan BREIN_DRADEN), en de server erop vastgezet met
 # taskset (het hex-masker; kent de telefoon dat niet, dan zonder). Wat er gekozen is staat in kernen.txt naast de server ("masker draden").
+# 678 (16 nov): LOOPT ER EEN LES? Het slot blijft staan als het lesproces wordt afgebroken (een tijdslimiet, een herstart van de console); dan
+# wachtte de waakhond voor altijd ("niet tijdens een les"). Een slot ouder dan 90 minuten telt daarom niet meer -- dezelfde grens als de les zelf.
+les_loopt() { [ -d "$REK_MAP/brein-les.lock" ] && [ -z "$(find "$REK_MAP/brein-les.lock" -maxdepth 0 -mmin +90 2>/dev/null)" ]; }
 brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
   # 678 (16 nov, onderzoek stap 1): de snelle kernen per SOORT, uit /proc/cpuinfo ("CPU part"): alles behalve de zuinige kernen (A53 0xd03,
   # A55 0xd05, A510 0xd46, A520 0xd80) telt. Zo: 4x A78 = 4, 2x M4 + 2x A75 = 4, 2x A78 = 2, 2x A76 = 2. Lukt dat niet (geen CPU part),
   # dan de oude regel: max-frequentie minstens 90% van de hoogste. Geen GPU (Vulkan/OpenCL): de grafische chips (Mali/IMG) zijn hier trager dan
   # de processor; de server is alleen voor de CPU gebouwd, en -ngl 0 zegt het nog eens.
   printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P ./llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja${BREIN_EXTRA:+ $BREIN_EXTRA} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
+}
+# 678 (16 nov, onderzoek stap 3): WELKE LLAMA-SERVER. De APK draagt er twee: libllamaserver.so (kale armv8.0, draait overal) en
+# libllamaserver_dp.so (armv8.2 met dotprod en fp16: sdot/udot en de snelle Q4_0-paden). Meldt de telefoon 'asimddp' in /proc/cpuinfo, dan de
+# dotprod-versie -- uit de JARVIS op de telefoon, of anders uit de proef- of vrijgegeven APK op deze computer (dan hoeft de brein-telefoon niet
+# op een vrijgave te wachten). bouw.txt zegt welke er draait. Alleen kopieren als de server NIET draait (anders "text file busy").
+brein_binaire_zet() {   # $1 serienummer -> zet $BREIN_MAP_TEL/llama-server; zegt "dotprod" of "basis" (leeg = geen server gevonden)
+  local s="$1" lib tmp apk
+  lib="$("$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's#^package:\(.*\)/base\.apk$#\1#p' | head -1)"
+  "$ADB" -s "$s" shell "mkdir -p $BREIN_MAP_TEL" >/dev/null 2>&1
+  if "$ADB" -s "$s" shell "grep -q asimddp /proc/cpuinfo && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja; then
+    if [ -n "$lib" ] && "$ADB" -s "$s" shell "[ -s $lib/lib/arm64/libllamaserver_dp.so ] && cp $lib/lib/arm64/libllamaserver_dp.so $BREIN_MAP_TEL/llama-server && chmod 755 $BREIN_MAP_TEL/llama-server && echo dotprod > $BREIN_MAP_TEL/bouw.txt && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja; then
+      echo dotprod; return 0
+    fi
+    for apk in "${JARVIS_PROEF_APK:-}" "${JAPK_PLEK:-}/jarvis.apk"; do
+      [ -s "$apk" ] || continue
+      tmp="$(mktemp)" || continue
+      if python3 -I -c 'import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1]); open(sys.argv[2], "wb").write(z.read("lib/arm64-v8a/libllamaserver_dp.so"))' "$apk" "$tmp" 2>/dev/null && [ -s "$tmp" ] \
+         && "$ADB" -s "$s" push "$tmp" "$BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 \
+         && "$ADB" -s "$s" shell "chmod 755 $BREIN_MAP_TEL/llama-server && echo dotprod > $BREIN_MAP_TEL/bouw.txt && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja; then
+        rm -f "$tmp"; echo dotprod; return 0
+      fi
+      rm -f "$tmp"
+    done
+  fi
+  [ -n "$lib" ] && "$ADB" -s "$s" shell "cp $lib/lib/arm64/libllamaserver.so $BREIN_MAP_TEL/llama-server && chmod 755 $BREIN_MAP_TEL/llama-server && echo basis > $BREIN_MAP_TEL/bouw.txt" >/dev/null 2>&1 && echo basis
+}
+# is er een dotprod-server te halen voor deze telefoon (die nu de basisversie draait)?
+brein_dp_beschikbaar() {   # $1 serienummer
+  local s="$1" lib apk
+  "$ADB" -s "$s" shell "grep -q asimddp /proc/cpuinfo && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja || return 1
+  lib="$("$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's#^package:\(.*\)/base\.apk$#\1#p' | head -1)"
+  [ -n "$lib" ] && "$ADB" -s "$s" shell "[ -s $lib/lib/arm64/libllamaserver_dp.so ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja && return 0
+  for apk in "${JARVIS_PROEF_APK:-}" "${JAPK_PLEK:-}/jarvis.apk"; do
+    [ -s "$apk" ] && python3 -I -c 'import sys, zipfile; sys.exit(0 if "lib/arm64-v8a/libllamaserver_dp.so" in zipfile.ZipFile(sys.argv[1]).namelist() else 1)' "$apk" 2>/dev/null && return 0
+  done
+  return 1
 }
 
 BREIN_CONTEXT="${BREIN_CONTEXT:-4096}"
@@ -6949,7 +6989,7 @@ brein_start_kern() {
   lib="$("$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's#^package:\(.*\)/base\.apk$#\1#p' | head -1)"
   [ -n "$lib" ] || { zeg "  JARVIS staat niet op deze telefoon."; brein_stand fout "JARVIS staat niet op de brein-telefoon." "$s" "" "$mem"; return 0; }
   bin="$BREIN_MAP_TEL/llama-server"
-  "$ADB" -s "$s" shell "mkdir -p $BREIN_MAP_TEL && cp $lib/lib/arm64/libllamaserver.so $bin && chmod 755 $bin" >/dev/null 2>&1
+  zeg "  llama-server: $(brein_binaire_zet "$s")"   # 678: de dotprod-versie als de telefoon het kan, anders de basis
   "$ADB" -s "$s" shell "[ -x $bin ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja || { zeg "  deze JARVIS heeft geen llama-server (libllamaserver.so); werk JARVIS bij."; brein_stand fout "Geen llama-server in deze JARVIS." "$s" "" "$mem"; return 0; }
   # 2. het model: op deze computer ophalen, naar de telefoon zetten als hij er nog niet (helemaal) staat
   model="$(brein_model_haal $keus)" || { brein_stand fout "Het model is er nog niet (download loopt of mislukte)." "$s" "$2" "$mem"; return 0; }
@@ -7176,12 +7216,18 @@ except Exception: print(0)' 2>/dev/null)"
     nu1="$(date +%s)"; t1="$(head -1 "$REK_MAP/brein-vakken.t" 2>/dev/null | tr -cd '0-9')"; t1="${t1:-0}"
     local s1 oud=''; s1="$(brein_nu)"
     # 678 (16 nov): een server van voor het vastzetten op de grote kernen (geen kernen.txt) ook een keer opnieuw
-    [ -n "$s1" ] && ! "$ADB" -s "$s1" shell "[ -s $BREIN_MAP_TEL/kernen.txt ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja && oud=1
-    if { [ "${vak:-0}" -gt 1 ] 2>/dev/null || [ -n "$oud" ]; } && [ ! -d "$REK_MAP/brein-les.lock" ] && [ $((nu1 - t1)) -ge 3600 ]; then
+    if [ -n "$s1" ]; then
+      local bk; bk="$("$ADB" -s "$s1" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null; [ -s $BREIN_MAP_TEL/kernen.txt ] && echo kernen" 2>/dev/null | tr -d '\r')"
+      case "$bk" in *kernen*) : ;; *) oud=1 ;; esac
+      # 678 (onderzoek stap 3): draait de basisversie terwijl er een dotprod-server te halen is, dan ook een keer opnieuw (uur-rem, niet tijdens een les)
+      case "$bk" in *dotprod*) : ;; *) [ -z "$oud" ] && ! les_loopt && [ $((nu1 - t1)) -ge 3600 ] && brein_dp_beschikbaar "$s1" && oud=dp ;; esac
+    fi
+    if { [ "${vak:-0}" -gt 1 ] 2>/dev/null || [ -n "$oud" ]; } && ! les_loopt && [ $((nu1 - t1)) -ge 3600 ]; then
       if [ -n "$s1" ] && ! is_f8 "$s1"; then
         printf '%s\n' "$nu1" >"$REK_MAP/brein-vakken.t"
         "$ADB" -s "$s1" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true
-        if [ -n "$oud" ]; then logregel "${BREIN_LABEL:-Brein}: de server draaide nog niet vast op de grote kernen; opnieuw gestart (grote kernen, een vak)."
+        if [ "$oud" = dp ]; then logregel "${BREIN_LABEL:-Brein}: er is een llama-server met dotprod voor deze telefoon; opnieuw gestart om hem te gebruiken."
+        elif [ -n "$oud" ]; then logregel "${BREIN_LABEL:-Brein}: de server draaide nog niet vast op de grote kernen; opnieuw gestart (grote kernen, een vak)."
         else logregel "${BREIN_LABEL:-Brein}: de server had $vak vakken (de context gedeeld, vragen delen de rekenkracht); opnieuw gestart met een vak."; fi
       fi
     fi
@@ -7202,6 +7248,7 @@ except Exception: print(0)' 2>/dev/null)"
   if [ -n "$("$ADB" -s "$s" shell "pgrep -f $bin" 2>/dev/null | tr -d '\r\n ')" ]; then rm -rf "$REK_MAP/brein.lock"; return 0; fi   # draait nog (laadt misschien): niet dubbel starten
   "$ADB" -s "$s" shell "[ -x $bin ] && [ -s $BREIN_MAP_TEL/$m ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja || { rm -rf "$REK_MAP/brein.lock"; return 0; }
   mem="$(brein_vrijmaken "$s" 2>/dev/null)"
+  brein_binaire_zet "$s" >/dev/null 2>&1 || true   # 678: bij een herstart ook de beste llama-server (dotprod als het kan)
   "$ADB" -s "$s" shell "$(brein_start_cmd "$m" "$(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9' | grep . || echo "$BREIN_CONTEXT")")" >/dev/null 2>&1
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
   for i in $(seq 1 80); do curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { ok=1; break; }; sleep 3; done
@@ -7279,6 +7326,10 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
       '') zeg "  kernen: niet vastgezet (een server van voor 16 nov; de waakhond start hem een keer opnieuw)" ;;
       ' '*) zeg "  kernen: ${kern# } draden, niet vastgezet (taskset kon niet op deze telefoon)" ;;
       *) zeg "  kernen: vast op de grote kernen (masker ${kern%% *}), ${kern##* } draden" ;;
+    esac
+    case "$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)" in
+      dotprod) zeg "  llama-server: met dotprod en fp16 (armv8.2)" ;;
+      basis) zeg "  llama-server: de basisversie (armv8.0, zonder dotprod)" ;;
     esac
     cpu="$("$ADB" -s "$s" shell top -b -n 1 -m 8 -o %CPU,NAME 2>/dev/null | tr -d '\r' | awk '$1 ~ /^[0-9.]+$/ && $1+0 >= 5 {printf "%s %d%%; ", $2, $1}' | head -c 300)"
     [ -n "$cpu" ] && zeg "  wat er nu rekent (procent van een kern): $cpu"
@@ -7601,19 +7652,20 @@ STAND_SIG_F="$REK_MAP/stand.sig"
 # al gelezen is). Alles uit de timings van llama.cpp zelf, niets geschat. Niet tijdens een les. De regels staan in het standverslag.
 BREIN_MEET_F="$REK_MAP/brein-meet.log"
 brein_meet() {   # [label] -> een regel in brein-meet.log
-  [ -d "$REK_MAP/brein-les.lock" ] && return 0
+  les_loopt && return 0
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
-  local s kern model sig t0 nu
+  local s kern bouw model sig t0 nu
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
   kern="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/kernen.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
+  bouw="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
   model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
-  sig="$model|$kern|${BREIN_EXTRA:-}"; nu="$(date +%s)"
+  sig="$model|$kern|${bouw:-}|${BREIN_EXTRA:-}"; nu="$(date +%s)"
   if [ "${1:-}" != --nu ] && [ "$(sed -n 1p "$REK_MAP/brein-meet.sig" 2>/dev/null)" = "$sig" ]; then
     t0="$(sed -n 2p "$REK_MAP/brein-meet.sig" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t0:-0})) -lt 21600 ] && return 0
   fi
   mkdir "$REK_MAP/brein-meet.lock" 2>/dev/null || return 0
   printf '%s\n%s\n' "$sig" "$nu" >"$REK_MAP/brein-meet.sig"
-  LABEL="$model, kernen ${kern:-onbekend}${BREIN_EXTRA:+, $BREIN_EXTRA}" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_MEET_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
+  LABEL="$model, kernen ${kern:-onbekend}, llama.cpp ${bouw:-basis}${BREIN_EXTRA:+, $BREIN_EXTRA}" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_MEET_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
 import os, json, time, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try: kennis = open(os.environ['KENNIS']).read()[:3500]
@@ -7754,7 +7806,7 @@ stand_tik() {
   # de samenvatting kost het brein ~2 minuten: hoogstens eens per uur een nieuwe (behalve met --nu: na een nieuwe versie of een les)
   sam=""; local st0; st0="$(stat -c %Y "$REK_MAP/stand-samenvatting" 2>/dev/null || echo 0)"
   if [ "${1:-}" != --nu ] && [ $((nu - st0)) -lt 3600 ]; then sam="$(cat "$REK_MAP/stand-samenvatting" 2>/dev/null)"
-  elif [ ! -d "$REK_MAP/brein-les.lock" ] && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+  elif ! les_loopt && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
     sam="$(TEKST="$(printf '%s' "$tekst" | sed '/^## Log/,$d' | head -c 3000)" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" python3 -I - <<'PY' 2>/dev/null
 import os, json, re, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
