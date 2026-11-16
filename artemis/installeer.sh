@@ -875,6 +875,8 @@ def lus():
                 threading.Thread(target=doe_args, args=(['proef-vanzelf'], 900), daemon=True).start()
             if RONDE % 10 == 7:
                 threading.Thread(target=doe_args, args=(['brein-proefbank'], 2400), daemon=True).start()   # 678 (16 nov): de proefbank (eens per opstelling)
+            if RONDE % 15 == 13:
+                threading.Thread(target=doe_args, args=(['brein-modelproef'], 21600), daemon=True).start()   # 678 (16 nov): de modelproef (eens per kandidatenlijst; downloads gaan door waar ze stopten)
             if RONDE % 30 == 11:
                 threading.Thread(target=doe_args, args=(['rem-uit'], 300), daemon=True).start()   # 678 (16 nov): de Android-rem uit (een keer per telefoon)   # 678 (16 nov): een nieuwe proef-JARVIS en de spraaktest, zonder knop
             if RONDE % 5 == 3:
@@ -6678,8 +6680,12 @@ BREIN_DRADEN="${BREIN_DRADEN:-4}"
 # 678 (16 nov, onderzoek stap 4+5): EXTRA VLAGGEN voor llama-server. Wat de proefbank als beste koos staat in brein-extra (per rol, in de map van
 # de rol); tijdens een proef zet de proefbank BREIN_PROEF (ook leeg = zonder extra). Alleen veilige tekens: geen ; of $ naar de telefoon.
 brein_extra() {
-  if [ -n "${BREIN_PROEF+x}" ]; then printf '%s' "$BREIN_PROEF" | tr -cd 'A-Za-z0-9_+ .=-'
-  else head -1 "$REK_MAP/brein-extra" 2>/dev/null | tr -cd 'A-Za-z0-9_+ .=-'; fi
+  local b m
+  if [ -n "${BREIN_PROEF+x}" ]; then b="$BREIN_PROEF"; else b="$(head -1 "$REK_MAP/brein-extra" 2>/dev/null)"; fi
+  # 678 (onderzoek stap 6): de vlaggen die bij het MODEL horen (bv. --spec-type draft-mtp, of -md <vooruitrader>) staan apart, zodat de
+  # proefbank (die de basisvlaggen wisselt) ze nooit weghaalt.
+  if [ -n "${BREIN_MODEL_PROEF+x}" ]; then m="$BREIN_MODEL_PROEF"; else m="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"; fi
+  printf '%s %s' "$b" "$m" | tr -cd 'A-Za-z0-9_+ .=-' | sed 's/^ *//; s/ *$//; s/  */ /g'
 }
 # 678 (16 nov, eigenaar: "zoek de traagheid in iets anders: geheugen, -np, draden, of iets dat tegelijk rekent"): DE GROTE KERNEN. llama-server
 # draaide met -t 4 zonder vaste kernen; Android schuift de draden dan naar de kleine kernen zodra er iets anders loopt (JARVIS, het scherm) en
@@ -6872,13 +6878,15 @@ PY
   return 1
 }
 # brein_model_haal <repo> <naam> <sha> <grootte>: op deze computer ophalen (hervatbaar), de sha256 narekenen -> het pad
-brein_model_haal() {
-  local repo="$1" naam="$2" sha="$3" groot="$4" map="$JAPK_PLEK/brein" doel
-  mkdir -p "$map" 2>/dev/null || true; doel="$map/$naam"
-  if [ -s "$doel" ] && [ "$(stat -c %s "$doel" 2>/dev/null)" = "$groot" ]; then printf '%s' "$doel"; return 0; fi
-  zeg "  model ophalen: $naam ($((groot / 1000000)) MB) -- dit duurt even; de download gaat verder waar hij stopte." >&2
-  curl -fsSL -C - -m 7200 "https://huggingface.co/$repo/resolve/main/$naam" -o "$doel.deel" 2>/dev/null || true
-  [ "$(stat -c %s "$doel.deel" 2>/dev/null)" = "$groot" ] || { zeg "  de download is nog niet compleet ($(stat -c %s "$doel.deel" 2>/dev/null || echo 0) van $groot bytes); druk later opnieuw." >&2; return 1; }
+brein_model_haal() {   # repo naam sha grootte [lokale naam] -> het pad op deze computer; grootte 0 = onbekend (dan telt alleen de sha256)
+  local repo="$1" naam="$2" sha="$3" groot="$4" lokaal="${5:-$2}" map="$JAPK_PLEK/brein" doel
+  mkdir -p "$map" 2>/dev/null || true; doel="$map/$lokaal"
+  if [ -s "$doel" ] && { [ "$groot" = 0 ] || [ "$(stat -c %s "$doel" 2>/dev/null)" = "$groot" ]; }; then printf '%s' "$doel"; return 0; fi
+  zeg "  model ophalen: $naam$([ "$groot" != 0 ] && echo " ($((groot / 1000000)) MB)") -- dit duurt even; de download gaat verder waar hij stopte." >&2
+  curl -fsSL -C - -m 7200 "https://huggingface.co/$repo/resolve/main/$naam" -o "$doel.deel" 2>/dev/null || { [ "$groot" = 0 ] && { zeg "  de download is nog niet compleet; de volgende keer verder." >&2; return 1; }; }
+  if [ "$groot" != 0 ]; then
+    [ "$(stat -c %s "$doel.deel" 2>/dev/null)" = "$groot" ] || { zeg "  de download is nog niet compleet ($(stat -c %s "$doel.deel" 2>/dev/null || echo 0) van $groot bytes); druk later opnieuw." >&2; return 1; }
+  fi
   [ "$(sha256sum "$doel.deel" | cut -c1-64)" = "$sha" ] || { rm -f "$doel.deel"; zeg "  de controlesom van het model klopt niet; weggegooid." >&2; return 1; }
   mv -f "$doel.deel" "$doel" && printf '%s' "$doel"
 }
@@ -7373,7 +7381,10 @@ CONTROLE_POORT_LOK=18095
 controle_modellen() {   # een andere familie dan het brein; klein genoeg voor een telefoon die ook nog iets anders doet
   case "$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr 'A-Z' 'a-z')" in
     *gemma*) printf '%s' 'Qwen/Qwen3-1.7B-GGUF Q8_0;unsloth/Qwen3-1.7B-GGUF Q4_K_M;Qwen/Qwen3-0.6B-GGUF Q8_0' ;;
-    *) printf '%s' 'ggml-org/gemma-4-E2B-it-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M;unsloth/gemma-3-1b-it-GGUF Q4_K_M' ;;
+    # 678 (16 nov, onderzoek deel 2 punt 4): bij een Qwen3-brein is Qwen3.5-2B (een nieuwere generatie) de keurmeester; draait het brein zelf al
+    # Qwen3.5, dan blijft het Gemma -- de keurmeester hoort uit een ANDERE familie te komen dan het brein, anders maakt hij dezelfde fouten.
+    *qwen3.5*) printf '%s' 'ggml-org/gemma-4-E2B-it-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M;unsloth/gemma-3-1b-it-GGUF Q4_K_M' ;;
+    *) printf '%s' 'unsloth/Qwen3.5-2B-GGUF Q4_0;ggml-org/gemma-4-E2B-it-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M;unsloth/gemma-3-1b-it-GGUF Q4_K_M' ;;
   esac
 }
 als_controle() {   # draai een brein-functie als de controle-rol (in een subshell: de echte brein-instellingen blijven onaangeroerd)
@@ -7409,7 +7420,7 @@ als_verdeler() {
   (
     mkdir -p "$VERDELER_MAP" 2>/dev/null; chmod 700 "$VERDELER_MAP" 2>/dev/null || true
     [ -e "$REK_MAP/rek-token.conf" ] && ln -sf "$REK_MAP/rek-token.conf" "$VERDELER_MAP/rek-token.conf"
-    BREIN_MODELLEN='Qwen/Qwen3-0.6B-GGUF Q8_0;unsloth/Qwen3-0.6B-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M'
+    BREIN_MODELLEN='unsloth/Qwen3.5-0.8B-GGUF Q4_0;Qwen/Qwen3-0.6B-GGUF Q8_0;unsloth/Qwen3-0.6B-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M'   # 678 (16 nov): eerst Qwen3.5-0.8B (507 MB)
     REK_MAP_BASIS="$REK_MAP"
     REK_MAP="$VERDELER_MAP"
     BREIN_POORT_TEL=8096; BREIN_POORT_LOK="$VERDELER_POORT_LOK"; BREIN_MAP_TEL="/data/local/tmp/verdeler"; BREIN_CONTEXT=2048
@@ -7444,7 +7455,20 @@ verdeler_rol() {
   zeg "Verdeler: $v krijgt een klein, snel model (deelt vragen in en beantwoordt korte); hij wordt NIET schoongeveegd."
   als_verdeler brein_rol
 }
-verdeler_waak() { verdeler_kies >/dev/null 2>&1 || return 0; als_verdeler brein_waak; }
+verdeler_waak() { verdeler_kies >/dev/null 2>&1 || return 0; rol_modelkeus verdeler-rol "$VERDELER_MAP" && return 0; als_verdeler brein_waak; }
+# 678 (16 nov, onderzoek deel 2 punt 4): EEN KEER OPNIEUW KIEZEN. Een rol kiest zijn model alleen bij het starten; de waakhond herstart met het model
+# dat er al was. Is de modellijst van een rol veranderd (ROL_MODELKEUS_VERSIE), dan start ARTEMIS die rol EEN keer opnieuw zodat hij uit de
+# nieuwe lijst kiest. Niet tijdens een les; de keuze staat daarna in de status en de vaste meting van die rol.
+ROL_MODELKEUS_VERSIE=2
+rol_modelkeus() {   # $1 rol-opdracht, $2 map van de rol -> 0 = opnieuw gestart (op de achtergrond)
+  [ "$(head -1 "$2/modelkeus.v" 2>/dev/null)" = "$ROL_MODELKEUS_VERSIE" ] && return 1
+  [ -s "$2/brein-vast" ] || return 1
+  les_loopt && return 1
+  printf '%s\n' "$ROL_MODELKEUS_VERSIE" >"$2/modelkeus.v"
+  logregel "${1%-rol}: de modellijst is veranderd; een keer opnieuw kiezen."
+  ( REK_MAP="${REK_MAP_BASIS:-$REK_MAP}" setsid "$0" "$1" </dev/null >>"${REK_MAP_BASIS:-$REK_MAP}/console-$1.log" 2>&1 & ) 2>/dev/null
+  return 0
+}
 # <<< CONTROLE
 
 # >>> BREIN-LES (678, 15 nov, eigenaar: "ga verder met het trainen van de lokale AI")
@@ -7514,7 +7538,7 @@ brein_les() {
   code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
   base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
   rek_zorg_crypto >/dev/null 2>&1 || true
-  RIJ="$rij" CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" SERIE="$(brein_nu)" ADBP="$ADB" TPSF="$REK_MAP/brein-tps" ID="$id" CODE="$code" BASE="$base" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_LES_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
+  ALLEEN_NA="${LES_ALLEEN_NA:-}" RIJ="$rij" CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" SERIE="$(brein_nu)" ADBP="$ADB" TPSF="$REK_MAP/brein-tps" ID="$id" CODE="$code" BASE="$base" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="${LES_UIT:-$BREIN_LES_F}" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
 import os, json, re, time, hashlib, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try: stand = json.load(open(os.environ['STAND']))
@@ -7606,6 +7630,8 @@ def kijk(les, a):
     return True, ''
 uitslag = {'rij': int(os.environ.get('RIJ') or 1), 'model': model, 'telefoon': stand.get('telefoon') or '', 't': int(time.time()), 'kennis_tekens': len(kennis), 'rondes': {}}
 for ronde, met in (('voor', False), ('na', True)):
+    if not met and os.environ.get('ALLEEN_NA'):   # 678: de modelproef meet alleen het echte pad (na), niet de kale vorm
+        uitslag['rondes'][ronde] = {'goed': 0, 'van': 0, 'lessen': []}; continue
     rij = []
     for les in LESSEN:
         if te_warm():
@@ -7672,7 +7698,7 @@ brein_meet() {   # [label] -> een regel in brein-meet.log
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
   kern="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/kernen.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
   bouw="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
-  model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  model="${BREIN_MODEL_NU:-$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')}"
   sig="$model|$kern|${bouw:-}|$(brein_extra)"; nu="$(date +%s)"
   if [ "${1:-}" != --nu ] && [ "$(sed -n 1p "$REK_MAP/brein-meet.sig" 2>/dev/null)" = "$sig" ]; then
     t0="$(sed -n 2p "$REK_MAP/brein-meet.sig" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t0:-0})) -lt 21600 ] && return 0
@@ -7707,9 +7733,9 @@ PY
 # schrijft EN de server ermee start. De keuze staat in brein-extra en geldt daarna bij elke start. Eens per opstelling (model + llama-server),
 # pas als de dotprod-server draait of er geen te halen is, nooit tijdens een les; de waakhond wacht zolang (het brein-slot).
 BREIN_PROEFBANK_KANDIDATEN='-fa on -ctk q8_0 -ctv q8_0|-fa on -ctk q8_0 -ctv q8_0 --load-mode mmap+mlock'
-brein_herstart_met() {   # $1 serienummer -> de server opnieuw, met $(brein_extra); 0 = hij antwoordt binnen ~4 minuten
+brein_herstart_met() {   # $1 serienummer [$2 model] -> de server opnieuw, met $(brein_extra); 0 = hij antwoordt binnen ~4 minuten
   local s="$1" m ctx i
-  m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; [ -n "$m" ] || return 1
+  m="${2:-$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')}"; [ -n "$m" ] || return 1
   ctx="$(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9')"; ctx="${ctx:-$BREIN_CONTEXT}"
   "$ADB" -s "$s" shell "$(brein_kill_cmd)" >/dev/null 2>&1 || true
   sleep 3
@@ -7730,7 +7756,7 @@ brein_proefbank() {
   [ "$(head -1 "$REK_MAP/proefbank.sig" 2>/dev/null)" = "$sig" ] && return 0
   mkdir "$REK_MAP/brein.lock" 2>/dev/null || return 0   # de waakhond start zolang niets
   logregel "Proefbank: begint ($model, llama-server ${bouw:-basis}); het brein is een paar minuten weg."
-  huidig="$(brein_extra)"
+  huidig="$(head -1 "$REK_MAP/brein-extra" 2>/dev/null | tr -cd 'A-Za-z0-9_+ .=-')"
   regel="$(BREIN_PROEF="$huidig" brein_meet --nu 2>/dev/null | tail -1)"
   best="$huidig"; best_tps="$(printf '%s' "$regel" | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; best_tps="${best_tps:-0}"
   oud_ifs="$IFS"; IFS='|'
@@ -7752,6 +7778,104 @@ brein_proefbank() {
   printf '%s\n' "$sig" >"$REK_MAP/proefbank.sig"
   rm -rf "$REK_MAP/brein.lock"
   logregel "Proefbank klaar: gekozen ${best:-geen extra vlaggen} (schrijven $best_tps tok/s); alle metingen staan onder Snelheid van het brein."
+}
+# 678 (16 nov, onderzoek stap 3 deel 2, stap 6 en deel 2 punt 3): DE MODELPROEF. Na de proefbank (de vlaggen staan goed) probeert ARTEMIS
+# andere breinen op DEZELFDE manier: snelheid met de vaste meting, slimheid met beide lesrijen (alleen het echte pad, 20 vragen, de code kijkt
+# na). Kandidaten (de bestandsnamen en sha256 GEMETEN op een runner, model-meten.yml run 7 -- nooit geraden):
+#   - Qwen3-4B in Q4_0: hetzelfde model, maar Q4_0 gebruikt de ARM-repack met dotprod (sneller bij gelijke kwaliteit?);
+#   - Qwen3.5-4B in Q4_0 (maart 2026, slimmer; hybride met Gated DeltaNet -- eerst meten of het op de A78 snel genoeg is);
+#   - Qwen3.5-4B-MTP in Q4_0 met --spec-type draft-mtp (de ingebouwde vooruitraad-laag);
+#   - het huidige Qwen3-4B met Qwen3-0.6B als vooruitrader (-md): alleen houden als het echt sneller is.
+# DE SLIMSTE DIE SNEL GENOEG IS WINT: de hoogste lesscore onder de kandidaten die minstens 80% van de huidige snelheid halen (of 3 tok/s);
+# gelijke score = de snelste. Het huidige brein doet zelf ook mee, dus "niets beters" = alles blijft zoals het was. Een download die nog niet
+# klaar is = stoppen en de volgende keer verder. Kandidaten die het niet werden gaan weer van de telefoon. Eens per kandidatenlijst.
+BREIN_MODELPROEF_KANDIDATEN='unsloth/Qwen3-4B-GGUF Qwen3-4B-Q4_0.gguf 92f4a83cdfe691b216a949f915e47f35f0ed85b833aa03490c719160ac5cdf7a Qwen3-4B-Q4_0.gguf -
+unsloth/Qwen3.5-4B-GGUF Qwen3.5-4B-Q4_0.gguf 298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb Qwen3.5-4B-Q4_0.gguf -
+unsloth/Qwen3.5-4B-MTP-GGUF Qwen3.5-4B-Q4_0.gguf 14e6ef39302330c63c2c1a1ab548c7f6f1b7e36b3150ca8b42cab7193b0c3669 Qwen3.5-4B-MTP-Q4_0.gguf --spec-type draft-mtp
+huidig - - - -md Qwen3-0.6B-Q4_0.gguf'
+BREIN_VOORUITRADER='unsloth/Qwen3-0.6B-GGUF Qwen3-0.6B-Q4_0.gguf 33bcc57074ec7b6eada5a90651ee546ec0c2b271002c22baf9f1b2dd1e8f75cb'
+MODELPROEF_LOG_F="$REK_MAP/modelproef.log"
+brein_snelle_les() {   # -> het aantal goed van 20 (lesrij 1 en 2, alleen het echte pad)
+  local t1 t2; t1="$(mktemp)"; t2="$(mktemp)"
+  LES_ALLEEN_NA=1 LES_UIT="$t1" brein_les "" 1 >/dev/null 2>&1
+  LES_ALLEEN_NA=1 LES_UIT="$t2" brein_les "" 2 >/dev/null 2>&1
+  python3 -I -c 'import json, sys
+n = 0
+for f in sys.argv[1:]:
+    try: n += int(json.load(open(f))["rondes"]["na"]["goed"])
+    except Exception: pass
+print(n)' "$t1" "$t2" 2>/dev/null || echo 0
+  rm -f "$t1" "$t2"
+}
+brein_tel_zet() {   # $1 serienummer, $2 lokaal pad, $3 naam op de telefoon -> 0 = staat er (compleet)
+  local s="$1" pad="$2" naam="$3" groot vrij
+  groot="$(stat -c %s "$pad" 2>/dev/null)"; [ -n "$groot" ] || return 1
+  [ "$("$ADB" -s "$s" shell "stat -c %s $BREIN_MAP_TEL/$naam 2>/dev/null" 2>/dev/null | tr -d '\r ')" = "$groot" ] && return 0
+  vrij="$("$ADB" -s "$s" shell "df -k $BREIN_MAP_TEL" 2>/dev/null | tr -d '\r' | awk 'NR==2 {print $4}')"
+  case "$vrij" in ''|*[!0-9]*) vrij=0 ;; esac
+  [ "$vrij" -gt $((groot / 1024 + 300000)) ] || return 3   # te weinig ruimte op de telefoon
+  "$ADB" -s "$s" push "$pad" "$BREIN_MAP_TEL/$naam" >/dev/null 2>&1
+  [ "$("$ADB" -s "$s" shell "stat -c %s $BREIN_MAP_TEL/$naam 2>/dev/null" 2>/dev/null | tr -d '\r ')" = "$groot" ]
+}
+brein_modelproef() {
+  les_loopt && return 0
+  [ -s "$REK_MAP/proefbank.sig" ] || return 0   # eerst de vlaggen (stap 4+5)
+  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  local s sig oud_m oud_mx regel repo naam sha lokaal mx pad dpad r tps score best_m best_mx best_tps best_score basis_tps grens drep dnaam dsha k mem
+  s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
+  sig="$(printf '%s' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"
+  [ "$(head -1 "$REK_MAP/modelproef.sig" 2>/dev/null)" = "$sig" ] && return 0
+  mkdir "$REK_MAP/brein.lock" 2>/dev/null || return 0
+  oud_m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; oud_mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
+  logregel "Modelproef: begint (nu $oud_m); elke kandidaat wordt gemeten op snelheid en met beide lesrijen."
+  # het huidige brein
+  tps="$(BREIN_MODEL_PROEF="$oud_mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
+  score="$(brein_snelle_les)"
+  printf '%s | %s%s (nu) | schrijven %s tok/s | les %s/20\n' "$(date '+%d-%m %H:%M')" "$oud_m" "${oud_mx:+ $oud_mx}" "$tps" "$score" >>"$MODELPROEF_LOG_F"
+  best_m="$oud_m"; best_mx="$oud_mx"; best_tps="$tps"; best_score="$score"; basis_tps="$tps"
+  grens="$(awk "BEGIN{g = $basis_tps * 0.8; print (g < 3 ? g : 3)}")"
+  while IFS= read -r regel; do
+    [ -n "$regel" ] || continue
+    set -- $regel; repo="$1"; naam="$2"; sha="$3"; lokaal="$4"; shift 4; mx="$*"; [ "$mx" = - ] && mx=""
+    if [ "$repo" = huidig ]; then lokaal="$oud_m"
+    else
+      pad="$(brein_model_haal "$repo" "$naam" "$sha" 0 "$lokaal" 2>/dev/null)" || { logregel "Modelproef: $lokaal is nog niet binnen; de volgende keer verder."; brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0; }
+      brein_tel_zet "$s" "$pad" "$lokaal"; k=$?
+      [ "$k" = 3 ] && { printf '%s | %s | te weinig ruimte op de telefoon\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; continue; }
+      [ "$k" = 0 ] || { printf '%s | %s | kwam niet op de telefoon\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; continue; }
+    fi
+    case "$mx" in *"-md "*)
+      set -- $BREIN_VOORUITRADER; drep="$1"; dnaam="$2"; dsha="$3"
+      dpad="$(brein_model_haal "$drep" "$dnaam" "$dsha" 0 2>/dev/null)" || { logregel "Modelproef: de vooruitrader is nog niet binnen; de volgende keer verder."; brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0; }
+      brein_tel_zet "$s" "$dpad" "$dnaam" || { printf '%s | %s + vooruitrader | kwam niet op de telefoon\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; continue; } ;;
+    esac
+    if ! BREIN_MODEL_PROEF="$mx" brein_herstart_met "$s" "$lokaal"; then
+      printf '%s | %s%s | startte niet (te weinig geheugen?)\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" >>"$MODELPROEF_LOG_F"; continue
+    fi
+    brein_stand klaar "Modelproef: $lokaal" "$s" "$lokaal" ""   # zodat de kennisbank en de les de juiste naam noemen
+    tps="$(BREIN_MODEL_NU="$lokaal" BREIN_MODEL_PROEF="$mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
+    score="$(brein_snelle_les)"
+    printf '%s | %s%s | schrijven %s tok/s | les %s/20\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" "$tps" "$score" >>"$MODELPROEF_LOG_F"
+    if awk "BEGIN{exit !($tps >= $grens && ($score > $best_score || ($score == $best_score && $tps > $best_tps)))}"; then
+      best_m="$lokaal"; best_mx="$mx"; best_tps="$tps"; best_score="$score"
+    fi
+  done <<EOF_KAND
+$BREIN_MODELPROEF_KANDIDATEN
+EOF_KAND
+  printf '%s\n' "$best_m" >"$REK_MAP/brein-model"; printf '%s\n' "$best_mx" >"$REK_MAP/brein-model-extra"
+  brein_herstart_met "$s" "$best_m" || logregel "Modelproef: het gekozen brein startte niet; de waakhond probeert het opnieuw."
+  brein_stand klaar "Het brein draait op $(toestel_naam "$s") (gekozen door de modelproef)." "$s" "$best_m" ""
+  # kandidaten die het niet werden weer van de telefoon (het oude brein blijft staan als terugval)
+  while IFS= read -r regel; do
+    set -- $regel; lokaal="$4"; [ "$1" = huidig ] && continue
+    [ "$lokaal" = "$best_m" ] || "$ADB" -s "$s" shell "rm -f $BREIN_MAP_TEL/$lokaal" >/dev/null 2>&1
+  done <<EOF_KAND
+$BREIN_MODELPROEF_KANDIDATEN
+EOF_KAND
+  case "$best_mx" in *"-md "*) : ;; *) "$ADB" -s "$s" shell "rm -f $BREIN_MAP_TEL/Qwen3-0.6B-Q4_0.gguf" >/dev/null 2>&1 ;; esac
+  printf '%s\n' "$sig" >"$REK_MAP/modelproef.sig"
+  rm -rf "$REK_MAP/brein.lock"
+  logregel "Modelproef klaar: gekozen $best_m${best_mx:+ $best_mx} (les $best_score/20, schrijven $best_tps tok/s; was $oud_m)."
 }
 # 678 (16 nov, onderzoek deel 2): DE ANDROID-REM UIT op de rektelefoons. Android 12+ stopt "phantom processes" (processen die niet bij een app
 # horen) en remt bij batterijbesparing; llama-server mag daar geen last van hebben. Per telefoon een keer (opnieuw na een herstart van
@@ -7804,6 +7928,8 @@ for x in n["lessen"]:
     if not x["goed"]: print("    fout na: %s (%s): %s" % (x["id"], x["waarom"], (x["antwoord"] or "")[:120].replace("\n"," ")))' 2>/dev/null
   printf '\n## Snelheid van het brein (vaste meting, nieuwste onderaan)\n'; tail -n 6 "$BREIN_MEET_F" 2>/dev/null | sed 's/^/    /' || true
   [ -s "$BREIN_MEET_F" ] || printf '    nog geen meting\n'
+  printf '\n## Modelproef (welk brein: snelheid en lesscore)\n'; tail -n 6 "$MODELPROEF_LOG_F" 2>/dev/null | sed 's/^/    /' || true
+  [ -s "$MODELPROEF_LOG_F" ] || printf '    nog niet gedaan\n'
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
   printf '\n## Stem en oor (proeftelefoon)\n    %s\n' "$(head -1 "$SPRAAK_TEST_F" 2>/dev/null || echo 'nog geen spraaktest')"
   [ -s "$PROEF_SPRAAK_NA" ] && printf '    de volgende spraaktest (vanzelf, na een nieuwe JARVIS): om %s\n' "$(date -d "@$(tr -dc 0-9 < "$PROEF_SPRAAK_NA")" '+%H:%M' 2>/dev/null)"
@@ -8446,7 +8572,7 @@ case "${1:-status}" in
   brein-les2) brein_les "" 2 ;;
   controle-rol) controle_rol ;;                     # 678 (15 nov): de controle-telefoon (tweede model, andere familie) starten
   controle-status) zeg "== De controle-telefoon (kijkt de antwoorden van het brein na) =="; als_controle brein_status ;;
-  controle-waak) als_controle brein_waak ;;
+  controle-waak) rol_modelkeus controle-rol "$CONTROLE_MAP" || als_controle brein_waak ;;
   controle-stop) als_controle brein_stop ;;
   controle-doorsturing) als_controle brein_doorsturing ;;
   verdeler-rol) verdeler_rol ;;                     # 678 (16 nov): de verdeler (klein model; deelt vragen in)
@@ -8457,7 +8583,8 @@ case "${1:-status}" in
   stand-tik) stand_tik "${2:-}" ;;
   proef-vanzelf) proef_vanzelf ;;
   rem-uit) rek_rem_uit ;;
-  brein-proefbank) brein_proefbank ;;               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
+  brein-proefbank) brein_proefbank ;;
+  brein-modelproef) brein_modelproef ;;             # 678 (16 nov): onderzoek stap 3/6, deel 2 punt 3 -- andere breinen gemeten (snelheid + beide lesrijen)               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
   versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
   stand-na-update) sleep 60; brein_waak; als_controle brein_waak; sleep 120; stand_tik --nu ;;   # 678: na een nieuwe versie: rollen nalopen, dan het verslag                 # 678 (15 nov): de lokale AI leren: kennisbank op de Cat + lesrij voor/na, nagekeken door code                          # 678 (15 nov): het brein op de telefoon met de rol brein, ook draadloos (Tailscale/wifi-adb)                      # 678 (15 nov): het brein op de rektelefoon aan de USB-kabel (vast), dan starten
   brein-waak) brein_waak ;;                        # intern (de console-lus): het brein in leven houden, zonder internet                      # 678 (15 nov): het brein (llama-server + Gemma 4 E2B) op de brein-telefoon
