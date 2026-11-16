@@ -6689,13 +6689,19 @@ brein_extra() {
 # 678 (16 nov): LOOPT ER EEN LES? Het slot blijft staan als het lesproces wordt afgebroken (een tijdslimiet, een herstart van de console); dan
 # wachtte de waakhond voor altijd ("niet tijdens een les"). Een slot ouder dan 90 minuten telt daarom niet meer -- dezelfde grens als de les zelf.
 les_loopt() { [ -d "$REK_MAP/brein-les.lock" ] && [ -z "$(find "$REK_MAP/brein-les.lock" -maxdepth 0 -mmin +90 2>/dev/null)" ]; }
+# 678 (16 nov, gevonden in het verslag van 19:55): STOPPEN GING NIET. De server werd gestart als "./llama-server" (vanuit zijn map) en gestopt met
+# "pkill -f <map>/llama-server" -- dat volledige pad staat niet in zijn opdrachtregel, dus er werd nooit iets gestopt (ook de controle en de
+# verdeler niet). Erger: "pkill -f <pad>" trof de eigen shell (dat pad staat in de opdrachtregel van "sh -c ...") en stopte zichzelf eerst. Nu:
+# starten met het VOLLEDIGE pad, en stoppen/zoeken op de WERKMAP van het proces (pidof + /proc/<pid>/cwd) -- geen pkill -f meer.
+brein_kill_cmd() { printf '%s' "for p in \$(pidof llama-server); do [ \"\$(readlink /proc/\$p/cwd)\" = $BREIN_MAP_TEL ] && kill \$p; done; true"; }
+brein_pids_cmd() { printf '%s' "for p in \$(pidof llama-server); do [ \"\$(readlink /proc/\$p/cwd)\" = $BREIN_MAP_TEL ] && echo \$p; done; true"; }
 brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
   # 678 (16 nov, onderzoek stap 1): de snelle kernen per SOORT, uit /proc/cpuinfo ("CPU part"): alles behalve de zuinige kernen (A53 0xd03,
   # A55 0xd05, A510 0xd46, A520 0xd80) telt. Zo: 4x A78 = 4, 2x M4 + 2x A75 = 4, 2x A78 = 2, 2x A76 = 2. Lukt dat niet (geen CPU part),
   # dan de oude regel: max-frequentie minstens 90% van de hoogste. Geen GPU (Vulkan/OpenCL): de grafische chips (Mali/IMG) zijn hier trager dan
   # de processor; de server is alleen voor de CPU gebouwd, en -ngl 0 zegt het nog eens.
   local x; x="$(brein_extra)"
-  printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P ./llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja${x:+ $x} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
+  printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P $BREIN_MAP_TEL/llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja${x:+ $x} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
 }
 # 678 (16 nov, onderzoek stap 3): WELKE LLAMA-SERVER. De APK draagt er twee: libllamaserver.so (kale armv8.0, draait overal) en
 # libllamaserver_dp.so (armv8.2 met dotprod en fp16: sdot/udot en de snelle Q4_0-paden). Meldt de telefoon 'asimddp' in /proc/cpuinfo, dan de
@@ -6984,7 +6990,7 @@ brein_start_kern() {
   [ -n "$sm" ] || { zeg "Brein: geen rektelefoon met JARVIS verbonden (kabel of Tailscale)."; brein_stand uit "Geen rektelefoon verbonden." ""; return 0; }
   is_f8 "$s" && return 0
   naam="$(toestel_naam "$s")"
-  "$ADB" -s "$s" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true   # een eerder brein van ONS telt niet mee in het vrije geheugen
+  "$ADB" -s "$s" shell "$(brein_kill_cmd)" >/dev/null 2>&1 || true   # een eerder brein van ONS telt niet mee in het vrije geheugen
   zeg "${BREIN_LABEL:-Brein} op $naam ($(toestel_id "$s"), route: $(brein_route "$s")). Eerst het geheugen vrijmaken, dan het slimste model dat past."
   [ -z "${BREIN_GEEN_VEGEN:-}" ] && [ "$(toestel_id "$s")" = "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && brein_schoonvegen "$s"   # 678: alleen de VASTE brein-telefoon (de controle nooit)
   mem="$(brein_vrijmaken "$s")"; case "$mem" in ''|*[!0-9]*) mem="$(mem_vrij_kb "$s")" ;; esac; case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
@@ -7233,7 +7239,7 @@ except Exception: print(0)' 2>/dev/null)"
     if { [ "${vak:-0}" -gt 1 ] 2>/dev/null || [ -n "$oud" ]; } && ! les_loopt && [ $((nu1 - t1)) -ge 3600 ]; then
       if [ -n "$s1" ] && ! is_f8 "$s1"; then
         printf '%s\n' "$nu1" >"$REK_MAP/brein-vakken.t"
-        "$ADB" -s "$s1" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true
+        "$ADB" -s "$s1" shell "$(brein_kill_cmd)" >/dev/null 2>&1 || true
         if [ "$oud" = dp ]; then logregel "${BREIN_LABEL:-Brein}: er is een llama-server met dotprod voor deze telefoon; opnieuw gestart om hem te gebruiken."
         elif [ -n "$oud" ]; then logregel "${BREIN_LABEL:-Brein}: de server draaide nog niet vast op de grote kernen; opnieuw gestart (grote kernen, een vak)."
         else logregel "${BREIN_LABEL:-Brein}: de server had $vak vakken (de context gedeeld, vragen delen de rekenkracht); opnieuw gestart met een vak."; fi
@@ -7253,7 +7259,7 @@ except Exception: print(0)' 2>/dev/null)"
   mkdir "$REK_MAP/brein.lock" 2>/dev/null || return 0
   date +%s >"$REK_MAP/brein-herstart"
   bin="$BREIN_MAP_TEL/llama-server"
-  if [ -n "$("$ADB" -s "$s" shell "pgrep -f $bin" 2>/dev/null | tr -d '\r\n ')" ]; then rm -rf "$REK_MAP/brein.lock"; return 0; fi   # draait nog (laadt misschien): niet dubbel starten
+  if [ -n "$("$ADB" -s "$s" shell "$(brein_pids_cmd)" 2>/dev/null | tr -d '\r\n ')" ]; then rm -rf "$REK_MAP/brein.lock"; return 0; fi   # draait nog (laadt misschien): niet dubbel starten
   "$ADB" -s "$s" shell "[ -x $bin ] && [ -s $BREIN_MAP_TEL/$m ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja || { rm -rf "$REK_MAP/brein.lock"; return 0; }
   mem="$(brein_vrijmaken "$s" 2>/dev/null)"
   brein_binaire_zet "$s" >/dev/null 2>&1 || true   # 678: bij een herstart ook de beste llama-server (dotprod als het kan)
@@ -7272,7 +7278,7 @@ brein_doorsturing() {
 brein_stop() {
   local s; s="$(brein_nu)"
   if [ -n "$s" ] && ! is_f8 "$s"; then
-    "$ADB" -s "$s" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true
+    "$ADB" -s "$s" shell "$(brein_kill_cmd)" >/dev/null 2>&1 || true
     "$ADB" -s "$s" forward --remove tcp:"$BREIN_POORT_LOK" >/dev/null 2>&1 || true
   fi
   rm -f "$BREIN_AAN_F"
@@ -7705,7 +7711,7 @@ brein_herstart_met() {   # $1 serienummer -> de server opnieuw, met $(brein_extr
   local s="$1" m ctx i
   m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; [ -n "$m" ] || return 1
   ctx="$(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9')"; ctx="${ctx:-$BREIN_CONTEXT}"
-  "$ADB" -s "$s" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true
+  "$ADB" -s "$s" shell "$(brein_kill_cmd)" >/dev/null 2>&1 || true
   sleep 3
   "$ADB" -s "$s" shell "$(brein_start_cmd "$m" "$ctx")" >/dev/null 2>&1
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
