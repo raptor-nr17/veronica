@@ -873,6 +873,8 @@ def lus():
             threading.Thread(target=doe_args, args=(['versie-kijk'], 200), daemon=True).start()   # 678 (16 nov): een nieuwe versie binnen een paar minuten
             if RONDE % 5 == 1:
                 threading.Thread(target=doe_args, args=(['proef-vanzelf'], 900), daemon=True).start()
+            if RONDE % 10 == 7:
+                threading.Thread(target=doe_args, args=(['brein-proefbank'], 2400), daemon=True).start()   # 678 (16 nov): de proefbank (eens per opstelling)
             if RONDE % 30 == 11:
                 threading.Thread(target=doe_args, args=(['rem-uit'], 300), daemon=True).start()   # 678 (16 nov): de Android-rem uit (een keer per telefoon)   # 678 (16 nov): een nieuwe proef-JARVIS en de spraaktest, zonder knop
             if RONDE % 5 == 3:
@@ -6673,7 +6675,12 @@ BREIN_MAP_TEL="/data/local/tmp/brein"
 BREIN_POORT_TEL=8093                       # op de telefoon, alleen 127.0.0.1
 BREIN_POORT_LOK="${BREIN_POORT_LOK:-18093}" # de adb-doorsturing op deze computer
 BREIN_DRADEN="${BREIN_DRADEN:-4}"
-BREIN_EXTRA="${BREIN_EXTRA:-}"   # 678: extra vlaggen voor llama-server (de proefbank zet ze per meting)
+# 678 (16 nov, onderzoek stap 4+5): EXTRA VLAGGEN voor llama-server. Wat de proefbank als beste koos staat in brein-extra (per rol, in de map van
+# de rol); tijdens een proef zet de proefbank BREIN_PROEF (ook leeg = zonder extra). Alleen veilige tekens: geen ; of $ naar de telefoon.
+brein_extra() {
+  if [ -n "${BREIN_PROEF+x}" ]; then printf '%s' "$BREIN_PROEF" | tr -cd 'A-Za-z0-9_+ .=-'
+  else head -1 "$REK_MAP/brein-extra" 2>/dev/null | tr -cd 'A-Za-z0-9_+ .=-'; fi
+}
 # 678 (16 nov, eigenaar: "zoek de traagheid in iets anders: geheugen, -np, draden, of iets dat tegelijk rekent"): DE GROTE KERNEN. llama-server
 # draaide met -t 4 zonder vaste kernen; Android schuift de draden dan naar de kleine kernen zodra er iets anders loopt (JARVIS, het scherm) en
 # EEN draad op een kleine kern remt alle andere af (ze wachten op elkaar). Nu: de grote kernen tellen OP DE TELEFOON (max-frequentie minstens
@@ -6687,7 +6694,8 @@ brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
   # A55 0xd05, A510 0xd46, A520 0xd80) telt. Zo: 4x A78 = 4, 2x M4 + 2x A75 = 4, 2x A78 = 2, 2x A76 = 2. Lukt dat niet (geen CPU part),
   # dan de oude regel: max-frequentie minstens 90% van de hoogste. Geen GPU (Vulkan/OpenCL): de grafische chips (Mali/IMG) zijn hier trager dan
   # de processor; de server is alleen voor de CPU gebouwd, en -ngl 0 zegt het nog eens.
-  printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P ./llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja${BREIN_EXTRA:+ $BREIN_EXTRA} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
+  local x; x="$(brein_extra)"
+  printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P ./llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja${x:+ $x} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
 }
 # 678 (16 nov, onderzoek stap 3): WELKE LLAMA-SERVER. De APK draagt er twee: libllamaserver.so (kale armv8.0, draait overal) en
 # libllamaserver_dp.so (armv8.2 met dotprod en fp16: sdot/udot en de snelle Q4_0-paden). Meldt de telefoon 'asimddp' in /proc/cpuinfo, dan de
@@ -7659,13 +7667,13 @@ brein_meet() {   # [label] -> een regel in brein-meet.log
   kern="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/kernen.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
   bouw="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
   model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
-  sig="$model|$kern|${bouw:-}|${BREIN_EXTRA:-}"; nu="$(date +%s)"
+  sig="$model|$kern|${bouw:-}|$(brein_extra)"; nu="$(date +%s)"
   if [ "${1:-}" != --nu ] && [ "$(sed -n 1p "$REK_MAP/brein-meet.sig" 2>/dev/null)" = "$sig" ]; then
     t0="$(sed -n 2p "$REK_MAP/brein-meet.sig" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t0:-0})) -lt 21600 ] && return 0
   fi
   mkdir "$REK_MAP/brein-meet.lock" 2>/dev/null || return 0
   printf '%s\n%s\n' "$sig" "$nu" >"$REK_MAP/brein-meet.sig"
-  LABEL="$model, kernen ${kern:-onbekend}, llama.cpp ${bouw:-basis}${BREIN_EXTRA:+, $BREIN_EXTRA}" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_MEET_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
+  LABEL="$model, kernen ${kern:-onbekend}, llama.cpp ${bouw:-basis}$(x="$(brein_extra)"; [ -n "$x" ] && printf ', %s' "$x")" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_MEET_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
 import os, json, time, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try: kennis = open(os.environ['KENNIS']).read()[:3500]
@@ -7686,6 +7694,58 @@ with open(os.environ['UIT'], 'a') as fh: fh.write(regel + '\n')
 print(regel)
 PY
   rm -rf "$REK_MAP/brein-meet.lock"
+}
+# 678 (16 nov, onderzoek stap 4 en 5): DE PROEFBANK. Een voor een, steeds meten: eerst de huidige opstelling, dan flash attention met de
+# KV-cache in q8_0 (minder geheugen per token, minder lezen), dan daarbovenop het model vasthouden in het werkgeheugen (--load-mode mmap+mlock:
+# Android mag de modelpagina's dan niet wegzetten). Na elke herstart de vaste meting; een kandidaat blijft alleen als hij minstens 3% sneller
+# schrijft EN de server ermee start. De keuze staat in brein-extra en geldt daarna bij elke start. Eens per opstelling (model + llama-server),
+# pas als de dotprod-server draait of er geen te halen is, nooit tijdens een les; de waakhond wacht zolang (het brein-slot).
+BREIN_PROEFBANK_KANDIDATEN='-fa on -ctk q8_0 -ctv q8_0|-fa on -ctk q8_0 -ctv q8_0 --load-mode mmap+mlock'
+brein_herstart_met() {   # $1 serienummer -> de server opnieuw, met $(brein_extra); 0 = hij antwoordt binnen ~4 minuten
+  local s="$1" m ctx i
+  m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; [ -n "$m" ] || return 1
+  ctx="$(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9')"; ctx="${ctx:-$BREIN_CONTEXT}"
+  "$ADB" -s "$s" shell "pkill -f $BREIN_MAP_TEL/llama-server" >/dev/null 2>&1 || true
+  sleep 3
+  "$ADB" -s "$s" shell "$(brein_start_cmd "$m" "$ctx")" >/dev/null 2>&1
+  "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
+  for i in $(seq 1 80); do curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && return 0; sleep 3; done
+  return 1
+}
+brein_proefbank() {
+  les_loopt && return 0
+  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  local s model bouw sig huidig best best_tps tps kand regel oud_ifs
+  s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
+  model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  bouw="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
+  [ "$bouw" = dotprod ] || ! brein_dp_beschikbaar "$s" || return 0   # eerst de dotprod-server (stap 3), dan deze stappen
+  sig="$model|${bouw:-basis}"
+  [ "$(head -1 "$REK_MAP/proefbank.sig" 2>/dev/null)" = "$sig" ] && return 0
+  mkdir "$REK_MAP/brein.lock" 2>/dev/null || return 0   # de waakhond start zolang niets
+  logregel "Proefbank: begint ($model, llama-server ${bouw:-basis}); het brein is een paar minuten weg."
+  huidig="$(brein_extra)"
+  regel="$(BREIN_PROEF="$huidig" brein_meet --nu 2>/dev/null | tail -1)"
+  best="$huidig"; best_tps="$(printf '%s' "$regel" | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; best_tps="${best_tps:-0}"
+  oud_ifs="$IFS"; IFS='|'
+  for kand in $BREIN_PROEFBANK_KANDIDATEN; do
+    IFS="$oud_ifs"
+    [ "$kand" = "$huidig" ] && { IFS='|'; continue; }
+    if BREIN_PROEF="$kand" brein_herstart_met "$s"; then
+      regel="$(BREIN_PROEF="$kand" brein_meet --nu 2>/dev/null | tail -1)"
+      tps="$(printf '%s' "$regel" | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"
+      if [ -n "$tps" ] && awk "BEGIN{exit !($tps > $best_tps * 1.03)}" 2>/dev/null; then best="$kand"; best_tps="$tps"; fi
+    else
+      logregel "Proefbank: llama-server startte niet met '$kand'; overgeslagen."
+    fi
+    IFS='|'
+  done
+  IFS="$oud_ifs"
+  printf '%s\n' "$best" >"$REK_MAP/brein-extra"
+  brein_herstart_met "$s" || logregel "Proefbank: de gekozen opstelling startte niet; de waakhond probeert het opnieuw."
+  printf '%s\n' "$sig" >"$REK_MAP/proefbank.sig"
+  rm -rf "$REK_MAP/brein.lock"
+  logregel "Proefbank klaar: gekozen ${best:-geen extra vlaggen} (schrijven $best_tps tok/s); alle metingen staan onder Snelheid van het brein."
 }
 # 678 (16 nov, onderzoek deel 2): DE ANDROID-REM UIT op de rektelefoons. Android 12+ stopt "phantom processes" (processen die niet bij een app
 # horen) en remt bij batterijbesparing; llama-server mag daar geen last van hebben. Per telefoon een keer (opnieuw na een herstart van
@@ -8390,7 +8450,8 @@ case "${1:-status}" in
   verdeler-doorsturing) als_verdeler brein_doorsturing ;;
   stand-tik) stand_tik "${2:-}" ;;
   proef-vanzelf) proef_vanzelf ;;
-  rem-uit) rek_rem_uit ;;                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
+  rem-uit) rek_rem_uit ;;
+  brein-proefbank) brein_proefbank ;;               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
   versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
   stand-na-update) sleep 60; brein_waak; als_controle brein_waak; sleep 120; stand_tik --nu ;;   # 678: na een nieuwe versie: rollen nalopen, dan het verslag                 # 678 (15 nov): de lokale AI leren: kennisbank op de Cat + lesrij voor/na, nagekeken door code                          # 678 (15 nov): het brein op de telefoon met de rol brein, ook draadloos (Tailscale/wifi-adb)                      # 678 (15 nov): het brein op de rektelefoon aan de USB-kabel (vast), dan starten
   brein-waak) brein_waak ;;                        # intern (de console-lus): het brein in leven houden, zonder internet                      # 678 (15 nov): het brein (llama-server + Gemma 4 E2B) op de brein-telefoon
