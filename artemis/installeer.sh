@@ -6451,6 +6451,9 @@ jarvis_pagina_leeft() {
 jarvis_web_herstel() {   # $1 serienummer, $2 naam -> een zin (leeg = niets te doen)
   local s="$1" naam="${2:-telefoon}" sl rem nu laatst leefde
   is_f8 "$s" && return 0
+  # 678 (16 nov, gemeten): op de VASTE brein-telefoon nooit de JARVIS-pagina openen -- die pagina kost het brein ~1 GB en daarmee de snelheid
+  # (0,66 in plaats van ~5 tok/s). Het brein heeft de webserver van JARVIS niet nodig.
+  [ -n "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && [ "$(toestel_id "$s")" = "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && return 0
   [ -n "$(timeout 10 "$ADB" -s "$s" shell pidof "$JARVIS_PKG" 2>/dev/null | tr -d '\r\n ')" ] || return 0
   jarvis_8080_luistert "$s" && return 0
   sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"; rem="$REK_MAP/web-herstel-$sl"; nu="$(date +%s)"
@@ -7149,6 +7152,11 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
   local w tps tt oorz=""
   [ -n "$s" ] && w="$(brein_warmte "$s")"
   [ -n "${w:-}" ] && zeg "  warmte: $((w / 10)),$((w % 10)) graden (accu)"
+  # 678 (16 nov): wie gebruikt het geheugen op de brein-telefoon? (het vrije geheugen bleef zakken, ook nadat JARVIS naar de achtergrond ging)
+  if [ -n "$s" ] && [ "${BREIN_ROLNAAM:-brein}" = brein ] && [ -z "${STAND_KORT:-}" ]; then
+    local top; top="$("$ADB" -s "$s" shell dumpsys meminfo 2>/dev/null | tr -d '\r' | awk '/Total PSS by process:/{f=1;next} f&&/K: /{gsub(/,/,"",$1); sub(/K:$/,"",$1); n++; printf "%s %d MB; ", $2, $1/1024} n>=5{exit}')"
+    [ -n "$top" ] && zeg "  grootste geheugengebruikers: $top"
+  fi
   read -r tps tt <"$REK_MAP/brein-tps" 2>/dev/null || true
   if [ -n "${tps:-}" ]; then
     zeg "  snelheid: $tps tok/s (laatst gemeten $(date -d "@${tt:-0}" '+%d-%m %H:%M' 2>/dev/null))"
