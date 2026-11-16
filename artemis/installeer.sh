@@ -872,7 +872,9 @@ def lus():
                 threading.Thread(target=doe_args, args=(['verdeler-waak'], 330), daemon=True).start()   # 678 (16 nov): en de verdeler
             threading.Thread(target=doe_args, args=(['versie-kijk'], 200), daemon=True).start()   # 678 (16 nov): een nieuwe versie binnen een paar minuten
             if RONDE % 5 == 1:
-                threading.Thread(target=doe_args, args=(['proef-vanzelf'], 900), daemon=True).start()   # 678 (16 nov): een nieuwe proef-JARVIS en de spraaktest, zonder knop
+                threading.Thread(target=doe_args, args=(['proef-vanzelf'], 900), daemon=True).start()
+            if RONDE % 30 == 11:
+                threading.Thread(target=doe_args, args=(['rem-uit'], 300), daemon=True).start()   # 678 (16 nov): de Android-rem uit (een keer per telefoon)   # 678 (16 nov): een nieuwe proef-JARVIS en de spraaktest, zonder knop
             if RONDE % 5 == 3:
                 threading.Thread(target=doe_args, args=(['stand-tik'], 420), daemon=True).start()   # 678 (16 nov): het standverslag (alleen bij verandering of na een uur)
             threading.Thread(target=doe_args, args=(['kanaal-tik'], 330), daemon=True).start()   # 678 (15 nov): een vraag van Claude Code aan het brein? (eigen draad: een antwoord kan minuten duren; een slot voorkomt dubbel)
@@ -1693,10 +1695,12 @@ class H(BaseHTTPRequestHandler):
             msgs = [m for m in (d.get('messages') or []) if isinstance(m, dict) and m.get('role') in ('system', 'user', 'assistant') and isinstance(m.get('content'), str)][-24:]
             if not msgs:
                 self._cors_json(400, json.dumps({'fout': 'Geen vraag.'})); return
-            msgs_eigen = [dict(m) for m in msgs]   # zonder de naam van het brein (voor de verdeler)
+            # 678 (16 nov, onderzoek deel 2): HET VASTE DEEL BOVENAAN. De naam en de kennisbank veranderen niet tussen twee vragen; staan ze
+            # VOORAAN (en de systeemtekst van Veronica erachter), dan hergebruikt llama-server dat begin uit zijn cache (cache_prompt) en hoeft
+            # alleen het nieuwe stuk gelezen te worden. Stond het achter een wisselende tekst, dan moest elke vraag alles opnieuw lezen.
             wie = (brein_wie() + ' ' + brein_kennis()).strip()
             if wie:
-                if msgs[0].get('role') == 'system': msgs[0] = {'role': 'system', 'content': msgs[0]['content'] + ' ' + wie}
+                if msgs[0].get('role') == 'system': msgs[0] = {'role': 'system', 'content': wie + '\n\n' + msgs[0]['content']}
                 else: msgs.insert(0, {'role': 'system', 'content': wie})
             mt = d.get('max_tokens'); mt = mt if isinstance(mt, int) and 1 <= mt <= 2048 else 512
             laatste = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
@@ -1709,23 +1713,12 @@ class H(BaseHTTPRequestHandler):
                 self._cors_json(200, json.dumps({'tekst': som + ' (de som van het brein, uitgerekend door de code)', 'tps': None, 'ms': int((time.time() - t0r) * 1000),
                                                  'bron': 'rekenhulp', 'controle_id': None})); return
             if nl_herinnering(laatste):
-                for lijst in (msgs, msgs_eigen):
-                    for m in reversed(lijst):
-                        if m.get('role') == 'user': m['content'] = m['content'] + '\n\n(Antwoord in het Nederlands.)'; break
-            if verdeler_bereikbaar() and verdeler_soort(laatste) == 'KORT':
-                t0v = time.time()
-                vmod = verdeler_model()
-                ken = ' '.join(r for r in brein_kennis().splitlines() if 'Jij bent het taalmodel' not in r)
-                ken = ('Jij bent de VERDELER van het rek, het kleine taalmodel %s (niet het brein). ' % (vmod or 'van de verdeler')) + ken + ' Antwoord in een of twee korte zinnen.'
-                vm = msgs_eigen
-                if vm and vm[0].get('role') == 'system': vm[0]['content'] = vm[0]['content'] + ' ' + ken
-                else: vm.insert(0, {'role': 'system', 'content': ken})
-                vt, vtps = verdeler_vraag(vm, 160, 0.2)
-                if vt:
-                    cid = None if les else controle_start(laatste, vt, brein_kennis())
-                    self._cors_json(200, json.dumps({'tekst': vt, 'tps': round(vtps, 2) if isinstance(vtps, (int, float)) else None, 'ms': int((time.time() - t0v) * 1000),
-                                                     'bron': 'verdeler-model', 'model': vmod, 'controle_id': cid})); return
-            t0 = time.time(); r = brein_vraag({'messages': msgs, 'max_tokens': mt, 'stream': False, 'temperature': 0.2 if les else 0.7, 'chat_template_kwargs': {'enable_thinking': False}})   # 678: Qwen3 denkt anders eerst honderden tokens hardop
+                for m in reversed(msgs):
+                    if m.get('role') == 'user': m['content'] = m['content'] + '\n\n(Antwoord in het Nederlands.)'; break
+            # 678 (16 nov, onderzoek stap 7): GEEN WERK OVER WIFI VOOR EEN ANTWOORD. De verdeler (een andere telefoon, via Tailscale) zat in het
+            # antwoordpad: eerst indelen, dan soms zelf antwoorden -- twee keer over het netwerk voor elk antwoord. Het brein antwoordt nu altijd
+            # zelf; de controle kijkt pas NA het antwoord na (die vertraagt niets). De verdeler blijft draaien voor werk op de achtergrond.
+            t0 = time.time(); r = brein_vraag({'messages': msgs, 'max_tokens': mt, 'stream': False, 'cache_prompt': True, 'temperature': 0.2 if les else 0.7, 'chat_template_kwargs': {'enable_thinking': False}})   # 678: Qwen3 denkt anders eerst honderden tokens hardop
             if r is None:
                 self._cors_json(503, json.dumps({'fout': 'Het brein antwoordt niet. Druk in ARTEMIS op Brein starten.'})); return
             try:
@@ -6680,14 +6673,20 @@ BREIN_MAP_TEL="/data/local/tmp/brein"
 BREIN_POORT_TEL=8093                       # op de telefoon, alleen 127.0.0.1
 BREIN_POORT_LOK="${BREIN_POORT_LOK:-18093}" # de adb-doorsturing op deze computer
 BREIN_DRADEN="${BREIN_DRADEN:-4}"
+BREIN_EXTRA="${BREIN_EXTRA:-}"   # 678: extra vlaggen voor llama-server (de proefbank zet ze per meting)
 # 678 (16 nov, eigenaar: "zoek de traagheid in iets anders: geheugen, -np, draden, of iets dat tegelijk rekent"): DE GROTE KERNEN. llama-server
 # draaide met -t 4 zonder vaste kernen; Android schuift de draden dan naar de kleine kernen zodra er iets anders loopt (JARVIS, het scherm) en
 # EEN draad op een kleine kern remt alle andere af (ze wachten op elkaar). Nu: de grote kernen tellen OP DE TELEFOON (max-frequentie minstens
 # 90% van de hoogste, dezelfde regel als Snelheid meten), draden = dat aantal (nooit meer dan BREIN_DRADEN), en de server erop vastgezet met
 # taskset (het hex-masker; kent de telefoon dat niet, dan zonder). Wat er gekozen is staat in kernen.txt naast de server ("masker draden").
 brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
-  printf '%s' "cd $BREIN_MAP_TEL && m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); k=0; n=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P ./llama-server -m $1 -t \$n -c $2 -np 1 --jinja --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
+  # 678 (16 nov, onderzoek stap 1): de snelle kernen per SOORT, uit /proc/cpuinfo ("CPU part"): alles behalve de zuinige kernen (A53 0xd03,
+  # A55 0xd05, A510 0xd46, A520 0xd80) telt. Zo: 4x A78 = 4, 2x M4 + 2x A75 = 4, 2x A78 = 2, 2x A76 = 2. Lukt dat niet (geen CPU part),
+  # dan de oude regel: max-frequentie minstens 90% van de hoogste. Geen GPU (Vulkan/OpenCL): de grafische chips (Mali/IMG) zijn hier trager dan
+  # de processor; de server is alleen voor de CPU gebouwd, en -ngl 0 zegt het nog eens.
+  printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P ./llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja${BREIN_EXTRA:+ $BREIN_EXTRA} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
 }
+
 BREIN_CONTEXT="${BREIN_CONTEXT:-4096}"
 BREIN_MARGE_KB=1048576                     # DREMPEL 1: model + 1024 MB bij context 4096 (KV-cache ~600 MB voor een 4B-model, de server zelf, Android)
 BREIN_MARGE_KLEIN_KB=655360                # DREMPEL 2: model + 640 MB bij context 2048 (de helft van de KV-cache); een slimmer model met een kortere context gaat voor een dommer
@@ -7596,6 +7595,68 @@ PY
 # (eigen onderwerp, zelfde sleutel als het kanaal); een runner (lokale-ai-stand.yml) zet het in docs/stand-lokale-ai.md, en Claude Code leest
 # het daar zelf. Alleen LEZEN en melden: er wordt niets uitgevoerd. Geen sleutels, codes of adressen in het verslag (de Log wordt gefilterd).
 STAND_SIG_F="$REK_MAP/stand.sig"
+# 678 (16 nov, eigenaar: "een voor een, steeds voor en na meten"): DE VASTE SNELHEIDSMETING. Elke keer dat de opstelling van het brein verandert
+# (model, kernen, extra vlaggen) -- en anders hoogstens eens per zes uur -- stelt ARTEMIS het brein DEZELFDE vraag met dezelfde kennisbank, twee
+# keer: zonder cache (wat kost het lezen van de vraag, en hoe snel schrijft hij) en met cache (de tijd tot het eerste woord als het vaste begin
+# al gelezen is). Alles uit de timings van llama.cpp zelf, niets geschat. Niet tijdens een les. De regels staan in het standverslag.
+BREIN_MEET_F="$REK_MAP/brein-meet.log"
+brein_meet() {   # [label] -> een regel in brein-meet.log
+  [ -d "$REK_MAP/brein-les.lock" ] && return 0
+  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  local s kern model sig t0 nu
+  s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
+  kern="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/kernen.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
+  model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  sig="$model|$kern|${BREIN_EXTRA:-}"; nu="$(date +%s)"
+  if [ "${1:-}" != --nu ] && [ "$(sed -n 1p "$REK_MAP/brein-meet.sig" 2>/dev/null)" = "$sig" ]; then
+    t0="$(sed -n 2p "$REK_MAP/brein-meet.sig" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t0:-0})) -lt 21600 ] && return 0
+  fi
+  mkdir "$REK_MAP/brein-meet.lock" 2>/dev/null || return 0
+  printf '%s\n%s\n' "$sig" "$nu" >"$REK_MAP/brein-meet.sig"
+  LABEL="$model, kernen ${kern:-onbekend}${BREIN_EXTRA:+, $BREIN_EXTRA}" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_MEET_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
+import os, json, time, urllib.request
+op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try: kennis = open(os.environ['KENNIS']).read()[:3500]
+except Exception: kennis = 'Je bent het brein van een rek oude telefoons.'
+def een(cache):
+    lijf = json.dumps({'messages': [{'role': 'system', 'content': kennis}, {'role': 'user', 'content': 'Leg in vijf korte zinnen uit wat het rek doet.'}],
+                       'max_tokens': 96, 'ignore_eos': True, 'temperature': 0, 'stream': False, 'cache_prompt': cache, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
+    r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=600)
+    return json.loads(r.read(4000000).decode('utf-8', 'replace')).get('timings') or {}
+try:
+    a = een(False); b = een(True)
+    regel = '%s | %s | lezen %.1f tok/s (%d tokens) | schrijven %.2f tok/s | eerste woord %.1f s, met cache %.1f s' % (
+        time.strftime('%d-%m %H:%M'), os.environ['LABEL'], a.get('prompt_per_second') or 0, a.get('prompt_n') or 0,
+        a.get('predicted_per_second') or 0, (a.get('prompt_ms') or 0) / 1000, (b.get('prompt_ms') or 0) / 1000)
+except Exception as e:
+    regel = '%s | %s | meting mislukt (%s)' % (time.strftime('%d-%m %H:%M'), os.environ['LABEL'], type(e).__name__)
+with open(os.environ['UIT'], 'a') as fh: fh.write(regel + '\n')
+print(regel)
+PY
+  rm -rf "$REK_MAP/brein-meet.lock"
+}
+# 678 (16 nov, onderzoek deel 2): DE ANDROID-REM UIT op de rektelefoons. Android 12+ stopt "phantom processes" (processen die niet bij een app
+# horen) en remt bij batterijbesparing; llama-server mag daar geen last van hebben. Per telefoon een keer (opnieuw na een herstart van
+# ARTEMIS als het niet lukte), alleen telefoons op de lijst, NOOIT de F8. Alleen deze vier instellingen; niets wordt verwijderd of gewist.
+REM_UIT_F="$REK_MAP/rem-uit.txt"
+rek_rem_uit() {
+  command -v "$ADB" >/dev/null 2>&1 || return 0
+  local s id naam regel="" uit
+  mkdir -p "$REK_MAP/rem-uit" 2>/dev/null || true
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; case "$id" in ''|adb:*) continue ;; esac
+    toegestaan "$id" || continue
+    naam="$(toestel_naam "$s")"
+    if [ -f "$REK_MAP/rem-uit/$id" ]; then regel="$regel$naam: uit; "; continue; fi
+    uit="$(timeout 20 "$ADB" -s "$s" shell 'settings put global settings_enable_monitor_phantom_procs false; device_config set_sync_disabled_for_tests persistent; device_config put activity_manager max_phantom_processes 2147483647; settings put global low_power 0; echo KLAAR' 2>&1 | tr -d '\r')"
+    case "$uit" in
+      *KLAAR*) : >"$REK_MAP/rem-uit/$id"; regel="$regel$naam: uit gezet $(date +%H:%M); "; logregel "Android-rem uit op $naam (phantom process killer en batterijbesparing)." ;;
+      *) regel="$regel$naam: lukte niet ($(printf '%s' "$uit" | tail -1 | cut -c1-60)); " ;;
+    esac
+  done
+  [ -n "$regel" ] && printf '%s\n' "$regel" >"$REM_UIT_F"
+}
 stand_maak() {   # het verslag als platte tekst
   local s
   export STAND_MAAK=1
@@ -7623,6 +7684,9 @@ v=d["rondes"]["voor"]; n=d["rondes"]["na"]
 print("    %s, lesrij %s: voor %d/%d, na %d/%d (%s)" % (time.strftime("%d-%m %H:%M", time.localtime(d.get("t",0))), d.get("rij", 1), v["goed"], v["van"], n["goed"], n["van"], d.get("model","")))
 for x in n["lessen"]:
     if not x["goed"]: print("    fout na: %s (%s): %s" % (x["id"], x["waarom"], (x["antwoord"] or "")[:120].replace("\n"," ")))' 2>/dev/null
+  printf '\n## Snelheid van het brein (vaste meting, nieuwste onderaan)\n'; tail -n 6 "$BREIN_MEET_F" 2>/dev/null | sed 's/^/    /' || true
+  [ -s "$BREIN_MEET_F" ] || printf '    nog geen meting\n'
+  printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
   printf '\n## Stem en oor (proeftelefoon)\n    %s\n' "$(head -1 "$SPRAAK_TEST_F" 2>/dev/null || echo 'nog geen spraaktest')"
   [ -s "$PROEF_SPRAAK_NA" ] && printf '    de volgende spraaktest (vanzelf, na een nieuwe JARVIS): om %s\n' "$(date -d "@$(tr -dc 0-9 < "$PROEF_SPRAAK_NA")" '+%H:%M' 2>/dev/null)"
   printf '\n## Zelfronde\n'; sed 's/^/    /' "$ZR_TXT_F" 2>/dev/null | head -20
@@ -7681,6 +7745,7 @@ stand_tik() {
   case "$base" in https://*.workers.dev|https://*.workers.dev/) : ;; *) zeg "Stand: geen relay-adres -- geen verslag."; return 0 ;; esac
   mkdir "$REK_MAP/stand.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/stand.lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] && rm -rf "$REK_MAP/stand.lock"; return 0; }
   jarvis_rol_wek >/dev/null 2>&1 || true
+  brein_meet >/dev/null 2>&1 || true   # 678: na een verandering van de opstelling (of na zes uur) de vaste snelheidsmeting
   tekst="$(stand_maak 2>/dev/null | head -c 9000)"
   sig="$(printf '%s' "$tekst" | grep -v 'vrij geheugen' | sed -E 's/[0-9]+ (s|min) geleden//g; s/^    [0-9]{2}:[0-9]{2}:[0-9]{2} //' | sha256sum | cut -c1-16)"; oud="$(head -1 "$STAND_SIG_F" 2>/dev/null)"
   nu="$(date +%s)"; t0="$(sed -n 2p "$STAND_SIG_F" 2>/dev/null | tr -cd '0-9')"; t0="${t0:-0}"
@@ -8272,7 +8337,8 @@ case "${1:-status}" in
   verdeler-stop) als_verdeler brein_stop ;;
   verdeler-doorsturing) als_verdeler brein_doorsturing ;;
   stand-tik) stand_tik "${2:-}" ;;
-  proef-vanzelf) proef_vanzelf ;;                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
+  proef-vanzelf) proef_vanzelf ;;
+  rem-uit) rek_rem_uit ;;                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
   versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
   stand-na-update) sleep 60; brein_waak; als_controle brein_waak; sleep 120; stand_tik --nu ;;   # 678: na een nieuwe versie: rollen nalopen, dan het verslag                 # 678 (15 nov): de lokale AI leren: kennisbank op de Cat + lesrij voor/na, nagekeken door code                          # 678 (15 nov): het brein op de telefoon met de rol brein, ook draadloos (Tailscale/wifi-adb)                      # 678 (15 nov): het brein op de rektelefoon aan de USB-kabel (vast), dan starten
   brein-waak) brein_waak ;;                        # intern (de console-lus): het brein in leven houden, zonder internet                      # 678 (15 nov): het brein (llama-server + Gemma 4 E2B) op de brein-telefoon
