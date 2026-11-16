@@ -1677,6 +1677,10 @@ class H(BaseHTTPRequestHandler):
             ms = int((time.time() - t0) * 1000)
             vraag_tekst = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
             cid = controle_start(vraag_tekst, tekst, brein_kennis()) if tekst else None
+            if isinstance(tps, (int, float)):
+                try:
+                    with open(os.path.join(REK, 'brein-tps'), 'w') as fh: fh.write('%.2f %d\n' % (tps, int(time.time())))
+                except Exception: pass
             self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid}))
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
@@ -6631,6 +6635,9 @@ brein_bereik() {
   brein_ts_herbouw
   brein_adb "$tid"
 }
+brein_warmte() {   # $1 adb-adres -> de accutemperatuur in TIENDEN van graden (dumpsys battery), of niets
+  "$ADB" -s "$1" shell dumpsys battery 2>/dev/null | tr -d '\r' | awk '/temperature:/ {print $2; exit}' | tr -cd '0-9'
+}
 brein_route() {   # $1 adb-adres -> kabel / draadloos (Tailscale) / draadloos (wifi)
   case "$1" in 127.0.0.1:*) printf 'draadloos (Tailscale)' ;; *:*) printf 'draadloos (wifi)' ;; '') printf 'geen' ;; *) printf 'kabel' ;; esac
 }
@@ -7117,6 +7124,19 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
   zeg "  drempel: $(brein_drempel_zin)"
   zeg "  vrij geheugen: $(case "$nu" in ''|*[!0-9]*) echo 'nu niet te meten' ;; *) echo "$((nu / 1024)) MB nu" ;; esac)$([ -n "$(printf '%s\n' "$st" | sed -n 3p)" ] && echo ", $(printf '%s\n' "$st" | sed -n 3p) MB bij het starten")"
   zeg "  antwoordt: $([ -n "$h" ] && echo 'ja' || echo 'NEE')$([ -f "$BREIN_AAN_F" ] && echo ' -- de waakhond houdt hem in leven (ook zonder internet)')"
+  # 678 (16 nov, eigenaar: "waarom is het brein zo veel trager geworden?"): warmte, de laatst GEMETEN snelheid, en onder 2 tok/s de waarschijnlijke oorzaak
+  local w tps tt oorz=""
+  [ -n "$s" ] && w="$(brein_warmte "$s")"
+  [ -n "${w:-}" ] && zeg "  warmte: $((w / 10)),$((w % 10)) graden (accu)"
+  read -r tps tt <"$REK_MAP/brein-tps" 2>/dev/null || true
+  if [ -n "${tps:-}" ]; then
+    zeg "  snelheid: $tps tok/s (laatst gemeten $(date -d "@${tt:-0}" '+%d-%m %H:%M' 2>/dev/null))"
+    if awk "BEGIN{exit !(${tps} < 2)}" 2>/dev/null; then
+      case "$nu" in ''|*[!0-9]*) : ;; *) [ "$nu" -lt 2700000 ] && oorz="${oorz}weinig vrij geheugen ($((nu / 1024)) MB); " ;; esac
+      [ -n "${w:-}" ] && [ "$w" -ge 400 ] && oorz="${oorz}warm ($((w / 10)) graden: Android remt dan af); "
+      zeg "  TRAAG (onder 2 tok/s): ${oorz:-geen duidelijke oorzaak in geheugen of warmte (rekent er iets anders mee?)}"
+    fi
+  fi
 }
 # 678 (15 nov, eigenaar: "laat Claude Code direct met de lokale AI praten"): HET KANAAL. Claude Code legt via een runner (lokale-ai-gesprek.yml) een
 # vraag VERSLEUTELD op de relay; hier leest ARTEMIS hem (elke minuut, alleen als het brein antwoordt), vraagt het brein en legt het antwoord
@@ -7269,7 +7289,7 @@ brein_les() {
   code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
   base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
   rek_zorg_crypto >/dev/null 2>&1 || true
-  RIJ="$rij" ID="$id" CODE="$code" BASE="$base" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_LES_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
+  RIJ="$rij" SERIE="$(brein_nu)" ADBP="$ADB" TPSF="$REK_MAP/brein-tps" ID="$id" CODE="$code" BASE="$base" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_LES_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
 import os, json, re, time, hashlib, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try: stand = json.load(open(os.environ['STAND']))
@@ -7309,7 +7329,22 @@ LESSEN2 = [
 if os.environ.get('RIJ') == '2': LESSEN = LESSEN2
 NL = set('de het een en ik je jij is ben niet wat dat van op te in mag nooit denk na beantwoord vragen rek brein telefoon telefoons dit voor'.split())
 EN = set('the and i am you your my this rack think brain answer questions what do'.split())
+import subprocess
+GEKOELD = [0]
+def koel():
+    # 678 (16 nov): twintig vragen achter elkaar maken de telefoon warm, en een warme telefoon remt af. Vanaf 42 graden eerst afkoelen
+    # (hoogstens 5 minuten per vraag); de wachttijd staat in de uitslag.
+    if not os.environ.get('SERIE'): return
+    for _ in range(5):
+        try:
+            u = subprocess.run([os.environ['ADBP'], '-s', os.environ['SERIE'], 'shell', 'dumpsys', 'battery'], capture_output=True, text=True, timeout=15).stdout
+            t = int(re.search(r'temperature:\s*(\d+)', u).group(1))
+        except Exception:
+            return
+        if t < 420: return
+        time.sleep(60); GEKOELD[0] += 60
 def vraag(tekst, met):
+    koel()
     sysm = ROL + ((' ' + kennis) if met and kennis else '')
     lijf = json.dumps({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': tekst}], 'max_tokens': 200, 'stream': False, 'temperature': 0.2, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
     t0 = time.time()
@@ -7341,7 +7376,13 @@ for ronde, met in (('voor', False), ('na', True)):
         print('%s %-10s %s %s' % (ronde, les['id'], 'GOED' if goed else 'FOUT', waarom))
     uitslag['rondes'][ronde] = {'goed': sum(1 for x in rij if x['goed']), 'van': len(rij), 'lessen': rij}
 v, n = uitslag['rondes']['voor'], uitslag['rondes']['na']
-print('Uitslag (lesrij %d): voor %d van %d goed, na (met de kennisbank) %d van %d goed.' % (uitslag['rij'], v['goed'], v['van'], n['goed'], n['van']))
+uitslag['gekoeld_s'] = GEKOELD[0]
+_t = [x['tps'] for x in n['lessen'] if isinstance(x['tps'], (int, float))]
+if _t:
+    try:
+        with open(os.environ['TPSF'], 'w') as fh: fh.write('%.2f %d\n' % (sum(_t) / len(_t), int(time.time())))
+    except Exception: pass
+print('Uitslag (lesrij %d): voor %d van %d goed, na (met de kennisbank) %d van %d goed.%s' % (uitslag['rij'], v['goed'], v['van'], n['goed'], n['van'], (' Eerst %d s afgekoeld (42 graden of warmer).' % GEKOELD[0]) if GEKOELD[0] else ''))
 with open(os.environ['UIT'], 'w') as fh: json.dump(uitslag, fh, ensure_ascii=False, indent=1)
 os.chmod(os.environ['UIT'], 0o600)
 # terug via het kanaal (alleen met een kanaal-id, een code en een relay)
