@@ -7182,7 +7182,7 @@ verdeler_kies() {
   b="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"; c="$(head -1 "$CONTROLE_MAP/brein-vast" 2>/dev/null | tr -d '\r\n ')"
   for s in $(verbonden); do
     is_f8 "$s" && continue
-    [ "$(toestel_naam "$s")" = "$VERDELER_STANDAARD_MODEL" ] || continue
+    case "$(toestel_naam "$s")" in *"$VERDELER_STANDAARD_MODEL"*) : ;; *) continue ;; esac
     id="$(toestel_id "$s")"; case "$id" in ''|adb:*) continue ;; esac
     [ "$id" != "$b" ] && [ "$id" != "$c" ] || continue
     mkdir -p "$VERDELER_MAP"; chmod 700 "$VERDELER_MAP" 2>/dev/null || true
@@ -7381,6 +7381,13 @@ stand_maak() {   # het verslag als platte tekst
   if [ -s "$CONTROLE_MAP/brein-vast" ]; then BREIN_ALLEEN_KIJKEN=1 als_controle brein_status 2>/dev/null | sed 's/^/    /'; else printf '    nog geen controle-telefoon gekozen\n'; fi
   printf '\n## Verdeler\n'
   if [ -s "$VERDELER_MAP/brein-vast" ]; then BREIN_ALLEEN_KIJKEN=1 als_verdeler brein_status 2>/dev/null | sed 's/^/    /'; else printf '    nog geen verdeler (geen telefoon met het standaard-modelnummer aangesloten)\n'; fi
+  printf '\n## Aangesloten via adb (welke telefoon het rek nu ziet)\n'
+  local zg=" " a i
+  for a in $(verbonden); do
+    is_f8 "$a" && { printf '    de dagelijkse telefoon (overgeslagen)\n'; continue; }
+    i="$(toestel_id "$a")"; case "$zg" in *" $i "*) continue ;; esac; zg="$zg$i "
+    printf '    %s (%s)%s\n' "$(toestel_naam "$a")" "$(brein_route "$a")" "$(toegestaan "$i" && echo ', op de lijst' || echo ', NIET op de lijst')"
+  done
   printf '\n## JARVIS op de rol-telefoons\n    %s\n' "$(head -1 "$JARVIS_WEK_F" 2>/dev/null || echo 'nog niet nagekeken')"
   printf '\n## Laatste les\n'
   LES="$BREIN_LES_F" python3 -I -c 'import json,os,time
