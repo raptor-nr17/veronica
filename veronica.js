@@ -7339,7 +7339,7 @@
       const tekst = K.zonderDenken(String(d.tekst || '')).trim();
       const c = controleUit(d.controle);
       const cid = /^[0-9a-f]{16}$/.test(String(d.controle_id || '')) ? String(d.controle_id) : '';
-      return tekst ? { tekst, tps: typeof d.tps === 'number' ? d.tps : null, ms: Number(d.ms) || 0, controle: c, controleId: cid, bron: d.bron === 'verdeler' ? 'verdeler' : 'brein' } : null;
+      return tekst ? { tekst, tps: typeof d.tps === 'number' ? d.tps : null, ms: Number(d.ms) || 0, controle: c, controleId: cid, bron: ['verdeler', 'verdeler-model'].includes(d.bron) ? d.bron : 'brein', model: String(d.model || '').slice(0, 60) } : null;
     } catch (e) { return null; } finally { clearTimeout(klok); }
   }
   async function breinHoofd(t) {
@@ -7358,7 +7358,8 @@
       BreinV.laatsteTps = a.tps;
       const snel = a.tps ? `, ${String(Math.round(a.tps * 10) / 10).replace('.', ',')} tok/s` : '';
       // 678 (15 nov): het oordeel van de controle-telefoon (een ander model) komt ERBIJ; bij twijfel zegt Veronica dat eerlijk
-      const basis = a.bron === 'verdeler' ? `Antwoord (de verdeler, exact uitgerekend, geen model): ${a.tekst}` : `Antwoord (brein${BreinV.telefoon ? ` op ${BreinV.telefoon}` : ''}${snel}): ${a.tekst}`;
+      const basis = a.bron === 'verdeler' ? `Antwoord (de verdeler, exact uitgerekend, geen model): ${a.tekst}`
+        : a.bron === 'verdeler-model' ? `Antwoord (de verdeler, klein model${a.model ? ` ${a.model}` : ''}${snel}): ${a.tekst}` : `Antwoord (brein${BreinV.telefoon ? ` op ${BreinV.telefoon}` : ''}${snel}): ${a.tekst}`;
       const wacht = !a.controle && a.controleId ? ' · de controle kijkt het na…' : '';
       HoofdV.trap = { zin: basis + controleRegel(a.controle) + wacht, soort: a.controle && a.controle.oordeel === 'twijfel' ? 'fout' : 'klaar', tekst: a.tekst }; vraagStatusTik();
       if (!a.controle && a.controleId) controleVolg(a.controleId, a.tekst, basis).catch(() => {});
