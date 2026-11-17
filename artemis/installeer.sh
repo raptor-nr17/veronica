@@ -820,6 +820,44 @@ def brein_vraag(lijf, timeout=180):
             if poging == 0 and brein_forward(): continue
             return None
     return None
+# 678 (17 nov, eigenaar: "de vier telefoons moeten echt samen een brein vormen, en blijven werken als er een wegvalt"): DE INVALLER. Het brein
+# lag op 16/17 nov dertien uur stil terwijl de controle en de verdeler gewoon draaiden -- en Veronica kreeg al die tijd "het brein
+# antwoordt niet". Nu: antwoordt het brein niet, of is het BEZIG met een andere vraag (llama-server doet er een tegelijk, -np 1), dan valt
+# eerst de controle in, dan de verdeler -- met dezelfde kennis vooraan. Het antwoord zegt WIE antwoordde en waarom; er wordt niets
+# verzonnen of verborgen. Tijdens een les nooit (die meet het brein zelf).
+BREIN_BEZIG = [0]
+BREIN_BEZIG_SLOT = threading.Lock()
+def brein_gezond():
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=2) as r: return b'ok' in r.read(200)
+    except Exception:
+        return brein_forward() and brein_gezond_kaal()
+def brein_gezond_kaal():
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=2) as r: return b'ok' in r.read(200)
+    except Exception: return False
+def rol_vraag(poort, msgs, mt, timeout):
+    lijf = json.dumps({'messages': msgs, 'max_tokens': mt, 'stream': False, 'cache_prompt': True, 'temperature': 0.6, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request('http://127.0.0.1:%d/v1/chat/completions' % poort, data=lijf, headers={'Content-Type': 'application/json'}), timeout=timeout) as r:
+            j = json.loads(r.read(4000000).decode('utf-8', 'replace'))
+        t = brein_tekst(j['choices'][0]['message'])
+        return (t, (j.get('timings') or {}).get('predicted_per_second')) if t and t.strip() else (None, None)
+    except Exception:
+        return None, None
+def rol_model(rol):
+    try:
+        with open(os.path.join(REK, rol, 'brein-stand.json')) as fh: return re.sub(r'\.gguf$', '', str(json.load(fh).get('model') or ''))[:60]
+    except Exception: return ''
+def invaller_vraag(msgs, mt):
+    # -> (tekst, tps, bron, model) of (None, None, None, None). Eerst de controle (groter model), dan de verdeler.
+    if controle_bereikbaar():
+        t, tps = rol_vraag(CONTROLE_LOK, msgs, mt, 150)
+        if t: return t, tps, 'controle-model', rol_model('controle')
+    if verdeler_bereikbaar():
+        t, tps = rol_vraag(VERDELER_LOK, msgs, min(mt, 300), 120)
+        if t: return t, tps, 'verdeler-model', rol_model('verdeler')
+    return None, None, None, None
 def doe(cmd):
     arg = cmd   # 576: Bijwerken draait nu de VOLLE opdracht (script + venv op 3.12 + console herstarten), niet enkel zelf-bijwerken
     if cmd in LOPEND:
@@ -1774,16 +1812,34 @@ class H(BaseHTTPRequestHandler):
             # zelf; de controle kijkt pas NA het antwoord na (die vertraagt niets). De verdeler blijft draaien voor werk op de achtergrond.
             denk = denk_nodig(laatste)
             t0 = time.time(); r = None
-            if denk:   # 678 (17 nov): eerst nadenken, met een tijdslimiet; leeg of te laat = alsnog direct
+            # 678 (17 nov): DE INVALLER -- het brein is weg, of bezig met een andere vraag en dit is geen denkvraag: dan antwoordt een ander
+            waarom = '' if les else ('weg' if not brein_gezond() else ('bezig' if BREIN_BEZIG[0] > 0 and not denk else ''))
+            if waarom:
+                t, tps_i, bron_i, model_i = invaller_vraag(msgs, mt)
+                if t:
+                    self._cors_json(200, json.dumps({'tekst': t, 'tps': round(tps_i, 2) if isinstance(tps_i, (int, float)) else None, 'ms': int((time.time() - t0) * 1000),
+                                                     'bron': bron_i, 'model': model_i, 'invaller': waarom, 'controle_id': None})); return
+                if waarom == 'weg':
+                    self._cors_json(503, json.dumps({'fout': 'Het brein antwoordt niet, en de controle en de verdeler ook niet. ARTEMIS probeert het brein vanzelf opnieuw te starten.'})); return
+            with BREIN_BEZIG_SLOT: BREIN_BEZIG[0] += 1
+            try:
+              if denk:   # 678 (17 nov): eerst nadenken, met een tijdslimiet; leeg of te laat = alsnog direct
                 r = brein_vraag({'messages': msgs, 'max_tokens': mt + 640, 'stream': False, 'cache_prompt': True, 'temperature': 0.2 if les else 0.6, 'chat_template_kwargs': {'enable_thinking': True}}, timeout=DENK_TIMEOUT)
                 try:
                     if not re.sub(r'(?s)<think>.*?</think>', '', str(r['choices'][0]['message'].get('content') or '')).strip(): r = None
                 except Exception: r = None
                 if r is None: denk = False
-            if r is None:
+              if r is None:
                 r = brein_vraag({'messages': msgs, 'max_tokens': mt, 'stream': False, 'cache_prompt': True, 'temperature': 0.2 if les else 0.7, 'chat_template_kwargs': {'enable_thinking': False}})   # 678: Qwen3 denkt anders eerst honderden tokens hardop
+            finally:
+                with BREIN_BEZIG_SLOT: BREIN_BEZIG[0] -= 1
+            if r is None and not les:   # 678 (17 nov): het brein viel onderweg weg -- dan alsnog een invaller
+                t, tps_i, bron_i, model_i = invaller_vraag(msgs, mt)
+                if t:
+                    self._cors_json(200, json.dumps({'tekst': t, 'tps': round(tps_i, 2) if isinstance(tps_i, (int, float)) else None, 'ms': int((time.time() - t0) * 1000),
+                                                     'bron': bron_i, 'model': model_i, 'invaller': 'weg', 'controle_id': None})); return
             if r is None:
-                self._cors_json(503, json.dumps({'fout': 'Het brein antwoordt niet. Druk in ARTEMIS op Brein starten.'})); return
+                self._cors_json(503, json.dumps({'fout': 'Het brein antwoordt niet, en de controle en de verdeler ook niet. ARTEMIS probeert het brein vanzelf opnieuw te starten.'})); return
             try:
                 tekst = brein_tekst(r['choices'][0]['message'])
                 tps = (r.get('timings') or {}).get('predicted_per_second')
@@ -6103,16 +6159,35 @@ rek_via_tailscale() {
   # verbonden: adb onthoudt de serie PER POORT, en een achtergebleven socat/tailscale-nc houdt de poort vast. Dit is NIET een
   # dubbele Tailscale-aanmelding (de eerste hypothese), maar plak-processen tussen rondes. Alles op PID/poort -- nooit pkill -f,
   # dat raakt de eigen shell (de 592o-les).
-  local p q
-  for p in 5600 5601 5602 5603 5604 5605 5606 5607 5608 5609; do
-    "$ADB" disconnect "127.0.0.1:$p" >/dev/null 2>&1 || true          # adb's gecachte verbinding + serie-per-poort weg (de kern van de fix)
-  done
-  if [ -f "$TS_BRUG_F" ]; then while read -r _lp _ip _pid; do [ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true; done <"$TS_BRUG_F"; fi
-  for p in 5600 5601 5602 5603 5604 5605 5606 5607 5608 5609; do
-    for q in $(pids_op_poort "$p" 2>/dev/null); do kill "$q" 2>/dev/null || true; done   # een achtergebleven socat-listener op die poort (PID uit het bestand kan verloren zijn)
-  done
-  sleep 1                                                              # de oude socat/tailscale-nc laten afsterven voor we opnieuw binden
-  : >"$TS_BRUG_F" 2>/dev/null || true
+  # 678 (17 nov, eigenaar: "verbinding en modellen overzetten betrouwbaar"): VASTE POORT PER ADRES, EN ALLEEN HERBOUWEN WAT STUK IS. Tot nu toe
+  # brak ELKE ronde (ongeveer elk uur) ALLE tunnels af en deelde de poorten opnieuw uit op volgorde: kwam de brein-telefoon online, dan schoof de
+  # controle-telefoon een poort op -- en elke lopende overdracht (een model van 1 tot 2,5 GB duurt over Tailscale langer dan een uur), les of
+  # doorsturing brak af. Nu krijgt elk 100.x een VASTE poort (ts-poorten), en blijft een brug staan zolang zijn socat leeft en adb het toestel
+  # ziet. De les van 10 nov (adb onthoudt de serie PER POORT) blijft gedekt: een poort hoort nu altijd bij hetzelfde adres. Alles op PID en
+  # poort -- nooit pkill -f, dat raakt de eigen shell (de 592o-les).
+  local p q oud="" nieuw_brug vrij
+  local TS_POORT_F="$REK_MAP/ts-poorten"; touch "$TS_POORT_F" 2>/dev/null || true
+  vaste_poort() {   # $1 100.x -> zijn vaste poort (5600-5629); een nieuw adres krijgt de laagste vrije
+    local ip1="$1" pp
+    pp="$(awk -v i="$ip1" '$1==i {print $2; exit}' "$TS_POORT_F" 2>/dev/null)"
+    [ -n "$pp" ] && { printf '%s' "$pp"; return 0; }
+    for pp in $(seq 5600 5629); do grep -q " $pp\$" "$TS_POORT_F" 2>/dev/null || { printf '%s %s\n' "$ip1" "$pp" >>"$TS_POORT_F"; printf '%s' "$pp"; return 0; }; done
+    printf '5629'
+  }
+  brug_leeft() {   # $1 poort -> 0 = socat leeft (uit TS_BRUG_F) en adb ziet een toestel op die poort
+    local lp1="$1" pd
+    pd="$(awk -v l="$lp1" '$1==l {print $3; exit}' "$TS_BRUG_F" 2>/dev/null)"
+    [ -n "$pd" ] && kill -0 "$pd" 2>/dev/null || return 1
+    [ "$("$ADB" devices 2>/dev/null | awk -v s="127.0.0.1:$lp1" '$1==s {print $2}')" = device ]
+  }
+  brug_weg() {   # $1 poort: de brug en de adb-verbinding op die poort weg
+    local lp1="$1" pd
+    "$ADB" disconnect "127.0.0.1:$lp1" >/dev/null 2>&1 || true
+    pd="$(awk -v l="$lp1" '$1==l {print $3; exit}' "$TS_BRUG_F" 2>/dev/null)"; [ -n "$pd" ] && kill "$pd" 2>/dev/null
+    for q in $(pids_op_poort "$lp1" 2>/dev/null); do kill "$q" 2>/dev/null || true; done
+  }
+  [ -f "$TS_BRUG_F" ] && oud="$(cat "$TS_BRUG_F" 2>/dev/null)"
+  nieuw_brug="$(mktemp)"
   status_out="$(tailscale status 2>/dev/null)"
   zeg "== Rek via Tailscale (vaste 100.x-adressen; werkt op elk netwerk) =="
   # per peer: het 100.x, de tailnet-hostnaam (kolom 2 -- zo zie je WELKE telefoon welk adres heeft) en of hij offline is. We
@@ -6130,14 +6205,23 @@ rek_via_tailscale() {
       zeg "  - $host ($ip): OFFLINE in Tailscale -- niet te bereiken (staat die telefoon aan en verbonden met Tailscale?)."
       continue
     fi
-    lport=$(( 5600 + n ))
+    lport="$(vaste_poort "$ip")"
+    if brug_leeft "$lport" && printf '%s\n' "$oud" | awk -v l="$lport" -v i="$ip" '$1==l && $2==i {f=1} END {exit !f}'; then
+      pid="$(printf '%s\n' "$oud" | awk -v l="$lport" '$1==l {print $3; exit}')"
+      printf '%s %s %s\n' "$lport" "$ip" "$pid" >>"$nieuw_brug"
+      serial="$("$ADB" -s "127.0.0.1:$lport" shell getprop ro.serialno </dev/null 2>/dev/null | tr -d '\r')"
+      gezien_serie="$gezien_serie $serial"
+      zeg "  - $host: $(toestel_naam "127.0.0.1:$lport") (serie ${serial:-?}) via Tailscale ($ip) op adb 127.0.0.1:$lport -- de brug stond al en blijft staan."
+      n=$((n+1)); continue
+    fi
+    brug_weg "$lport"; sleep 1
     socat "TCP-LISTEN:$lport,reuseaddr,fork,bind=127.0.0.1" "EXEC:tailscale nc $ip 5555" </dev/null >/dev/null 2>&1 &
     pid=$!
-    printf '%s %s %s\n' "$lport" "$ip" "$pid" >>"$TS_BRUG_F" 2>/dev/null || true
+    printf '%s %s %s\n' "$lport" "$ip" "$pid" >>"$nieuw_brug"
     sleep 1
     if "$ADB" connect "127.0.0.1:$lport" </dev/null 2>/dev/null | grep -qiE 'connected|already'; then
       if is_f8 "127.0.0.1:$lport"; then
-        "$ADB" disconnect "127.0.0.1:$lport" >/dev/null 2>&1 || true; kill "$pid" 2>/dev/null || true
+        "$ADB" disconnect "127.0.0.1:$lport" >/dev/null 2>&1 || true; brug_weg "$lport"
         zeg "  - $host ($ip) is de F8 -- losgekoppeld (nooit besturen)."
         continue
       fi
@@ -6145,7 +6229,7 @@ rek_via_tailscale() {
       # ONTDUBBELEN: dit serienummer al eerder verbonden via een ander 100.x? Dan is het DEZELFDE telefoon (twee tailnet-nodes voor
       # één toestel) -- die tweede brug loskoppelen en melden; zo blijf je niet twee keer naar hetzelfde toestel pushen.
       if [ -n "$serial" ] && printf ' %s ' "$gezien_serie" | grep -qF " $serial "; then
-        "$ADB" -s "127.0.0.1:$lport" disconnect >/dev/null 2>&1; "$ADB" disconnect "127.0.0.1:$lport" >/dev/null 2>&1 || true; kill "$pid" 2>/dev/null || true
+        brug_weg "$lport"
         zeg "  - $host ($ip) = DEZELFDE telefoon (serie $serial, $model) als een eerder 100.x -- overgeslagen. Dubbele Tailscale-aanmelding voor dit toestel; de telefoon die je hier verwacht, staat niet (meer) op dit adres."
         continue
       fi
@@ -6153,10 +6237,16 @@ rek_via_tailscale() {
       zeg "  - $host: ${model:-?} (serie ${serial:-?}) via Tailscale ($ip) op adb 127.0.0.1:$lport."
       n=$((n+1))
     else
-      kill "$pid" 2>/dev/null || true
+      brug_weg "$lport"
       zeg "  - $host ($ip) reageert niet op adb 5555 -- adb-over-tcp staat waarschijnlijk uit (na een herstart). Zet 'm weer aan: sluit die telefoon één keer met de kabel aan en druk op 'Telefoon klaarzetten' (dat zet 5555 herstart-vast)."
     fi
   done 3<<< "$status_out"
+  # bruggen van de vorige ronde die er nu niet meer bij horen (offline, of een poort die niet meer bij dat adres hoort): weg
+  printf '%s\n' "$oud" | while read -r p _ip _pid; do
+    [ -n "$p" ] || continue
+    awk -v l="$p" '$1==l {f=1} END {exit !f}' "$nieuw_brug" || { "$ADB" disconnect "127.0.0.1:$p" >/dev/null 2>&1; [ -n "$_pid" ] && kill "$_pid" 2>/dev/null; }
+  done
+  mv -f "$nieuw_brug" "$TS_BRUG_F" 2>/dev/null || true
   [ "$n" -gt 0 ] && zeg "Rek via Tailscale: $n telefoon(s) verbonden. Blijft werken na een verhuizing (het 100.x-adres is vast)." || zeg "Geen telefoon via Tailscale verbonden (is Tailscale op de telefoons aan en adb 5555?)."
 }
 # de minuut-scan roept dit aan, maar hoogstens eens per ~300 s (de bruggen blijven staan; niet elke minuut herbouwen). Best-effort.
@@ -6935,18 +7025,58 @@ brein_pids_cmd() { printf '%s' "for p in \$(pidof llama-server); do [ \"\$(readl
 # een tunnel breekt soms af, en een half bestand met de echte naam werd daarna voor een model aangezien. Nu: naar <doel>.deel, de grootte
 # nakijken, dan pas hernoemen; hoogstens drie pogingen van elk hoogstens een uur, met de echte melding van adb in de Log. Nooit de F8.
 adb_push_heel() {   # $1 serienummer, $2 lokaal bestand, $3 doel op de telefoon -> 0 = staat er heel
-  local s="$1" bron="$2" doel="$3" groot uit p
+  # 678 (17 nov, eigenaar: "verbinding en modellen overzetten betrouwbaar, met hervatten"): HERVATTEN IN BLOKKEN. Een model van 1 tot 2,5 GB
+  # over Tailscale brak af en begon dan weer bij nul (de S10 kreeg zijn keurmeester nooit). Nu: een groot bestand gaat in blokken van
+  # ADB_BLOK_MB (64 MB); elk blok wordt op de telefoon op zijn grootte nagekeken en pas dan achter de .deel gezet. Breekt de verbinding, dan
+  # gaat de volgende poging verder vanaf de grootte van de .deel. Aan het eind rekent de TELEFOON de sha256 na; pas als die gelijk is aan die
+  # van deze computer wordt het bestand hernoemd. Een klein bestand (hoogstens twee blokken) gaat zoals vroeger in een keer.
+  local s="$1" bron="$2" doel="$3" groot uit p heb n nieuw blok tmp shaL shaT
   is_f8 "$s" && return 1
   groot="$(stat -c %s "$bron" 2>/dev/null)"; [ -n "$groot" ] || return 1
-  for p in 1 2 3; do
-    uit="$(timeout 3600 "$ADB" -s "$s" push "$bron" "$doel.deel" 2>&1 | tr -d '\r' | tail -1)"
-    if [ "$("$ADB" -s "$s" shell stat -c %s "$doel.deel" 2>/dev/null | tr -d '\r ')" = "$groot" ] \
-       && "$ADB" -s "$s" shell "mv -f $doel.deel $doel && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja; then
-      return 0
+  blok=$(( ${ADB_BLOK_MB:-64} * 1048576 ))
+  if [ "$groot" -le $((blok * 2)) ]; then
+    for p in 1 2 3; do
+      uit="$(timeout 3600 "$ADB" -s "$s" push "$bron" "$doel.deel" 2>&1 | tr -d '\r' | tail -1)"
+      if [ "$("$ADB" -s "$s" shell stat -c %s "$doel.deel" 2>/dev/null | tr -d '\r ')" = "$groot" ] \
+         && "$ADB" -s "$s" shell "mv -f $doel.deel $doel && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja; then
+        return 0
+      fi
+      logregel "$(basename "$bron") naar $(toestel_naam "$s") (poging $p van 3) lukte niet: $(printf '%s' "$uit" | cut -c1-120)"
+      "$ADB" -s "$s" shell "rm -f $doel.deel" >/dev/null 2>&1 || true
+    done
+    return 1
+  fi
+  tmp="$(mktemp -d)" || return 1
+  shaL="$(sha256sum "$bron" | cut -c1-64)"
+  for p in 1 2 3 4 5; do
+    heb="$("$ADB" -s "$s" shell stat -c %s "$doel.deel" 2>/dev/null | tr -cd '0-9')"; heb="${heb:-0}"
+    [ "$heb" -le "$groot" ] || { "$ADB" -s "$s" shell "rm -f $doel.deel" >/dev/null 2>&1; heb=0; }
+    [ "$heb" -gt 0 ] && logregel "$(basename "$bron") naar $(toestel_naam "$s"): ik ga verder bij $((heb / 1048576)) van $((groot / 1048576)) MB (poging $p)."
+    uit=""
+    while [ "$heb" -lt "$groot" ]; do
+      n=$(( groot - heb )); [ "$n" -le "$blok" ] || n="$blok"
+      tail -c +$((heb + 1)) "$bron" | head -c "$n" >"$tmp/blok"
+      uit="$(timeout 900 "$ADB" -s "$s" push "$tmp/blok" "$doel.blok" 2>&1 | tr -d '\r' | tail -1)"
+      nieuw="$("$ADB" -s "$s" shell "[ \"\$(stat -c %s $doel.blok 2>/dev/null)\" = $n ] && cat $doel.blok >> $doel.deel; rm -f $doel.blok; stat -c %s $doel.deel 2>/dev/null" 2>/dev/null | tr -cd '0-9')"
+      if [ "${nieuw:-0}" != $((heb + n)) ]; then
+        # een half aangeplakt blok terug naar de laatste goede grootte (anders klopt het vervolg niet)
+        [ "${nieuw:-0}" -gt "$heb" ] 2>/dev/null && "$ADB" -s "$s" shell "truncate -s $heb $doel.deel" >/dev/null 2>&1
+        break
+      fi
+      heb="$nieuw"
+    done
+    if [ "$heb" = "$groot" ]; then
+      shaT="$("$ADB" -s "$s" shell "sha256sum $doel.deel" 2>/dev/null | tr -d '\r' | cut -c1-64)"
+      if [ "$shaT" = "$shaL" ] && "$ADB" -s "$s" shell "mv -f $doel.deel $doel && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja; then
+        rm -rf "$tmp"; return 0
+      fi
+      logregel "$(basename "$bron") naar $(toestel_naam "$s"): alles overgezet, maar de controlesom op de telefoon klopt niet; opnieuw vanaf nul."
+      "$ADB" -s "$s" shell "rm -f $doel.deel" >/dev/null 2>&1 || true
+    else
+      logregel "$(basename "$bron") naar $(toestel_naam "$s") onderbroken bij $((heb / 1048576)) van $((groot / 1048576)) MB (poging $p van 5): $(printf '%s' "$uit" | cut -c1-120). De volgende poging gaat hier verder."
     fi
-    logregel "$(basename "$bron") naar $(toestel_naam "$s") (poging $p van 3) lukte niet: $(printf '%s' "$uit" | cut -c1-120)"
-    "$ADB" -s "$s" shell "rm -f $doel.deel" >/dev/null 2>&1 || true
   done
+  rm -rf "$tmp"
   return 1
 }
 brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
@@ -7105,6 +7235,11 @@ brein_model_kies() {
     repo="${paar%% *}"; kw="${paar##* }"
     printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || continue
     lijst="$(curl -fsSL -m 60 "https://huggingface.co/api/models/$repo?blobs=true" 2>/dev/null)" || lijst=""
+    # 678 (17 nov): ZONDER INTERNET. De lijst (naam, sha256, grootte) wordt bewaard; is Hugging Face niet te bereiken, dan de bewaarde lijst --
+    # anders kon een rol zonder internet niet opnieuw opgezet worden, terwijl het model gewoon op de telefoon en op deze computer staat.
+    local lb; lb="$JAPK_PLEK/brein/lijst-$(printf '%s' "$repo" | tr '/' '_').json"
+    if [ -n "$lijst" ]; then mkdir -p "${lb%/*}" 2>/dev/null; printf '%s' "$lijst" >"$lb.nieuw" 2>/dev/null && mv -f "$lb.nieuw" "$lb"
+    elif [ -s "$lb" ]; then lijst="$(cat "$lb")"; zeg "  $repo: Hugging Face is niet te bereiken; ik gebruik de bewaarde lijst." >&2; fi
     [ -n "$lijst" ] || { zeg "  $repo: de lijst van Hugging Face is niet te lezen; volgende." >&2; continue; }
     keus="$(LIJST="$lijst" KW="$kw" python3 -I - <<'PY' 2>/dev/null
 import json, os, re
@@ -7471,7 +7606,36 @@ brein_nu() {
 # Hoort het brein te draaien (brein-aan) en antwoordt het niet, dan eerst de doorsturing opnieuw; helpt dat niet en draait de server niet meer,
 # dan start hij hem opnieuw met het model dat AL op de telefoon staat (geen download, geen internet nodig). Eerst weer het geheugen vrijmaken.
 # Een slot voorkomt dubbel starten; hoogstens eens per 5 minuten een herstart.
+# 678 (17 nov, het brein antwoordde sinds 16 nov 20:33 niet meer): HET BREIN-SLOT MET EEN EIGENAAR. Proefbank en modelproef houden brein.lock
+# vast zolang ze het brein gebruiken. Werden ze door de tijdslimiet van de console afgebroken (of viel de computer uit), dan bleef het slot
+# staan -- en de waakhond stopte daarna ELKE keer bij "mkdir brein.lock || return 0": het brein werd nooit meer gestart. Nu staat het
+# proces-nummer in het slot; is dat proces weg, dan is het slot verweesd en wordt het overgenomen. (Een levend proces houdt het slot, ook
+# als de modelproef uren downloadt.)
+brein_slot_neem() {
+  local l="$REK_MAP/brein.lock" p
+  if ! mkdir "$l" 2>/dev/null; then
+    p="$(head -1 "$l/pid" 2>/dev/null | tr -cd '0-9')"
+    if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then return 1; fi
+    # zonder pid: alleen verweesd als het slot ouder is dan 3 uur (een slot van voor deze regel)
+    if [ -z "$p" ] && [ -z "$(find "$l" -maxdepth 0 -mmin +180 2>/dev/null)" ]; then return 1; fi
+    rm -rf "$l"; mkdir "$l" 2>/dev/null || return 1
+    logregel "${BREIN_LABEL:-Brein}: een verweesd slot (van een afgebroken proefbank of modelproef) opgeruimd."
+  fi
+  printf '%s\n' "${BREIN_SLOT_PID:-$$}" >"$l/pid"
+}
 brein_waak() {
+  # 678 (17 nov): EENMALIG HERSTEL VAN DE MODELNAAM-FOUT (16 nov): heet het model van deze rol alleen een getal ("4096", "2048", "1024"), dan
+  # was het bestand door die fout misschien het model van een ANDERE rol (ze overschreven elkaar). Dan de rol EEN keer opnieuw opzetten:
+  # het juiste model, onder zijn eigen naam. Niet tijdens een les; daarna nooit meer.
+  local mm; mm="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  case "$mm" in ''|*[!0-9]*) : ;; *)
+    if ! les_loopt && [ ! -f "$REK_MAP/naam-herstel.gedaan" ]; then
+      : >"$REK_MAP/naam-herstel.gedaan"; rm -f "$BREIN_AAN_F" "$REK_MAP/brein-model"
+      logregel "${BREIN_LABEL:-Brein}: het model heette '$mm' (de modelnaam-fout van 16 nov); de rol wordt opnieuw opgezet met het juiste model."
+      ( REK_MAP="${REK_MAP_BASIS:-$REK_MAP}" setsid "$0" "${BREIN_CMD_ROL:-brein-rol}" </dev/null >>"$REK_MAP/console-${BREIN_CMD_ROL:-brein-rol}.log" 2>&1 & ) 2>/dev/null
+      return 0
+    fi ;;
+  esac
   # 678 (16 nov): mislukte het starten (het model werd nog opgehaald, of de telefoon was even weg), dan zelf opnieuw proberen -- hoogstens eens per
   # 10 minuten, alleen met een gekozen telefoon en alleen na een FOUT (een mens die op Stoppen drukte zet de stand op "uit": dan niets).
   if [ ! -f "$BREIN_AAN_F" ]; then
@@ -7485,6 +7649,7 @@ brein_waak() {
     return 0
   fi
   if curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+    rm -f "$REK_MAP/brein-stil.t"
     # 678 (16 nov): EEN VAK. Zonder -np 1 verdeelt llama-server de context over meerdere vakken (4096 = 4 x 1024 tokens: de kennisbank + vraag +
     # antwoord passen dan net niet) en delen gelijktijdige vragen de rekenkracht. Draait er nog een oude server met meer vakken, dan EEN keer
     # opnieuw starten (alleen als er geen les loopt; hoogstens eens per uur) -- de waakhond start hem daarna met -np 1.
@@ -7524,7 +7689,7 @@ except Exception: print(0)' 2>/dev/null)"
     return 0
   fi
   brein_doorsturing >/dev/null 2>&1
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && return 0
+  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { rm -f "$REK_MAP/brein-stil.t"; return 0; }
   local s m bin i ok=0 vorig mem
   s="$(brein_nu)"; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
   [ -n "$s" ] && [ -n "$m" ] || return 0   # de telefoon is nu niet bereikbaar via adb (kabel of draadloos): dan kan ik niets
@@ -7532,10 +7697,20 @@ except Exception: print(0)' 2>/dev/null)"
   printf '%s\n' "$s" >"$REK_MAP/brein-serial"
   vorig="$(cat "$REK_MAP/brein-herstart" 2>/dev/null || echo 0)"; case "$vorig" in ''|*[!0-9]*) vorig=0 ;; esac
   [ $(( $(date +%s) - vorig )) -ge 300 ] || return 0
-  mkdir "$REK_MAP/brein.lock" 2>/dev/null || return 0
+  brein_slot_neem || return 0
   date +%s >"$REK_MAP/brein-herstart"
   bin="$BREIN_MAP_TEL/llama-server"
-  if [ -n "$("$ADB" -s "$s" shell "$(brein_pids_cmd)" 2>/dev/null | tr -d '\r\n ')" ]; then rm -rf "$REK_MAP/brein.lock"; return 0; fi   # draait nog (laadt misschien): niet dubbel starten
+  if [ -n "$("$ADB" -s "$s" shell "$(brein_pids_cmd)" 2>/dev/null | tr -d '\r\n ')" ]; then
+    # draait nog (laadt misschien): niet dubbel starten. 678 (17 nov): MAAR een server die er wel is en een kwartier lang niet antwoordt
+    # (vastgelopen) gaat uit -- anders bleef het brein voor altijd "draait, antwoordt NEE". Niet tijdens een les.
+    local stil0; stil0="$(head -1 "$REK_MAP/brein-stil.t" 2>/dev/null | tr -cd '0-9')"
+    if [ -z "$stil0" ]; then date +%s >"$REK_MAP/brein-stil.t"
+    elif [ $(( $(date +%s) - stil0 )) -ge 900 ] && ! les_loopt; then
+      "$ADB" -s "$s" shell "$(brein_kill_cmd)" >/dev/null 2>&1 || true; rm -f "$REK_MAP/brein-stil.t"
+      logregel "${BREIN_LABEL:-Brein}: de server draaide maar antwoordde al een kwartier niet (vastgelopen); gestopt, de waakhond start hem opnieuw."
+    fi
+    rm -rf "$REK_MAP/brein.lock"; return 0
+  fi
   "$ADB" -s "$s" shell "[ -x $bin ] && [ -s $BREIN_MAP_TEL/$m ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja || { rm -rf "$REK_MAP/brein.lock"; return 0; }
   mem="$(brein_vrijmaken "$s" 2>/dev/null)"
   brein_binaire_zet "$s" >/dev/null 2>&1 || true   # 678: bij een herstart ook de beste llama-server (dotprod als het kan)
@@ -8028,7 +8203,7 @@ brein_proefbank() {
   [ "$bouw" = dotprod ] || ! brein_dp_beschikbaar "$s" || return 0   # eerst de dotprod-server (stap 3), dan deze stappen
   sig="$model|${bouw:-basis}"
   [ "$(head -1 "$REK_MAP/proefbank.sig" 2>/dev/null)" = "$sig" ] && return 0
-  mkdir "$REK_MAP/brein.lock" 2>/dev/null || return 0   # de waakhond start zolang niets
+  brein_slot_neem || return 0   # de waakhond start zolang niets
   logregel "Proefbank: begint ($model, llama-server ${bouw:-basis}); het brein is een paar minuten weg."
   huidig="$(head -1 "$REK_MAP/brein-extra" 2>/dev/null | tr -cd 'A-Za-z0-9_+ .=-')"
   regel="$(BREIN_PROEF="$huidig" brein_meet --nu 2>/dev/null | tail -1)"
@@ -8098,7 +8273,7 @@ brein_modelproef() {
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
   sig="$(printf '%s' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"
   [ "$(head -1 "$REK_MAP/modelproef.sig" 2>/dev/null)" = "$sig" ] && return 0
-  mkdir "$REK_MAP/brein.lock" 2>/dev/null || return 0
+  brein_slot_neem || return 0
   oud_m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; oud_mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
   logregel "Modelproef: begint (nu $oud_m); elke kandidaat wordt gemeten op snelheid en met beide lesrijen."
   # het huidige brein
@@ -8447,7 +8622,7 @@ zr_punt() {   # naam ok(true|false|null) zin
   case "$2" in true) ZR_TEKST="${ZR_TEKST}OK   $1: $3"$'\n' ;; false) ZR_TEKST="${ZR_TEKST}NEE  $1: $3"$'\n' ;; *) ZR_TEKST="${ZR_TEKST}?    $1: $3"$'\n' ;; esac
 }
 zelfronde() {
-  local nu t d s idv naam sl jid m n=0 ok=0 nee="" repo tak nieuwste=0 leesbaar=0 sig oud uur
+  local nu t d s idv naam sl jid m n=0 ok=0 nee="" bmeld="" repo tak nieuwste=0 leesbaar=0 sig oud uur
   nu="$(date +%s)"; ZR_N=0; ZR_NEE=""; ZR_PUNTEN=""; ZR_TEKST=""
   # 1. ARTEMIS -- en het enige herstel hier: na drie mislukte starts en twee uur rust de pogingenteller wissen (zoals de Start-knop doet)
   if [ ! -f "$AANF" ]; then zr_punt artemis true "ARTEMIS staat uit; zo gekozen."
@@ -8482,13 +8657,20 @@ zelfronde() {
       jid="$(jarvis_toestel_id "$s" "$sl")"
       if [ -z "$jid" ]; then nee="${nee}${nee:+; }$naam: JARVIS antwoordt niet"; continue; fi
       m="$(meld_van "$jid")"
+      # 678 (17 nov, eigenaar: "het brein meldt zich soms niet bij de relay"): de BREIN-telefoon meldt zich met opzet niet -- JARVIS op
+      # de voorgrond kostte het brein ~1 GB en zakte de snelheid van ~5 naar 0,66 tok/s (gemeten 16 nov). Antwoordt het brein (ARTEMIS ziet die
+      # telefoon zelf via adb), dan telt hij als gemeld, met die reden erbij; antwoordt het brein niet, dan blijft het een echte NEE.
+      if [ "$m" = nee ] && [ "$idv" = "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+        ok=$((ok + 1)); bmeld="$naam is de brein-telefoon: JARVIS staat daar met opzet op de achtergrond (het geheugen is voor het brein), en het brein antwoordt. "
+        continue
+      fi
       case "$m" in ja*) ok=$((ok + 1)) ;; nee) nee="${nee}${nee:+; }$naam: meldt zich niet bij de relay" ;; *) : ;; esac
     done
   fi
   if [ "$n" -eq 0 ]; then zr_punt melden null "Geen rektelefoon verbonden met deze Chromebook; melden kan ik nu niet nakijken."
   elif [ -n "$nee" ]; then zr_punt melden false "$ok van $n rektelefoons melden zich. $nee. (Koppelen via de kabel probeert de console zelf, hoogstens eens per half uur per telefoon.)"
   elif [ ! -s "$REK_ONDERWERP_F" ]; then zr_punt melden null "JARVIS draait op $n rektelefoons; of ze zich melden zie ik pas met het relay-onderwerp (open Meer in Veronica)."
-  else zr_punt melden true "Alle $n rektelefoons melden zich bij de relay."
+  else zr_punt melden true "Alle $n rektelefoons melden zich bij de relay.${bmeld:+ $bmeld}"
   fi
   # 4. Claude: de laatste push op de gevolgde takken (zelfde bron als de Voortgang-knop)
   while read -r repo tak; do
