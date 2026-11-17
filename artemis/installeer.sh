@@ -882,7 +882,7 @@ def lus():
             if RONDE % 30 == 11:
                 threading.Thread(target=doe_args, args=(['rem-uit'], 300), daemon=True).start()   # 678 (16 nov): de Android-rem uit (een keer per telefoon)   # 678 (16 nov): een nieuwe proef-JARVIS en de spraaktest, zonder knop
             if RONDE % 5 == 3:
-                threading.Thread(target=doe_args, args=(['stand-tik'], 420), daemon=True).start()   # 678 (16 nov): het standverslag (alleen bij verandering of na een uur)
+                threading.Thread(target=doe_args, args=(['stand-tik'], 900), daemon=True).start()   # 678 (16 nov): het standverslag (alleen bij verandering of na een uur)
             threading.Thread(target=doe_args, args=(['kanaal-tik'], 330), daemon=True).start()   # 678 (15 nov): een vraag van Claude Code aan het brein? (eigen draad: een antwoord kan minuten duren; een slot voorkomt dubbel)
             if RONDE % 15 == 9:
                 threading.Thread(target=doe, args=('zelfronde',), daemon=True).start()   # 678 (14 nov): de rondes van Cowork, nu zelf; op een eigen draad (adb/relay kosten even)
@@ -7940,8 +7940,13 @@ rek_rem_uit() {
   done
   [ -n "$regel" ] && printf '%s\n' "$regel" >"$REM_UIT_F"
 }
+# 678 (17 nov): elke adb-vraag in het verslag hoogstens 20 seconden (een telefoon met een vol geheugen antwoordt soms minuten niet op dumpsys).
+adb_kort() {   # -> het pad van een adb die na 20 s opgeeft
+  local w="$REK_MAP/adb-kort"
+  printf '#!/bin/sh\nexec timeout 20 %s "$@"\n' "$ADB" >"$w.nieuw" && chmod 700 "$w.nieuw" && mv -f "$w.nieuw" "$w" && printf '%s' "$w" || printf '%s' "$ADB"
+}
 stand_maak() {   # het verslag als platte tekst
-  local s
+  local s ADB; ADB="$(adb_kort)"
   export STAND_MAAK=1
   printf '# Stand van het rek (ARTEMIS)\n\n'
   printf -- '- versie (vingerafdruk van het script): %s\n' "$(head -1 "$REK_MAP/bron-sha" 2>/dev/null | cut -c1-12 || true)"
@@ -8038,9 +8043,12 @@ stand_tik() {
   if [ "${1:-}" != --nu ] && [ "$sig" = "$oud" ] && [ $((nu - t0)) -lt 3600 ]; then rm -rf "$REK_MAP/stand.lock"; zeg "Stand: niets veranderd."; return 0; fi
   # de samenvatting door de lokale AI (alleen als het brein antwoordt en er geen les loopt); anders zonder
   # de samenvatting kost het brein ~2 minuten: hoogstens eens per uur een nieuwe (behalve met --nu: na een nieuwe versie of een les)
-  sam=""; local st0; st0="$(stat -c %Y "$REK_MAP/stand-samenvatting" 2>/dev/null || echo 0)"
+  # 678 (17 nov): ook een MISLUKTE poging telt (stand-samenvatting.poging): een traag brein liet de samenvatting elke vijf minuten opnieuw vier
+  # minuten wachten, en samen met de rest liep het verslag in zijn tijdslimiet -- het werd nooit verstuurd (stil sinds 16 nov 21:11).
+  sam=""; local st0; st0="$(stat -c %Y "$REK_MAP/stand-samenvatting.poging" 2>/dev/null || stat -c %Y "$REK_MAP/stand-samenvatting" 2>/dev/null || echo 0)"
   if [ "${1:-}" != --nu ] && [ $((nu - st0)) -lt 3600 ]; then sam="$(cat "$REK_MAP/stand-samenvatting" 2>/dev/null)"
   elif ! les_loopt && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+    : >"$REK_MAP/stand-samenvatting.poging"
     sam="$(TEKST="$(printf '%s' "$tekst" | sed '/^## Log/,$d' | head -c 3000)" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" python3 -I - <<'PY' 2>/dev/null
 import os, json, re, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -8048,7 +8056,7 @@ v = ('Hieronder staat de stand van het rek telefoons. Vat hem samen voor Claude 
      'wat niet werkt, en wat ARTEMIS zelf opnieuw probeert. Verzin niets dat er niet staat.\n\n' + os.environ['TEKST'][:3000])
 lijf = json.dumps({'messages': [{'role': 'user', 'content': v}], 'max_tokens': 160, 'temperature': 0.2, 'stream': False, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
 try:
-    r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=240)
+    r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=150)
     print(re.sub(r'(?s)<think>.*?</think>', '', json.loads(r.read(500000))['choices'][0]['message'].get('content') or '').strip()[:800])
 except Exception:
     pass
