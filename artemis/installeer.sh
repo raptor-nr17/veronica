@@ -6729,6 +6729,24 @@ les_loopt() { [ -d "$REK_MAP/brein-les.lock" ] && [ -z "$(find "$REK_MAP/brein-l
 # starten met het VOLLEDIGE pad, en stoppen/zoeken op de WERKMAP van het proces (pidof + /proc/<pid>/cwd) -- geen pkill -f meer.
 brein_kill_cmd() { printf '%s' "for p in \$(pidof llama-server); do [ \"\$(readlink /proc/\$p/cwd)\" = $BREIN_MAP_TEL ] && kill \$p; done; true"; }
 brein_pids_cmd() { printf '%s' "for p in \$(pidof llama-server); do [ \"\$(readlink /proc/\$p/cwd)\" = $BREIN_MAP_TEL ] && echo \$p; done; true"; }
+# 678 (17 nov, gezien in de console: Qwen3.5-2B "het model naar de telefoon zetten mislukte" naar de S10 over Tailscale). Een groot bestand over
+# een tunnel breekt soms af, en een half bestand met de echte naam werd daarna voor een model aangezien. Nu: naar <doel>.deel, de grootte
+# nakijken, dan pas hernoemen; hoogstens drie pogingen van elk hoogstens een uur, met de echte melding van adb in de Log. Nooit de F8.
+adb_push_heel() {   # $1 serienummer, $2 lokaal bestand, $3 doel op de telefoon -> 0 = staat er heel
+  local s="$1" bron="$2" doel="$3" groot uit p
+  is_f8 "$s" && return 1
+  groot="$(stat -c %s "$bron" 2>/dev/null)"; [ -n "$groot" ] || return 1
+  for p in 1 2 3; do
+    uit="$(timeout 3600 "$ADB" -s "$s" push "$bron" "$doel.deel" 2>&1 | tr -d '\r' | tail -1)"
+    if [ "$("$ADB" -s "$s" shell stat -c %s "$doel.deel" 2>/dev/null | tr -d '\r ')" = "$groot" ] \
+       && "$ADB" -s "$s" shell "mv -f $doel.deel $doel && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja; then
+      return 0
+    fi
+    logregel "$(basename "$bron") naar $(toestel_naam "$s") (poging $p van 3) lukte niet: $(printf '%s' "$uit" | cut -c1-120)"
+    "$ADB" -s "$s" shell "rm -f $doel.deel" >/dev/null 2>&1 || true
+  done
+  return 1
+}
 brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
   # 678 (16 nov, onderzoek stap 1): de snelle kernen per SOORT, uit /proc/cpuinfo ("CPU part"): alles behalve de zuinige kernen (A53 0xd03,
   # A55 0xd05, A510 0xd46, A520 0xd80) telt. Zo: 4x A78 = 4, 2x M4 + 2x A75 = 4, 2x A78 = 2, 2x A76 = 2. Lukt dat niet (geen CPU part),
@@ -6778,7 +6796,10 @@ brein_dp_beschikbaar() {   # $1 serienummer
 BREIN_CONTEXT="${BREIN_CONTEXT:-4096}"
 BREIN_MARGE_KB=1048576                     # DREMPEL 1: model + 1024 MB bij context 4096 (KV-cache ~600 MB voor een 4B-model, de server zelf, Android)
 BREIN_MARGE_KLEIN_KB=655360                # DREMPEL 2: model + 640 MB bij context 2048 (de helft van de KV-cache); een slimmer model met een kortere context gaat voor een dommer
-brein_drempel_zin() { printf 'model + %s MB vrij (context 4096), anders model + %s MB (context 2048)' $((BREIN_MARGE_KB / 1024)) $((BREIN_MARGE_KLEIN_KB / 1024)); }
+# 678 (17 nov, de verdeler: 691 MB vrij, "nodig ~1123 MB"): DREMPEL 3, ALLEEN VOOR KLEINE MODELLEN (onder 1 GB): model + 300 MB bij
+# context 1024. De 640 MB van drempel 2 is gerekend op de KV-cache van een 4B-model; die van een 0,6B-model is bij 1024 tokens ~120 MB.
+BREIN_MARGE_MINI_KB=307200
+brein_drempel_zin() { printf 'model + %s MB vrij (context 4096), anders model + %s MB (context 2048)' $((BREIN_MARGE_KB / 1024)) $((BREIN_MARGE_KLEIN_KB / 1024)); [ -n "${BREIN_MINI_OK:-}" ] && printf ', een klein model (onder 1 GB) model + %s MB (context 1024)' $((BREIN_MARGE_MINI_KB / 1024)); return 0; }
 BREIN_VAST_F="$REK_MAP/brein-vast"           # 678 (15 nov, eigenaar): een VASTE brein-telefoon (serienummer); de knop "Brein op de telefoon aan de USB-kabel" zet hem
 BREIN_AAN_F="$REK_MAP/brein-aan"             # het brein hoort te draaien: de waakhond (console-lus) herstart hem dan zelf, ook zonder internet
 BREIN_ID_F="$REK_MAP/brein-id.conf"        # het JARVIS-toestel-id van de telefoon met de rol brein (Veronica geeft hem door, /relay-zet)
@@ -6901,7 +6922,8 @@ PY
     groot="${keus##* }"
     if [ $((groot / 1024 + BREIN_MARGE_KB)) -le "$vrij" ]; then printf '%s %s 4096' "$repo" "$keus"; return 0; fi
     if [ $((groot / 1024 + BREIN_MARGE_KLEIN_KB)) -le "$vrij" ]; then zeg "  $repo ($kw, $((groot / 1000000)) MB) past met context 2048 (drempel model + $((BREIN_MARGE_KLEIN_KB / 1024)) MB)." >&2; printf '%s %s 2048' "$repo" "$keus"; return 0; fi
-    zeg "  $repo ($kw, $((groot / 1000000)) MB) past niet in $((vrij / 1024)) MB vrij geheugen (nodig: $((groot / 1048576 + BREIN_MARGE_KLEIN_KB / 1024)) MB); het volgende (kleinere) model." >&2
+    if [ -n "${BREIN_MINI_OK:-}" ] && [ "$groot" -lt 1000000000 ] && [ $((groot / 1024 + BREIN_MARGE_MINI_KB)) -le "$vrij" ]; then zeg "  $repo ($kw, $((groot / 1000000)) MB) past als klein model met context 1024 (drempel model + $((BREIN_MARGE_MINI_KB / 1024)) MB)." >&2; printf '%s %s 1024' "$repo" "$keus"; return 0; fi
+    zeg "  $repo ($kw, $((groot / 1000000)) MB) past niet in $((vrij / 1024)) MB vrij geheugen (nodig: $((groot / 1048576 + (${BREIN_MINI_OK:-0} && groot < 1000000000 ? BREIN_MARGE_MINI_KB : BREIN_MARGE_KLEIN_KB) / 1024)) MB); het volgende (kleinere) model." >&2
   done
   return 1
 }
@@ -7049,7 +7071,7 @@ brein_start_kern() {
     case "$vrij" in ''|*[!0-9]*) vrij=0 ;; esac
     [ "$vrij" -gt $((groot / 1024 + 524288)) ] || { zeg "  te weinig ruimte op de telefoon ($((vrij / 1024)) MB vrij; het model is $((groot / 1000000)) MB)."; brein_stand fout "Te weinig ruimte op de brein-telefoon." "$s" "$mnaam"; return 0; }
     zeg "  model naar de telefoon zetten ($((groot / 1000000)) MB; over Tailscale duurt dat langer)..."
-    "$ADB" -s "$s" push "$model" "$BREIN_MAP_TEL/$mnaam" >/dev/null 2>&1 || { zeg "  het model naar de telefoon zetten mislukte."; brein_stand fout "Het model kwam niet op de telefoon." "$s" "$mnaam"; return 0; }
+    adb_push_heel "$s" "$model" "$BREIN_MAP_TEL/$mnaam" || { zeg "  het model naar de telefoon zetten mislukte (drie pogingen; de reden staat in de Log)."; brein_stand fout "Het model kwam niet op de telefoon." "$s" "$mnaam"; return 0; }
   fi
   # 3. het vrije geheugen opnieuw meten vlak voor het starten (het push-moment kan iets veranderd hebben)
   mem="$(mem_vrij_kb "$s")"; case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
@@ -7461,7 +7483,8 @@ als_verdeler() {
   (
     mkdir -p "$VERDELER_MAP" 2>/dev/null; chmod 700 "$VERDELER_MAP" 2>/dev/null || true
     [ -e "$REK_MAP/rek-token.conf" ] && ln -sf "$REK_MAP/rek-token.conf" "$VERDELER_MAP/rek-token.conf"
-    BREIN_MODELLEN='unsloth/Qwen3.5-0.8B-GGUF Q4_0;Qwen/Qwen3-0.6B-GGUF Q8_0;unsloth/Qwen3-0.6B-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M'   # 678 (16 nov): eerst Qwen3.5-0.8B (507 MB)
+    BREIN_MINI_OK=1   # 678: alleen de verdeler mag een klein model met context 1024 (drempel 3)
+    BREIN_MODELLEN='unsloth/Qwen3.5-0.8B-GGUF Q4_0;Qwen/Qwen3-0.6B-GGUF Q8_0;unsloth/Qwen3-0.6B-GGUF Q4_K_M;unsloth/Qwen3-0.6B-GGUF Q4_0;ggml-org/gemma-3-1b-it-GGUF Q4_K_M'   # 678 (16 nov): eerst Qwen3.5-0.8B (507 MB)
     REK_MAP_BASIS="$REK_MAP"
     REK_MAP="$VERDELER_MAP"
     BREIN_POORT_TEL=8096; BREIN_POORT_LOK="$VERDELER_POORT_LOK"; BREIN_MAP_TEL="/data/local/tmp/verdeler"; BREIN_CONTEXT=2048
@@ -7855,8 +7878,7 @@ brein_tel_zet() {   # $1 serienummer, $2 lokaal pad, $3 naam op de telefoon -> 0
   vrij="$("$ADB" -s "$s" shell "df -k $BREIN_MAP_TEL" 2>/dev/null | tr -d '\r' | awk 'NR==2 {print $4}')"
   case "$vrij" in ''|*[!0-9]*) vrij=0 ;; esac
   [ "$vrij" -gt $((groot / 1024 + 300000)) ] || return 3   # te weinig ruimte op de telefoon
-  "$ADB" -s "$s" push "$pad" "$BREIN_MAP_TEL/$naam" >/dev/null 2>&1
-  [ "$("$ADB" -s "$s" shell "stat -c %s $BREIN_MAP_TEL/$naam 2>/dev/null" 2>/dev/null | tr -d '\r ')" = "$groot" ]
+  adb_push_heel "$s" "$pad" "$BREIN_MAP_TEL/$naam"
 }
 brein_modelproef() {
   les_loopt && return 0
@@ -8065,19 +8087,39 @@ PY
     [ -n "$sam" ] && { printf '%s\n' "$sam" >"$REK_MAP/stand-samenvatting"; chmod 600 "$REK_MAP/stand-samenvatting" 2>/dev/null || true; }
   fi
   rek_zorg_crypto >/dev/null 2>&1 || true
-  if CODE="$code" BASE="$base" TEKST="$tekst" SAM="$sam" SHA="$(head -1 "$REK_MAP/bron-sha" 2>/dev/null)" "$(rek_py)" -I - <<'PY' 2>/dev/null
-import os, json, hashlib, time, urllib.request
+  # 678 (17 nov, gezien in de console: "versturen mislukte" vier keer achter elkaar): DE RELAY NEEMT HOOGSTENS 12288 TEKENS PER BERICHT. Het
+  # verslag (tot 9000 tekens) werd versleuteld en als hex verstuurd -- ruim twee keer zo groot -- en sinds het meer secties kreeg weigerde de
+  # relay het (413). Nu: EERST comprimeren (zlib, z: 1 -- kanaal.js pakt het uit), dan versleutelen; past het dan nog niet, dan gaat de Log
+  # er stap voor stap af. En de melding zegt de echte reden (de HTTP-code), niet "niet bereikbaar?".
+  local stuur
+  stuur="$(CODE="$code" BASE="$base" TEKST="$tekst" SAM="$sam" SHA="$(head -1 "$REK_MAP/bron-sha" 2>/dev/null)" "$(rek_py)" -I - <<'PY' 2>&1
+import os, json, hashlib, time, zlib, urllib.request, urllib.error
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 code = os.environ['CODE']; base = os.environ['BASE'].rstrip('/')
 h = lambda s: hashlib.sha256(s.encode()).hexdigest()
 key = hashlib.sha256(('lokale-ai-sleutel:' + code).encode()).digest()
-uit = {'v': 1, 'soort': 'stand', 'versie': os.environ.get('SHA', '')[:64], 'tekst': os.environ['TEKST'], 'samenvatting': os.environ.get('SAM', ''), 't': int(time.time() * 1000)}
-iv = os.urandom(12); ct = AESGCM(key).encrypt(iv, json.dumps(uit).encode(), None)
-lijf = json.dumps({'topic': 'ls' + h('lokale-ai-stand:' + code)[:30], 'message': json.dumps({'iv': iv.hex(), 'data': ct.hex()})}).encode()
-urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(base + '/', data=lijf, headers={'Content-Type': 'application/json', 'User-Agent': 'artemis'}), timeout=20).read()
+MAX = 11000   # de relay neemt 12288 tekens per bericht; ruimte voor de verpakking
+tekst = os.environ['TEKST']
+while True:
+    uit = {'v': 1, 'soort': 'stand', 'versie': os.environ.get('SHA', '')[:64], 'tekst': tekst, 'samenvatting': os.environ.get('SAM', ''), 't': int(time.time() * 1000)}
+    iv = os.urandom(12); ct = AESGCM(key).encrypt(iv, zlib.compress(json.dumps(uit).encode(), 9), None)
+    bericht = json.dumps({'iv': iv.hex(), 'data': ct.hex(), 'z': 1})
+    if len(bericht) <= MAX or len(tekst) < 1500: break
+    i = tekst.rfind('\n', 0, int(len(tekst) * 0.8)); tekst = tekst[:i if i > 0 else int(len(tekst) * 0.8)] + '\n(ingekort: te groot voor de relay)'
+lijf = json.dumps({'topic': 'ls' + h('lokale-ai-stand:' + code)[:30], 'message': bericht}).encode()
+try:
+    urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(base + '/', data=lijf, headers={'Content-Type': 'application/json', 'User-Agent': 'artemis'}), timeout=20).read()
+    print('OK %d' % len(bericht))
+except urllib.error.HTTPError as e:
+    print('HTTP %d (%d tekens)' % (e.code, len(bericht)))
+except Exception as e:
+    print('GEEN VERBINDING (%s)' % type(e).__name__)
 PY
-  then printf '%s\n%s\n' "$sig" "$nu" >"$STAND_SIG_F"; zeg "Stand: verslag verstuurd$([ -n "$sam" ] && echo ', met een samenvatting door de lokale AI')."
-  else zeg "Stand: versturen mislukte (relay niet bereikbaar?); de volgende ronde opnieuw."; fi
+)"
+  case "$stuur" in
+    OK*) printf '%s\n%s\n' "$sig" "$nu" >"$STAND_SIG_F"; zeg "Stand: verslag verstuurd$([ -n "$sam" ] && echo ', met een samenvatting door de lokale AI')." ;;
+    *) zeg "Stand: versturen mislukte: $(printf '%s' "$stuur" | tail -1 | cut -c1-120); de volgende ronde opnieuw." ;;
+  esac
   rm -rf "$REK_MAP/stand.lock"
 }
 # <<< STAND
