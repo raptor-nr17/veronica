@@ -783,6 +783,47 @@ KENNIS_KERN = ('Jij bent het taalmodel', 'BELANGRIJK, ALTIJD', 'Verzin nooit', '
 KENNIS_STOP = set('deze dat die van een het wat welke waar wanneer hoeveel kunnen moet niet nooit altijd ook maar voor met zijn heeft hebben wordt worden telefoon telefoons rektelefoon rektelefoons'.split())   # telefoon staat in bijna elke regel
 def kennis_woorden(t):   # de eerste vier letters als eenvoudige stam: "warm" vindt "warmte", "rekenen" vindt "reken"
     return set(w[:4] for w in re.findall(r'[a-zà-ÿ0-9]{4,}', str(t or '').lower()) if w not in KENNIS_STOP)
+# 678 (17 nov, eigenaar stap 5: "de bibliothecaris op de Cat, de kennisbank echt laten helpen"): ZOEKEN OP BETEKENIS. De Cat draait een klein
+# meertalig EMBEDDINGmodel (EmbeddingGemma-300M; gemeten op een runner). De regels van de kennisbank krijgen een keer een vector (bewaard in het
+# geheugen, per tekst); per vraag alleen de vraag zelf. De regels die in BETEKENIS het dichtst bij de vraag liggen gaan mee (met een klein
+# voordeel voor gedeelde woorden). Antwoordt de Cat niet, of te traag, dan de woordregel van hiervoor -- er gaat nooit iets verloren.
+BIBLIO_LOK = 18097
+KENNIS_VEC = {}
+def bibliothecaris_embed(teksten, timeout=6):
+    try:
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        lijf = json.dumps({'input': list(teksten)}).encode()
+    except Exception:
+        return None
+    for poging in (0, 1):
+        try:
+            with op.open(urllib.request.Request('http://127.0.0.1:%d/v1/embeddings' % BIBLIO_LOK, data=lijf, headers={'Content-Type': 'application/json'}), timeout=timeout) as r:
+                j = json.loads(r.read(20000000).decode('utf-8', 'replace'))
+            d = sorted(j.get('data') or [], key=lambda x: x.get('index', 0))
+            v = [x.get('embedding') for x in d]
+            return v if len(v) == len(teksten) and all(isinstance(x, list) and x for x in v) else None
+        except Exception:
+            try:
+                if poging == 0 and 'OK' in doe_args(['bibliothecaris-doorsturing'], 15): continue
+            except Exception:
+                pass
+            return None
+    return None
+def _cos(a, b):
+    import math
+    n = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return sum(x * y for x, y in zip(a, b)) / n if n else 0.0
+def kennis_op_betekenis(vraag, rest):
+    # -> {regel: score} of None (geen bibliothecaris). EmbeddingGemma wil een taakregel voor de vraag en voor de tekst.
+    nodig = [r for r in rest if r not in KENNIS_VEC]
+    if nodig:
+        v = bibliothecaris_embed(['title: none | text: ' + r.lstrip('- ') for r in nodig])
+        if v is None: return None
+        for r, x in zip(nodig, v): KENNIS_VEC[r] = x
+        if len(KENNIS_VEC) > 400: KENNIS_VEC.clear()
+    q = bibliothecaris_embed(['task: question answering | query: ' + str(vraag)[:600]], timeout=4)
+    if not q: return None
+    return {r: _cos(q[0], KENNIS_VEC[r]) for r in rest if r in KENNIS_VEC}
 def brein_kennis_voor(vraag, hoeveel=5):
     k = brein_kennis()
     if not k: return ''
@@ -791,8 +832,13 @@ def brein_kennis_voor(vraag, hoeveel=5):
     kern = [r for r in regels if r.startswith('-') and any(x in r for x in KENNIS_KERN)]
     rest = [r for r in regels if r.startswith('-') and r not in kern]
     vw = kennis_woorden(vraag)
-    gescoord = sorted(((len(vw & kennis_woorden(r)), i, r) for i, r in enumerate(rest)), key=lambda x: (-x[0], x[1]))
-    gekozen = [r for n, i, r in gescoord if n > 0][:hoeveel]
+    bet = kennis_op_betekenis(vraag, rest) if rest else None
+    if bet:
+        gescoord = sorted(((bet.get(r, 0.0) + 0.03 * len(vw & kennis_woorden(r)), i, r) for i, r in enumerate(rest)), key=lambda x: (-x[0], x[1]))
+        gekozen = [r for n, i, r in gescoord][:hoeveel]
+    else:
+        gescoord = sorted(((len(vw & kennis_woorden(r)), i, r) for i, r in enumerate(rest)), key=lambda x: (-x[0], x[1]))
+        gekozen = [r for n, i, r in gescoord if n > 0][:hoeveel]
     gekozen.sort(key=lambda r: rest.index(r))   # in de volgorde van de kennisbank
     return '\n'.join(kop + kern + gekozen)
 # 678 (17 nov, eigenaar: "laat het brein bij moeilijke vragen eerst nadenken, bij simpele direct antwoorden"). Moeilijk = een lange vraag, meer
@@ -924,6 +970,15 @@ def herstart_als_nieuwer():
         if time.time() - os.path.getmtime(_lm) < 10800: return   # hoogstens drie uur (een hergebruikt procesnummer houdt hem nooit voor altijd tegen)
     except Exception:
         pass
+    # 678 (17 nov): ook niet zolang de PROEFBANK of de MODELPROEF het brein vasthoudt (een levend proces in brein.lock): een herstart nam ze mee
+    # (de modelproef van 17:11 sneuvelde om 17:19), en die halen gigabytes binnen en duren uren. Hoogstens zes uur.
+    try:
+        _bm = os.path.join(REK, 'brein.lock')
+        with open(os.path.join(_bm, 'pid')) as fh: _bp = int(fh.read().strip() or 0)
+        os.kill(_bp, 0)
+        if time.time() - os.path.getmtime(_bm) < 21600: return
+    except Exception:
+        pass
     try:   # 678: de verse console maakt af wat Bijwerken verder doet (na-update), zonder dat iemand op de knop drukt
         with open(os.path.join(REK, 'na-update'), 'w') as fh: fh.write(str(int(time.time())))
     except Exception: pass
@@ -980,6 +1035,7 @@ def lus():
                 threading.Thread(target=doe_args, args=(['brein-waak'], 330), daemon=True).start()   # 678 (15 nov): het brein in leven houden (eigen slot), ook zonder internet
                 threading.Thread(target=doe_args, args=(['controle-waak'], 330), daemon=True).start()   # 678 (15 nov): en de controle-telefoon
                 threading.Thread(target=doe_args, args=(['verdeler-waak'], 330), daemon=True).start()   # 678 (16 nov): en de verdeler
+                threading.Thread(target=doe_args, args=(['bibliothecaris-waak'], 330), daemon=True).start()   # 678 (17 nov, stap 5): en de bibliothecaris op de Cat
             threading.Thread(target=doe_args, args=(['versie-kijk'], 200), daemon=True).start()   # 678 (16 nov): een nieuwe versie binnen een paar minuten
             if RONDE % 5 == 1:
                 threading.Thread(target=doe_args, args=(['proef-vanzelf'], 3600), daemon=True).start()
@@ -7980,6 +8036,46 @@ verdeler_rol() {
   als_verdeler brein_rol
 }
 verdeler_waak() { verdeler_kies >/dev/null 2>&1 || return 0; rol_modelkeus verdeler-rol "$VERDELER_MAP" && return 0; als_verdeler brein_waak; }
+# 678 (17 nov, eigenaar stap 5): DE BIBLIOTHECARIS op de Cat. Een klein meertalig EMBEDDINGmodel (EmbeddingGemma-300M Q8_0, 333 MB; terugval
+# nomic-embed-text-v2-moe Q4_0, 324 MB -- namen en sha256 gemeten op een runner) met llama-server --embedding. De console vraagt hem per vraag om
+# de kennisregels op BETEKENIS te kiezen (kennis_op_betekenis). Zelfde machinerie als de verdeler: eigen map, poort 8097/18097, nooit
+# schoonvegen, nooit de F8, nooit de brein-, controle- of verdeler-telefoon. Geen Cat = geen bibliothecaris, en dan de woordregel.
+BIBLIO_MAP="$REK_MAP/bibliothecaris"
+BIBLIO_POORT_LOK=18097
+als_bibliothecaris() {
+  (
+    mkdir -p "$BIBLIO_MAP" 2>/dev/null; chmod 700 "$BIBLIO_MAP" 2>/dev/null || true
+    [ -e "$REK_MAP/rek-token.conf" ] && ln -sf "$REK_MAP/rek-token.conf" "$BIBLIO_MAP/rek-token.conf"
+    BREIN_MINI_OK=1
+    BREIN_MODELLEN='ggml-org/embeddinggemma-300M-GGUF Q8_0;nomic-ai/nomic-embed-text-v2-moe-GGUF Q4_0'
+    REK_MAP_BASIS="$REK_MAP"
+    REK_MAP="$BIBLIO_MAP"
+    BREIN_POORT_TEL=8097; BREIN_POORT_LOK="$BIBLIO_POORT_LOK"; BREIN_MAP_TEL="/data/local/tmp/bibliothecaris"; BREIN_CONTEXT=2048
+    BREIN_VAST_F="$REK_MAP/brein-vast"; BREIN_AAN_F="$REK_MAP/brein-aan"; BREIN_ID_F="$REK_MAP/brein-id.conf"; BREIN_STAND_F="$REK_MAP/brein-stand.json"
+    BREIN_BRUG_F="$REK_MAP/brein-brug"; BREIN_BRUG_POORT=5623; BREIN_DIAG_F="$REK_MAP/brein-route.log"
+    BREIN_GEEN_VEGEN=1; BREIN_CMD_ROL=bibliothecaris-rol; BREIN_LABEL=Bibliothecaris; BREIN_ROLNAAM=bibliothecaris; BREIN_HET="De bibliothecaris"
+    printf -- '--embedding\n' >"$REK_MAP/brein-model-extra"   # een embeddingserver, geen chat
+    "$@"
+  )
+}
+bibliothecaris_kies() {   # de Cat (onder de toegestane rektelefoons), nooit de F8 en nooit een telefoon die al een andere rol heeft
+  [ -s "$BIBLIO_MAP/brein-vast" ] && return 0
+  local s id b c v
+  s="$(cat_serial 2>/dev/null)" || return 1; [ -n "$s" ] || return 1
+  is_f8 "$s" && return 1
+  id="$(toestel_id "$s")"; case "$id" in ''|adb:*) return 1 ;; esac
+  b="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"; c="$(head -1 "$CONTROLE_MAP/brein-vast" 2>/dev/null | tr -d '\r\n ')"; v="$(head -1 "$VERDELER_MAP/brein-vast" 2>/dev/null | tr -d '\r\n ')"
+  [ "$id" != "$b" ] && [ "$id" != "$c" ] && [ "$id" != "$v" ] || return 1
+  mkdir -p "$BIBLIO_MAP"; chmod 700 "$BIBLIO_MAP" 2>/dev/null || true
+  printf '%s\n' "$id" >"$BIBLIO_MAP/brein-vast"; chmod 600 "$BIBLIO_MAP/brein-vast" 2>/dev/null || true
+  logregel "Bibliothecaris gekozen: $(toestel_naam "$s") (serie $id) -- de Cat; hij krijgt een klein embeddingmodel om de kennisbank op betekenis te doorzoeken."
+}
+bibliothecaris_rol() {
+  bibliothecaris_kies || { zeg "Bibliothecaris: geen Cat aangesloten (of hij heeft al een andere rol)."; return 0; }
+  zeg "Bibliothecaris: de Cat krijgt een klein embeddingmodel (zoeken op betekenis in de kennisbank); hij wordt NIET schoongeveegd."
+  als_bibliothecaris brein_rol
+}
+bibliothecaris_waak() { bibliothecaris_kies >/dev/null 2>&1 || return 0; als_bibliothecaris brein_waak; }
 # 678 (16 nov, onderzoek deel 2 punt 4): EEN KEER OPNIEUW KIEZEN. Een rol kiest zijn model alleen bij het starten; de waakhond herstart met het model
 # dat er al was. Is de modellijst van een rol veranderd (ROL_MODELKEUS_VERSIE), dan start ARTEMIS die rol EEN keer opnieuw zodat hij uit de
 # nieuwe lijst kiest. Niet tijdens een les; de keuze staat daarna in de status en de vaste meting van die rol.
@@ -8474,6 +8570,8 @@ for x in n["lessen"]:
   if [ -s "$CONTROLE_MAP/brein-vast" ]; then BREIN_ALLEEN_KIJKEN=1 als_controle brein_status 2>/dev/null | sed 's/^/    /'; else printf '    nog geen controle-telefoon gekozen\n'; fi
   printf '\n## Verdeler\n'
   if [ -s "$VERDELER_MAP/brein-vast" ]; then BREIN_ALLEEN_KIJKEN=1 als_verdeler brein_status 2>/dev/null | sed 's/^/    /'; else printf '    nog geen verdeler (geen telefoon met het standaard-modelnummer aangesloten)\n'; fi
+  printf '\n## Bibliothecaris\n'
+  if [ -s "$BIBLIO_MAP/brein-vast" ]; then BREIN_ALLEEN_KIJKEN=1 als_bibliothecaris brein_status 2>/dev/null | sed 's/^/    /'; else printf '    nog geen bibliothecaris (geen Cat aangesloten)\n'; fi
   printf '\n## Aangesloten via adb (welke telefoon het rek nu ziet)\n'
   local zg=" " a i
   for a in $(verbonden); do
@@ -9197,6 +9295,11 @@ case "${1:-status}" in
   verdeler-waak) verdeler_waak ;;
   verdeler-stop) als_verdeler brein_stop ;;
   verdeler-doorsturing) als_verdeler brein_doorsturing ;;
+  bibliothecaris-rol) bibliothecaris_rol ;;         # 678 (17 nov, stap 5): de bibliothecaris op de Cat (embeddingmodel)
+  bibliothecaris-status) zeg "== De bibliothecaris (zoekt in de kennisbank op betekenis) =="; als_bibliothecaris brein_status ;;
+  bibliothecaris-stop) als_bibliothecaris brein_stop ;;
+  bibliothecaris-doorsturing) als_bibliothecaris brein_doorsturing ;;
+  bibliothecaris-waak) bibliothecaris_waak ;;
   stand-tik) stand_tik "${2:-}" ;;
   proef-vanzelf) proef_vanzelf ;;
   rem-uit) rek_rem_uit ;;
