@@ -875,6 +875,8 @@ def lus():
                 threading.Thread(target=doe_args, args=(['proef-vanzelf'], 900), daemon=True).start()
             if RONDE % 10 == 7:
                 threading.Thread(target=doe_args, args=(['brein-proefbank'], 2400), daemon=True).start()   # 678 (16 nov): de proefbank (eens per opstelling)
+            if RONDE % 10 == 3:
+                threading.Thread(target=doe_args, args=(['brein-meet'], 1500), daemon=True).start()   # 678 (17 nov): de vaste snelheidsmeting, los van het verslag
             if RONDE % 15 == 13:
                 threading.Thread(target=doe_args, args=(['brein-modelproef'], 21600), daemon=True).start()   # 678 (16 nov): de modelproef (eens per kandidatenlijst; downloads gaan door waar ze stopten)
             if RONDE % 30 == 11:
@@ -7236,7 +7238,18 @@ brein_waak() {
 try: print(int(json.load(sys.stdin).get("total_slots") or 0))
 except Exception: print(0)' 2>/dev/null)"
     nu1="$(date +%s)"; t1="$(head -1 "$REK_MAP/brein-vakken.t" 2>/dev/null | tr -cd '0-9')"; t1="${t1:-0}"
-    local s1 oud=''; s1="$(brein_nu)"
+    local s1 oud='' np; s1="$(brein_nu)"
+    # 678 (17 nov, verslag van 16 nov 21:11: llama-server 5872 MB, 569 MB vrij): TWEE SERVERS TEGELIJK. Een oude "./llama-server" die vroeger niet
+    # te stoppen was draaide door naast de nieuwe; samen vraten ze het geheugen en de meting liep in een time-out. Staan er in de map van deze rol
+    # meer dan een, dan gaan ze allemaal uit (de waakhond start er daarna EEN). Niet als de proefbank of de modelproef het brein-slot heeft.
+    if [ -n "$s1" ] && ! is_f8 "$s1" && [ ! -d "$REK_MAP/brein.lock" ]; then
+      np="$("$ADB" -s "$s1" shell "$(brein_pids_cmd)" 2>/dev/null | tr -d '\r' | grep -c '[0-9]')"
+      if [ "${np:-0}" -gt 1 ] 2>/dev/null; then
+        "$ADB" -s "$s1" shell "$(brein_kill_cmd)" >/dev/null 2>&1 || true
+        logregel "${BREIN_LABEL:-Brein}: er draaiden $np servers tegelijk (een oude die vroeger niet te stoppen was); allemaal gestopt, de waakhond start er een."
+        return 0
+      fi
+    fi
     # 678 (16 nov): een server van voor het vastzetten op de grote kernen (geen kernen.txt) ook een keer opnieuw
     if [ -n "$s1" ]; then
       local bk; bk="$("$ADB" -s "$s1" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null; [ -s $BREIN_MAP_TEL/kernen.txt ] && echo kernen" 2>/dev/null | tr -d '\r')"
@@ -7349,6 +7362,8 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
       ' '*) zeg "  kernen: ${kern# } draden, niet vastgezet (taskset kon niet op deze telefoon)" ;;
       *) zeg "  kernen: vast op de grote kernen (masker ${kern%% *}), ${kern##* } draden" ;;
     esac
+    local np; np="$("$ADB" -s "$s" shell "$(brein_pids_cmd)" 2>/dev/null | tr -d '\r' | grep -c '[0-9]')"
+    [ "${np:-0}" -gt 1 ] 2>/dev/null && zeg "  LET OP: er draaien $np servers tegelijk in deze map (de waakhond stopt ze en start er een)"
     case "$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)" in
       dotprod) zeg "  llama-server: met dotprod en fp16 (armv8.2)" ;;
       basis) zeg "  llama-server: de basisversie (armv8.0, zonder dotprod)" ;;
@@ -7989,7 +8004,8 @@ stand_tik() {
   case "$base" in https://*.workers.dev|https://*.workers.dev/) : ;; *) zeg "Stand: geen relay-adres -- geen verslag."; return 0 ;; esac
   mkdir "$REK_MAP/stand.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/stand.lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] && rm -rf "$REK_MAP/stand.lock"; return 0; }
   jarvis_rol_wek >/dev/null 2>&1 || true
-  brein_meet >/dev/null 2>&1 || true   # 678: na een verandering van de opstelling (of na zes uur) de vaste snelheidsmeting
+  # 678 (17 nov): NIET meer de snelheidsmeting hier. Die kan op een trage telefoon twee keer tien minuten duren, en het verslag kreeg maar zeven
+  # minuten: het werd afgebroken voor het verstuurd was (het rek leek stil sinds 16 nov 21:11). De meting is nu een eigen taak in de lus.
   tekst="$(stand_maak 2>/dev/null | head -c 9000)"
   sig="$(printf '%s' "$tekst" | grep -v 'vrij geheugen' | sed -E 's/[0-9]+ (s|min) geleden//g; s/^    [0-9]{2}:[0-9]{2}:[0-9]{2} //' | sha256sum | cut -c1-16)"; oud="$(head -1 "$STAND_SIG_F" 2>/dev/null)"
   nu="$(date +%s)"; t0="$(sed -n 2p "$STAND_SIG_F" 2>/dev/null | tr -cd '0-9')"; t0="${t0:-0}"
@@ -8583,6 +8599,7 @@ case "${1:-status}" in
   stand-tik) stand_tik "${2:-}" ;;
   proef-vanzelf) proef_vanzelf ;;
   rem-uit) rek_rem_uit ;;
+  brein-meet) brein_meet ;;                         # 678 (17 nov): de vaste snelheidsmeting (eigen taak, niet meer binnen het verslag)
   brein-proefbank) brein_proefbank ;;
   brein-modelproef) brein_modelproef ;;             # 678 (16 nov): onderzoek stap 3/6, deel 2 punt 3 -- andere breinen gemeten (snelheid + beide lesrijen)               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
   versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
