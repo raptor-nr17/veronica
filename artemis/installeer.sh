@@ -8178,7 +8178,9 @@ adb_kort() {   # -> het pad van een adb die na 20 s opgeeft
   printf '#!/bin/sh\nexec timeout 20 %s "$@"\n' "$ADB" >"$w.nieuw" && chmod 700 "$w.nieuw" && mv -f "$w.nieuw" "$w" && printf '%s' "$w" || printf '%s' "$ADB"
 }
 stand_maak() {   # het verslag als platte tekst
-  local s ADB; ADB="$(adb_kort)"
+  # 678 (17 nov): EERST het pad van de korte adb maken, DAN pas ADB lokaal maken. Andersom (local ADB; ADB="$(adb_kort)") zag adb_kort al de
+  # LEGE lokale ADB en schreef "timeout 20 <niets>": het verslag zag geen enkele telefoon ("route: geen" bij alle drie, lege adb-lijst).
+  local s kort; kort="$(adb_kort)"; local ADB="$kort"
   export STAND_MAAK=1
   printf '# Stand van het rek (ARTEMIS)\n\n'
   printf -- '- versie (vingerafdruk van het script): %s\n' "$(head -1 "$REK_MAP/bron-sha" 2>/dev/null | cut -c1-12 || true)"
