@@ -8370,6 +8370,95 @@ PY
 #   4. HERSTEL: de waakhond zet het brein vanzelf terug (hoogstens 15 minuten), ook zonder internet.
 # Nooit tijdens een les; het brein-slot houdt proefbank en modelproef op afstand. Er wordt niets uitgevoerd dat in een vraag staat.
 ZELFSTANDIG_F="$REK_MAP/zelfstandig.txt"
+# 678 (17 nov, eigenaar: "de proef van Qwen3.5-4B naast lesrij 2"): EEN KANDIDAAT PROBEREN, NAAST HET HUIDIGE BREIN, ZONDER TE WISSELEN.
+# De modelproef kiest zelf en werd twee keer onderbroken voor hij aan Qwen3.5-4B toekwam. Dit doet EEN kandidaat uit de vaste kandidatenlijst
+# (nooit een vrije naam): ophalen (gaat door waar hij stopte; sha256 uit de lijst), op de brein-telefoon zetten, starten, snelheid meten, lesrij 2
+# voor en na draaien (door de CODE nagekeken), en dan ALTIJD het huidige brein terug. De uitslag naast de laatste les van het huidige brein, in het
+# verslag en via het kanaal. Wisselen van brein beslist een mens (of later de modelproef). De kandidaat blijft op de telefoon staan.
+BREIN_PROBEER_F="$REK_MAP/brein-probeer.txt"
+brein_probeer() {   # [kanaal-id] [kandidaat, de naam op de telefoon; standaard Qwen3.5-4B-Q4_0.gguf]
+  local id="${1:-}" wil="${2:-Qwen3.5-4B-Q4_0.gguf}" regel repo naam sha lokaal mx s oud_m oud_mx pad k meet t fout=""
+  if les_loopt; then zeg "Probeer: er loopt een les; later opnieuw."; return 1; fi
+  regel="$(printf '%s\n' "$BREIN_MODELPROEF_KANDIDATEN" | awk -v w="$wil" '$1 != "huidig" && $4 == w {print; exit}')"
+  [ -n "$regel" ] || { zeg "Probeer: $wil staat niet in de kandidatenlijst; niets gedaan."; return 0; }
+  set -- $regel; repo="$1"; naam="$2"; sha="$3"; lokaal="$4"; shift 4; mx="$*"; [ "$mx" = - ] && mx=""
+  s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || { zeg "Probeer: geen brein-telefoon."; return 0; }
+  brein_slot_neem || { zeg "Probeer: het brein is bezet (proefbank of modelproef); later opnieuw."; return 1; }
+  oud_m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; oud_mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
+  t="$(mktemp)"
+  zeg "Probeer: $lokaal naast het huidige brein ($oud_m). Ophalen, starten, meten en lesrij 2; daarna het huidige brein terug."
+  if ! pad="$(brein_model_haal "$repo" "$naam" "$sha" 0 "$lokaal" 2>/dev/null)"; then fout="$lokaal kon niet worden opgehaald (de volgende keer gaat hij door waar hij stopte)"
+  else
+    brein_tel_zet "$s" "$pad" "$lokaal"; k=$?
+    if [ "$k" = 3 ]; then fout="te weinig ruimte op de brein-telefoon"
+    elif [ "$k" != 0 ]; then fout="$lokaal kwam niet op de brein-telefoon"
+    elif ! BREIN_MODEL_PROEF="$mx" brein_herstart_met "$s" "$lokaal"; then fout="$lokaal startte niet (te weinig geheugen, of llama-server kent het model niet)"
+    else
+      brein_stand klaar "Proef: $lokaal" "$s" "$lokaal" ""   # zodat de kennisbank en de les de juiste naam noemen
+      meet="$(BREIN_MODEL_NU="$lokaal" BREIN_MODEL_PROEF="$mx" brein_meet --nu 2>/dev/null | tail -1)"
+      LES_UIT="$t" brein_les "" 2 >/dev/null 2>&1
+    fi
+  fi
+  # ALTIJD het huidige brein terug
+  if [ -n "$oud_m" ]; then
+    BREIN_MODEL_PROEF="$oud_mx" brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1 || logregel "Probeer: het huidige brein startte niet meteen; de waakhond probeert het opnieuw."
+    brein_stand klaar "Het brein draait op $(toestel_naam "$s") (terug na de proef van $lokaal)." "$s" "$oud_m" ""
+  fi
+  rm -rf "$REK_MAP/brein.lock"
+  rek_zorg_crypto >/dev/null 2>&1 || true
+  local link code base
+  link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
+  code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
+  base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
+  KAND="$lokaal" HUIDIG="$oud_m" FOUT="$fout" MEET="${meet:-}" HMEET="$(grep -F "| $oud_m," "$BREIN_MEET_F" 2>/dev/null | tail -1)" PLES="$t" HLES="$BREIN_LES_F" UIT="$BREIN_PROBEER_F" ID="$id" CODE="$code" BASE="$base" \
+    "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
+import os, json, time, re, hashlib, urllib.request
+def les(f):
+    try:
+        j = json.load(open(f))
+        if int(j.get('rij') or 0) != 2: return None
+        return j
+    except Exception: return None
+def tps(regel):
+    m = re.search(r'schrijven ([0-9.]+) tok/s', regel or ''); return m.group(1) if m else '?'
+k, h, fout = os.environ['KAND'], os.environ['HUIDIG'], os.environ.get('FOUT', '')
+p, hl = les(os.environ['PLES']), les(os.environ['HLES'])
+r = ['**Proef: %s naast het huidige brein (%s), lesrij 2** (%s; het huidige brein draait weer)' % (k, h, time.strftime('%d-%m %H:%M')), '']
+if fout:
+    r.append('De proef kwam niet tot een meting: %s.' % fout)
+else:
+    r += ['| | %s (proef) | %s (huidig) |' % (k, h), '|---|---|---|']
+    def gem(j):
+        t = [x['tps'] for x in ((j or {}).get('rondes') or {}).get('na', {}).get('lessen', []) if isinstance(x.get('tps'), (int, float))]
+        return ('%.2f tok/s' % (sum(t) / len(t))) if t else '?'
+    r.append('| schrijven (vaste meting) | %s tok/s | %s tok/s |' % (tps(os.environ.get('MEET')), tps(os.environ.get('HMEET'))))
+    r.append('| schrijven (gemiddeld in de les) | %s | %s |' % (gem(p), gem(hl)))
+    for kant, naam in (('voor', 'lesrij 2 voor (zonder kennisbank)'), ('na', 'lesrij 2 na (het echte pad)')):
+        r.append('| %s | %s | %s |' % (naam, ('%s/10' % p['rondes'][kant]['goed']) if p and kant in (p.get('rondes') or {}) else '?', ('%s/10' % hl['rondes'][kant]['goed']) if hl and kant in (hl.get('rondes') or {}) else '?'))
+    if p:
+        fout_na = [x for x in p['rondes'].get('na', {}).get('lessen', []) if not x.get('goed')]
+        if fout_na: r.append(''); r.append('Fout na, bij de proef: ' + '; '.join('%s (%s)' % (x.get('id'), x.get('waarom') or '') for x in fout_na))
+    r += ['', 'Er is niet gewisseld: dat beslist een mens (of de modelproef). %s blijft op de telefoon staan.' % k]
+tekst = '\n'.join(r)
+print(tekst)
+with open(os.environ['UIT'], 'w') as fh: fh.write(tekst + '\n')
+code = os.environ.get('CODE', ''); base = os.environ.get('BASE', '').rstrip('/'); kid = os.environ.get('ID', '')
+if kid and code and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev', base):
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        hx = lambda s: hashlib.sha256(s.encode()).hexdigest()
+        key = hashlib.sha256(('lokale-ai-sleutel:' + code).encode()).digest()
+        uit = {'v': 1, 'id': kid, 'antwoord': tekst, 'fout': '', 't': int(time.time() * 1000)}
+        iv = os.urandom(12); ct = AESGCM(key).encrypt(iv, json.dumps(uit).encode(), None)
+        lijf = json.dumps({'topic': 'la' + hx('lokale-ai-antwoord:' + code)[:30], 'message': json.dumps({'iv': iv.hex(), 'data': ct.hex()})}).encode()
+        urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(base + '/', data=lijf, headers={'Content-Type': 'application/json', 'User-Agent': 'artemis'}), timeout=20)
+        print('De uitslag staat versleuteld op het kanaal (%s).' % kid)
+    except Exception as e:
+        print('Kon de uitslag niet via het kanaal terugzetten (' + type(e).__name__ + ').')
+PY
+  rm -f "$t"
+  stand_tik --nu >/dev/null 2>&1 || true
+}
 brein_onderbreek() {   # de llama-server op de brein-telefoon stoppen ZONDER "stoppen" (de waakhond start hem weer) -- alleen voor de proef
   local s; s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 1
   "$ADB" -s "$s" shell "$(brein_kill_cmd)" >/dev/null 2>&1 && echo OK
@@ -8762,6 +8851,7 @@ for x in n["lessen"]:
   [ -f "$REK_MAP/les-wacht" ] && printf '    er wacht een les (sinds %s)\n' "$(date -d "@$(stat -c %Y "$REK_MAP/les-wacht")" '+%d-%m %H:%M' 2>/dev/null)"
   printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
+  printf '\n## Proef naast het huidige brein (brein-probeer)\n'; sed 's/^/    /' "$BREIN_PROBEER_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Zelfstandigheidsproef (zonder Claude en internet)\n'; sed 's/^/    /' "$ZELFSTANDIG_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Stem en oor (proeftelefoon)\n    %s\n' "$(head -1 "$SPRAAK_TEST_F" 2>/dev/null || echo 'nog geen spraaktest')"
   [ -s "$STEM_ADB_F" ] && printf '    stem via de kabel: %s\n' "$(head -1 "$STEM_ADB_F")"
@@ -8939,6 +9029,26 @@ def _les_leeft_z(m):   # zelfde regel als _les_leeft hieronder
         return time.time() - os.path.getmtime(m) < 5400
     try: os.kill(_q, 0); return True
     except Exception: return False
+if vraag.get('soort') == 'probeer':   # 678 (17 nov): een kandidaat naast het huidige brein; een keer per vraag
+    import subprocess
+    if _les_leeft_z(os.environ['LESLOT']):
+        raise SystemExit(0)
+    try:
+        with open(os.path.join(os.environ['BSLOT'], 'pid')) as fh: _p = int(fh.read().strip() or 0)
+        os.kill(_p, 0)
+        try: open(os.environ['LESWACHT'], 'w').close()   # de modelproef of proefbank maakt na de lopende kandidaat plaats
+        except Exception: pass
+        raise SystemExit(0)   # NIET afvinken: de volgende minuut opnieuw
+    except SystemExit: raise
+    except Exception: pass
+    _k = str(vraag.get('kandidaat') or 'Qwen3.5-4B-Q4_0.gguf')
+    if not re.fullmatch(r'[A-Za-z0-9._-]{1,80}\.gguf', _k): _k = 'Qwen3.5-4B-Q4_0.gguf'
+    try:
+        with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
+        subprocess.Popen([os.environ['AREK'], 'brein-probeer', vraag['id'], _k], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+    except Exception:
+        pass
+    raise SystemExit(0)
 if vraag.get('soort') == 'zelfstandig':   # 678 (17 nov, stap 6): de zelfstandigheidsproef, op de achtergrond; een keer per vraag
     import subprocess
     if _les_leeft_z(os.environ['LESLOT']):
@@ -9475,6 +9585,7 @@ case "${1:-status}" in
   brein-les) brein_les "${2:-}" "${3:-}" ;;
   zelfstandig) zelfstandig_proef "${2:-}" ;;        # 678 (17 nov, stap 6): de zelfstandigheidsproef (zonder Claude en internet)
   brein-onderbreek) brein_onderbreek ;;
+  brein-probeer) brein_probeer "${2:-}" "${3:-}" ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
   brein-les2) brein_les "" 2 ;;
   controle-rol) controle_rol ;;                     # 678 (15 nov): de controle-telefoon (tweede model, andere familie) starten
   controle-status) zeg "== De controle-telefoon (kijkt de antwoorden van het brein na) =="; als_controle brein_status ;;
