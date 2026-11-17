@@ -7460,6 +7460,18 @@ brein_start_kern() {
   mem="$(mem_vrij_kb "$s")"; case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
   marge="$BREIN_MARGE_KB"; [ "$ctx" = 2048 ] && marge="$BREIN_MARGE_KLEIN_KB"; [ "$ctx" = 1024 ] && marge="$BREIN_MARGE_MINI_KB"   # 678 (17 nov): de kleine verdeler heeft zijn eigen, kleinere drempel -- ook hier
   [ "$mem" -lt $((groot / 1024 + marge)) ] && mem="$(brein_geheugen_rust "$s" "$mem")"
+  # 678 (17 nov, de verdeler-telefoon: 1565 MB vrij bij het kiezen, 690 MB na het overzetten): te weinig vlak voor het starten = EERST opnieuw vrijmaken en
+  # meten, en past het dan nog niet, een KLEINERE context (2048, en een klein model met 1024) -- niet meteen opgeven.
+  if [ "$mem" -lt $((groot / 1024 + marge)) ]; then
+    local mem2; mem2="$(brein_vrijmaken "$s" 2>/dev/null | tail -1)"; case "$mem2" in ''|*[!0-9]*) mem2="$(mem_vrij_kb "$s")" ;; esac
+    mem2="$(brein_geheugen_rust "$s" "${mem2:-0}")"; case "$mem2" in ''|*[!0-9]*) : ;; *) [ "$mem2" -gt "$mem" ] && mem="$mem2" ;; esac
+    if [ "$mem" -lt $((groot / 1024 + marge)) ] && [ "$ctx" -gt 2048 ] && [ "$mem" -ge $((groot / 1024 + BREIN_MARGE_KLEIN_KB)) ]; then
+      ctx=2048; marge="$BREIN_MARGE_KLEIN_KB"; zeg "  na het overzetten minder vrij geheugen; ik start met context 2048."
+    fi
+    if [ "$mem" -lt $((groot / 1024 + marge)) ] && [ -n "${BREIN_MINI_OK:-}" ] && [ "$groot" -lt 1000000000 ] && [ "$mem" -ge $((groot / 1024 + BREIN_MARGE_MINI_KB)) ]; then
+      ctx=1024; marge="$BREIN_MARGE_MINI_KB"; zeg "  na het overzetten minder vrij geheugen; het kleine model start met context 1024."
+    fi
+  fi
   if [ "$mem" -lt $((groot / 1024 + marge)) ]; then
     zeg "  te weinig vrij geheugen ($((mem / 1024)) MB vrij; nodig ~$((groot / 1048576 + marge / 1024)) MB). Druk opnieuw: dan maak ik eerst weer vrij."
     brein_stand fout "Te weinig vrij geheugen vlak voor het starten ($((mem / 1024)) MB)." "$s" "$mnaam" "$mem"; return 0
@@ -7967,7 +7979,7 @@ verdeler_waak() { verdeler_kies >/dev/null 2>&1 || return 0; rol_modelkeus verde
 # 678 (16 nov, onderzoek deel 2 punt 4): EEN KEER OPNIEUW KIEZEN. Een rol kiest zijn model alleen bij het starten; de waakhond herstart met het model
 # dat er al was. Is de modellijst van een rol veranderd (ROL_MODELKEUS_VERSIE), dan start ARTEMIS die rol EEN keer opnieuw zodat hij uit de
 # nieuwe lijst kiest. Niet tijdens een les; de keuze staat daarna in de status en de vaste meting van die rol.
-ROL_MODELKEUS_VERSIE=2
+ROL_MODELKEUS_VERSIE=3   # 678 (17 nov): 3 = een keer opnieuw kiezen, nu het overzetten hervat (de S10 draaide nog gemma-3-1b i.p.v. de keurmeester)
 rol_modelkeus() {   # $1 rol-opdracht, $2 map van de rol -> 0 = opnieuw gestart (op de achtergrond)
   [ "$(head -1 "$2/modelkeus.v" 2>/dev/null)" = "$ROL_MODELKEUS_VERSIE" ] && return 1
   [ -s "$2/brein-vast" ] || return 1
