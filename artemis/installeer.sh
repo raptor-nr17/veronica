@@ -663,6 +663,10 @@ def controle_start(vraag, antwoord, kennis=''):
     def werk():
         try: o = controle_oordeel(vraag, antwoord, kennis)
         except Exception: o = None
+        if o and o.get('oordeel') == 'twijfel':
+            try: v = brein_verbeter(vraag, antwoord, o.get('zin') or '', kennis)
+            except Exception: v = None
+            if v and v.strip() != str(antwoord).strip(): o = dict(o, verbeterd=v[:3000])
         CONTROLE_UIT[cid] = {'klaar': True, 'controle': o, 't': time.time()}
     threading.Thread(target=werk, daemon=True).start()
     return cid
@@ -756,6 +760,47 @@ def brein_kennis():
         with open(os.path.join(REK, 'kennisboek', 'brein-kennis.md')) as fh: return fh.read()[:3500].strip()
     except Exception:
         return ''
+# 678 (17 nov, eigenaar: "kennisbank slimmer: per vraag alleen de best passende stukken"). De kennisbank is een lijst regels ("- ..."). Een vaste
+# KERN gaat altijd mee (wie het brein is, de taal, nooit verzinnen, niets uitvoeren) en staat VOORAAN, zodat de cache van llama-server dat begin
+# hergebruikt; daarachter alleen de regels die het meest op de vraag lijken (gedeelde woorden van 4+ letters, zonder stopwoorden). Minder tekst
+# = sneller lezen, en het model wordt niet afgeleid door regels over iets anders. Geen embeddings nodig voor ~20 regels; een trefwoord past hier.
+KENNIS_KERN = ('Jij bent het taalmodel', 'BELANGRIJK, ALTIJD', 'Verzin nooit', 'voert NIETS uit', 'wie je bent')
+KENNIS_STOP = set('deze dat die van een het wat welke waar wanneer hoeveel kunnen moet niet nooit altijd ook maar voor met zijn heeft hebben wordt worden telefoon telefoons rektelefoon rektelefoons'.split())   # telefoon staat in bijna elke regel
+def kennis_woorden(t):   # de eerste vier letters als eenvoudige stam: "warm" vindt "warmte", "rekenen" vindt "reken"
+    return set(w[:4] for w in re.findall(r'[a-zà-ÿ0-9]{4,}', str(t or '').lower()) if w not in KENNIS_STOP)
+def brein_kennis_voor(vraag, hoeveel=5):
+    k = brein_kennis()
+    if not k: return ''
+    regels = [r for r in k.splitlines() if r.strip()]
+    kop = [r for r in regels if r.startswith('#')]
+    kern = [r for r in regels if r.startswith('-') and any(x in r for x in KENNIS_KERN)]
+    rest = [r for r in regels if r.startswith('-') and r not in kern]
+    vw = kennis_woorden(vraag)
+    gescoord = sorted(((len(vw & kennis_woorden(r)), i, r) for i, r in enumerate(rest)), key=lambda x: (-x[0], x[1]))
+    gekozen = [r for n, i, r in gescoord if n > 0][:hoeveel]
+    gekozen.sort(key=lambda r: rest.index(r))   # in de volgorde van de kennisbank
+    return '\n'.join(kop + kern + gekozen)
+# 678 (17 nov, eigenaar: "laat het brein bij moeilijke vragen eerst nadenken, bij simpele direct antwoorden"). Moeilijk = een lange vraag, meer
+# dan een vraag tegelijk, of een vraag die om uitleg, vergelijken of redeneren vraagt. Dan thinking AAN met een eigen tijdslimiet (DENK_TIMEOUT);
+# lukt dat niet in die tijd, of blijft het antwoord leeg, dan alsnog direct (zonder nadenken). Een rekensom gaat eerst naar de rekenhulp.
+DENK_WOORDEN = ('waarom', 'leg uit', 'uitleggen', 'vergelijk', 'verschil', 'hoe werkt', 'hoe komt', 'stappen', 'stap voor stap', 'wat gebeurt',
+                'wat zou', 'beste manier', 'voor- en nadelen', 'voordelen', 'nadelen', 'analyseer', 'redeneer', 'bedenk', 'plan ')
+DENK_TIMEOUT = 150
+def denk_nodig(t):
+    t = str(t or '').lower().strip()
+    if len(t) > 240 or t.count('?') >= 2: return True
+    return len(t.split()) >= 5 and any(w in t for w in DENK_WOORDEN)
+# 678 (17 nov, eigenaar: "S10 als keurmeester die elk antwoord nakijkt en bij twijfel het brein laat verbeteren"). Zegt de controle NEE, dan krijgt
+# het brein zijn eigen antwoord en de opmerking van de controle terug, met de opdracht het te verbeteren (of, als het klopt, kort te herhalen).
+def brein_verbeter(vraag, antwoord, opmerking, kennis=''):
+    berichten = [{'role': 'system', 'content': ((brein_wie() + ' ') if brein_wie() else '') + (kennis or brein_kennis())},
+                 {'role': 'user', 'content': str(vraag)[:3000]},
+                 {'role': 'assistant', 'content': str(antwoord)[:3000]},
+                 {'role': 'user', 'content': 'Een tweede taalmodel heeft je antwoord nagekeken en twijfelt: "%s". Verbeter je antwoord als dat nodig is. '
+                                             'Verzin niets; weet je het niet zeker, zeg dat. Antwoord in het Nederlands, alleen met het verbeterde antwoord.' % str(opmerking)[:300]}]
+    r = brein_vraag({'messages': berichten, 'max_tokens': 400, 'stream': False, 'temperature': 0.2, 'cache_prompt': True, 'chat_template_kwargs': {'enable_thinking': False}})
+    try: return brein_tekst(r['choices'][0]['message']).strip() or None
+    except Exception: return None
 def brein_wie():
     # 678 (15 nov): de echte modelnaam en telefoon voor de systeemtekst (een klein model verzint anders wie het is)
     try:
@@ -764,12 +809,12 @@ def brein_wie():
         return ''
     m = re.sub(r'\.gguf$', '', str(d.get('model') or ''))
     return ('Jij bent het taalmodel %s%s; noem jezelf zo als ernaar gevraagd wordt.' % (m, (', en je draait op de telefoon ' + str(d.get('telefoon'))) if d.get('telefoon') else '')) if m else ''
-def brein_vraag(lijf):
+def brein_vraag(lijf, timeout=180):
     data = json.dumps(lijf).encode()
     for poging in (0, 1):
         try:
             req = urllib.request.Request('http://127.0.0.1:%d/v1/chat/completions' % BREIN_LOK, data=data, headers={'Content-Type': 'application/json'})
-            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=180) as r:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as r:
                 return json.loads(r.read(4000000).decode('utf-8', 'replace'))
         except Exception:
             if poging == 0 and brein_forward(): continue
@@ -877,6 +922,8 @@ def lus():
                 threading.Thread(target=doe_args, args=(['brein-proefbank'], 2400), daemon=True).start()   # 678 (16 nov): de proefbank (eens per opstelling)
             if RONDE % 10 == 3:
                 threading.Thread(target=doe_args, args=(['brein-meet'], 1500), daemon=True).start()   # 678 (17 nov): de vaste snelheidsmeting, los van het verslag
+            if RONDE % 10 == 5:
+                threading.Thread(target=doe_args, args=(['stem-adb-vanzelf'], 5400), daemon=True).start()   # 678 (17 nov): het stemmodel via de kabel, als JARVIS het zelf niet binnenkrijgt
             if RONDE % 15 == 13:
                 threading.Thread(target=doe_args, args=(['brein-modelproef'], 21600), daemon=True).start()   # 678 (16 nov): de modelproef (eens per kandidatenlijst; downloads gaan door waar ze stopten)
             if RONDE % 30 == 11:
@@ -1704,7 +1751,8 @@ class H(BaseHTTPRequestHandler):
             # 678 (16 nov, onderzoek deel 2): HET VASTE DEEL BOVENAAN. De naam en de kennisbank veranderen niet tussen twee vragen; staan ze
             # VOORAAN (en de systeemtekst van Veronica erachter), dan hergebruikt llama-server dat begin uit zijn cache (cache_prompt) en hoeft
             # alleen het nieuwe stuk gelezen te worden. Stond het achter een wisselende tekst, dan moest elke vraag alles opnieuw lezen.
-            wie = (brein_wie() + ' ' + brein_kennis()).strip()
+            laatste0 = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
+            wie = (brein_wie() + ' ' + brein_kennis_voor(laatste0)).strip()   # 678 (17 nov): de kern + alleen de best passende regels
             if wie:
                 if msgs[0].get('role') == 'system': msgs[0] = {'role': 'system', 'content': wie + '\n\n' + msgs[0]['content']}
                 else: msgs.insert(0, {'role': 'system', 'content': wie})
@@ -1724,7 +1772,16 @@ class H(BaseHTTPRequestHandler):
             # 678 (16 nov, onderzoek stap 7): GEEN WERK OVER WIFI VOOR EEN ANTWOORD. De verdeler (een andere telefoon, via Tailscale) zat in het
             # antwoordpad: eerst indelen, dan soms zelf antwoorden -- twee keer over het netwerk voor elk antwoord. Het brein antwoordt nu altijd
             # zelf; de controle kijkt pas NA het antwoord na (die vertraagt niets). De verdeler blijft draaien voor werk op de achtergrond.
-            t0 = time.time(); r = brein_vraag({'messages': msgs, 'max_tokens': mt, 'stream': False, 'cache_prompt': True, 'temperature': 0.2 if les else 0.7, 'chat_template_kwargs': {'enable_thinking': False}})   # 678: Qwen3 denkt anders eerst honderden tokens hardop
+            denk = denk_nodig(laatste)
+            t0 = time.time(); r = None
+            if denk:   # 678 (17 nov): eerst nadenken, met een tijdslimiet; leeg of te laat = alsnog direct
+                r = brein_vraag({'messages': msgs, 'max_tokens': mt + 640, 'stream': False, 'cache_prompt': True, 'temperature': 0.2 if les else 0.6, 'chat_template_kwargs': {'enable_thinking': True}}, timeout=DENK_TIMEOUT)
+                try:
+                    if not re.sub(r'(?s)<think>.*?</think>', '', str(r['choices'][0]['message'].get('content') or '')).strip(): r = None
+                except Exception: r = None
+                if r is None: denk = False
+            if r is None:
+                r = brein_vraag({'messages': msgs, 'max_tokens': mt, 'stream': False, 'cache_prompt': True, 'temperature': 0.2 if les else 0.7, 'chat_template_kwargs': {'enable_thinking': False}})   # 678: Qwen3 denkt anders eerst honderden tokens hardop
             if r is None:
                 self._cors_json(503, json.dumps({'fout': 'Het brein antwoordt niet. Druk in ARTEMIS op Brein starten.'})); return
             try:
@@ -1735,11 +1792,18 @@ class H(BaseHTTPRequestHandler):
             ms = int((time.time() - t0) * 1000)
             vraag_tekst = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
             cid = controle_start(vraag_tekst, tekst, brein_kennis()) if tekst and not les else None
+            kc = None
+            if tekst and les and d.get('keur') is True and controle_bereikbaar():   # 678: de lesmeting kan de keurmeester meenemen (en wacht er dan op)
+                kc = controle_oordeel(vraag_tekst, tekst, brein_kennis())
+                if kc and kc.get('oordeel') == 'twijfel':
+                    v = brein_verbeter(vraag_tekst, tekst, kc.get('zin') or '', brein_kennis())
+                    if v: tekst = v; kc = dict(kc, verbeterd=True)
             if isinstance(tps, (int, float)):
                 try:
                     with open(os.path.join(REK, 'brein-tps'), 'w') as fh: fh.write('%.2f %d\n' % (tps, int(time.time())))
                 except Exception: pass
-            self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid}))
+            self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid,
+                                             'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd'))}))
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
@@ -2816,6 +2880,140 @@ jarvis_spraak_proef() {
   done
   zeg "Stem en oor: de proeftelefoon is nu niet verbonden. Sluit hem aan de USB-kabel aan en druk opnieuw."
 }
+# 678 (17 nov, de S10: "Stem blijft 'staat NIET klaar (geen)' na een uur; het stemmodel (81 MB) komt niet binnen"): DE KABELROUTE VOOR HET
+# STEMMODEL. JARVIS haalt het zelf alleen op wifi EN aan de lader, als ~360 losse bestanden (de taaldata van espeak), en een mislukt bestand
+# kost een half uur wachten. En waarom hij wachtte stond nergens: de spraakserver zei alleen "geen". Vanaf JARVIS 1.9.100 (code 107):
+#  (1) de kabel-ontvanger geeft de stand MET de zin terug (--es stand ja) en de map waar het model neer mag (getExternalFilesDir: de enige map
+#      van JARVIS waar de adb-shell mag schrijven; JARVIS zegt hem zelf, ARTEMIS raadt geen pad);
+#  (2) ARTEMIS haalt het model op deze computer op (de bestandenlijst van Hugging Face, dezelfde keus als JARVIS), rekent elk groot bestand
+#      na op zijn sha256 en elk klein op zijn grootte, zet het via adb neer (ook over Tailscale) naar een .deel-map, telt de bestanden op
+#      de telefoon, hernoemt, en schrijft als LAATSTE klaar.txt ("<repo> <aantal>");
+#  (3) JARVIS (--es bijgezet stem) kijkt het na -- aantal, de stem compleet, de Nederlandse sleutelbestanden -- en laadt pas dan.
+# Alleen modelbestanden; er wordt niets uitgevoerd. Nooit de F8. Elke stap met de echte reden in stem-adb.txt (en zo in het verslag).
+STEM_REPO="csukuangfj/vits-piper-nl_BE-nathalie-medium"
+STEM_ADB_F="$REK_MAP/stem-adb.txt"
+stem_kabel_stand() {   # $1 serienummer -> de stand-JSON van stem en oor (leeg = deze JARVIS kent het nog niet, of geen antwoord)
+  timeout 15 "$ADB" -s "$1" shell am broadcast -f 32 -n "$JARVIS_PKG/.JarvisKabelKoppel" -a nl.eigen.jarvis.KABEL_SPRAAK --es stand ja 2>/dev/null \
+    | tr -d '\r' | sed -n 's/.*data="OK \({.*}\)"$/\1/p' | head -1
+}
+stem_stand_veld() {   # $1 stand-JSON, $2 veld: aan|fase|zin|procent|klaar|adbStem
+  ST="$1" VELD="$2" python3 -I -c 'import json,os
+try: d=json.loads(os.environ["ST"])
+except Exception: d={}
+v=os.environ["VELD"]
+if v=="adbStem": print(str(d.get("adbStem") or ""))
+else:
+    x=(d.get("stem") or {}).get(v)
+    print("" if x is None else (str(x).lower() if isinstance(x,bool) else str(x))[:200])' 2>/dev/null
+}
+stem_adb_meld() { printf '%s %s\n' "$(date '+%d-%m %H:%M')" "$1" >"$STEM_ADB_F"; chmod 600 "$STEM_ADB_F" 2>/dev/null || true; logregel "Stem via de kabel: $1"; zeg "Stem via de kabel: $1"; }
+stem_adb_zet() {   # $1 serienummer
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  local s="${1:-}" st doel lokaal uit n op naam
+  [ -n "$s" ] && verbonden | grep -qxF "$s" || { zeg "Stem via de kabel: die telefoon is niet verbonden."; return 0; }
+  is_f8 "$s" && return 0
+  naam="$(toestel_naam "$s")"
+  mkdir "$REK_MAP/stem-adb.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/stem-adb.lock" -maxdepth 0 -mmin +120 2>/dev/null)" ] && rm -rf "$REK_MAP/stem-adb.lock"; zeg "Stem via de kabel: loopt al."; return 0; }
+  st="$(stem_kabel_stand "$s")"
+  doel="$(stem_stand_veld "$st" adbStem)"
+  case "$doel" in
+    /storage/emulated/*/Android/data/"$JARVIS_PKG"/files/adb-stem|/sdcard/Android/data/"$JARVIS_PKG"/files/adb-stem) : ;;
+    *) stem_adb_meld "$naam: JARVIS kent de kabelroute nog niet (vanaf 1.9.100) of antwoordde niet; niets gedaan."; rm -rf "$REK_MAP/stem-adb.lock"; return 0 ;;
+  esac
+  if [ "$(stem_stand_veld "$st" klaar)" = true ]; then stem_adb_meld "$naam: de stem staat al klaar; niets nodig."; rm -rf "$REK_MAP/stem-adb.lock"; return 0; fi
+  lokaal="$JAPK_PLEK/stem/adb-stem"; mkdir -p "$lokaal" 2>/dev/null || true
+  zeg "Stem via de kabel: het stemmodel ophalen op deze computer en narekenen ($STEM_REPO)..."
+  uit="$(REPO="$STEM_REPO" DOEL="$lokaal" HF="${STEM_HF_BASIS:-https://huggingface.co}" python3 -I - <<'PY' 2>&1 | tail -1
+import hashlib, json, os, re, urllib.parse, urllib.request
+repo = os.environ['REPO']; doel = os.environ['DOEL']; HF = os.environ['HF'].rstrip('/')
+TAAL = ['nl_dict', 'phontab', 'phondata', 'phonindex', 'intonations', 'lang/gmw/nl']
+def haal(url, t=60):
+    return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'artemis'}), timeout=t)
+try:
+    items = []; url = HF + '/api/models/%s/tree/main?recursive=1' % repo
+    while url:
+        r = haal(url); items += json.loads(r.read().decode())
+        m = re.search(r'<([^>]+)>;\s*rel="next"', r.headers.get('Link') or ''); url = m.group(1) if m else None
+except Exception as e:
+    print('FOUT de bestandenlijst van Hugging Face is niet te lezen (%s)' % type(e).__name__); raise SystemExit(0)
+kies = []; onnx = 0
+for x in items:
+    if x.get('type') != 'file': continue
+    p = str(x.get('path') or ''); lfs = x.get('lfs') or {}
+    if '..' in p or p.startswith('/'): continue
+    top = '/' not in p
+    if (top and (p.endswith('.onnx') or p.endswith('.onnx.json'))) or p == 'tokens.txt' or p.startswith('espeak-ng-data/'):
+        if top and p.endswith('.onnx'): onnx += 1
+        kies.append((p, int(x.get('size') or 0), str(lfs.get('sha256') or lfs.get('oid') or '')))
+paden = set(p for p, _, _ in kies)
+mist = [k for k in TAAL if 'espeak-ng-data/' + k not in paden]
+if onnx != 1 or 'tokens.txt' not in paden or mist:
+    print('FOUT de lijst is onvolledig (%d modellen, ontbreekt: %s)' % (onnx, ', '.join(mist) or '-')); raise SystemExit(0)
+# wat er lokaal staat en NIET in de lijst hoort, gaat weg (anders telt de telefoon te veel bestanden)
+for wortel, _, fs in os.walk(doel):
+    for f in fs:
+        rel = os.path.relpath(os.path.join(wortel, f), doel)
+        if rel not in paden: os.remove(os.path.join(wortel, f))
+def goed(pad, groot, sha):
+    if not os.path.isfile(pad) or os.path.getsize(pad) != groot: return False
+    if not sha: return True
+    h = hashlib.sha256()
+    with open(pad, 'rb') as f:
+        for b in iter(lambda: f.read(1 << 20), b''): h.update(b)
+    return h.hexdigest() == sha
+nieuw = 0
+for p, groot, sha in kies:
+    pad = os.path.join(doel, p); os.makedirs(os.path.dirname(pad), exist_ok=True)
+    if goed(pad, groot, sha): continue
+    for poging in range(3):
+        try:
+            with haal(HF + '/%s/resolve/main/%s' % (repo, urllib.parse.quote(p)), 300) as r, open(pad + '.deel', 'wb') as f:
+                for b in iter(lambda: r.read(1 << 16), b''): f.write(b)
+            os.replace(pad + '.deel', pad)
+            if goed(pad, groot, sha): nieuw += 1; break
+        except Exception:
+            pass
+    else:
+        print('FOUT %s kwam niet goed binnen (grootte of controlesom)' % p); raise SystemExit(0)
+print('OK %d %d' % (len(kies), nieuw))
+PY
+)"
+  case "$uit" in OK\ *) : ;; *) stem_adb_meld "$naam: ophalen op deze computer mislukte: ${uit#FOUT }"; rm -rf "$REK_MAP/stem-adb.lock"; return 0 ;; esac
+  n="$(printf '%s' "$uit" | awk '{print $2}')"
+  zeg "Stem via de kabel: $n bestanden staan klaar op deze computer; nu naar $naam (over Tailscale duurt dat langer)..."
+  timeout 30 "$ADB" -s "$s" shell "rm -rf '$doel.deel'; mkdir -p '${doel%/*}'" >/dev/null 2>&1
+  op="$(timeout 3600 "$ADB" -s "$s" push "$lokaal" "$doel.deel" 2>&1 | tr -d '\r' | tail -1)"
+  local tel; tel="$(timeout 60 "$ADB" -s "$s" shell "find '$doel.deel' -type f | wc -l" 2>/dev/null | tr -cd '0-9')"
+  if [ "${tel:-0}" != "$n" ]; then
+    stem_adb_meld "$naam: het neerzetten brak af ($tel van de $n bestanden; adb zei: $(printf '%s' "$op" | cut -c1-140)). De volgende keer opnieuw."
+    rm -rf "$REK_MAP/stem-adb.lock"; return 0
+  fi
+  timeout 60 "$ADB" -s "$s" shell "rm -rf '$doel' && mv '$doel.deel' '$doel' && echo '$STEM_REPO $n' > '$doel/klaar.txt' && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja \
+    || { stem_adb_meld "$naam: hernoemen op de telefoon mislukte; de volgende keer opnieuw."; rm -rf "$REK_MAP/stem-adb.lock"; return 0; }
+  uit="$(timeout 20 "$ADB" -s "$s" shell am broadcast -f 32 -n "$JARVIS_PKG/.JarvisKabelKoppel" -a nl.eigen.jarvis.KABEL_SPRAAK --es bijgezet stem 2>/dev/null | tr -d '\r' | sed -n 's/.*data="\(.*\)"$/\1/p' | head -1)"
+  case "$uit" in
+    OK) stem_adb_meld "$naam: het stemmodel staat erop ($n bestanden, nagekeken door JARVIS); hij laadt het nu.$([ "$(stem_stand_veld "$st" aan)" = true ] || echo ' Zet de stem aan om hem te gebruiken.')" ;;
+    *) stem_adb_meld "$naam: neergezet, maar JARVIS keurt het af: ${uit#FOUT }" ;;
+  esac
+  rm -rf "$REK_MAP/stem-adb.lock"
+}
+# vanzelf (in de lus): op de proeftelefoon, en op elke telefoon waar de stem aan staat maar niet klaar is, het stemmodel via de kabel neerzetten.
+# Een keer per telefoon per zes uur (ook als het mislukte), zodat er niet steeds 81 MB over Tailscale gaat.
+stem_adb_vanzelf() {
+  command -v "$ADB" >/dev/null 2>&1 || return 0
+  local s st p nu t id; p="$(head -1 "$JARVIS_PROEF_F" 2>/dev/null | tr -d '\r\n ')"; nu="$(date +%s)"
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    st="$(stem_kabel_stand "$s")"; [ -n "$st" ] || continue
+    [ "$(stem_stand_veld "$st" klaar)" = true ] && continue
+    [ "$id" = "$p" ] || [ "$(stem_stand_veld "$st" aan)" = true ] || continue
+    case "$(stem_stand_veld "$st" fase)" in laden|geladen) continue ;; esac
+    t="$(head -1 "$REK_MAP/stem-adb.$id" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t:-0})) -ge 21600 ] || continue
+    printf '%s\n' "$nu" >"$REK_MAP/stem-adb.$id"
+    stem_adb_zet "$s"
+  done
+}
 # 678 (15 nov): WAT ADB LAAT ZIEN, OOK ZONDER RIJ-CODE. De spraakserver (8082) vraagt de rij-code; zonder die code zegt hij niets. Maar adb
 # ziet wel: draait JARVIS en hoe lang al zonder herstart, luistert poort 8082 (de server start ALLEEN als de stem of het oor klaar staat), en
 # hoe vaak het proces de laatste 24 uur afbrak (crash, native crash, ANR). Alleen lezen; niets op de telefoon verandert.
@@ -2873,7 +3071,11 @@ print(str(j.get("rol") or "?"), str(j.get("voorkeur") or "?"))' 2>/dev/null)"; r
     if [ "$c" = 200 ]; then
       stem="$(sed -n 's/.*"stem" *: *"\([a-z-]*\)".*/\1/p' "$w/h.json" | head -1)"; oor="$(sed -n 's/.*"oor" *: *"\([a-z-]*\)".*/\1/p' "$w/h.json" | head -1)"
       if [ "$stem" != klaar ]; then
-        uit="Stem: staat NIET klaar (${stem:-onbekend}). Oor: ${oor:-onbekend}. Oordeel: stem werkt niet -- kijk bij 'Motor en spraak: status' en in JARVIS op de telefoon waar hij op wacht (wifi en lader voor het model)."
+        # 678 (17 nov): "geen" zegt alleen dat de stem niet geladen is; de ECHTE reden (wachten op wifi/lader, een bestand mis, ...) geeft JARVIS
+        # via de kabel (vanaf 1.9.100). Het stemmodel zet ARTEMIS dan zelf via de kabel neer (stem_adb_vanzelf, in de lus).
+        local kst kz; kst="$(stem_kabel_stand "$s")"; kz="$(stem_stand_veld "$kst" zin)"
+        uit="Stem: staat NIET klaar (${stem:-onbekend}$([ -n "$kz" ] && echo "; JARVIS zegt: $kz $(stem_stand_veld "$kst" procent)%")). Oor: ${oor:-onbekend}. Oordeel: stem werkt niet. $([ -n "$(stem_stand_veld "$kst" adbStem)" ] && echo 'ARTEMIS zet het stemmodel nu zelf via de kabel op de telefoon (zie Stem via de kabel in het verslag).' || echo 'Deze JARVIS geeft de reden nog niet door; vanaf 1.9.100 zet ARTEMIS het stemmodel zelf via de kabel neer.')"
+        [ -n "$(stem_stand_veld "$kst" adbStem)" ] && ( setsid "$0" stem-adb "$s" </dev/null >>"$REK_MAP/console-stem-adb.log" 2>&1 & ) 2>/dev/null
       else
         # STAP 2 -- de rondgang: /zeg maakt de zin, /luister verstaat diezelfde WAV weer.
         "$ADB" -s "$s" forward --remove tcp:"$MOTOR_LOK_POORT" >/dev/null 2>&1 || true
@@ -7064,7 +7266,12 @@ brein_start_kern() {
   zeg "  llama-server: $(brein_binaire_zet "$s")"   # 678: de dotprod-versie als de telefoon het kan, anders de basis
   "$ADB" -s "$s" shell "[ -x $bin ] && echo ja" 2>/dev/null | tr -d '\r' | grep -q ja || { zeg "  deze JARVIS heeft geen llama-server (libllamaserver.so); werk JARVIS bij."; brein_stand fout "Geen llama-server in deze JARVIS." "$s" "" "$mem"; return 0; }
   # 2. het model: op deze computer ophalen, naar de telefoon zetten als hij er nog niet (helemaal) staat
-  model="$(brein_model_haal $keus)" || { brein_stand fout "Het model is er nog niet (download loopt of mislukte)." "$s" "$2" "$mem"; return 0; }
+  # 678 (17 nov): ALLEEN de vier velden van het model doorgeven. Het vijfde veld van de keus is de CONTEXT (4096/2048/1024), en brein_model_haal
+  # las dat als lokale bestandsnaam: elk model heette op deze computer "4096", en de modellen van brein, controle en verdeler overschreven
+  # elkaar (de controle-telefoon kreeg zo nooit zijn model, en het verslag zei "model: 4096"). Oude bestanden met zo'n getal als naam weg.
+  rm -f "$JAPK_PLEK/brein/4096" "$JAPK_PLEK/brein/2048" "$JAPK_PLEK/brein/1024" 2>/dev/null || true
+  "$ADB" -s "$s" shell "rm -f $BREIN_MAP_TEL/4096 $BREIN_MAP_TEL/2048 $BREIN_MAP_TEL/1024" >/dev/null 2>&1 || true
+  model="$(brein_model_haal "$1" "$2" "$3" "$4")" || { brein_stand fout "Het model is er nog niet (download loopt of mislukte)." "$s" "$2" "$mem"; return 0; }
   mnaam="$(basename "$model")"; groot="$(stat -c %s "$model")"
   if [ "$("$ADB" -s "$s" shell stat -c %s "$BREIN_MAP_TEL/$mnaam" 2>/dev/null | tr -d '\r ')" != "$groot" ]; then
     vrij="$("$ADB" -s "$s" shell df -k /data/local/tmp 2>/dev/null | tr -d '\r' | awk 'NR==2 {print $4}')"
@@ -7075,7 +7282,7 @@ brein_start_kern() {
   fi
   # 3. het vrije geheugen opnieuw meten vlak voor het starten (het push-moment kan iets veranderd hebben)
   mem="$(mem_vrij_kb "$s")"; case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
-  marge="$BREIN_MARGE_KB"; [ "$ctx" = 2048 ] && marge="$BREIN_MARGE_KLEIN_KB"
+  marge="$BREIN_MARGE_KB"; [ "$ctx" = 2048 ] && marge="$BREIN_MARGE_KLEIN_KB"; [ "$ctx" = 1024 ] && marge="$BREIN_MARGE_MINI_KB"   # 678 (17 nov): de kleine verdeler heeft zijn eigen, kleinere drempel -- ook hier
   [ "$mem" -lt $((groot / 1024 + marge)) ] && mem="$(brein_geheugen_rust "$s" "$mem")"
   if [ "$mem" -lt $((groot / 1024 + marge)) ]; then
     zeg "  te weinig vrij geheugen ($((mem / 1024)) MB vrij; nodig ~$((groot / 1048576 + marge / 1024)) MB). Druk opnieuw: dan maak ik eerst weer vrij."
@@ -7378,7 +7585,9 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
   zeg "  route: $([ -n "$s" ] && brein_route "$s" || echo 'geen -- de brein-telefoon is nu niet bereikbaar via adb (niet aan de kabel, niet draadloos)')"
   if [ -z "$s" ]; then
     zeg "  waarom niet bereikbaar (laatste poging, stap voor stap):"
-    if [ -s "$BREIN_DIAG_F" ]; then tail -n 25 "$BREIN_DIAG_F" | while IFS= read -r L; do zeg "    $L"; done
+    # 678 (17 nov): in het VERSLAG zonder de regels per telefoon van "Rek via Tailscale" (die vulden het verslag tot het werd afgekapt
+    # en les, meting en modelproef wegvielen); alleen de laatste acht stappen. In de console blijft het volledige stappenplan.
+    if [ -s "$BREIN_DIAG_F" ]; then tail -n 25 "$BREIN_DIAG_F" | { if [ -n "${STAND_MAAK:-}" ]; then grep -vE '^[0-9:]{8} +(== Rek|- )' | tail -n 8; else cat; fi; } | while IFS= read -r L; do zeg "    $L"; done
     elif [ ! -s "$BREIN_VAST_F" ] && [ ! -s "$BREIN_ID_F" ]; then zeg "    Er is nog GEEN brein-telefoon gekozen. Typ zijn serienummer in het veld 'Brein-telefoon' in deze console."
     else zeg "    nog geen poging gedaan."; fi
     brein_poging_achtergrond
@@ -7671,7 +7880,7 @@ def vraag_echt(tekst):
     try: sl = open(os.environ.get('SLEUTELF', '')).read().strip()
     except Exception: sl = ''
     if not sl or not re.fullmatch(r'\d{2,5}', os.environ.get('CPOORT', '')): return None
-    lijf = json.dumps({'sleutel': sl, 'les': True, 'messages': [{'role': 'user', 'content': tekst}], 'max_tokens': 200}).encode()
+    lijf = json.dumps({'sleutel': sl, 'les': True, 'keur': True, 'messages': [{'role': 'user', 'content': tekst}], 'max_tokens': 200}).encode()
     t0 = time.time()
     try:
         r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=lijf, headers={'Content-Type': 'application/json'}), timeout=300)
@@ -7679,7 +7888,8 @@ def vraag_echt(tekst):
     except Exception:
         return None
     if not isinstance(j, dict) or 'tekst' not in j: return None
-    return str(j.get('tekst') or '').strip(), j.get('tps'), round(time.time() - t0, 1), str(j.get('bron') or 'brein')
+    bron = str(j.get('bron') or 'brein') + ('+nagedacht' if j.get('nagedacht') else '') + ('+verbeterd' if j.get('verbeterd') else '')
+    return str(j.get('tekst') or '').strip(), j.get('tps'), round(time.time() - t0, 1), bron
 def kijk(les, a):
     if not a: return False, 'geen antwoord'
     l = ' ' + a.lower() + ' '
@@ -7973,6 +8183,19 @@ stand_maak() {   # het verslag als platte tekst
   printf '# Stand van het rek (ARTEMIS)\n\n'
   printf -- '- versie (vingerafdruk van het script): %s\n' "$(head -1 "$REK_MAP/bron-sha" 2>/dev/null | cut -c1-12 || true)"
   printf -- '- laatst zelf bijgewerkt: %s\n' "$( t="$(head -1 "$REK_MAP/laatst-bijgewerkt" 2>/dev/null | tr -cd '0-9')"; [ -n "$t" ] && date -d "@$t" '+%d-%m %H:%M' || echo onbekend)"
+  # 678 (17 nov): de uitslagen (les, meting, modelproef) VOORAAN -- wordt het verslag ooit ingekort, dan valt de rest weg, niet dit
+  printf '\n## Laatste les\n'
+  LES="$BREIN_LES_F" python3 -I -c 'import json,os,time
+try: d=json.load(open(os.environ["LES"]))
+except Exception: print("    nog geen les"); raise SystemExit
+v=d["rondes"]["voor"]; n=d["rondes"]["na"]
+print("    %s, lesrij %s: voor %d/%d, na %d/%d (%s)" % (time.strftime("%d-%m %H:%M", time.localtime(d.get("t",0))), d.get("rij", 1), v["goed"], v["van"], n["goed"], n["van"], d.get("model","")))
+for x in n["lessen"]:
+    if not x["goed"]: print("    fout na: %s (%s): %s" % (x["id"], x["waarom"], (x["antwoord"] or "")[:120].replace("\n"," ")))' 2>/dev/null
+  printf '\n## Snelheid van het brein (vaste meting, nieuwste onderaan)\n'; tail -n 6 "$BREIN_MEET_F" 2>/dev/null | sed 's/^/    /' || true
+  [ -s "$BREIN_MEET_F" ] || printf '    nog geen meting\n'
+  printf '\n## Modelproef (welk brein: snelheid en lesscore)\n'; tail -n 6 "$MODELPROEF_LOG_F" 2>/dev/null | sed 's/^/    /' || true
+  [ -s "$MODELPROEF_LOG_F" ] || printf '    nog niet gedaan\n'
   printf '\n## Brein\n'; BREIN_ALLEEN_KIJKEN=1 brein_status 2>/dev/null | sed 's/^/    /'
   printf '\n## Controle\n'
   if [ -s "$CONTROLE_MAP/brein-vast" ]; then BREIN_ALLEEN_KIJKEN=1 als_controle brein_status 2>/dev/null | sed 's/^/    /'; else printf '    nog geen controle-telefoon gekozen\n'; fi
@@ -7986,20 +8209,9 @@ stand_maak() {   # het verslag als platte tekst
     printf '    %s (%s)%s\n' "$(toestel_naam "$a")" "$(brein_route "$a")" "$(toegestaan "$i" && echo ', op de lijst' || echo ', NIET op de lijst')"
   done
   printf '\n## JARVIS op de rol-telefoons\n    %s\n' "$(head -1 "$JARVIS_WEK_F" 2>/dev/null || echo 'nog niet nagekeken')"
-  printf '\n## Laatste les\n'
-  LES="$BREIN_LES_F" python3 -I -c 'import json,os,time
-try: d=json.load(open(os.environ["LES"]))
-except Exception: print("    nog geen les"); raise SystemExit
-v=d["rondes"]["voor"]; n=d["rondes"]["na"]
-print("    %s, lesrij %s: voor %d/%d, na %d/%d (%s)" % (time.strftime("%d-%m %H:%M", time.localtime(d.get("t",0))), d.get("rij", 1), v["goed"], v["van"], n["goed"], n["van"], d.get("model","")))
-for x in n["lessen"]:
-    if not x["goed"]: print("    fout na: %s (%s): %s" % (x["id"], x["waarom"], (x["antwoord"] or "")[:120].replace("\n"," ")))' 2>/dev/null
-  printf '\n## Snelheid van het brein (vaste meting, nieuwste onderaan)\n'; tail -n 6 "$BREIN_MEET_F" 2>/dev/null | sed 's/^/    /' || true
-  [ -s "$BREIN_MEET_F" ] || printf '    nog geen meting\n'
-  printf '\n## Modelproef (welk brein: snelheid en lesscore)\n'; tail -n 6 "$MODELPROEF_LOG_F" 2>/dev/null | sed 's/^/    /' || true
-  [ -s "$MODELPROEF_LOG_F" ] || printf '    nog niet gedaan\n'
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
   printf '\n## Stem en oor (proeftelefoon)\n    %s\n' "$(head -1 "$SPRAAK_TEST_F" 2>/dev/null || echo 'nog geen spraaktest')"
+  [ -s "$STEM_ADB_F" ] && printf '    stem via de kabel: %s\n' "$(head -1 "$STEM_ADB_F")"
   [ -s "$PROEF_SPRAAK_NA" ] && printf '    de volgende spraaktest (vanzelf, na een nieuwe JARVIS): om %s\n' "$(date -d "@$(tr -dc 0-9 < "$PROEF_SPRAAK_NA")" '+%H:%M' 2>/dev/null)"
   printf '\n## Zelfronde\n'; sed 's/^/    /' "$ZR_TXT_F" 2>/dev/null | head -20
   printf '\n## Log (laatste regels)\n'
@@ -8059,7 +8271,7 @@ stand_tik() {
   jarvis_rol_wek >/dev/null 2>&1 || true
   # 678 (17 nov): NIET meer de snelheidsmeting hier. Die kan op een trage telefoon twee keer tien minuten duren, en het verslag kreeg maar zeven
   # minuten: het werd afgebroken voor het verstuurd was (het rek leek stil sinds 16 nov 21:11). De meting is nu een eigen taak in de lus.
-  tekst="$(stand_maak 2>/dev/null | head -c 9000)"
+  tekst="$(stand_maak 2>/dev/null | head -c 40000)"   # 678 (17 nov): het bericht wordt gecomprimeerd; de verzender kort zelf in tot het past
   sig="$(printf '%s' "$tekst" | grep -v 'vrij geheugen' | sed -E 's/[0-9]+ (s|min) geleden//g; s/^    [0-9]{2}:[0-9]{2}:[0-9]{2} //' | sha256sum | cut -c1-16)"; oud="$(head -1 "$STAND_SIG_F" 2>/dev/null)"
   nu="$(date +%s)"; t0="$(sed -n 2p "$STAND_SIG_F" 2>/dev/null | tr -cd '0-9')"; t0="${t0:-0}"
   if [ "${1:-}" != --nu ] && [ "$sig" = "$oud" ] && [ $((nu - t0)) -lt 3600 ]; then rm -rf "$REK_MAP/stand.lock"; zeg "Stand: niets veranderd."; return 0; fi
@@ -8686,6 +8898,8 @@ case "${1:-status}" in
   kanaal-tik) kanaal_tik ;;                        # intern (de console-lus): een vraag van Claude Code naar het brein, het antwoord terug          # intern (de console): de adb-doorsturing naar het brein opnieuw
   brein-status) brein_status ;;
   spraak-test) jarvis_spraak_test ;;                # 678 (15 nov): de rondgang stem -> oor op de proeftelefoon (met de rij-code van Veronica)
+  stem-adb) stem_adb_zet "${2:-}" ;;                # 678 (17 nov): het stemmodel via de kabel (ook Tailscale) op de telefoon
+  stem-adb-vanzelf) stem_adb_vanzelf ;;
   spraak-proef-uit) jarvis_spraak_proef uit ;;             # 678: de bewaarde vrijgegeven JARVIS terug op de proeftelefoon (install -r -d)
   zelfronde) zelfronde ;;                        # 678 (14 nov): de rondes die Cowork met de hand deed, nu zelf (alleen lezen + veilig herstel)
   waakbewaker) waakbewaker ;;                    # 678: start een weggevallen console opnieuw

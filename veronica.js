@@ -7303,9 +7303,12 @@
     return true;
   }
   const controleUit = (x) => (x && typeof x === 'object' && ['klopt', 'twijfel', 'onduidelijk'].includes(x.oordeel)
-    ? { oordeel: x.oordeel, zin: String(x.zin || '').slice(0, 240), model: String(x.model || '').slice(0, 60) } : null);
+    ? Object.assign({ oordeel: x.oordeel, zin: String(x.zin || '').slice(0, 240), model: String(x.model || '').slice(0, 60) },
+      x.oordeel === 'twijfel' && typeof x.verbeterd === 'string' && x.verbeterd.trim() ? { verbeterd: K.zonderDenken(x.verbeterd).trim().slice(0, 1200) } : {}) : null);
   const controleRegel = (c) => (!c ? '' : c.oordeel === 'klopt' ? ` · nagekeken door de controle${c.model ? ` (${c.model})` : ''}: klopt`
-    : c.oordeel === 'twijfel' ? ` · LET OP, de controle${c.model ? ` (${c.model})` : ''} twijfelt: ${c.zin || 'geen reden gegeven'}` : ' · de controle gaf geen duidelijk oordeel');
+    : c.oordeel === 'twijfel' ? ` · LET OP, de controle${c.model ? ` (${c.model})` : ''} twijfelt: ${c.zin || 'geen reden gegeven'}`
+      // 678 (17 nov): bij twijfel liet ARTEMIS het brein het antwoord verbeteren; dat verbeterde antwoord komt eronder, als voorstel
+      + (c.verbeterd ? ` · het brein verbeterde zijn antwoord: ${c.verbeterd}` : '') : ' · de controle gaf geen duidelijk oordeel');
   // 678 (16 nov): het oordeel van de controle-telefoon komt NA het antwoord (ARTEMIS rekent het op de achtergrond); elke 3 s kijken, hoogstens 3 minuten.
   // Alleen bijwerken als hetzelfde antwoord nog in beeld staat.
   async function controleVolg(cid, tekst, basisZin) {
