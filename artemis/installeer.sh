@@ -573,6 +573,20 @@ REKDOK_LOPEND = {}
 # 678 (15 nov): het brein -- de llama-server op de brein-telefoon, bereikbaar via een adb-doorsturing op deze computer (BREIN_POORT_LOK).
 # Valt de doorsturing weg (adb opnieuw verbonden), dan zet brein_vraag hem een keer opnieuw op naar het bewaarde serienummer.
 BREIN_LOK = int(os.environ.get('BREIN_POORT_LOK', '18093'))
+# 678 (17 nov, eigenaar stap 6: "de zelfstandigheidstest zonder Claude en internet"): GEEN INTERNET, AANTOONBAAR. Staat OFFLINE aan (alleen tijdens
+# de zelfstandigheidsproef, hoogstens 30 minuten), dan weigert deze console ELKE verbinding naar iets anders dan deze computer zelf (127.x: de
+# adb-doorsturingen naar de telefoons en de Tailscale-bruggen). Wat dan nog antwoordt, heeft het internet aantoonbaar niet nodig.
+import socket
+OFFLINE = [0.0]
+_ECHTE_VERBINDING = socket.create_connection
+def _verbinding(adres, *a, **k):
+    if OFFLINE[0] > time.time():
+        h = str((adres or ('',))[0])
+        if not (h.startswith('127.') or h in ('localhost', '::1')):
+            raise OSError('zelfstandigheidsproef: geen internet (%s)' % h)
+    return _ECHTE_VERBINDING(adres, *a, **k)
+socket.create_connection = _verbinding
+KENNIS_OP = ['']
 def brein_gezond():
     try:
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=3) as r:
@@ -683,6 +697,8 @@ def brein_sleutel():
     with open(pad, 'w') as fh: fh.write(k + '\n')
     os.chmod(pad, 0o600)
     return k
+try: brein_sleutel()   # 678 (17 nov): de brein-sleutel bestaat altijd (de les gebruikt hem voor het echte pad)
+except Exception: pass
 def veronica_adres():
     # het adres van Veronica = de bron waar ARTEMIS vandaan komt (ARTEMIS_BRON bij de installatie); alleen https
     try:
@@ -833,6 +849,8 @@ def brein_kennis_voor(vraag, hoeveel=5):
     rest = [r for r in regels if r.startswith('-') and r not in kern]
     vw = kennis_woorden(vraag)
     bet = kennis_op_betekenis(vraag, rest) if rest else None
+    try: KENNIS_OP[0] = 'betekenis' if bet else 'woorden'
+    except Exception: pass
     if bet:
         gescoord = sorted(((bet.get(r, 0.0) + 0.03 * len(vw & kennis_woorden(r)), i, r) for i, r in enumerate(rest)), key=lambda x: (-x[0], x[1]))
         gekozen = [r for n, i, r in gescoord][:hoeveel]
@@ -1847,6 +1865,22 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._schrijf(500, 'fout: ' + str(e))
             return
+        if p.path == '/intern/offline':
+            # 678 (17 nov, stap 6): de offline-bewaker aan of uit -- alleen met de brein-sleutel of de rij-code (de zelfstandigheidsproef). Aan = 30 min.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            try: d = json.loads(self.rfile.read(min(ln, 20000)).decode('utf-8', 'replace') if ln else '{}')
+            except Exception: d = {}
+            try:
+                with open(os.path.join(REK, 'rek-token.conf')) as fh: tok = fh.read().strip()
+            except Exception: tok = ''
+            try:
+                with open(os.path.join(REK, 'brein-sleutel')) as fh: bsl = fh.read().strip()
+            except Exception: bsl = ''
+            c = str(d.get('code') or ''); sl = str(d.get('sleutel') or '')
+            if not ((tok and c and hmac.compare_digest(c.encode(), tok.encode())) or (bsl and sl and hmac.compare_digest(sl.encode(), bsl.encode()))):
+                self._cors_json(403, json.dumps({'fout': 'niet toegestaan'})); return
+            OFFLINE[0] = time.time() + 1800 if d.get('aan') is True else 0.0
+            self._cors_json(200, json.dumps({'offline': OFFLINE[0] > time.time()})); return
         if p.path == '/brein/chat':
             # 678 (15 nov): TYPEN NAAR HET BREIN. Veronica stuurt {code, messages, max_tokens}; alleen met de rij-code. ARTEMIS stuurt het door
             # naar de llama-server op de brein-telefoon (via de adb-doorsturing, 127.0.0.1) en geeft {tekst, tps, ms} terug -- tps is GEMETEN
@@ -1952,7 +1986,8 @@ class H(BaseHTTPRequestHandler):
                     with open(os.path.join(REK, 'brein-tps'), 'w') as fh: fh.write('%.2f %d\n' % (tps, int(time.time())))
                 except Exception: pass
             self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid,
-                                             'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd'))}))
+                                             'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd')),
+                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time()}))
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
@@ -8161,7 +8196,7 @@ brein_les() {
   code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
   base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
   rek_zorg_crypto >/dev/null 2>&1 || true
-  ALLEEN_NA="${LES_ALLEEN_NA:-}" RIJ="$rij" CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" SERIE="$(brein_nu)" ADBP="$ADB" TPSF="$REK_MAP/brein-tps" ID="$id" CODE="$code" BASE="$base" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="${LES_UIT:-$BREIN_LES_F}" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
+  ALLEEN_NA="${LES_ALLEEN_NA:-}" RIJ="$rij" CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" REKTOKEN="$REK_MAP/rek-token.conf" SERIE="$(brein_nu)" ADBP="$ADB" TPSF="$REK_MAP/brein-tps" ID="$id" CODE="$code" BASE="$base" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="${LES_UIT:-$BREIN_LES_F}" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
 import os, json, re, time, hashlib, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try: stand = json.load(open(os.environ['STAND']))
@@ -8226,18 +8261,27 @@ def vraag(tekst, met):
 # 678 (16 nov): NA = HET ECHTE PAD. De ronde "na" vraagt via /brein/chat van de console -- precies de weg van Veronica: de kennisbank, de verdeler,
 # de rekenhulp (het brein schrijft de som, de code rekent) en de herinnering aan het Nederlands. Gaat dat niet (geen console of geen sleutel),
 # dan de oude weg: rechtstreeks naar het brein met de kennisbank. De bron staat in de uitslag, zodat te zien is wie het antwoord gaf.
+ECHT_FOUT = ['']
 def vraag_echt(tekst):
+    # 678 (17 nov): het ECHTE pad van Veronica (de console: rekenhulp, invaller, keurmeester, bibliothecaris). Faalde dat, dan viel de les STIL
+    # terug op een directe vraag aan het brein (bron "kennisbank") -- het echte pad werd zo nooit gemeten. Nu: met de brein-sleutel OF de
+    # rij-code, en als het misgaat staat de reden erbij.
     try: sl = open(os.environ.get('SLEUTELF', '')).read().strip()
     except Exception: sl = ''
-    if not sl or not re.fullmatch(r'\d{2,5}', os.environ.get('CPOORT', '')): return None
-    lijf = json.dumps({'sleutel': sl, 'les': True, 'keur': True, 'messages': [{'role': 'user', 'content': tekst}], 'max_tokens': 200}).encode()
+    try: cd = open(os.environ.get('REKTOKEN', '')).read().strip()
+    except Exception: cd = ''
+    if not re.fullmatch(r'\d{2,5}', os.environ.get('CPOORT', '')): ECHT_FOUT[0] = 'geen consolepoort'; return None
+    if not sl and not cd: ECHT_FOUT[0] = 'geen brein-sleutel en geen rij-code'; return None
+    lijf = json.dumps({'sleutel': sl, 'code': cd, 'les': True, 'keur': True, 'messages': [{'role': 'user', 'content': tekst}], 'max_tokens': 200}).encode()
     t0 = time.time()
     try:
-        r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=lijf, headers={'Content-Type': 'application/json'}), timeout=300)
+        r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=lijf, headers={'Content-Type': 'application/json'}), timeout=420)
         j = json.loads(r.read(2000000).decode('utf-8', 'replace'))
-    except Exception:
-        return None
-    if not isinstance(j, dict) or 'tekst' not in j: return None
+    except urllib.error.HTTPError as e:
+        ECHT_FOUT[0] = 'HTTP %d' % e.code; return None
+    except Exception as e:
+        ECHT_FOUT[0] = type(e).__name__; return None
+    if not isinstance(j, dict) or 'tekst' not in j: ECHT_FOUT[0] = 'onleesbaar antwoord'; return None
     bron = str(j.get('bron') or 'brein') + ('+nagedacht' if j.get('nagedacht') else '') + ('+verbeterd' if j.get('verbeterd') else '')
     return str(j.get('tekst') or '').strip(), j.get('tps'), round(time.time() - t0, 1), bron
 def kijk(les, a):
@@ -8264,7 +8308,7 @@ for ronde, met in (('voor', False), ('na', True)):
             print('%s %-10s NIET GEVRAAGD (45 graden)' % (ronde, les['id'])); continue
         e = vraag_echt(les['vraag']) if met else None
         if e: a, tps, s, bron = e
-        else: (a, tps, s), bron = vraag(les['vraag'], met), ('kennisbank' if met else 'kaal')
+        else: (a, tps, s), bron = vraag(les['vraag'], met), ('kennisbank (echt pad: %s)' % (ECHT_FOUT[0] or '?') if met else 'kaal')
         goed, waarom = kijk(les, a)
         rij.append({'id': les['id'], 'goed': goed, 'waarom': waarom, 'antwoord': (a or '')[:300], 'tps': tps, 's': s, 'bron': bron})
         print('%s %-10s %s %s' % (ronde, les['id'], 'GOED' if goed else 'FOUT', waarom))
@@ -8302,6 +8346,119 @@ if kid and code and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev', base):
 PY
   rm -rf "$REK_MAP/brein-les.lock"
   stand_tik --nu >/dev/null 2>&1 || true   # 678 (16 nov): de uitslag meteen in het standverslag
+}
+# 678 (17 nov, eigenaar stap 6): DE ZELFSTANDIGHEIDSPROEF -- zonder Claude en zonder internet blijft het rek antwoorden en neemt het werk over.
+# Claude en de relay zitten niet in het antwoordpad; het internet wordt AANTOONBAAR uitgezet: de console weigert tijdens de proef elke verbinding
+# naar iets anders dan deze computer zelf (OFFLINE). Dan vier proeven, door de CODE nagekeken:
+#   1. een gewone vraag: het brein antwoordt, de controle geeft een oordeel, de bibliothecaris kiest de kennis op betekenis;
+#   2. het brein is BEZIG (een lange denkvraag loopt): een korte vraag krijgt meteen antwoord van een invaller;
+#   3. het brein is WEG (ARTEMIS stopt de llama-server op de brein-telefoon, zonder "stoppen", dus de waakhond geeft niet op): een vraag krijgt
+#      toch antwoord, van de controle of de verdeler;
+#   4. HERSTEL: de waakhond zet het brein vanzelf terug (hoogstens 15 minuten), ook zonder internet.
+# Nooit tijdens een les; het brein-slot houdt proefbank en modelproef op afstand. Er wordt niets uitgevoerd dat in een vraag staat.
+ZELFSTANDIG_F="$REK_MAP/zelfstandig.txt"
+brein_onderbreek() {   # de llama-server op de brein-telefoon stoppen ZONDER "stoppen" (de waakhond start hem weer) -- alleen voor de proef
+  local s; s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 1
+  "$ADB" -s "$s" shell "$(brein_kill_cmd)" >/dev/null 2>&1 && echo OK
+}
+zelfstandig_proef() {   # [kanaal-id]
+  local id="${1:-}" link code base
+  if les_loopt; then zeg "Zelfstandigheidsproef: er loopt een les; later opnieuw."; return 0; fi
+  slot_neem "$REK_MAP/zelfstandig.lock" || { zeg "Zelfstandigheidsproef: loopt al."; return 0; }
+  link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
+  code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
+  base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
+  zeg "Zelfstandigheidsproef: het internet gaat voor de console uit; vier proeven (gewone vraag, brein bezig, brein weg, herstel). Dit duurt hoogstens een half uur."
+  CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" REKTOKEN="$REK_MAP/rek-token.conf" AREK="$0" BLOK="$BREIN_POORT_LOK" CLOK="$CONTROLE_POORT_LOK" VLOK="$VERDELER_POORT_LOK" BILOK="$BIBLIO_POORT_LOK" \
+    ID="$id" CODE="$code" BASE="$base" UIT="$ZELFSTANDIG_F" HERSTEL_MAX="${ZELFSTANDIG_HERSTEL_MAX:-900}" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
+import os, json, time, re, hashlib, threading, subprocess, urllib.request, urllib.error
+op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+P = os.environ['CPOORT']
+def lees(f):
+    try: return open(os.environ.get(f, '')).read().strip()
+    except Exception: return ''
+SL, CD = lees('SLEUTELF'), lees('REKTOKEN')
+def post(pad, d, timeout):
+    d = dict(d, sleutel=SL, code=CD)
+    try:
+        r = op.open(urllib.request.Request('http://127.0.0.1:%s%s' % (P, pad), data=json.dumps(d).encode(), headers={'Content-Type': 'application/json'}), timeout=timeout)
+        return r.status, json.loads(r.read(2000000).decode('utf-8', 'replace'))
+    except urllib.error.HTTPError as e:
+        try: return e.code, json.loads(e.read().decode('utf-8', 'replace'))
+        except Exception: return e.code, {}
+    except Exception as e:
+        return 0, {'fout': type(e).__name__}
+def gezond(poort):
+    try:
+        with op.open('http://127.0.0.1:%s/health' % poort, timeout=3) as r: return b'ok' in r.read(200)
+    except Exception: return False
+def chat(tekst, mt=160, timeout=420):
+    t0 = time.time(); st, j = post('/brein/chat', {'messages': [{'role': 'user', 'content': tekst}], 'max_tokens': mt}, timeout)
+    return st, j, round(time.time() - t0, 1)
+R = []
+def punt(naam, goed, zin): R.append((naam, goed, zin)); print('%s %s: %s' % ('GOED' if goed else 'FOUT', naam, zin))
+st, j = post('/intern/offline', {'aan': True}, 10)
+if st != 200 or not j.get('offline'):
+    punt('offline', False, 'de console kon het internet niet uitzetten (HTTP %s) -- de proef stopt' % st)
+else:
+    punt('offline', True, 'de console weigert nu elke verbinding naar buiten deze computer')
+    rollen = ['%s %s' % (n, 'ja' if gezond(p) else 'NEE') for n, p in (('brein', os.environ['BLOK']), ('controle', os.environ['CLOK']), ('verdeler', os.environ['VLOK']), ('bibliothecaris', os.environ['BILOK']))]
+    punt('rollen', all(x.endswith('ja') for x in rollen[:2]), 'antwoorden op hun poort: ' + ', '.join(rollen))
+    # 1. een gewone vraag
+    st, j, t = chat('Wat doet de controle-telefoon in het rek? Antwoord in een zin.')
+    punt('gewone vraag', st == 200 and bool(j.get('tekst')) and not j.get('invaller') and j.get('offline') is True,
+         'HTTP %s in %.1f s, bron %s, kennis op %s, %s tok/s: %s' % (st, t, j.get('bron') or 'brein', j.get('kennis_op') or '?', j.get('tps'), str(j.get('tekst') or j.get('fout') or '')[:120]))
+    cid = j.get('controle_id'); oordeel = None
+    if cid:
+        eind = time.time() + 180
+        while time.time() < eind and oordeel is None:
+            time.sleep(5)
+            try:
+                with op.open('http://127.0.0.1:%s/brein/controle?id=%s' % (P, cid), timeout=10) as r: k = json.loads(r.read().decode())
+                if k.get('klaar'): oordeel = (k.get('controle') or {}).get('oordeel') or 'geen'
+            except Exception: pass
+    punt('controle', oordeel in ('klopt', 'twijfel', 'onduidelijk'), 'oordeel van de controle-telefoon: %s' % (oordeel or 'kwam niet'))
+    punt('bibliothecaris', j.get('kennis_op') == 'betekenis', 'de kennis gekozen op %s' % (j.get('kennis_op') or '?'))
+    # 2. het brein is bezig
+    lang = {}
+    def lange(): lang['r'] = chat('Leg stap voor stap uit waarom een rek van vier telefoons beter werkt dan een telefoon alleen, en vergelijk de rollen.', 300)
+    th = threading.Thread(target=lange); th.start(); time.sleep(6)
+    st, j, t = chat('Hoe heet jij?', 80, 240)
+    punt('brein bezig', st == 200 and j.get('invaller') == 'bezig', 'HTTP %s in %.1f s, invaller %s (%s): %s' % (st, t, j.get('invaller') or '-', j.get('model') or j.get('bron') or '', str(j.get('tekst') or j.get('fout') or '')[:100]))
+    th.join(440)
+    # 3. het brein is weg
+    try: weg = 'OK' in subprocess.run([os.environ['AREK'], 'brein-onderbreek'], capture_output=True, text=True, timeout=60).stdout
+    except Exception: weg = False
+    time.sleep(8)
+    st, j, t = chat('Wie beslist over iets dat geld kost?', 80, 300)
+    punt('brein weg', weg and st == 200 and j.get('invaller') == 'weg', 'brein gestopt: %s; HTTP %s in %.1f s, invaller %s (%s): %s' % ('ja' if weg else 'NEE', st, t, j.get('invaller') or '-', j.get('model') or j.get('bron') or '', str(j.get('tekst') or j.get('fout') or '')[:100]))
+    # 4. herstel door de waakhond, zonder internet
+    t0 = time.time(); terug = False
+    while time.time() - t0 < int(os.environ.get('HERSTEL_MAX', '900')):
+        if gezond(os.environ['BLOK']): terug = True; break
+        time.sleep(15)
+    punt('herstel', terug, ('het brein is na %d s vanzelf terug (de waakhond, zonder internet)' % (time.time() - t0)) if terug else 'het brein kwam niet binnen %d s terug' % int(os.environ.get('HERSTEL_MAX', '900')))
+    post('/intern/offline', {'aan': False}, 10)
+goed = sum(1 for x in R if x[1]); tekst = '\n'.join('- %s **%s**: %s' % ('✓' if g else '✗', n, z) for n, g, z in R)
+samen = 'Zelfstandigheidsproef %s: %d van %d goed (zonder Claude, het internet uit voor de console).' % (time.strftime('%d-%m %H:%M'), goed, len(R))
+print(samen)
+with open(os.environ['UIT'], 'w') as fh: fh.write(samen + '\n' + tekst + '\n')
+code = os.environ.get('CODE', ''); base = os.environ.get('BASE', '').rstrip('/'); kid = os.environ.get('ID', '')
+if kid and code and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev', base):
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        h = lambda s: hashlib.sha256(s.encode()).hexdigest()
+        key = hashlib.sha256(('lokale-ai-sleutel:' + code).encode()).digest()
+        uit = {'v': 1, 'id': kid, 'antwoord': '**' + samen + '**\n\n' + tekst, 'fout': '', 't': int(time.time() * 1000)}
+        iv = os.urandom(12); ct = AESGCM(key).encrypt(iv, json.dumps(uit).encode(), None)
+        lijf = json.dumps({'topic': 'la' + h('lokale-ai-antwoord:' + code)[:30], 'message': json.dumps({'iv': iv.hex(), 'data': ct.hex()})}).encode()
+        op.open(urllib.request.Request(base + '/', data=lijf, headers={'Content-Type': 'application/json', 'User-Agent': 'artemis'}), timeout=20)
+        print('De uitslag staat versleuteld op het kanaal (%s).' % kid)
+    except Exception as e:
+        print('Kon de uitslag niet via het kanaal terugzetten (' + type(e).__name__ + ').')
+PY
+  rm -rf "$REK_MAP/zelfstandig.lock"
+  stand_tik --nu >/dev/null 2>&1 || true
 }
 # <<< BREIN-LES
 # >>> STAND (678, 16 nov, eigenaar: "die browserkoppeling is echt een probleem; laat de lokale AI dat overnemen"): HET STANDVERSLAG.
@@ -8592,6 +8749,7 @@ for x in n["lessen"]:
   [ -f "$REK_MAP/les-wacht" ] && printf '    er wacht een les (sinds %s)\n' "$(date -d "@$(stat -c %Y "$REK_MAP/les-wacht")" '+%d-%m %H:%M' 2>/dev/null)"
   printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
+  printf '\n## Zelfstandigheidsproef (zonder Claude en internet)\n'; sed 's/^/    /' "$ZELFSTANDIG_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Stem en oor (proeftelefoon)\n    %s\n' "$(head -1 "$SPRAAK_TEST_F" 2>/dev/null || echo 'nog geen spraaktest')"
   [ -s "$STEM_ADB_F" ] && printf '    stem via de kabel: %s\n' "$(head -1 "$STEM_ADB_F")"
   [ -s "$PROEF_SPRAAK_NA" ] && printf '    de volgende spraaktest (vanzelf, na een nieuwe JARVIS): om %s\n' "$(date -d "@$(tr -dc 0-9 < "$PROEF_SPRAAK_NA")" '+%H:%M' 2>/dev/null)"
@@ -8760,6 +8918,24 @@ if not vraag:
     raise SystemExit(0)
 # 678 (15 nov): soort "les" = de vaste lesrij en meting (brein-les) op de achtergrond starten. Er wordt NIETS uit de vraag uitgevoerd: alleen
 # het eigen, vaste lesprogramma; brein-les zet de uitslag zelf met dit kanaal-id terug. Een keer per vraag.
+def _les_leeft_z(m):   # zelfde regel als _les_leeft hieronder
+    if not os.path.isdir(m): return False
+    try:
+        with open(os.path.join(m, 'pid')) as fh: _q = int(fh.read().strip() or 0)
+    except Exception:
+        return time.time() - os.path.getmtime(m) < 5400
+    try: os.kill(_q, 0); return True
+    except Exception: return False
+if vraag.get('soort') == 'zelfstandig':   # 678 (17 nov, stap 6): de zelfstandigheidsproef, op de achtergrond; een keer per vraag
+    import subprocess
+    if _les_leeft_z(os.environ['LESLOT']):
+        raise SystemExit(0)   # er loopt een les: NIET afvinken, de volgende minuut opnieuw
+    try:
+        with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
+        subprocess.Popen([os.environ['AREK'], 'zelfstandig', vraag['id']], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+    except Exception:
+        pass
+    raise SystemExit(0)
 if vraag.get('soort') == 'les':
     import subprocess
     # 678 (17 nov): een lesslot ouder dan 90 minuten is VERWEESD (een afgebroken les) -- zelfde regel als les_loopt. Zonder deze regel bleef
@@ -9284,6 +9460,8 @@ case "${1:-status}" in
   brein-kabel) brein_kabel ;;
   brein-rol) brein_rol ;;
   brein-les) brein_les "${2:-}" "${3:-}" ;;
+  zelfstandig) zelfstandig_proef "${2:-}" ;;        # 678 (17 nov, stap 6): de zelfstandigheidsproef (zonder Claude en internet)
+  brein-onderbreek) brein_onderbreek ;;
   brein-les2) brein_les "" 2 ;;
   controle-rol) controle_rol ;;                     # 678 (15 nov): de controle-telefoon (tweede model, andere familie) starten
   controle-status) zeg "== De controle-telefoon (kijkt de antwoorden van het brein na) =="; als_controle brein_status ;;
