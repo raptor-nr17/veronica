@@ -897,6 +897,14 @@ def herstart_als_nieuwer():
     # zou een eindeloze herstart-lus geven. Met de hash herstart hij ALLEEN bij een echte nieuwe versie; gelijk = niets doen.
     h = _hash(AREK)
     if not h or h == START_HASH: return
+    # 678 (17 nov): NIET herstarten zolang er echt een les loopt (zijn proces leeft): de les van 13:42 sneuvelde bij de herstart van 13:46, en
+    # zijn slot hield daarna alles tegen. De nieuwe versie komt dan na de les.
+    try:
+        with open(os.path.join(REK, 'brein-les.lock', 'pid')) as fh: _lp = int(fh.read().strip() or 0)
+        os.kill(_lp, 0)
+        return
+    except Exception:
+        pass
     try:   # 678: de verse console maakt af wat Bijwerken verder doet (na-update), zonder dat iemand op de knop drukt
         with open(os.path.join(REK, 'na-update'), 'w') as fh: fh.write(str(int(time.time())))
     except Exception: pass
@@ -7014,7 +7022,15 @@ brein_extra() {
 # taskset (het hex-masker; kent de telefoon dat niet, dan zonder). Wat er gekozen is staat in kernen.txt naast de server ("masker draden").
 # 678 (16 nov): LOOPT ER EEN LES? Het slot blijft staan als het lesproces wordt afgebroken (een tijdslimiet, een herstart van de console); dan
 # wachtte de waakhond voor altijd ("niet tijdens een les"). Een slot ouder dan 90 minuten telt daarom niet meer -- dezelfde grens als de les zelf.
-les_loopt() { [ -d "$REK_MAP/brein-les.lock" ] && [ -z "$(find "$REK_MAP/brein-les.lock" -maxdepth 0 -mmin +90 2>/dev/null)" ]; }
+# 678 (17 nov): een les LOOPT alleen als zijn proces leeft (het slot draagt het procesnummer). Een les die bij een herstart van ARTEMIS sneuvelde,
+# hield anders 90 minuten lang alles tegen (meting, proefbank, het opnieuw opzetten van de controle en de verdeler). Zonder nummer (een slot
+# van voor deze regel): de oude regel van 90 minuten.
+les_loopt() {
+  [ -d "$REK_MAP/brein-les.lock" ] || return 1
+  local p; p="$(head -1 "$REK_MAP/brein-les.lock/pid" 2>/dev/null | tr -cd '0-9')"
+  if [ -n "$p" ]; then kill -0 "$p" 2>/dev/null; return; fi
+  [ -z "$(find "$REK_MAP/brein-les.lock" -maxdepth 0 -mmin +90 2>/dev/null)" ]
+}
 # 678 (16 nov, gevonden in het verslag van 19:55): STOPPEN GING NIET. De server werd gestart als "./llama-server" (vanuit zijn map) en gestopt met
 # "pkill -f <map>/llama-server" -- dat volledige pad staat niet in zijn opdrachtregel, dus er werd nooit iets gestopt (ook de controle en de
 # verdeler niet). Erger: "pkill -f <pad>" trof de eigen shell (dat pad staat in de opdrachtregel van "sh -c ...") en stopte zichzelf eerst. Nu:
@@ -7998,7 +8014,9 @@ brein_les() {
   case "$rij" in 1|2) : ;; *) rij=1 ;; esac
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || brein_doorsturing >/dev/null 2>&1
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || { zeg "Brein-les: het brein antwoordt niet (druk eerst op Brein: status)."; return 0; }
-  mkdir "$REK_MAP/brein-les.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/brein-les.lock" -maxdepth 0 -mmin +90 2>/dev/null)" ] && rm -rf "$REK_MAP/brein-les.lock" && mkdir "$REK_MAP/brein-les.lock"; } || { zeg "Brein-les: er loopt al een les."; return 0; }
+  if les_loopt; then zeg "Brein-les: er loopt al een les."; return 0; fi
+  rm -rf "$REK_MAP/brein-les.lock"; mkdir "$REK_MAP/brein-les.lock" 2>/dev/null || { zeg "Brein-les: er loopt al een les."; return 0; }
+  printf '%s\n' "$$" >"$REK_MAP/brein-les.lock/pid"   # 678 (17 nov): het slot draagt het procesnummer (les_loopt)
   rm -f "$REK_MAP/les-wacht"
   zeg "Brein-les: de kennisbank zetten, dan de lesrij voor (zonder) en na (met de kennisbank). Dit duurt een kwartier tot een half uur."
   brein_kennis_zet
@@ -8604,7 +8622,15 @@ if vraag.get('soort') == 'les':
     import subprocess
     # 678 (17 nov): een lesslot ouder dan 90 minuten is VERWEESD (een afgebroken les) -- zelfde regel als les_loopt. Zonder deze regel bleef
     # "er loopt al een les" voor altijd waar en startte lesrij 2 via het kanaal nooit.
-    if os.path.isdir(os.environ['LESLOT']) and time.time() - os.path.getmtime(os.environ['LESLOT']) < 5400:
+    def _les_leeft(m):
+        if not os.path.isdir(m): return False
+        try:
+            with open(os.path.join(m, 'pid')) as fh: _q = int(fh.read().strip() or 0)
+        except Exception:
+            return time.time() - os.path.getmtime(m) < 5400   # een slot zonder nummer: de oude regel van 90 minuten
+        try: os.kill(_q, 0); return True
+        except Exception: return False
+    if _les_leeft(os.environ['LESLOT']):
         raise SystemExit(0)   # er loopt al een les (bv. met de knop gestart): NIET afvinken, de volgende minuut opnieuw
     # 678 (17 nov): houdt de PROEFBANK of de MODELPROEF het brein vast (een levend proces in brein.lock), dan WACHT de les: die proeven starten
     # het brein steeds opnieuw met een ander model, en de les van 12:10 kreeg daardoor na drie vragen geen antwoord meer (0/10). Een merkteken
