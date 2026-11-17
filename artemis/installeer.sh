@@ -7986,6 +7986,7 @@ brein_les() {
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || brein_doorsturing >/dev/null 2>&1
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || { zeg "Brein-les: het brein antwoordt niet (druk eerst op Brein: status)."; return 0; }
   mkdir "$REK_MAP/brein-les.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/brein-les.lock" -maxdepth 0 -mmin +90 2>/dev/null)" ] && rm -rf "$REK_MAP/brein-les.lock" && mkdir "$REK_MAP/brein-les.lock"; } || { zeg "Brein-les: er loopt al een les."; return 0; }
+  rm -f "$REK_MAP/les-wacht"
   zeg "Brein-les: de kennisbank zetten, dan de lesrij voor (zonder) en na (met de kennisbank). Dit duurt een kwartier tot een half uur."
   brein_kennis_zet
   link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
@@ -8201,6 +8202,7 @@ brein_herstart_met() {   # $1 serienummer [$2 model] -> de server opnieuw, met $
 }
 brein_proefbank() {
   les_loopt && return 0
+  [ -f "$REK_MAP/les-wacht" ] && return 0   # 678 (17 nov): er wacht een les; die gaat voor
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s model bouw sig huidig best best_tps tps kand regel oud_ifs
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
@@ -8276,6 +8278,7 @@ brein_tel_zet() {   # $1 serienummer, $2 lokaal pad, $3 naam op de telefoon -> 0
 }
 brein_modelproef() {
   les_loopt && return 0
+  [ -f "$REK_MAP/les-wacht" ] && return 0   # 678 (17 nov): er wacht een les; die gaat voor
   [ -s "$REK_MAP/proefbank.sig" ] || return 0   # eerst de vlaggen (stap 4+5)
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s sig oud_m oud_mx regel repo naam sha lokaal mx pad dpad r tps score best_m best_mx best_tps best_score basis_tps grens drep dnaam dsha k mem
@@ -8297,6 +8300,11 @@ brein_modelproef() {
   grens="$(awk "BEGIN{g = $basis_tps * 0.8; print (g < 3 ? g : 3)}")"
   while IFS= read -r regel; do
     [ -n "$regel" ] || continue
+    # 678 (17 nov): WACHT ER EEN LES, dan eerst de les: het oude brein terug, slot los, geen sig -- de volgende keer verder
+    if [ -f "$REK_MAP/les-wacht" ]; then
+      logregel "Modelproef: er wacht een les; het huidige brein terug en de modelproef later verder."
+      brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0
+    fi
     set -- $regel; repo="$1"; naam="$2"; sha="$3"; lokaal="$4"; shift 4; mx="$*"; [ "$mx" = - ] && mx=""
     if [ "$repo" = huidig ]; then lokaal="$oud_m"
     else
@@ -8536,7 +8544,7 @@ kanaal_tik() {
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   mkdir "$REK_MAP/kanaal.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/kanaal.lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] && rm -rf "$REK_MAP/kanaal.lock"; return 0; }
   rek_zorg_crypto >/dev/null 2>&1 || true
-  CODE="$code" BASE="$base" GEZIEN="$KANAAL_GEZIEN_F" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" AREK="$BIN_SELF/artemis-rek" LESLOG="$REK_MAP/console-brein-les.log" LESLOT="$REK_MAP/brein-les.lock" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
+  CODE="$code" BASE="$base" GEZIEN="$KANAAL_GEZIEN_F" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" AREK="$BIN_SELF/artemis-rek" LESLOG="$REK_MAP/console-brein-les.log" LESLOT="$REK_MAP/brein-les.lock" BSLOT="$REK_MAP/brein.lock" LESWACHT="$REK_MAP/les-wacht" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
 import os, json, hashlib, time, re, urllib.request
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -8574,6 +8582,18 @@ if vraag.get('soort') == 'les':
     # "er loopt al een les" voor altijd waar en startte lesrij 2 via het kanaal nooit.
     if os.path.isdir(os.environ['LESLOT']) and time.time() - os.path.getmtime(os.environ['LESLOT']) < 5400:
         raise SystemExit(0)   # er loopt al een les (bv. met de knop gestart): NIET afvinken, de volgende minuut opnieuw
+    # 678 (17 nov): houdt de PROEFBANK of de MODELPROEF het brein vast (een levend proces in brein.lock), dan WACHT de les: die proeven starten
+    # het brein steeds opnieuw met een ander model, en de les van 12:10 kreeg daardoor na drie vragen geen antwoord meer (0/10). Een merkteken
+    # zegt de modelproef dat er een les wacht; die maakt na de lopende kandidaat plaats.
+    try:
+        with open(os.path.join(os.environ['BSLOT'], 'pid')) as fh: _p = int(fh.read().strip() or 0)
+        os.kill(_p, 0); _bezet = True
+    except Exception:
+        _bezet = False
+    if _bezet:
+        try: open(os.environ['LESWACHT'], 'w').close()
+        except Exception: pass
+        raise SystemExit(0)   # NIET afvinken: de volgende minuut opnieuw
     try:
         with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
         subprocess.Popen([os.environ['AREK'], 'brein-les', vraag['id'], str(vraag.get('rij') if vraag.get('rij') in (1, 2) else 1)], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
