@@ -725,8 +725,22 @@ def reken_vraag(t):
     n = len(re.findall(r'\d+(?:[.,]\d+)?', t))
     eenheid = bool(re.search(r'\b(gb|mb|kb|uur|uren|minuut|minuten|seconde|seconden|dag|dagen|week|weken|km|meter)\b', t))   # "3 GB in MB": een getal + een omrekening
     return (n >= 2 or (n == 1 and eenheid)) and bool(re.search(r'\b(hoeveel|hoe lang|hoe ver|hoe vaak|na hoeveel|bereken|reken|how many|how much|how long|wie viele|wie lange)\b', t))
+# 678 (17 nov, lesrij 2 "tijd": "5 woorden per seconde, 400 woorden" werd 50 in plaats van 80): een TEMPOVRAAG zonder model. Staat er
+# "<a> <ding> per <tijdseenheid>" en ergens anders een getal met HETZELFDE ding, dan is het antwoord dat getal gedeeld door het tempo.
+def tempo_som(vraag):
+    t = str(vraag or '').lower().replace(',', '.')
+    m = re.search(r'(\d+(?:\.\d+)?)\s+([a-zà-ÿ]+)\s+per\s+(seconde|minuut|uur|dag|second|minute|hour|sekunde|minute|stunde)\b', t)
+    if not m: return None
+    a, ding = m.group(1), m.group(2)[:5]
+    rest = t[:m.start()] + ' ' + t[m.end():]
+    for b, w in re.findall(r'(\d+(?:\.\d+)?)\s+([a-zà-ÿ]+)', rest):
+        if w[:5] == ding and b != a:
+            return verdeler_som('%s : %s' % (b, a))
+    return None
 def reken_hulp(vraag, vraag_fn):
     if not reken_vraag(vraag): return None
+    ts = tempo_som(vraag)
+    if ts and ts != 'Delen door nul kan niet.': return ts
     sysm = ('Zet de rekenvraag om in EEN rekensom met de getallen uit de vraag. Gebruik alleen cijfers, + - x : en haakjes. Schrijf ALLEEN de som, '
             'zonder woorden en zonder uitkomst. Voorbeeld: "Een trein rijdt 60 km per uur. Hoe lang doet hij over 150 km?" -> 150 : 60. '
             'Kan het niet als som, schrijf GEEN.')
@@ -736,6 +750,7 @@ def reken_hulp(vraag, vraag_fn):
     except Exception: return None
     t = (t.splitlines() or [''])[0].strip().strip('`').split('=')[0].strip().rstrip('.')
     if not t or 'geen' in t.lower(): return None
+    t = re.sub(r'[A-Za-zà-ÿ]{2,}', ' ', t).strip()   # 678 (17 nov): "400 woorden : 5" -- de woorden eruit (niet de x van keer), de som blijft
     getallen = lambda x: set(g.replace(',', '.') for g in re.findall(r'\d+(?:[.,]\d+)?', x))
     if not getallen(t) <= (getallen(str(vraag)) | REKEN_VAST): return None   # een verzonnen getal: niet uitrekenen
     som = verdeler_som(t)
@@ -1853,6 +1868,16 @@ class H(BaseHTTPRequestHandler):
                 tps = (r.get('timings') or {}).get('predicted_per_second')
             except Exception:
                 self._cors_json(502, json.dumps({'fout': 'Het brein gaf een onleesbaar antwoord.'})); return
+            # 678 (17 nov, lesrij 2 "duits"): een vreemde vraag kreeg ondanks de herinnering een Duits antwoord. Dan EEN korte vertaling door het
+            # brein zelf, alleen in dat geval: het antwoord moet altijd Nederlands zijn.
+            if tekst and nl_herinnering(laatste) and nl_herinnering(tekst):
+                rv = brein_vraag({'messages': [{'role': 'system', 'content': 'Vertaal de tekst naar natuurlijk Nederlands. Schrijf alleen de vertaling, niets anders.'},
+                                               {'role': 'user', 'content': tekst[:1500]}], 'max_tokens': mt, 'stream': False, 'temperature': 0,
+                                  'chat_template_kwargs': {'enable_thinking': False}}, timeout=90)
+                try:
+                    vt = brein_tekst(rv['choices'][0]['message']).strip()
+                    if vt and not nl_herinnering(vt): tekst = vt
+                except Exception: pass
             ms = int((time.time() - t0) * 1000)
             vraag_tekst = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
             cid = controle_start(vraag_tekst, tekst, brein_kennis()) if tekst and not les else None
