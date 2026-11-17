@@ -906,6 +906,9 @@ def _hash(p):
         with open(p, 'rb') as f: return hashlib.sha256(f.read()).hexdigest()
     except Exception: return ''
 START_HASH = _hash(AREK)
+try:   # 678 (17 nov): welke versie de CONSOLE draait (die beantwoordt /brein/chat) -- het verslag zet hem naast die van het script
+    with open(os.path.join(REK, 'console-versie'), 'w') as fh: fh.write(START_HASH + '\n')
+except Exception: pass
 def herstart_als_nieuwer():
     # 577/587: laadt de nieuwe code zodra het script op schijf ANDERS is dan toen deze console startte. 587: op de HASH, niet op
     # de mtime -- zelf_bijwerken herschrijft de bestanden elke keer (ook als de inhoud gelijk is), dus mtime bumpt altijd en dat
@@ -915,9 +918,10 @@ def herstart_als_nieuwer():
     # 678 (17 nov): NIET herstarten zolang er echt een les loopt (zijn proces leeft): de les van 13:42 sneuvelde bij de herstart van 13:46, en
     # zijn slot hield daarna alles tegen. De nieuwe versie komt dan na de les.
     try:
-        with open(os.path.join(REK, 'brein-les.lock', 'pid')) as fh: _lp = int(fh.read().strip() or 0)
+        _lm = os.path.join(REK, 'brein-les.lock')
+        with open(os.path.join(_lm, 'pid')) as fh: _lp = int(fh.read().strip() or 0)
         os.kill(_lp, 0)
-        return
+        if time.time() - os.path.getmtime(_lm) < 10800: return   # hoogstens drie uur (een hergebruikt procesnummer houdt hem nooit voor altijd tegen)
     except Exception:
         pass
     try:   # 678: de verse console maakt af wat Bijwerken verder doet (na-update), zonder dat iemand op de knop drukt
@@ -8449,6 +8453,9 @@ stand_maak() {   # het verslag als platte tekst
   printf '# Stand van het rek (ARTEMIS)\n\n'
   printf -- '- versie (vingerafdruk van het script): %s\n' "$(head -1 "$REK_MAP/bron-sha" 2>/dev/null | cut -c1-12 || true)"
   printf -- '- laatst zelf bijgewerkt: %s\n' "$( t="$(head -1 "$REK_MAP/laatst-bijgewerkt" 2>/dev/null | tr -cd '0-9')"; [ -n "$t" ] && date -d "@$t" '+%d-%m %H:%M' || echo onbekend)"
+  # 678 (17 nov): de console (die Veronica en de les beantwoordt) kan een oudere versie draaien dan het script; dan zie je het hier
+  local cv; cv="$(head -1 "$REK_MAP/console-versie" 2>/dev/null | cut -c1-12)"
+  printf -- '- de console draait versie: %s%s\n' "${cv:-onbekend}" "$([ -n "$cv" ] && [ "$cv" != "$(head -1 "$REK_MAP/bron-sha" 2>/dev/null | cut -c1-12)" ] && echo ' (OUDER dan het script: hij herstart bij de volgende ronde, of na een lopende les)')"
   # 678 (17 nov): de uitslagen (les, meting, modelproef) VOORAAN -- wordt het verslag ooit ingekort, dan valt de rest weg, niet dit
   printf '\n## Laatste les\n'
   LES="$BREIN_LES_F" python3 -I -c 'import json,os,time
