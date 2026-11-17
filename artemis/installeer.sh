@@ -7644,20 +7644,20 @@ except Exception: print("")' 2>/dev/null | tr -d '\r\n ')"
   esac
   # 678 (16 nov): mislukte het starten (het model werd nog opgehaald, of de telefoon was even weg), dan zelf opnieuw proberen -- hoogstens eens per
   # 10 minuten, alleen met een gekozen telefoon en alleen na een FOUT (een mens die op Stoppen drukte zet de stand op "uit": dan niets).
-  if [ ! -f "$BREIN_AAN_F" ]; then
-    # 678 (17 nov, de controle en de verdeler hingen zo de hele dag): de stand zegt FOUT, er is geen "aan" -- en toch antwoordt er een server op de
-    # poort (een oude, met een onbekend model). De waakhond zag "antwoordt" en deed niets, en de rol werd nooit meer opgezet. Nu: dan de rol opnieuw
-    # opzetten (die stopt eerst de oude server), hoogstens eens per zes uur, niet tijdens een les.
-    if [ -s "$BREIN_VAST_F" ] && grep -q '"stand":"fout"' "$BREIN_STAND_F" 2>/dev/null && ! les_loopt \
-       && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
-      local tz nz; nz="$(date +%s)"; tz="$(head -1 "$REK_MAP/tegenstrijdig.t" 2>/dev/null | tr -cd '0-9')"
-      if [ $((nz - ${tz:-0})) -ge 21600 ]; then
-        printf '%s\n' "$nz" >"$REK_MAP/tegenstrijdig.t"
-        logregel "${BREIN_LABEL:-Brein}: de stand zegt fout, maar er antwoordt een oude server; de rol wordt opnieuw opgezet."
-        ( REK_MAP="${REK_MAP_BASIS:-$REK_MAP}" setsid "$0" "${BREIN_CMD_ROL:-brein-rol}" </dev/null >>"$REK_MAP/console-${BREIN_CMD_ROL:-brein-rol}.log" 2>&1 & ) 2>/dev/null
-      fi
+  # 678 (17 nov, de controle en de verdeler hingen zo de hele dag): de stand zegt FOUT (de laatste opzet mislukte) -- en toch antwoordt er een
+  # server op de poort (een oude, met een ander of onbekend model), met of zonder "aan". De waakhond zag "antwoordt" en deed niets, en de rol
+  # werd nooit meer opgezet. Nu: dan de rol opnieuw opzetten (die stopt eerst de oude server), hoogstens eens per zes uur, niet tijdens een les.
+  if [ -s "$BREIN_VAST_F" ] && grep -q '"stand":"fout"' "$BREIN_STAND_F" 2>/dev/null && ! les_loopt \
+     && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+    local tz nz; nz="$(date +%s)"; tz="$(head -1 "$REK_MAP/tegenstrijdig.t" 2>/dev/null | tr -cd '0-9')"
+    if [ $((nz - ${tz:-0})) -ge 21600 ]; then
+      printf '%s\n' "$nz" >"$REK_MAP/tegenstrijdig.t"
+      logregel "${BREIN_LABEL:-Brein}: de stand zegt fout, maar er antwoordt een oude server; de rol wordt opnieuw opgezet."
+      ( REK_MAP="${REK_MAP_BASIS:-$REK_MAP}" setsid "$0" "${BREIN_CMD_ROL:-brein-rol}" </dev/null >>"$REK_MAP/console-${BREIN_CMD_ROL:-brein-rol}.log" 2>&1 & ) 2>/dev/null
       return 0
     fi
+  fi
+  if [ ! -f "$BREIN_AAN_F" ]; then
     if [ -s "$BREIN_VAST_F" ] && ! grep -q '"stand":"uit"' "$BREIN_STAND_F" 2>/dev/null && ! curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
       local t0 nu; nu="$(date +%s)"; t0="$(head -1 "$REK_MAP/brein-poging.t" 2>/dev/null | tr -cd '0-9')"; t0="${t0:-0}"
       if [ $((nu - t0)) -ge 600 ]; then
@@ -8420,6 +8420,17 @@ for x in n["lessen"]:
     printf '    %s (%s)%s\n' "$(toestel_naam "$a")" "$(brein_route "$a")" "$(toegestaan "$i" && echo ', op de lijst' || echo ', NIET op de lijst')"
   done
   printf '\n## JARVIS op de rol-telefoons\n    %s\n' "$(head -1 "$JARVIS_WEK_F" 2>/dev/null || echo 'nog niet nagekeken')"
+  # 678 (17 nov): WAT HOUDT WAT VAST -- zo is van buiten te zien waarom een les of een proef niet begint
+  printf '\n## Sloten en wachtrij\n'
+  local sl sp
+  for sl in brein.lock brein-meet.lock brein-les.lock controle/brein.lock verdeler/brein.lock; do
+    [ -d "$REK_MAP/$sl" ] || continue
+    sp="$(head -1 "$REK_MAP/$sl/pid" 2>/dev/null | tr -cd '0-9')"
+    printf '    %s: sinds %s, %s\n' "$sl" "$(date -d "@$(stat -c %Y "$REK_MAP/$sl")" '+%d-%m %H:%M' 2>/dev/null)" \
+      "$( [ -n "$sp" ] && { kill -0 "$sp" 2>/dev/null && echo "proces $sp leeft ($(tr '\0' ' ' </proc/$sp/cmdline 2>/dev/null | sed 's#.*/##' | cut -c1-40))" || echo "proces $sp is weg (verweesd)"; } || echo 'zonder procesnummer')"
+  done
+  [ -f "$REK_MAP/les-wacht" ] && printf '    er wacht een les (sinds %s)\n' "$(date -d "@$(stat -c %Y "$REK_MAP/les-wacht")" '+%d-%m %H:%M' 2>/dev/null)"
+  printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
   printf '\n## Stem en oor (proeftelefoon)\n    %s\n' "$(head -1 "$SPRAAK_TEST_F" 2>/dev/null || echo 'nog geen spraaktest')"
   [ -s "$STEM_ADB_F" ] && printf '    stem via de kabel: %s\n' "$(head -1 "$STEM_ADB_F")"
