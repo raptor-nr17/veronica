@@ -928,13 +928,26 @@ def rol_model(rol):
     try:
         with open(os.path.join(REK, rol, 'brein-stand.json')) as fh: return re.sub(r'\.gguf$', '', str(json.load(fh).get('model') or ''))[:60]
     except Exception: return ''
+def invaller_msgs(msgs, rol):
+    # 678 (17 nov, na de zelfstandigheidsproef): de invaller kreeg de NAAMREGEL VAN HET BREIN mee en zei "Ik ben Qwen3-4B, het brein" terwijl
+    # het de controle-telefoon was. Die regel wordt hier vervangen door zijn eigen naam en rol; de rest (kennisbank, Veronica) blijft.
+    wie = brein_wie(); m = rol_model(rol)
+    eigen = ('Jij bent het taalmodel %s op de %s-telefoon van het rek. Het brein antwoordt nu niet; jij valt voor hem in. '
+             'Noem jezelf zo als ernaar gevraagd wordt, niet het brein.' % (m or 'onbekend', rol))
+    uit = [dict(x) for x in msgs]
+    if uit and uit[0].get('role') == 'system':
+        c = uit[0]['content']
+        uit[0]['content'] = (eigen + c[len(wie):]) if wie and c.startswith(wie) else (eigen + '\n\n' + c)
+    else:
+        uit.insert(0, {'role': 'system', 'content': eigen})
+    return uit
 def invaller_vraag(msgs, mt):
     # -> (tekst, tps, bron, model) of (None, None, None, None). Eerst de controle (groter model), dan de verdeler.
     if controle_bereikbaar():
-        t, tps = rol_vraag(CONTROLE_LOK, msgs, mt, 150)
+        t, tps = rol_vraag(CONTROLE_LOK, invaller_msgs(msgs, 'controle'), mt, 150)
         if t: return t, tps, 'controle-model', rol_model('controle')
     if verdeler_bereikbaar():
-        t, tps = rol_vraag(VERDELER_LOK, msgs, min(mt, 300), 120)
+        t, tps = rol_vraag(VERDELER_LOK, invaller_msgs(msgs, 'verdeler'), min(mt, 300), 120)
         if t: return t, tps, 'verdeler-model', rol_model('verdeler')
     return None, None, None, None
 def doe(cmd):
