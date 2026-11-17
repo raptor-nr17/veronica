@@ -872,7 +872,7 @@ def lus():
                 threading.Thread(target=doe_args, args=(['verdeler-waak'], 330), daemon=True).start()   # 678 (16 nov): en de verdeler
             threading.Thread(target=doe_args, args=(['versie-kijk'], 200), daemon=True).start()   # 678 (16 nov): een nieuwe versie binnen een paar minuten
             if RONDE % 5 == 1:
-                threading.Thread(target=doe_args, args=(['proef-vanzelf'], 900), daemon=True).start()
+                threading.Thread(target=doe_args, args=(['proef-vanzelf'], 3600), daemon=True).start()
             if RONDE % 10 == 7:
                 threading.Thread(target=doe_args, args=(['brein-proefbank'], 2400), daemon=True).start()   # 678 (16 nov): de proefbank (eens per opstelling)
             if RONDE % 10 == 3:
@@ -2635,16 +2635,40 @@ jarvis_proef_bron() {
   local versie="${1:-}" code="${2:-0}" sha="${3:-}" grootte="${4:-0}"
   case "$code" in ''|*[!0-9]*) code=0 ;; esac
   if [ "$code" -le "$JARVIS_VRIJ_CODE" ]; then rm -rf "$w"; zeg "Proefversie: op de tak staat $versie (code $code), niet nieuwer dan de vrijgegeven versie; geen proef nodig."; return 1; fi
-  if [ -s "$JARVIS_PROEF_APK" ] && [ "$(sha256sum "$JARVIS_PROEF_APK" | cut -d' ' -f1)" = "$sha" ]; then rm -rf "$w"; printf '%s\n' "$code" > "$JARVIS_PROEF_APK.code"; JARVIS_PROEF_VERSIE="$versie"; return 0; fi
+  if [ -s "$JARVIS_PROEF_APK" ] && [ "$(sha256sum "$JARVIS_PROEF_APK" | cut -d' ' -f1)" = "$sha" ]; then rm -rf "$w"; printf '%s\n' "$code" > "$JARVIS_PROEF_APK.code"; printf '%s\n' "$versie" > "$JARVIS_PROEF_APK.versie"; JARVIS_PROEF_VERSIE="$versie"; return 0; fi
   zeg "Proefversie $versie (code $code) ophalen uit de privé opslag ..."
-  if ! curl -fsS -m 600 -o "$JARVIS_PROEF_APK.part" "$url" 2>/dev/null; then rm -f "$JARVIS_PROEF_APK.part"; rm -rf "$w"; zeg "Proefversie: ophalen mislukte (verlopen adres? het geldt 48 uur)."; return 1; fi
+  if ! curl -fsS -m 1800 -o "$JARVIS_PROEF_APK.part" "$url" 2>/dev/null; then rm -f "$JARVIS_PROEF_APK.part"; rm -rf "$w"; zeg "Proefversie: ophalen mislukte (verlopen adres? het geldt 48 uur)."; return 1; fi
   if [ "$(stat -c %s "$JARVIS_PROEF_APK.part" 2>/dev/null)" != "$grootte" ] || [ "$(sha256sum "$JARVIS_PROEF_APK.part" | cut -d' ' -f1)" != "$sha" ]; then
     rm -f "$JARVIS_PROEF_APK.part"; rm -rf "$w"; zeg "Proefversie: de controlesom klopt niet; weggegooid, niets geïnstalleerd."; return 1
   fi
   cp -f "$JARVIS_PROEF_APK.part" "$JARVIS_PROEF_APK" && rm -f "$JARVIS_PROEF_APK.part"; chmod 600 "$JARVIS_PROEF_APK" 2>/dev/null || true
-  printf '%s\n' "$code" > "$JARVIS_PROEF_APK.code"; rm -rf "$w"; JARVIS_PROEF_VERSIE="$versie"
+  printf '%s\n' "$code" > "$JARVIS_PROEF_APK.code"; printf '%s\n' "$versie" > "$JARVIS_PROEF_APK.versie"; rm -rf "$w"; JARVIS_PROEF_VERSIE="$versie"
   zeg "Proefversie $versie binnen en gecontroleerd (sha256 klopt)."
   return 0
+}
+# 678 (17 nov, eigenaar: "de S10 hangt op Tailscale; 1.9.99 kwam er nooit op"): DE PROEFVERSIE OVER ELKE ADB-ROUTE -- de kabel of een
+# Tailscale-tunnel (127.0.0.1:56xx). Niet "adb install" in een keer (een grote apk over Tailscale brak af), maar eerst naar de telefoon
+# (adb push, met ruime tijd), dan nakijken dat hij er HEEL staat, dan "pm install -r" op de telefoon zelf, en het tijdelijke bestand weer weg.
+# Elke stap die misgaat staat met de reden en de route in de Log. Nooit de F8.
+jarvis_proef_installeer() {   # $1 serienummer -> 0 = de proefversie staat erop
+  local s="$1" naam route uit groot op code tel=/data/local/tmp/jarvis-proef.apk
+  is_f8 "$s" && return 1
+  naam="$(toestel_naam "$s")"; route="$(case "$s" in *:*) echo Tailscale-adb ;; *) echo kabel ;; esac)"
+  [ -s "$JARVIS_PROEF_APK" ] || { logregel "Proef: er staat geen proefversie op deze computer."; return 1; }
+  code="$(tr -dc 0-9 < "$JARVIS_PROEF_APK.code" 2>/dev/null)"; op="$(jarvis_apk_code "$s")"; case "$op" in ''|*[!0-9]*) op=0 ;; esac
+  if [ -n "$code" ] && [ "$op" -ge "$code" ]; then logregel "Proef: $naam heeft code $op al (de proefversie is $code)."; return 0; fi
+  groot="$(stat -c %s "$JARVIS_PROEF_APK" 2>/dev/null)"
+  timeout 1800 "$ADB" -s "$s" push "$JARVIS_PROEF_APK" "$tel" >/dev/null 2>&1 \
+    || { logregel "Proef: de apk kwam niet op $naam (adb push via $route brak af of duurde langer dan 30 min)."; "$ADB" -s "$s" shell rm -f "$tel" >/dev/null 2>&1; return 1; }
+  if [ "$("$ADB" -s "$s" shell stat -c %s "$tel" 2>/dev/null | tr -d '\r ')" != "$groot" ]; then
+    logregel "Proef: de apk staat niet heel op $naam (via $route); weggehaald, de volgende keer opnieuw."; "$ADB" -s "$s" shell rm -f "$tel" >/dev/null 2>&1; return 1
+  fi
+  uit="$(timeout 600 "$ADB" -s "$s" shell pm install -r "$tel" 2>&1 | tr -d '\r')"
+  "$ADB" -s "$s" shell rm -f "$tel" >/dev/null 2>&1 || true
+  case "$uit" in
+    *Success*) logregel "Proef: JARVIS ${JARVIS_PROEF_VERSIE:-?} (code ${code:-?}) staat op $naam (via $route)."; return 0 ;;
+    *) logregel "Proef: installeren op $naam lukte niet (via $route): $(printf '%s' "$uit" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-160)"; return 1 ;;
+  esac
 }
 # Knop: de rektelefoon die NU aan de USB-kabel zit (precies een, nooit de F8) wordt de proeftelefoon.
 jarvis_proef_zet() {
@@ -2674,9 +2698,7 @@ jarvis_proef_zet() {
     local op uit; op="$(jarvis_apk_code "$kandidaat")"; case "$op" in ''|*[!0-9]*) op=0 ;; esac
     if [ "$op" -ge "$(tr -dc 0-9 < "$JARVIS_PROEF_APK.code")" ]; then zeg "De proeftelefoon heeft $JARVIS_PROEF_VERSIE (of nieuwer) al."
     else
-      uit="$("$ADB" -s "$kandidaat" install -r "$JARVIS_PROEF_APK" 2>&1)"
-      if printf '%s' "$uit" | grep -qi 'Success'; then logregel "Proef: JARVIS $JARVIS_PROEF_VERSIE op $(toestel_naam "$kandidaat")."
-      else zeg "Installeren lukte niet: $(printf '%s' "$uit" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-160)"; fi
+      jarvis_proef_installeer "$kandidaat" || zeg "Installeren lukte niet; de reden staat in de Log."
     fi
   else
     jarvis_oogst 1 >/dev/null 2>&1 || true
@@ -2709,19 +2731,23 @@ proef_vanzelf() {
   printf '%s\n' "$nu" > "$PROEF_VANZELF_T"
   for x in $(verbonden); do is_f8 "$x" && continue; [ "$(toestel_id "$x")" = "$p" ] && { s="$x"; break; }; done
   [ -n "$s" ] || return 0
-  jarvis_proef_bron >/dev/null 2>&1 || return 0
+  uit="$(jarvis_proef_bron 2>&1)" || { case "$uit" in *"geen proef nodig"*) : ;; *) logregel "Proef (vanzelf): $(printf '%s' "$uit" | tail -1 | cut -c1-160)" ;; esac; return 0; }
+  JARVIS_PROEF_VERSIE="$(head -1 "$JARVIS_PROEF_APK.versie" 2>/dev/null | tr -cd '0-9.')"
   nieuw="$(tr -dc 0-9 < "$JARVIS_PROEF_APK.code" 2>/dev/null)"; op="$(jarvis_apk_code "$s")"; case "$op" in ''|*[!0-9]*) op=0 ;; esac
   [ -n "$nieuw" ] && [ "$op" -lt "$nieuw" ] || return 0
-  [ "$(tr -dc 0-9 < "$PROEF_VANZELF_CODE" 2>/dev/null)" = "$nieuw" ] && return 0
-  printf '%s\n' "$nieuw" > "$PROEF_VANZELF_CODE"
+  # 678 (17 nov): de markering kwam VOOR de installatie, en een poging die in de tijdslimiet liep (over Tailscale) werd nooit herhaald. Nu: per
+  # versie hoogstens drie pogingen, en pas "gedaan" na een geslaagde installatie.
+  local pog; pog="$(awk -v c="$nieuw" '$1 == c {print $2}' "$PROEF_VANZELF_CODE" 2>/dev/null)"; pog="${pog:-0}"
+  [ "$pog" -ge 3 ] 2>/dev/null && return 0
+  printf '%s %s\n' "$nieuw" "$((pog + 1))" > "$PROEF_VANZELF_CODE"
   jarvis_terugval_bewaar "$s" "$op"
-  uit="$("$ADB" -s "$s" install -r "$JARVIS_PROEF_APK" 2>&1)"
-  if printf '%s' "$uit" | grep -qi 'Success'; then
+  if jarvis_proef_installeer "$s"; then
+    printf '%s 9\n' "$nieuw" > "$PROEF_VANZELF_CODE"
     logregel "Proef: JARVIS ${JARVIS_PROEF_VERSIE:-?} vanzelf op de proeftelefoon $(toestel_naam "$s"); over 20 minuten de rondgang stem -> oor."
     jarvis_spraak_proef aan >/dev/null 2>&1 || true
     printf '%s\n' "$((nu + 1200))" > "$PROEF_SPRAAK_NA"
   else
-    logregel "Proef: JARVIS ${JARVIS_PROEF_VERSIE:-?} vanzelf installeren lukte niet: $(printf '%s' "$uit" | tr '\n' ' ' | cut -c1-120)"
+    logregel "Proef: poging $((pog + 1)) van 3 voor JARVIS ${JARVIS_PROEF_VERSIE:-?} lukte niet; over een half uur opnieuw."
   fi
 }
 jarvis_proef_uit() { rm -f "$JARVIS_PROEF_F" 2>/dev/null || true; zeg "Geen proeftelefoon meer: alle rektelefoons blijven op de vrijgegeven versie (code $JARVIS_VRIJ_CODE)."; }
