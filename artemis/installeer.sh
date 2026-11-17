@@ -7611,8 +7611,10 @@ brein_nu() {
 # staan -- en de waakhond stopte daarna ELKE keer bij "mkdir brein.lock || return 0": het brein werd nooit meer gestart. Nu staat het
 # proces-nummer in het slot; is dat proces weg, dan is het slot verweesd en wordt het overgenomen. (Een levend proces houdt het slot, ook
 # als de modelproef uren downloadt.)
-brein_slot_neem() {
-  local l="$REK_MAP/brein.lock" p
+brein_slot_neem() { slot_neem "$REK_MAP/brein.lock"; }
+# slot_neem <map>: hetzelfde voor elk slot (ook de meting: die bleef op 16 nov achter en daarna stopte ELKE meting stil -- "0 tok/s")
+slot_neem() {
+  local l="$1" p
   if ! mkdir "$l" 2>/dev/null; then
     p="$(head -1 "$l/pid" 2>/dev/null | tr -cd '0-9')"
     if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then return 1; fi
@@ -7628,6 +7630,10 @@ brein_waak() {
   # was het bestand door die fout misschien het model van een ANDERE rol (ze overschreven elkaar). Dan de rol EEN keer opnieuw opzetten:
   # het juiste model, onder zijn eigen naam. Niet tijdens een les; daarna nooit meer.
   local mm; mm="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  # ook de stand: bij de controle en de verdeler mislukte de rol VOOR brein-model geschreven werd; hun foute naam staat alleen in de stand
+  [ -n "$mm" ] || mm="$(STAND="$BREIN_STAND_F" python3 -I -c 'import json,os
+try: print(str(json.load(open(os.environ["STAND"])).get("model") or ""))
+except Exception: print("")' 2>/dev/null | tr -d '\r\n ')"
   case "$mm" in ''|*[!0-9]*) : ;; *)
     if ! les_loopt && [ ! -f "$REK_MAP/naam-herstel.gedaan" ]; then
       : >"$REK_MAP/naam-herstel.gedaan"; rm -f "$BREIN_AAN_F" "$REK_MAP/brein-model"
@@ -8152,7 +8158,7 @@ brein_meet() {   # [label] -> een regel in brein-meet.log
   if [ "${1:-}" != --nu ] && [ "$(sed -n 1p "$REK_MAP/brein-meet.sig" 2>/dev/null)" = "$sig" ]; then
     t0="$(sed -n 2p "$REK_MAP/brein-meet.sig" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t0:-0})) -lt 21600 ] && return 0
   fi
-  mkdir "$REK_MAP/brein-meet.lock" 2>/dev/null || return 0
+  slot_neem "$REK_MAP/brein-meet.lock" || return 0
   printf '%s\n%s\n' "$sig" "$nu" >"$REK_MAP/brein-meet.sig"
   LABEL="$model, kernen ${kern:-onbekend}, llama.cpp ${bouw:-basis}$(x="$(brein_extra)"; [ -n "$x" ] && printf ', %s' "$x")" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_MEET_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
 import os, json, time, urllib.request
@@ -8224,7 +8230,10 @@ brein_proefbank() {
   IFS="$oud_ifs"
   printf '%s\n' "$best" >"$REK_MAP/brein-extra"
   brein_herstart_met "$s" || logregel "Proefbank: de gekozen opstelling startte niet; de waakhond probeert het opnieuw."
-  printf '%s\n' "$sig" >"$REK_MAP/proefbank.sig"
+  # 678 (17 nov): ALLEEN afvinken als er echt gemeten is. Op 17 nov "klaar in 50 s, schrijven 0 tok/s": de meting deed niets (een verweesd
+  # slot), en toch werd de proefbank afgevinkt -- dan komt hij nooit meer terug. Geen meting = de volgende keer opnieuw.
+  if awk "BEGIN{exit !(${best_tps:-0} > 0)}" 2>/dev/null; then printf '%s\n' "$sig" >"$REK_MAP/proefbank.sig"
+  else logregel "Proefbank: er kwam geen meting (0 tok/s); NIET afgevinkt, de volgende keer opnieuw."; fi
   rm -rf "$REK_MAP/brein.lock"
   logregel "Proefbank klaar: gekozen ${best:-geen extra vlaggen} (schrijven $best_tps tok/s); alle metingen staan onder Snelheid van het brein."
 }
@@ -8279,6 +8288,10 @@ brein_modelproef() {
   # het huidige brein
   tps="$(BREIN_MODEL_PROEF="$oud_mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
   score="$(brein_snelle_les)"
+  if ! awk "BEGIN{exit !($tps > 0)}" 2>/dev/null; then   # 678 (17 nov): zonder meting van het huidige brein valt er niets te vergelijken
+    logregel "Modelproef: de meting van het huidige brein gaf niets (0 tok/s); de modelproef wacht tot meten weer werkt."
+    rm -rf "$REK_MAP/brein.lock"; return 0
+  fi
   printf '%s | %s%s (nu) | schrijven %s tok/s | les %s/20\n' "$(date '+%d-%m %H:%M')" "$oud_m" "${oud_mx:+ $oud_mx}" "$tps" "$score" >>"$MODELPROEF_LOG_F"
   best_m="$oud_m"; best_mx="$oud_mx"; best_tps="$tps"; best_score="$score"; basis_tps="$tps"
   grens="$(awk "BEGIN{g = $basis_tps * 0.8; print (g < 3 ? g : 3)}")"
@@ -8557,7 +8570,9 @@ if not vraag:
 # het eigen, vaste lesprogramma; brein-les zet de uitslag zelf met dit kanaal-id terug. Een keer per vraag.
 if vraag.get('soort') == 'les':
     import subprocess
-    if os.path.isdir(os.environ['LESLOT']):
+    # 678 (17 nov): een lesslot ouder dan 90 minuten is VERWEESD (een afgebroken les) -- zelfde regel als les_loopt. Zonder deze regel bleef
+    # "er loopt al een les" voor altijd waar en startte lesrij 2 via het kanaal nooit.
+    if os.path.isdir(os.environ['LESLOT']) and time.time() - os.path.getmtime(os.environ['LESLOT']) < 5400:
         raise SystemExit(0)   # er loopt al een les (bv. met de knop gestart): NIET afvinken, de volgende minuut opnieuw
     try:
         with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
