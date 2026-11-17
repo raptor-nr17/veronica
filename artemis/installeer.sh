@@ -7645,6 +7645,19 @@ except Exception: print("")' 2>/dev/null | tr -d '\r\n ')"
   # 678 (16 nov): mislukte het starten (het model werd nog opgehaald, of de telefoon was even weg), dan zelf opnieuw proberen -- hoogstens eens per
   # 10 minuten, alleen met een gekozen telefoon en alleen na een FOUT (een mens die op Stoppen drukte zet de stand op "uit": dan niets).
   if [ ! -f "$BREIN_AAN_F" ]; then
+    # 678 (17 nov, de controle en de verdeler hingen zo de hele dag): de stand zegt FOUT, er is geen "aan" -- en toch antwoordt er een server op de
+    # poort (een oude, met een onbekend model). De waakhond zag "antwoordt" en deed niets, en de rol werd nooit meer opgezet. Nu: dan de rol opnieuw
+    # opzetten (die stopt eerst de oude server), hoogstens eens per zes uur, niet tijdens een les.
+    if [ -s "$BREIN_VAST_F" ] && grep -q '"stand":"fout"' "$BREIN_STAND_F" 2>/dev/null && ! les_loopt \
+       && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+      local tz nz; nz="$(date +%s)"; tz="$(head -1 "$REK_MAP/tegenstrijdig.t" 2>/dev/null | tr -cd '0-9')"
+      if [ $((nz - ${tz:-0})) -ge 21600 ]; then
+        printf '%s\n' "$nz" >"$REK_MAP/tegenstrijdig.t"
+        logregel "${BREIN_LABEL:-Brein}: de stand zegt fout, maar er antwoordt een oude server; de rol wordt opnieuw opgezet."
+        ( REK_MAP="${REK_MAP_BASIS:-$REK_MAP}" setsid "$0" "${BREIN_CMD_ROL:-brein-rol}" </dev/null >>"$REK_MAP/console-${BREIN_CMD_ROL:-brein-rol}.log" 2>&1 & ) 2>/dev/null
+      fi
+      return 0
+    fi
     if [ -s "$BREIN_VAST_F" ] && ! grep -q '"stand":"uit"' "$BREIN_STAND_F" 2>/dev/null && ! curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
       local t0 nu; nu="$(date +%s)"; t0="$(head -1 "$REK_MAP/brein-poging.t" 2>/dev/null | tr -cd '0-9')"; t0="${t0:-0}"
       if [ $((nu - t0)) -ge 600 ]; then
@@ -8209,7 +8222,7 @@ brein_proefbank() {
   model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
   bouw="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
   [ "$bouw" = dotprod ] || ! brein_dp_beschikbaar "$s" || return 0   # eerst de dotprod-server (stap 3), dan deze stappen
-  sig="$model|${bouw:-basis}"
+  sig="$model|${bouw:-basis}|v2"   # 678 (17 nov): v2 = na de meetslot-fix; de afvinkingen van 0 tok/s (11:12) tellen niet
   [ "$(head -1 "$REK_MAP/proefbank.sig" 2>/dev/null)" = "$sig" ] && return 0
   brein_slot_neem || return 0   # de waakhond start zolang niets
   logregel "Proefbank: begint ($model, llama-server ${bouw:-basis}); het brein is een paar minuten weg."
@@ -8283,7 +8296,7 @@ brein_modelproef() {
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s sig oud_m oud_mx regel repo naam sha lokaal mx pad dpad r tps score best_m best_mx best_tps best_score basis_tps grens drep dnaam dsha k mem
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
-  sig="$(printf '%s' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"
+  sig="$(printf '%s|v2' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"   # 678 (17 nov): v2 = na de meetslot-fix (de ronde van 11:33-12:09 mat 0 tok/s)
   [ "$(head -1 "$REK_MAP/modelproef.sig" 2>/dev/null)" = "$sig" ] && return 0
   brein_slot_neem || return 0
   oud_m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; oud_mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
