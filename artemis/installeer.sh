@@ -807,7 +807,7 @@ def rek_live():
         d = ([staat] if staat else []) + (['model %s' % m] if m else [])
         r = '- %s: %s' % (rol, ', '.join(d) or 'onbekend')
         if st.get('telefoon'): r += ', op de telefoon %s' % st['telefoon']
-        if isinstance(st.get('vrij_mb'), int): r += ', %d MB vrij geheugen bij het starten' % st['vrij_mb']
+        r += (', %d MB vrij geheugen bij het starten' % st['vrij_mb']) if isinstance(st.get('vrij_mb'), int) else ', vrij geheugen onbekend'   # 18 nov: anders leende het brein het getal van de controle
         if rol == 'brein':
             try:
                 with open(os.path.join(REK, 'brein-tps')) as fh: tps = float(fh.read().split()[0])
@@ -8227,8 +8227,8 @@ except Exception: print("")' 2>/dev/null)"
 - Rekenen: schrijf EERST de tussenstappen op en dan pas het antwoord (bijvoorbeeld: 45 - 38 = 7 graden; 7 : 2 = 3,5 minuten). Een korte zin geldt niet voor rekenen. Handig: 1 GB = 1024 MB (ongeveer 1000), dus 3 GB = 3072 MB; tijd = aantal : tempo.
 - Antwoord kort en duidelijk, in een hele zin.
 - Het rek heeft VIER telefoons, elk met een eigen rol (brein, bibliothecaris, verdeler, helper/controle).
-- Valt een telefoon weg of antwoordt hij niet, dan start ARTEMIS hem VANZELF opnieuw (de waakhond); intussen valt een andere telefoon in. De eigenaar hoeft niets te doen. Herstarten doe jij niet zelf: dat doet ARTEMIS.
-- Vraagt de eigenaar naar de stand van het rek (welk model, hoeveel geheugen, hoe snel, wat draait er), gebruik dan ALLEEN de getallen uit "STAND VAN HET REK NU" als die erbij staat. Staat het er niet bij, zeg dan dat je het niet weet.
+- Antwoordt een telefoon niet meer (de verdeler, de controle of de bibliothecaris), zeg dan: "Je hoeft niets te doen: ARTEMIS start hem vanzelf opnieuw (de waakhond), en intussen valt een andere telefoon in." Herstarten doe jij niet zelf: dat doet ARTEMIS.
+- Vraagt de eigenaar naar de stand van het rek (welk model, hoeveel geheugen, hoe snel, wat draait er), gebruik dan ALLEEN de gegevens uit "STAND VAN HET REK NU". Noem bij een telefoon ALLEEN het getal dat bij DIE telefoon staat, nooit het getal van een andere telefoon. Staat er "onbekend" of staat het er niet bij, zeg dan dat je het niet weet.
 - Vraagt de eigenaar iets te VERTALEN, geef dan de vertaling in de gevraagde taal. Dat is de enige uitzondering op Nederlands.
 - Vraagt iemand wie je bent of wat je in het rek doet: "Ik ben ${m:-het taalmodel}, het brein van het rek: ik beantwoord vragen en denk na; de andere telefoons bewaren, verdelen en helpen." Noem ALTIJD je modelnaam.
 - Vraagt iemand wat de controle-telefoon doet: "De controle-telefoon kijkt de antwoorden van het brein na met een ander taalmodel en zegt of ze kloppen." 
@@ -8482,6 +8482,9 @@ brein_probeer() {   # [kanaal-id] [kandidaat, de naam op de telefoon; standaard 
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || { zeg "Probeer: geen brein-telefoon."; return 0; }
   brein_slot_neem || { zeg "Probeer: het brein is bezet (proefbank of modelproef); later opnieuw."; return 1; }
   oud_m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; oud_mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
+  local oud_vrij; oud_vrij="$(STAND="$BREIN_STAND_F" python3 -I -c 'import json,os
+try: v = json.load(open(os.environ["STAND"])).get("vrij_mb"); print(v * 1024 if isinstance(v, int) else "")
+except Exception: print("")' 2>/dev/null)"   # 678 (18 nov): het vrije geheugen van het huidige brein blijft in de stand staan na de proef
   t="$(mktemp)"
   # 678 (18 nov): de snelheid van het HUIDIGE brein bewaren -- de les van de kandidaat schreef zijn eigen tempo (3,31) als "snelheid van het brein"
   cp -p "$REK_MAP/brein-tps" "$t.tps" 2>/dev/null || : >"$t.tps"
@@ -8501,7 +8504,7 @@ brein_probeer() {   # [kanaal-id] [kandidaat, de naam op de telefoon; standaard 
   # ALTIJD het huidige brein terug
   if [ -n "$oud_m" ]; then
     BREIN_MODEL_PROEF="$oud_mx" brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1 || logregel "Probeer: het huidige brein startte niet meteen; de waakhond probeert het opnieuw."
-    brein_stand klaar "Het brein draait op $(toestel_naam "$s") (terug na de proef van $lokaal)." "$s" "$oud_m" ""
+    brein_stand klaar "Het brein draait op $(toestel_naam "$s") (terug na de proef van $lokaal)." "$s" "$oud_m" "$oud_vrij"
   fi
   if [ -s "$t.tps" ]; then cp -p "$t.tps" "$REK_MAP/brein-tps"; else rm -f "$REK_MAP/brein-tps"; fi; rm -f "$t.tps"
   rm -rf "$REK_MAP/brein.lock"
@@ -8917,8 +8920,10 @@ stand_maak() {   # het verslag als platte tekst
   printf -- '- versie (vingerafdruk van het script): %s\n' "$(head -1 "$REK_MAP/bron-sha" 2>/dev/null | cut -c1-12 || true)"
   printf -- '- laatst zelf bijgewerkt: %s\n' "$( t="$(head -1 "$REK_MAP/laatst-bijgewerkt" 2>/dev/null | tr -cd '0-9')"; [ -n "$t" ] && date -d "@$t" '+%d-%m %H:%M' || echo onbekend)"
   # 678 (17 nov): de console (die Veronica en de les beantwoordt) kan een oudere versie draaien dan het script; dan zie je het hier
-  local cv; cv="$(head -1 "$REK_MAP/console-versie" 2>/dev/null | cut -c1-12)"
-  printf -- '- de console draait versie: %s%s\n' "${cv:-onbekend}" "$([ -n "$cv" ] && [ "$cv" != "$(head -1 "$REK_MAP/bron-sha" 2>/dev/null | cut -c1-12)" ] && echo ' (OUDER dan het script: hij herstart bij de volgende ronde, of na een lopende les)')"
+  # 678 (18 nov): de console onthoudt de vingerafdruk van het GEINSTALLEERDE programma (artemis-rek), niet die van installeer.sh; die twee
+  # vergelijken gaf ELK verslag "OUDER". Nu: dezelfde vingerafdruk van hetzelfde bestand, net als de console zelf doet bij het herstarten.
+  local cv nu; cv="$(head -1 "$REK_MAP/console-versie" 2>/dev/null | cut -c1-12)"; nu="$(sha256sum "$BIN_SELF/artemis-rek" 2>/dev/null | cut -c1-12)"
+  printf -- '- de console draait versie: %s%s\n' "${cv:-onbekend}" "$([ -n "$cv" ] && [ -n "$nu" ] && [ "$cv" != "$nu" ] && echo ' (OUDER dan het geinstalleerde programma: hij herstart bij de volgende ronde, of na een lopende les)' || { [ -n "$cv" ] && [ "$cv" = "$nu" ] && echo ' (de nieuwste)'; })"
   # 678 (17 nov): de uitslagen (les, meting, modelproef) VOORAAN -- wordt het verslag ooit ingekort, dan valt de rest weg, niet dit
   printf '\n## Laatste les\n'
   LES="$BREIN_LES_F" python3 -I -c 'import json,os,time
