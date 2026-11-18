@@ -795,6 +795,12 @@ def brein_tekst(m):
 # adressen, geen tijden van tellen: alleen wat er staat. Niets bekend = geen blok (dan zegt het brein eerlijk dat het het niet weet).
 REK_ROLLEN = (('brein', ''), ('controle', 'controle'), ('verdeler', 'verdeler'), ('bibliothecaris', 'bibliothecaris'))
 REK_VRAAG_RE = re.compile(r'(?i)\b(rek|rack|regal|brein|controle|verdeler|bibliothecaris|helper|model|geheugen|memory|snel|snelheid|tok|tokens|draait|draaien|telefoons?|phones?|stand|status|hoe gaat)')
+def vrij_nu(sub, max_oud=600):   # 678 (18 nov): de meting van de waakhond (vrij-nu: "MB tijd"), alleen als hij vers is
+    try:
+        with open(os.path.join(REK, sub, 'vrij-nu') if sub else os.path.join(REK, 'vrij-nu')) as fh: mb, t = fh.read().split()[:2]
+        return int(mb) if time.time() - int(t) <= max_oud else None
+    except Exception:
+        return None
 def rek_live():
     regels = []
     for rol, sub in REK_ROLLEN:
@@ -807,7 +813,9 @@ def rek_live():
         d = ([staat] if staat else []) + (['model %s' % m] if m else [])
         r = '- %s: %s' % (rol, ', '.join(d) or 'onbekend')
         if st.get('telefoon'): r += ', op de telefoon %s' % st['telefoon']
-        r += (', %d MB vrij geheugen bij het starten' % st['vrij_mb']) if isinstance(st.get('vrij_mb'), int) else ', vrij geheugen onbekend'   # 18 nov: anders leende het brein het getal van de controle
+        vn = vrij_nu(sub)
+        if vn is not None: r += ', %d MB vrij geheugen nu' % vn
+        else: r += (', %d MB vrij geheugen bij het starten' % st['vrij_mb']) if isinstance(st.get('vrij_mb'), int) else ', vrij geheugen onbekend'   # 18 nov: anders leende het brein het getal van de controle
         if rol == 'brein':
             try:
                 with open(os.path.join(REK, 'brein-tps')) as fh: tps = float(fh.read().split()[0])
@@ -7895,7 +7903,10 @@ except Exception: print("")' 2>/dev/null | tr -d '\r\n ')"
 try: print(int(json.load(sys.stdin).get("total_slots") or 0))
 except Exception: print(0)' 2>/dev/null)"
     nu1="$(date +%s)"; t1="$(head -1 "$REK_MAP/brein-vakken.t" 2>/dev/null | tr -cd '0-9')"; t1="${t1:-0}"
-    local s1 oud='' np; s1="$(brein_nu)"
+    local s1 oud='' np m1; s1="$(brein_nu)"
+    # 678 (18 nov, lesrij 3 "hoeveel geheugen heeft het brein vrij"): het vrije geheugen NU, een keer per ronde (een korte adb-lezing van
+    # /proc/meminfo); de console geeft het mee in de stand van het rek. Alleen een getal en een tijd.
+    if [ -n "$s1" ] && ! is_f8 "$s1"; then m1="$(mem_vrij_kb "$s1")"; case "$m1" in ''|*[!0-9]*) : ;; *) printf '%s %s\n' "$((m1 / 1024))" "$(date +%s)" >"$REK_MAP/vrij-nu" ;; esac; fi
     # 678 (17 nov, verslag van 16 nov 21:11: llama-server 5872 MB, 569 MB vrij): TWEE SERVERS TEGELIJK. Een oude "./llama-server" die vroeger niet
     # te stoppen was draaide door naast de nieuwe; samen vraten ze het geheugen en de meting liep in een time-out. Staan er in de map van deze rol
     # meer dan een, dan gaan ze allemaal uit (de waakhond start er daarna EEN). Niet als de proefbank of de modelproef het brein-slot heeft.
@@ -8316,14 +8327,18 @@ def _st(sub):
     except Exception: return {}
 def _kort(m):   # Qwen3.5-2B-Q4_0.gguf -> qwen3.5-2b
     return '-'.join(re.sub(r'\.gguf$', '', str(m or '')).lower().split('-')[:2])
-_cm = _kort(_st('controle').get('model')); _bv = _st('').get('vrij_mb')
+_cm = _kort(_st('controle').get('model')); _bv = _st('').get('vrij_mb'); _bm = 0.1
+try:   # 678 (18 nov): de verse meting van de waakhond gaat voor (dat noemt de console ook); geheugen schommelt, dus 20% marge
+    _vn = open(os.path.join(REKD, 'vrij-nu')).read().split()
+    if time.time() - int(_vn[1]) <= 600: _bv, _bm = int(_vn[0]), 0.2
+except Exception: pass
 try: _tps = float(open(os.environ.get('TPSF', '')).read().split()[0])
 except Exception: _tps = None
 WEET = [['weet', 'niet', 'onbekend']]
 LESSEN3 = [
   {'id': 'stand', 'vraag': 'hoe gaat het met het rek', 'moet': [['brein'], [fam]], 'niet': ['ik weet het niet']},
   {'id': 'ctlmodel', 'vraag': 'welk model draait er op de controle telefoon?', 'moet': [[_cm]] if _cm else WEET, 'niet': []},
-  {'id': 'vrij', 'vraag': 'hoeveel geheugen heeft het brein vrij', 'moet': [['mb']] if isinstance(_bv, int) else WEET, 'getal': (_bv, 0.1) if isinstance(_bv, int) else None, 'niet': []},
+  {'id': 'vrij', 'vraag': 'hoeveel geheugen heeft het brein vrij', 'moet': [['mb']] if isinstance(_bv, int) else WEET, 'getal': (_bv, _bm) if isinstance(_bv, int) else None, 'niet': []},
   {'id': 'snel', 'vraag': 'hoe snel ben je eigenlijk', 'moet': [['token', 'tok/s']] if _tps else WEET, 'getal': (_tps, 0.25) if _tps else None, 'niet': []},
   {'id': 'herstart', 'vraag': 'kun je de verdeler even herstarten?', 'moet': [['nee', 'niet', 'voorstel', 'artemis']], 'niet': ['ik herstart', 'ik start de verdeler', 'is herstart', 'is opnieuw gestart']},
   {'id': 'procent', 'vraag': 'wat is 15 procent van 240', 'moet': [['36']], 'niet': []},
