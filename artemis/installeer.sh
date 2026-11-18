@@ -668,6 +668,26 @@ def controle_bereikbaar():
             with op.open('http://127.0.0.1:%d/health' % CONTROLE_LOK, timeout=2) as r: return b'ok' in r.read(200)
         except Exception: return False
     return gezond() or ('OK' in doe_args(['controle-doorsturing'], 15) and gezond())
+# 678 (18 nov, eigenaar punt 5: "elk fout of leeg antwoord in Veronica wordt vanzelf een nieuwe les"). HET FOUT-DAGBOEK: een vraag uit Veronica
+# waarop het brein leeg bleef of waar de controle aan twijfelde, komt hier in -- ALLEEN op deze computer (600), nooit in het verslag, het logboek
+# of op het kanaal (daar gaan alleen aantallen heen). Lesrij 5 stelt die vragen opnieuw; een vraag die dan wel goed gaat heet opgelost.
+FOUT_DAGBOEK_MAX = 200
+def fout_dagboek(vraag, reden):
+    v = re.sub(r'\s+', ' ', str(vraag or '')).strip()[:500]
+    if len(v) < 3: return
+    pad = os.path.join(REK, 'fout-dagboek.jsonl')
+    try:
+        with open(pad) as fh: regels = [json.loads(x) for x in fh if x.strip()]
+    except Exception:
+        regels = []
+    sleutel = v.lower()
+    regels = [x for x in regels if str(x.get('vraag', '')).lower() != sleutel]   # dezelfde vraag een keer, de nieuwste reden
+    regels.append({'t': int(time.time()), 'vraag': v, 'reden': str(reden)[:80], 'opgelost': False})
+    try:
+        with open(pad + '.nieuw', 'w') as fh: fh.write(''.join(json.dumps(x, ensure_ascii=False) + '\n' for x in regels[-FOUT_DAGBOEK_MAX:]))
+        os.chmod(pad + '.nieuw', 0o600); os.replace(pad + '.nieuw', pad)
+    except Exception:
+        pass
 def controle_start(vraag, antwoord, kennis=''):
     if not antwoord or not controle_bereikbaar(): return None
     nu = time.time()
@@ -678,6 +698,7 @@ def controle_start(vraag, antwoord, kennis=''):
         try: o = controle_oordeel(vraag, antwoord, kennis)
         except Exception: o = None
         if o and o.get('oordeel') == 'twijfel':
+            fout_dagboek(vraag, 'de controle twijfelde')
             try: v = brein_verbeter(vraag, antwoord, o.get('zin') or '', kennis)
             except Exception: v = None
             if v and v.strip() != str(antwoord).strip(): o = dict(o, verbeterd=v[:3000])
@@ -824,9 +845,11 @@ def rek_live():
         regels.append(r + '.')
     return ('STAND VAN HET REK NU (gemeten door ARTEMIS; gebruik alleen deze gegevens):\n' + '\n'.join(regels)) if regels else ''
 def brein_kennis():
-    # 678 (15 nov): de kennisbank van het brein (spiegel van brein-kennis.md op de kaart van de Cat) als vaste instructie bij elke vraag
+    # 678 (15 nov): de kennisbank van het brein (spiegel van brein-kennis.md op de kaart van de Cat) als vaste instructie bij elke vraag.
+    # 678 (18 nov, punt 7): de kennisbank groeit (stand van het rek, extra kennis via het kanaal); er gaat nooit alles mee in een vraag:
+    # brein_kennis_voor kiest per vraag de kern en de best passende regels.
     try:
-        with open(os.path.join(REK, 'kennisboek', 'brein-kennis.md')) as fh: return fh.read()[:3500].strip()
+        with open(os.path.join(REK, 'kennisboek', 'brein-kennis.md')) as fh: return fh.read()[:60000].strip()
     except Exception:
         return ''
 # 678 (17 nov, eigenaar: "kennisbank slimmer: per vraag alleen de best passende stukken"). De kennisbank is een lijst regels ("- ..."). Een vaste
@@ -867,14 +890,33 @@ def _cos(a, b):
     import math
     n = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
     return sum(x * y for x, y in zip(a, b)) / n if n else 0.0
+KENNIS_WARM = [False]
+def kennis_warm(regels):
+    # 678 (18 nov, punt 7): veel nieuwe regels tegelijk (extra kennis via het kanaal) passen niet in een vraag van zes seconden aan de Cat.
+    # Dan op de achtergrond, in brokjes van 16, met een ruimere tijd; tot dan kiest de console op woorden. Een draad tegelijk.
+    if KENNIS_WARM[0]: return
+    KENNIS_WARM[0] = True
+    def _doe():
+        try:
+            nodig = [r for r in regels if r not in KENNIS_VEC]
+            for i in range(0, len(nodig), 16):
+                brok = nodig[i:i + 16]
+                v = bibliothecaris_embed(['title: none | text: ' + r.lstrip('- ') for r in brok], timeout=60)
+                if v is None: break
+                for r, x in zip(brok, v): KENNIS_VEC[r] = x
+        finally:
+            KENNIS_WARM[0] = False
+    threading.Thread(target=_doe, daemon=True).start()
 def kennis_op_betekenis(vraag, rest):
     # -> {regel: score} of None (geen bibliothecaris). EmbeddingGemma wil een taakregel voor de vraag en voor de tekst.
     nodig = [r for r in rest if r not in KENNIS_VEC]
+    if len(nodig) > 16:
+        kennis_warm(rest); return None
     if nodig:
         v = bibliothecaris_embed(['title: none | text: ' + r.lstrip('- ') for r in nodig])
         if v is None: return None
         for r, x in zip(nodig, v): KENNIS_VEC[r] = x
-        if len(KENNIS_VEC) > 400: KENNIS_VEC.clear()
+        if len(KENNIS_VEC) > 2000: KENNIS_VEC.clear()
     q = bibliothecaris_embed(['task: question answering | query: ' + str(vraag)[:600]], timeout=4)
     if not q: return None
     return {r: _cos(q[0], KENNIS_VEC[r]) for r in rest if r in KENNIS_VEC}
@@ -910,7 +952,7 @@ def denk_nodig(t):
 # 678 (17 nov, eigenaar: "S10 als keurmeester die elk antwoord nakijkt en bij twijfel het brein laat verbeteren"). Zegt de controle NEE, dan krijgt
 # het brein zijn eigen antwoord en de opmerking van de controle terug, met de opdracht het te verbeteren (of, als het klopt, kort te herhalen).
 def brein_verbeter(vraag, antwoord, opmerking, kennis=''):
-    berichten = [{'role': 'system', 'content': ((brein_wie() + ' ') if brein_wie() else '') + (kennis or brein_kennis())},
+    berichten = [{'role': 'system', 'content': ((brein_wie() + ' ') if brein_wie() else '') + (kennis or brein_kennis_voor(vraag))},
                  {'role': 'user', 'content': str(vraag)[:3000]},
                  {'role': 'assistant', 'content': str(antwoord)[:3000]},
                  {'role': 'user', 'content': 'Een tweede taalmodel heeft je antwoord nagekeken en twijfelt: "%s". Verbeter je antwoord als dat nodig is. '
@@ -1147,6 +1189,10 @@ def lus():
                 doe('voortgang-controle')   # 678 (12 nov): kijkt of er langer dan 30 minuten niets gepusht is (stil; melding hoogstens eens per uur)
             if RONDE % 180 == 45:
                 doe('beheerder-opslag')   # 609: de lokale beheerder -- elke ~3 uur de opslag van de rektelefoons bewaken + veilig opruimen (nooit de F8)
+            if RONDE % 30 == 17:
+                doe('zelfstandig-tik')   # 678 (18 nov, punt 9): elke vier uur de zelfstandigheidsproef (beslist zelf of het nu kan; start op de achtergrond)
+            if RONDE % 30 == 23:
+                doe('dagboek-tik')   # 678 (18 nov, punt 5): nieuwe vragen in het fout-dagboek = vanzelf een les (hoogstens eens per drie uur)
             if RONDE % 180 == 120:
                 doe('kennisboek-kopie')   # 165: elke ~3 uur proberen; de kopie zelf gebeurt hoogstens één keer per dag (idempotent)
         except Exception: pass
@@ -1932,6 +1978,28 @@ class H(BaseHTTPRequestHandler):
                 self._cors_json(403, json.dumps({'fout': 'niet toegestaan'})); return
             OFFLINE[0] = time.time() + 1800 if d.get('aan') is True else 0.0
             self._cors_json(200, json.dumps({'offline': OFFLINE[0] > time.time()})); return
+        if p.path == '/rol/proef':
+            # 678 (18 nov, punt 6): DE CONTROLE EN DE VERDELER APART TOETSEN, met hun ECHTE functies (controle_oordeel, verdeler_soort). Alleen met
+            # de rij-code of de brein-sleutel (zoals /brein/chat). Er wordt niets uitgevoerd; alleen een oordeel of een indeling terug.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            try: d = json.loads(self.rfile.read(min(ln, 20000)).decode('utf-8', 'replace') if ln else '{}')
+            except Exception: d = {}
+            try:
+                with open(os.path.join(REK, 'rek-token.conf')) as fh: tok = fh.read().strip()
+            except Exception: tok = ''
+            try:
+                with open(os.path.join(REK, 'brein-sleutel')) as fh: bsl = fh.read().strip()
+            except Exception: bsl = ''
+            c = str(d.get('code') or ''); sl = str(d.get('sleutel') or '')
+            if not ((tok and c and hmac.compare_digest(c.encode(), tok.encode())) or (bsl and sl and hmac.compare_digest(sl.encode(), bsl.encode()))):
+                self._cors_json(403, json.dumps({'fout': 'niet gekoppeld'})); return
+            vr = str(d.get('vraag') or '')[:1500]; t0 = time.time()
+            if d.get('rol') == 'controle':
+                o = controle_oordeel(vr, str(d.get('antwoord') or '')[:2000], brein_kennis_voor(vr))
+                self._cors_json(200, json.dumps({'oordeel': (o or {}).get('oordeel'), 'model': (o or {}).get('model'), 'ms': int((time.time() - t0) * 1000)})); return
+            if d.get('rol') == 'verdeler':
+                self._cors_json(200, json.dumps({'soort': verdeler_soort(vr), 'model': verdeler_model(), 'ms': int((time.time() - t0) * 1000)})); return
+            self._cors_json(400, json.dumps({'fout': 'onbekende rol'})); return
         if p.path == '/brein/chat':
             # 678 (15 nov): TYPEN NAAR HET BREIN. Veronica stuurt {code, messages, max_tokens}; alleen met de rij-code. ARTEMIS stuurt het door
             # naar de llama-server op de brein-telefoon (via de adb-doorsturing, 127.0.0.1) en geeft {tekst, tps, ms} terug -- tps is GEMETEN
@@ -2052,12 +2120,17 @@ class H(BaseHTTPRequestHandler):
                 except Exception: pass
             ms = int((time.time() - t0) * 1000)
             vraag_tekst = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
-            cid = controle_start(vraag_tekst, tekst, brein_kennis()) if tekst and not les else None
+            if not les:   # 678 (18 nov, punt 5 en 9): een leeg antwoord gaat in het fout-dagboek; en wanneer de eigenaar het laatst iets vroeg
+                if not tekst: fout_dagboek(laatste0, 'leeg antwoord')
+                try:
+                    with open(os.path.join(REK, 'laatste-vraag.t'), 'w') as fh: fh.write(str(int(time.time())))
+                except Exception: pass
+            cid = controle_start(vraag_tekst, tekst, brein_kennis_voor(vraag_tekst)) if tekst and not les else None
             kc = None
             if tekst and les and d.get('keur') is True and controle_bereikbaar():   # 678: de lesmeting kan de keurmeester meenemen (en wacht er dan op)
-                kc = controle_oordeel(vraag_tekst, tekst, brein_kennis())
+                kc = controle_oordeel(vraag_tekst, tekst, brein_kennis_voor(vraag_tekst))
                 if kc and kc.get('oordeel') == 'twijfel':
-                    v = brein_verbeter(vraag_tekst, tekst, kc.get('zin') or '', brein_kennis())
+                    v = brein_verbeter(vraag_tekst, tekst, kc.get('zin') or '', brein_kennis_voor(vraag_tekst))
                     if v: tekst = v; kc = dict(kc, verbeterd=True)
             if isinstance(tps, (int, float)):
                 try:
@@ -8270,6 +8343,19 @@ except Exception: print("")' 2>/dev/null)"
 - Vraagt iemand wat de controle-telefoon doet: "De controle-telefoon kijkt de antwoorden van het brein na met een ander taalmodel en zegt of ze kloppen." 
 - BELANGRIJK, ALTIJD: antwoord in het NEDERLANDS, ook als de vraag in het Engels of Duits is. Nooit in het Engels of Duits antwoorden.
 KENNIS
+  # 678 (18 nov, punt 7): DE STAND VAN HET REK, op het moment dat de kennisbank gezet wordt (de console geeft bij een vraag over het rek ook
+  # de stand van NU mee; dit is de vaste kennis daaronder): per rol de telefoon en het model. Geen serienummers, geen adressen.
+  local rol map st tl md
+  for rol in brein controle verdeler bibliothecaris; do
+    case "$rol" in brein) map="$REK_MAP" ;; controle) map="$CONTROLE_MAP" ;; verdeler) map="$VERDELER_MAP" ;; bibliothecaris) map="$BIBLIO_MAP" ;; esac
+    st="$(cat "$map/brein-stand.json" 2>/dev/null)"; [ -n "$st" ] || continue
+    tl="$(printf '%s' "$st" | sed -n 's/.*"telefoon":"\([^"]*\)".*/\1/p' | tr -cd 'A-Za-z0-9 ._-')"; md="$(printf '%s' "$st" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p' | sed 's/\.gguf$//' | tr -cd 'A-Za-z0-9._-')"
+    [ -n "$md" ] && printf -- '- In het rek is de %s de telefoon %s, met het model %s.\n' "$rol" "${tl:-onbekend}" "$md"
+  done
+  # 678 (18 nov, punt 7): EXTRA KENNIS die via het (versleutelde) kanaal binnenkwam -- feiten over de streek en de verhalen van de eigenaar.
+  # Staat alleen op deze computer en op de kaart van de Cat; nooit in dit script (dat gaat naar de openbare site).
+  [ -s "$REK_MAP/kennis-extra.md" ] && grep '^- ' "$REK_MAP/kennis-extra.md" | head -400
+  return 0
 }
 # brein_kennis_zet: de kennis op de kaart van de Cat zetten (de bron van waarheid) en de spiegel op deze computer bijwerken.
 # Geen Cat bereikbaar = alleen de spiegel (en dat zeggen). Nooit de F8.
@@ -8293,13 +8379,15 @@ brein_kennis_zet() {
 # de uitslag versleuteld terug via het kanaal. Een les tegelijk.
 brein_les() {
   local id="${1:-}" rij="${2:-1}" link code base
-  case "$rij" in 1|2|3) : ;; *) rij=1 ;; esac
+  case "$rij" in 1|2|3) : ;; 4) [ -s "$REK_MAP/lesrij4.json" ] || { zeg "Brein-les: lesrij 4 heeft nog geen vragen (die komen via het kanaal)."; return 0; } ;;
+    5) [ -s "$REK_MAP/fout-dagboek.jsonl" ] || { zeg "Brein-les: het fout-dagboek is leeg."; return 0; } ;; *) rij=1 ;; esac
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || brein_doorsturing >/dev/null 2>&1
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || { zeg "Brein-les: het brein antwoordt niet (druk eerst op Brein: status)."; return 0; }
   if les_loopt; then zeg "Brein-les: er loopt al een les."; return 0; fi
   rm -rf "$REK_MAP/brein-les.lock"; mkdir "$REK_MAP/brein-les.lock" 2>/dev/null || { zeg "Brein-les: er loopt al een les."; return 0; }
   printf '%s\n' "$$" >"$REK_MAP/brein-les.lock/pid"   # 678 (17 nov): het slot draagt het procesnummer (les_loopt)
   rm -f "$REK_MAP/les-wacht"
+  [ "$rij" = 5 ] && [ -z "${LES_UIT:-}" ] && local LES_UIT="$REK_MAP/brein-les-dagboek.json"   # 678 (18 nov): het dagboek apart van de vaste lesrijen
   zeg "Brein-les: de kennisbank zetten, dan de lesrij voor (zonder) en na (met de kennisbank). Dit duurt een kwartier tot een half uur."
   brein_kennis_zet
   link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
@@ -8374,6 +8462,14 @@ LESSEN3 = [
 ]
 if os.environ.get('RIJ') == '2': LESSEN = LESSEN2
 if os.environ.get('RIJ') == '3': LESSEN = LESSEN3
+DAGBOEK = os.path.join(REKD, 'fout-dagboek.jsonl')
+if os.environ.get('RIJ') == '5':   # 678 (18 nov, punt 5): de open vragen uit het fout-dagboek (hoogstens tien, de nieuwste) -- alleen het echte pad
+    try: _db = [json.loads(x) for x in open(DAGBOEK) if x.strip()]
+    except Exception: _db = []
+    LESSEN = [{'id': 'd%d' % i, 'vraag': x['vraag'], 'moet': [], 'niet': [], 'dagboek': True} for i, x in enumerate([x for x in _db if not x.get('opgelost')][-10:], 1)]
+if os.environ.get('RIJ') == '4':   # 678 (18 nov, punt 4): lesrij 4 komt als GEGEVENS via het kanaal (vragen over de streek staan nooit in dit script)
+    try: LESSEN = [dict(x, moet=[[fam if w == '{fam}' else w for w in g] for g in x['moet']]) for x in json.load(open(os.path.join(REKD, 'lesrij4.json')))]
+    except Exception: LESSEN = []
 NL = set('de het een en ik je jij is ben niet wat dat van op te in mag nooit denk na beantwoord vragen rek brein telefoon telefoons dit voor'.split())
 EN = set('the and i am you your my this rack think brain answer questions what do'.split())
 import subprocess
@@ -8403,6 +8499,7 @@ def vraag(tekst, met):
 # dan de oude weg: rechtstreeks naar het brein met de kennisbank. De bron staat in de uitslag, zodat te zien is wie het antwoord gaf.
 ECHT_FOUT = ['']
 DIAG = [None]
+KEUR = [None]
 def vraag_echt(tekst):
     # 678 (17 nov): het ECHTE pad van Veronica (de console: rekenhulp, invaller, keurmeester, bibliothecaris). Faalde dat, dan viel de les STIL
     # terug op een directe vraag aan het brein (bron "kennisbank") -- het echte pad werd zo nooit gemeten. Nu: met de brein-sleutel OF de
@@ -8424,11 +8521,16 @@ def vraag_echt(tekst):
         ECHT_FOUT[0] = type(e).__name__; return None
     if not isinstance(j, dict) or 'tekst' not in j: ECHT_FOUT[0] = 'onleesbaar antwoord'; return None
     bron = str(j.get('bron') or 'brein') + ('+nagedacht' if j.get('nagedacht') else '') + ('+verbeterd' if j.get('verbeterd') else '')
-    DIAG[0] = j.get('leeg') if isinstance(j.get('leeg'), dict) else None   # 678 (18 nov): waarom het antwoord leeg was, en of opnieuw vragen hielp
+    DIAG[0] = j.get('leeg') if isinstance(j.get('leeg'), dict) else None
+    KEUR[0] = j.get('keur') if j.get('keur') in ('klopt', 'twijfel', 'onduidelijk') else None   # 678 (18 nov): waarom het antwoord leeg was, en of opnieuw vragen hielp
     if DIAG[0] and DIAG[0].get('opnieuw') == 'gelukt': bron += '+opnieuw'
     return str(j.get('tekst') or '').strip(), j.get('tps'), round(time.time() - t0, 1), bron
 def kijk(les, a):
     if not a: return False, 'geen antwoord'
+    if les.get('dagboek'):   # 678 (18 nov, punt 5): een vraag uit het dagboek is goed als er een echt antwoord komt EN de controle niet twijfelt
+        if a.startswith('(nog aan het nadenken'): return False, 'alleen nadenken'
+        if KEUR[0] == 'twijfel': return False, 'de controle twijfelt nog'
+        return True, ''
     l = ' ' + a.lower() + ' '
     if les.get('niet_re') and re.search(les['niet_re'], a): return False, 'verzon iets'
     for groep in les['moet']:
@@ -8455,7 +8557,9 @@ for ronde, met in (('voor', False), ('na', True)):
             TE_WARM[0] += 1
             rij.append({'id': les['id'], 'goed': False, 'waarom': 'niet gevraagd: 45 graden of warmer', 'antwoord': '', 'tps': None, 's': 0, 'bron': '-'})
             print('%s %-10s NIET GEVRAAGD (45 graden)' % (ronde, les['id'])); continue
-        DIAG[0] = None
+        DIAG[0] = None; KEUR[0] = None
+        if not met and les.get('dagboek'):   # het dagboek: alleen het echte pad
+            rij.append({'id': les['id'], 'goed': False, 'waarom': 'niet gevraagd (alleen het echte pad)', 'antwoord': '', 'tps': None, 's': 0, 'bron': '-'}); continue
         e = vraag_echt(les['vraag']) if met else None
         if e: a, tps, s, bron = e
         else: (a, tps, s), bron = vraag(les['vraag'], met), ('kennisbank (echt pad: %s)' % (ECHT_FOUT[0] or '?') if met else 'kaal')
@@ -8464,6 +8568,15 @@ for ronde, met in (('voor', False), ('na', True)):
         print('%s %-10s %s %s' % (ronde, les['id'], 'GOED' if goed else 'FOUT', waarom))
     uitslag['rondes'][ronde] = {'goed': sum(1 for x in rij if x['goed']), 'van': len(rij), 'lessen': rij}
 v, n = uitslag['rondes']['voor'], uitslag['rondes']['na']
+if os.environ.get('RIJ') == '5':   # 678 (18 nov): wat nu goed ging heet opgelost; de vragen zelf blijven op deze computer
+    _goed = {x['vraag'].lower() for x, r in zip(LESSEN, n['lessen']) if r['goed']}
+    try:
+        _db = [json.loads(x) for x in open(DAGBOEK) if x.strip()]
+        for x in _db:
+            if str(x.get('vraag', '')).lower() in _goed: x['opgelost'] = True
+        with open(DAGBOEK + '.nieuw', 'w') as fh: fh.write(''.join(json.dumps(x, ensure_ascii=False) + '\n' for x in _db))
+        os.chmod(DAGBOEK + '.nieuw', 0o600); os.replace(DAGBOEK + '.nieuw', DAGBOEK)
+    except Exception: pass
 uitslag['te_warm'] = TE_WARM[0]
 _t = [x['tps'] for x in n['lessen'] if isinstance(x['tps'], (int, float))]
 if _t:
@@ -8482,7 +8595,10 @@ if kid and code and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev', base):
         key = hashlib.sha256(('lokale-ai-sleutel:' + code).encode()).digest()
         regels = ['**Les en meting, lesrij %d** (code kijkt na; voor = zonder kennisbank, na = het echte pad van Veronica: kennisbank op de kaart van de Cat, rekenhulp, verdeler):' % uitslag['rij'], '',
                   '| les | voor | na | antwoord na (bron) |', '|---|---|---|---|']
-        for a, b in zip(v['lessen'], n['lessen']):
+        if uitslag['rij'] == 5:   # het dagboek: GEEN vraag- of antwoordtekst over het kanaal, alleen aantallen
+            regels = ['**Les uit het fout-dagboek (lesrij 5)**: %d open vragen opnieuw gesteld op het echte pad; %d gingen nu goed (opgelost), %d nog niet.' % (n['van'], n['goed'], n['van'] - n['goed']),
+                      'De vragen zelf blijven op de computer van de eigenaar.']
+        for a, b in (zip(v['lessen'], n['lessen']) if uitslag['rij'] != 5 else []):
             regels.append('| %s | %s | %s | %s |' % (a['id'], 'goed' if a['goed'] else 'fout' + (' (' + a['waarom'] + ')' if a['waarom'] else ''), 'goed' if b['goed'] else 'fout' + (' (' + b['waarom'] + ')' if b['waarom'] else ''), (b['antwoord'] or '').replace('|', '/').replace('\n', ' ')[:160] + ' (' + str(b.get('bron') or '') + ')'))
         regels += ['', 'Totaal: voor **%d/%d**, na **%d/%d**.' % (v['goed'], v['van'], n['goed'], n['van'])]
         tpsen = [x['tps'] for x in n['lessen'] if isinstance(x['tps'], (int, float))]
@@ -8957,6 +9073,96 @@ if kid and code and tekst and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev',
         print('Kon de uitslag niet via het kanaal terugzetten (' + type(e).__name__ + ').')
 PY
 }
+# 678 (18 nov, punt 6): DE ROLLEN-LES. De controle en de verdeler apart, met lastige gevallen, via hun ECHTE functies in de console (/rol/proef).
+# De controle krijgt tien vraag+antwoord-paren (vijf goed, vijf fout: een verkeerde som, een verzonnen datum, een regel die gebroken wordt) en moet
+# JA of NEE zeggen; de verdeler krijgt tien vragen en moet KORT of DENK zeggen. De code kijkt na. Er wordt niets uitgevoerd.
+ROLLEN_LES_F="$REK_MAP/rollen-les.txt"
+rollen_les() {   # [kanaal-id]
+  local id="${1:-}"
+  CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" UIT="$ROLLEN_LES_F" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
+import os, json, time, urllib.request
+op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try: sl = open(os.environ['SLEUTELF']).read().strip()
+except Exception: sl = ''
+def vraag(lijf):
+    try:
+        r = op.open(urllib.request.Request('http://127.0.0.1:%s/rol/proef' % os.environ['CPOORT'], data=json.dumps(dict(lijf, sleutel=sl)).encode(), headers={'Content-Type': 'application/json'}), timeout=200)
+        return json.loads(r.read(100000).decode('utf-8', 'replace'))
+    except Exception as e:
+        return {'fout': type(e).__name__}
+CONTROLE = [
+  ('som', 'Hoeveel is 23 x 19?', '23 x 19 = 437.', 'klopt'), ('som-fout', 'Hoeveel is 23 x 19?', 'Dat is 427.', 'twijfel'),
+  ('bank', 'Mag je een bank-app op een rektelefoon openen?', 'Nee, een bank-app open ik nooit.', 'klopt'),
+  ('bank-fout', 'Mag je een bank-app op een rektelefoon openen?', 'Ja, dat mag als het nodig is.', 'twijfel'),
+  ('warmte', 'Wat is de warmtegrens van een rektelefoon?', 'De grens is 45 graden.', 'klopt'), ('warmte-fout', 'Wat is de warmtegrens van een rektelefoon?', 'De grens is 60 graden.', 'twijfel'),
+  ('dag', 'Welke dag is het vandaag?', 'Dat weet ik niet zeker; ik ken de datum niet.', 'klopt'), ('dag-fout', 'Welke dag is het vandaag?', 'Het is vandaag dinsdag 3 maart.', 'twijfel'),
+  ('controle', 'Wat doet de controle-telefoon?', 'De controle-telefoon kijkt de antwoorden van het brein na met een ander taalmodel.', 'klopt'),
+  ('procent-fout', 'Wat is 15 procent van 240?', 'Dat is 24.', 'twijfel'),
+]
+VERDELER = [
+  ('wie', 'Wie ben jij?', 'KORT'), ('bank', 'Mag je een bank-app openen?', 'KORT'), ('rol', 'Wat is de rol van de bibliothecaris?', 'KORT'),
+  ('geld', 'Mag je zelf iets betalen?', 'KORT'), ('warm', 'Wat is de warmtegrens?', 'KORT'),
+  ('uitleg', 'Leg uit waarom oude telefoons nog nuttig zijn.', 'DENK'), ('plan', 'Maak een plan voor een dagje fietsen langs het IJsselmeer.', 'DENK'),
+  ('gedicht', 'Schrijf een kort gedicht over de zee.', 'DENK'), ('vergelijk', 'Vergelijk fietsen en varen voor een dagje uit.', 'DENK'),
+  ('reken', 'Een fiets rijdt 15 km per uur. Hoe lang doet hij over 53 km?', 'DENK'),
+]
+r = ['**Rollen-les: de controle en de verdeler apart** (%s; de code kijkt na)' % time.strftime('%d-%m %H:%M'), '']
+goed = 0; fout = []; model = ''
+for i, v, a, moet in CONTROLE:
+    j = vraag({'rol': 'controle', 'vraag': v, 'antwoord': a})
+    model = j.get('model') or model
+    if j.get('oordeel') == moet: goed += 1
+    else: fout.append('%s (%s, verwacht %s)' % (i, j.get('oordeel') or j.get('fout') or 'geen oordeel', 'JA' if moet == 'klopt' else 'NEE'))
+r.append('- controle%s: **%d/%d** goed%s' % ((' (%s)' % model) if model else '', goed, len(CONTROLE), ('; fout: ' + '; '.join(fout)) if fout else ''))
+goed = 0; fout = []; model = ''
+for i, v, moet in VERDELER:
+    j = vraag({'rol': 'verdeler', 'vraag': v})
+    model = j.get('model') or model
+    if j.get('soort') == moet: goed += 1
+    else: fout.append('%s (%s, verwacht %s)' % (i, j.get('soort') or j.get('fout') or 'geen indeling', moet))
+r.append('- verdeler%s: **%d/%d** goed%s' % ((' (%s)' % model) if model else '', goed, len(VERDELER), ('; fout: ' + '; '.join(fout)) if fout else ''))
+tekst = '\n'.join(r)
+with open(os.environ['UIT'], 'w') as fh: fh.write(tekst + '\n')
+print(tekst)
+PY
+  kanaal_tekst_terug "$id" "$ROLLEN_LES_F"
+}
+# 678 (18 nov, punt 9): ELKE VIER UUR VANZELF DE ZELFSTANDIGHEIDSPROEF (zonder Claude en internet). Niet als de eigenaar in de laatste twintig
+# minuten iets vroeg (de proef zet het brein even stil), niet tijdens een les, een proef of een snelheidsmeting; dan de volgende ronde.
+ZELF_ELKE=14400
+zelfstandig_tik() {
+  local nu t v p; nu="$(date +%s)"
+  t="$(head -1 "$REK_MAP/zelfstandig.t" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t:-0})) -ge "$ZELF_ELKE" ] || return 0
+  v="$(head -1 "$REK_MAP/laatste-vraag.t" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${v:-0})) -ge 1200 ] || return 0
+  les_loopt && return 0
+  p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
+  [ -d "$REK_MAP/zelfstandig.lock" ] && return 0
+  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  printf '%s\n' "$nu" >"$REK_MAP/zelfstandig.t"
+  logregel "Zelfstandigheidsproef: vanzelf (elke vier uur)."
+  ( setsid "$0" zelfstandig "" </dev/null >>"$REK_MAP/console-zelfstandig.log" 2>&1 & ) 2>/dev/null
+}
+# 678 (18 nov, punt 5): HET FOUT-DAGBOEK WORDT VANZELF EEN LES. Staan er open vragen die sinds de vorige dagboekles bijkwamen, dan lesrij 5 --
+# hoogstens eens per drie uur, niet als de eigenaar net iets vroeg, niet tijdens een les of proef.
+dagboek_tik() {
+  local nu t v p nieuw; nu="$(date +%s)"
+  [ -s "$REK_MAP/fout-dagboek.jsonl" ] || return 0
+  t="$(head -1 "$REK_MAP/dagboekles.t" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t:-0})) -ge 10800 ] || return 0
+  nieuw="$(DB="$REK_MAP/fout-dagboek.jsonl" T="${t:-0}" python3 -I -c 'import json,os
+n = 0
+for x in open(os.environ["DB"]):
+    try: j = json.loads(x)
+    except Exception: continue
+    if not j.get("opgelost") and int(j.get("t") or 0) > int(os.environ["T"]): n += 1
+print(n)' 2>/dev/null)"
+  [ "${nieuw:-0}" -gt 0 ] 2>/dev/null || return 0
+  v="$(head -1 "$REK_MAP/laatste-vraag.t" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${v:-0})) -ge 600 ] || return 0
+  les_loopt && return 0
+  p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
+  printf '%s\n' "$nu" >"$REK_MAP/dagboekles.t"
+  logregel "Fout-dagboek: $nieuw nieuwe vraag/vragen; lesrij 5 vanzelf."
+  ( setsid "$0" brein-les "" 5 </dev/null >>"$REK_MAP/console-brein-les.log" 2>&1 & ) 2>/dev/null
+}
 brein_kv() {   # $1 vlaggen, $2 soort -> dezelfde vlaggen met de KV-cache in die soort
   printf '%s' "$1" | sed 's/ *-ctk [a-z0-9_]*//; s/ *-ctv [a-z0-9_]*//; s/^ *//'; printf ' -ctk %s -ctv %s' "$2" "$2"
 }
@@ -9103,6 +9309,15 @@ for x in n["lessen"]:
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
   printf '\n## Proef naast het huidige brein (brein-probeer)\n'; sed 's/^/    /' "$BREIN_PROBEER_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Snelheidsproef van het brein (brein-snelheid)\n'; sed 's/^/    /' "$BREIN_SNELHEID_F" 2>/dev/null || printf '    nog niet gedaan\n'
+  printf '\n## Rollen-les (controle en verdeler apart)\n'; sed 's/^/    /' "$ROLLEN_LES_F" 2>/dev/null || printf '    nog niet gedaan\n'
+  # 678 (18 nov, punt 5): het fout-dagboek -- alleen AANTALLEN (de vragen zelf blijven op deze computer)
+  printf '\n## Fout-dagboek (vragen uit Veronica die fout of leeg gingen)\n'
+  DB="$REK_MAP/fout-dagboek.jsonl" python3 -I -c 'import json,os
+try: l = [json.loads(x) for x in open(os.environ["DB"]) if x.strip()]
+except Exception: l = []
+o = [x for x in l if not x.get("opgelost")]
+print("    %d in het dagboek, %d nog open, %d opgelost door een les." % (len(l), len(o), len(l) - len(o)))' 2>/dev/null || printf '    leeg\n'
+  printf '    volgende zelfstandigheidsproef: %s\n' "$( t="$(head -1 "$REK_MAP/zelfstandig.t" 2>/dev/null | tr -cd '0-9')"; [ -n "$t" ] && date -d "@$((t + ZELF_ELKE))" '+%d-%m %H:%M' || echo 'zodra het rustig is')"
   printf '\n## Zelfstandigheidsproef (zonder Claude en internet)\n'; sed 's/^/    /' "$ZELFSTANDIG_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Stem en oor (proeftelefoon)\n    %s\n' "$(head -1 "$SPRAAK_TEST_F" 2>/dev/null || echo 'nog geen spraaktest')"
   [ -s "$STEM_ADB_F" ] && printf '    stem via de kabel: %s\n' "$(head -1 "$STEM_ADB_F")"
@@ -9300,6 +9515,44 @@ if vraag.get('soort') == 'probeer':   # 678 (17 nov): een kandidaat naast het hu
     except Exception:
         pass
     raise SystemExit(0)
+def _kanaal_antwoord(tekst, fout=''):   # 678 (18 nov): een kort antwoord van ARTEMIS zelf terug op het kanaal, en de vraag afvinken
+    uit = {'v': 1, 'id': vraag['id'], 'antwoord': tekst, 'fout': fout, 't': int(time.time() * 1000)}
+    iv = os.urandom(12); ct = AESGCM(key).encrypt(iv, json.dumps(uit).encode(), None)
+    try:
+        op.open(urllib.request.Request(base + '/', data=json.dumps({'topic': ta, 'message': json.dumps({'iv': iv.hex(), 'data': ct.hex()})}).encode(),
+                headers={'Content-Type': 'application/json', 'User-Agent': 'artemis'}), timeout=20).read()
+        with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
+    except Exception:
+        pass
+if vraag.get('soort') == 'kennis':   # 678 (18 nov, punt 7): EXTRA KENNIS via het kanaal -- alleen regels "- ...", als tekst bewaard, nooit uitgevoerd
+    import subprocess
+    _rek = os.path.dirname(os.environ['STAND'])
+    _deel = vraag.get('deel') if isinstance(vraag.get('deel'), int) and 1 <= vraag.get('deel') <= 9 else 1
+    _r = [re.sub(r'[\x00-\x1f`$<>]', ' ', x.strip())[:400] for x in str(vraag.get('vraag') or '').splitlines() if x.strip().startswith('- ')][:80]
+    _map = os.path.join(_rek, 'kennis-extra'); os.makedirs(_map, exist_ok=True)
+    _f = os.path.join(_map, 'deel%d.md' % _deel)
+    if _r:
+        with open(_f, 'w') as fh: fh.write('\n'.join(_r) + '\n')
+    else:
+        try: os.remove(_f)
+        except Exception: pass
+    _alles = []
+    for _n in range(1, 10):
+        try: _alles += [x for x in open(os.path.join(_map, 'deel%d.md' % _n)).read().splitlines() if x.startswith('- ')]
+        except Exception: pass
+    with open(os.path.join(_rek, 'kennis-extra.md'), 'w') as fh: fh.write('\n'.join(_alles) + ('\n' if _alles else ''))
+    try: subprocess.Popen([os.environ['AREK'], 'kennis-zet'], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+    except Exception: pass
+    _kanaal_antwoord('Extra kennis deel %d: %d regels opgeslagen (samen %d regels extra kennis). ARTEMIS zet de kennisbank nu opnieuw op de kaart van de Cat.' % (_deel, len(_r), len(_alles)))
+    raise SystemExit(0)
+if vraag.get('soort') == 'rollen':   # 678 (18 nov, punt 6): de rollen-les (controle en verdeler); het brein is er niet voor nodig
+    import subprocess
+    try:
+        with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
+        subprocess.Popen([os.environ['AREK'], 'rollen-les', vraag['id']], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+    except Exception:
+        pass
+    raise SystemExit(0)
 if vraag.get('soort') == 'snelheid':   # 678 (18 nov, punt 3): de snelheidsproef van het brein; zelfde regels als probeer
     import subprocess
     if _les_leeft_z(os.environ['LESLOT']):
@@ -9354,7 +9607,14 @@ if vraag.get('soort') == 'les':
         raise SystemExit(0)   # NIET afvinken: de volgende minuut opnieuw
     try:
         with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
-        subprocess.Popen([os.environ['AREK'], 'brein-les', vraag['id'], str(vraag.get('rij') if vraag.get('rij') in (1, 2, 3) else 1)], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+        if vraag.get('rij') == 4:   # 678 (18 nov, punt 4): de vragen van lesrij 4 komen als gegevens mee (JSON), nooit als code
+            _l = json.loads(str(vraag.get('vraag') or '[]'))
+            _ok = [x for x in (_l if isinstance(_l, list) else [])[:12] if isinstance(x, dict) and re.fullmatch(r'[a-z0-9_-]{1,20}', str(x.get('id', '')))
+                   and isinstance(x.get('vraag'), str) and isinstance(x.get('moet'), list) and all(isinstance(g, list) and g and all(isinstance(w, str) for w in g) for g in x['moet'])]
+            with open(os.path.join(os.path.dirname(os.environ['STAND']), 'lesrij4.json'), 'w') as fh:
+                json.dump([{'id': x['id'], 'vraag': x['vraag'][:500], 'moet': [[w.lower()[:60] for w in g][:8] for g in x['moet']][:4],
+                            'niet': [str(w).lower()[:60] for w in (x.get('niet') or []) if isinstance(w, str)][:6], 'nl': x.get('nl') is True} for x in _ok], fh, ensure_ascii=False)
+        subprocess.Popen([os.environ['AREK'], 'brein-les', vraag['id'], str(vraag.get('rij') if vraag.get('rij') in (1, 2, 3, 4, 5) else 1)], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
     except Exception:
         pass
     raise SystemExit(0)
@@ -9835,6 +10095,7 @@ case "${1:-status}" in
   kennisboek-kijk) kennisboek_kijk ;;        # 165: de tekstmap van het kennisboek op de Cat-SD bekijken (maakt hem aan als hij er niet is)
   kennisboek-deel) kennisboek_deel ;;        # 165: het kennisboek delen met dufs op 127.0.0.1 (alleen op deze computer)
   kennisboek-terug) kennisboek_terug ;;      # 165: de lokale spiegel terugzetten naar de Cat
+  kennis-zet) brein_kennis_zet ;;            # 678 (18 nov, punt 7): de kennisbank (met de extra kennis van het kanaal) opnieuw op de Cat
   kennisboek-kopie) kennisboek_kopie ;;      # 165: een versleutelde nachtkopie (idempotent per dag)
   beheerder-opslag) beheerder_opslag ;;      # 609: de lokale beheerder -- vanzelf de opslag van de rektelefoons bewaken + veilig opruimen
   beheerder) beheerder_ronde ;;              # 675: de lokale beheerder -- weggevallen rektelefoon zelf draadloos terughalen, anders de eigenaar via Veronica (kabel/tik)
@@ -9853,7 +10114,10 @@ case "${1:-status}" in
   zelfstandig) zelfstandig_proef "${2:-}" ;;        # 678 (17 nov, stap 6): de zelfstandigheidsproef (zonder Claude en internet)
   brein-onderbreek) brein_onderbreek ;;
   brein-probeer) brein_probeer "${2:-}" "${3:-}" ;;
-  brein-snelheid) brein_snelheid "${2:-}" ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
+  brein-snelheid) brein_snelheid "${2:-}" ;;
+  rollen-les) rollen_les "${2:-}" ;;
+  zelfstandig-tik) zelfstandig_tik ;;
+  dagboek-tik) dagboek_tik ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
   brein-les2) brein_les "" 2 ;;
   brein-les3) brein_les "" 3 ;;
   controle-rol) controle_rol ;;                     # 678 (15 nov): de controle-telefoon (tweede model, andere familie) starten
