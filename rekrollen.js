@@ -118,7 +118,7 @@
   // aanzette (localStorage 'veronica-spraak-vanzelf' = 'aan'). Een versie = vrijgegeven na een goede proef: stem en oor gaan dan VANZELF aan
   // volgens de rol, maar alleen op telefoons die minstens die (geteste) versie draaien. 'uit' in de opslag houdt het altijd tegen.
   // Gezet door tools/jarvis-vrijgave/vrijgeef.js --spraak.
-  const SPRAAK_VRIJ = null;
+  const SPRAAK_VRIJ = '1.9.101';
   function spraakVanzelfAan(keuze) { return keuze === 'aan' || (keuze !== 'uit' && !!SPRAAK_VRIJ); }
   function spraakVoorRol(rol) { return { stem: rol === 'bibliothecaris', oor: rol === 'brein' }; }
   function spraakSleutel(sp) { return (sp.stem ? 'stem' : '-') + '|' + (sp.oor ? 'oor' : '-'); }
