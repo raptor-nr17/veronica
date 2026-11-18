@@ -562,10 +562,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 AREK = os.environ.get('AREK', 'artemis-rek'); POORT = int(os.environ.get('POORT', '8765')); REK = os.environ.get('REK_MAP', '')
 KB = os.environ.get('KB_HOST', 'penguin.linux.test')   # 665: de host waarmee je de console IN CHROME opent (618: NIET localhost)
 MIN_MB = int(os.environ.get('MIN_MB', '2048'))   # 588: ARTEMIS heeft ~2 GB nodig (Node/venv); zie ARTEMIS_MIN_MB
-TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde', 'jarvis-proef', 'jarvis-proef-uit', 'jarvis-terugval', 'spraak-proef', 'spraak-proef-uit', 'spraak-test', 'brein-start', 'brein-stop', 'brein-status', 'brein-kabel', 'brein-rol', 'brein-les', 'controle-rol', 'controle-status', 'controle-stop', 'stand-tik', 'brein-les2', 'verdeler-rol', 'verdeler-status', 'verdeler-stop'}
+TOEGESTAAN = {'gemini-wissel', 'start', 'stop', 'status', 'scan', 'bijwerken', 'vergeet', 'log', 'opruimen', 'jarvis-waak', 'lokaal', 'lokaal-uit', 'lokaal-meet', 'motor-meet', 'alleen-kijken', 'alleen-kijken-uit', 'cat-kijk', 'cat-ruim', 'duraspeed-uit', 'hardware', 'motor-zoek', 'f8-kabel', 'scherm-lees', 'versies', 'rek-zoek', 'draadloos-auto', 'kabel-koppel', 'klaarzetten', 'rek-hotspot', 'rek-op', 'rek-lijst', 'rek-diag', 'beheerder', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'meetuitslag', 'wifi-hotspot-test', 'kennisboek-kijk', 'kennisboek-deel', 'kennisboek-terug', 'voortgang', 'voortgang-controle', 'meet-hervat', 'motor-status', 'duurtest-start', 'duurtest-stop', 'duurtest-uitslag', 'duurtest-tik', 'meld-status', 'kabel-koppel', 'kabel-koppel-auto', 'zelfronde', 'jarvis-proef', 'jarvis-proef-uit', 'jarvis-terugval', 'spraak-proef', 'spraak-proef-uit', 'spraak-test', 'brein-start', 'brein-stop', 'brein-status', 'brein-kabel', 'brein-rol', 'brein-les', 'controle-rol', 'controle-status', 'controle-stop', 'stand-tik', 'brein-les2', 'brein-les3', 'verdeler-rol', 'verdeler-status', 'verdeler-stop'}
 # 575: start en bijwerken kunnen minuten duren (ARTEMIS start op, adb-ronde). Die blokkeren de knop NIET:
 # ze draaien op de achtergrond naar een eigen logbestand; de knop komt meteen terug, en Status/Log tonen hoe het ging.
-LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef', 'spraak-test', 'brein-start', 'brein-kabel', 'brein-rol', 'brein-les', 'controle-rol', 'brein-les2', 'verdeler-rol'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
+LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarzetten', 'klaarzetten-auto', 'tailscale-telefoon', 'tailscale-authkey', 'tailscale', 'rek-tailscale', 'motor-meet', 'beheerder', 'jarvis-proef', 'spraak-test', 'brein-start', 'brein-kabel', 'brein-rol', 'brein-les', 'controle-rol', 'brein-les2', 'brein-les3', 'verdeler-rol'}   # 578b/676/677/678: ook Rek opbouwen, Koppel via de kabel, Tailscale, de beheerder EN Snelheid meten op de achtergrond (anders 25 s AbortError) -- motor-meet haalt een 382 MB-model op en meet minuten; dat duurt veel langer dan de ~25 s fetch-time-out van de pagina. Nu meteen terug + via Log/Status (console-motor-meet.log) te volgen.
 # 678 (15 nov): wat de rekdokter van Veronica hier mag vragen (/rekdok, met de rij-code). Elke handeling is een bestaande opdracht die de F8
 # overslaat en alleen het JARVIS-pakket aanraakt; jarvis-terugval alleen op de proeftelefoon (zet de bewaarde vrijgegeven JARVIS terug).
 REKDOK_ACTIES = ('jarvis-waak', 'meld-status', 'motor-status', 'jarvis-terugval')
@@ -713,6 +713,7 @@ def verdeler_som(vraag):
     import ast, operator
     t = str(vraag or '').strip().lower()
     t = re.sub(r'^(hoeveel is|wat is|reken uit|bereken|what is|how much is)[:\s]+', '', t).rstrip(' ?.!=')
+    t = re.sub(r'(\d+(?:[.,]\d+)?)\s*(?:%|procent|percent)\s+(?:van|of)\s+(\d+(?:[.,]\d+)?)', r'\1 * \2 / 100', t)   # 678 (18 nov): "15 procent van 240"
     t = t.replace('×', '*').replace('÷', '/').replace(':', '/')
     t = re.sub(r'(?<=\d)\s*x\s*(?=[\d(])', '*', t)
     t = re.sub(r'(?<=\d)\.(?=\d{3}(?!\d))', '', t)   # Nederlands: 100.000 = honderdduizend (een punt met precies drie cijfers erachter)
@@ -781,10 +782,39 @@ def nl_herinnering(t):
 def brein_tekst(m):
     # 678 (15 nov): het antwoord zonder denkstappen; bleef het antwoord leeg (alles ging op aan nadenken), dan het nadenken zelf, eerlijk gemarkeerd
     t = re.sub(r'(?s)<think>.*?</think>', '', str((m or {}).get('content') or '')).strip()
+    # 678 (18 nov): een losse </think> (de opening zat in de prompt) = alles ervoor is nadenken; een <think> zonder einde = alleen nadenken
+    if '</think>' in t: t = t.split('</think>')[-1].strip()
+    if t.startswith('<think>'): t = ''
     if not t:
         r = str((m or {}).get('reasoning_content') or '').strip()
         if r: t = '(nog aan het nadenken toen de ruimte op was) ' + r[-1500:]
     return t
+# 678 (18 nov, lesrij 3: de eigenaar vraagt in Veronica "welk model draait er op de controle?" of "hoe snel ben je?"). Het brein KAN dat niet weten:
+# het ziet de andere telefoons niet. De console wel. Gaat een vraag over het rek, dan krijgt het brein een korte STAND VAN HET REK NU mee, uit de
+# standbestanden die ARTEMIS zelf bijhoudt (model, telefoontype, vrij geheugen bij het starten, gemeten snelheid). Geen serienummers, geen
+# adressen, geen tijden van tellen: alleen wat er staat. Niets bekend = geen blok (dan zegt het brein eerlijk dat het het niet weet).
+REK_ROLLEN = (('brein', ''), ('controle', 'controle'), ('verdeler', 'verdeler'), ('bibliothecaris', 'bibliothecaris'))
+REK_VRAAG_RE = re.compile(r'(?i)\b(rek|rack|regal|brein|controle|verdeler|bibliothecaris|helper|model|geheugen|memory|snel|snelheid|tok|tokens|draait|draaien|telefoons?|phones?|stand|status|hoe gaat)')
+def rek_live():
+    regels = []
+    for rol, sub in REK_ROLLEN:
+        try:
+            with open(os.path.join(REK, sub, 'brein-stand.json') if sub else os.path.join(REK, 'brein-stand.json')) as fh: st = json.load(fh)
+        except Exception:
+            continue
+        m = re.sub(r'\.gguf$', '', str(st.get('model') or ''))
+        staat = {'klaar': 'draait', 'uit': 'staat uit', 'fout': 'werkt nu niet'}.get(st.get('stand'), '')   # geen stand = niets beweren
+        d = ([staat] if staat else []) + (['model %s' % m] if m else [])
+        r = '- %s: %s' % (rol, ', '.join(d) or 'onbekend')
+        if st.get('telefoon'): r += ', op de telefoon %s' % st['telefoon']
+        if isinstance(st.get('vrij_mb'), int): r += ', %d MB vrij geheugen bij het starten' % st['vrij_mb']
+        if rol == 'brein':
+            try:
+                with open(os.path.join(REK, 'brein-tps')) as fh: tps = float(fh.read().split()[0])
+                r += ', snelheid %s tokens per seconde (gemeten)' % ('%.1f' % tps).replace('.', ',')
+            except Exception: pass
+        regels.append(r + '.')
+    return ('STAND VAN HET REK NU (gemeten door ARTEMIS; gebruik alleen deze gegevens):\n' + '\n'.join(regels)) if regels else ''
 def brein_kennis():
     # 678 (15 nov): de kennisbank van het brein (spiegel van brein-kennis.md op de kaart van de Cat) als vaste instructie bij elke vraag
     try:
@@ -1123,7 +1153,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <p><a id=veronicaBrein href="/veronica-open" target=_blank style="display:inline-block;font-size:20px;padding:14px 18px;border-radius:12px;background:#1f6f43;color:#fff;text-decoration:none;min-height:48px">&#129504; Open Veronica, gekoppeld aan het brein</a><br><span style="font-size:18px">Een klik: Veronica op deze computer typt daarna rechtstreeks naar de lokale AI. Geen code nodig.</span></p>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=brein-rol>Brein op de brein-telefoon (ook draadloos, veegt hem schoon)</button><button data-cmd=brein-kabel>Brein op de telefoon aan de USB-kabel (veegt hem schoon)</button><button data-cmd=brein-start>Brein starten (typen naar een telefoon)</button><button data-cmd=brein-status>Brein: status</button><button data-cmd=brein-les>Brein: les en meting (voor/na)</button><button data-cmd=brein-les2>Brein: lesrij 2 (moeilijker)</button><button data-cmd=controle-status>Controle: status</button><button data-cmd=controle-stop>Controle stoppen</button><button data-cmd=verdeler-status>Verdeler: status</button><button data-cmd=verdeler-stop>Verdeler stoppen</button><button data-cmd=stand-tik>Standverslag nu</button><button data-cmd=brein-stop>Brein stoppen</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=brein-rol>Brein op de brein-telefoon (ook draadloos, veegt hem schoon)</button><button data-cmd=brein-kabel>Brein op de telefoon aan de USB-kabel (veegt hem schoon)</button><button data-cmd=brein-start>Brein starten (typen naar een telefoon)</button><button data-cmd=brein-status>Brein: status</button><button data-cmd=brein-les>Brein: les en meting (voor/na)</button><button data-cmd=brein-les2>Brein: lesrij 2 (moeilijker)</button><button data-cmd=brein-les3>Brein: lesrij 3 (echte vragen)</button><button data-cmd=controle-status>Controle: status</button><button data-cmd=controle-stop>Controle stoppen</button><button data-cmd=verdeler-status>Verdeler: status</button><button data-cmd=verdeler-stop>Verdeler stoppen</button><button data-cmd=stand-tik>Standverslag nu</button><button data-cmd=brein-stop>Brein stoppen</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -1921,6 +1951,9 @@ class H(BaseHTTPRequestHandler):
             # alleen het nieuwe stuk gelezen te worden. Stond het achter een wisselende tekst, dan moest elke vraag alles opnieuw lezen.
             laatste0 = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
             wie = (brein_wie() + ' ' + brein_kennis_voor(laatste0)).strip()   # 678 (17 nov): de kern + alleen de best passende regels
+            if REK_VRAAG_RE.search(laatste0 or ''):   # 678 (18 nov): achter de vaste kern (de cache blijft), alleen bij een vraag over het rek
+                _rl = rek_live()
+                if _rl: wie = (wie + '\n\n' + _rl).strip()
             if wie:
                 if msgs[0].get('role') == 'system': msgs[0] = {'role': 'system', 'content': wie + '\n\n' + msgs[0]['content']}
                 else: msgs.insert(0, {'role': 'system', 'content': wie})
@@ -1975,6 +2008,30 @@ class H(BaseHTTPRequestHandler):
                 tps = (r.get('timings') or {}).get('predicted_per_second')
             except Exception:
                 self._cors_json(502, json.dumps({'fout': 'Het brein gaf een onleesbaar antwoord.'})); return
+            # 678 (18 nov): EEN LEEG ANTWOORD WORDT NIET MEER STIL DOORGEGEVEN. De proef met Qwen3.5-4B gaf op het echte pad bij twee lessen
+            # "geen antwoord", zonder de kale vorm wel. Nu staat erbij WAAROM (eindreden, tokens, nadenken, ruwe tekst) en vraagt de console
+            # het een keer opnieuw: zonder de cache (een hybride model als Qwen3.5 kan een hergebruikt begin niet altijd voortzetten) en
+            # met meer ruimte. Alleen getallen in de diagnose, nooit de inhoud.
+            leeg = None
+            if not tekst:
+                try:
+                    c0 = r['choices'][0]; m0 = c0.get('message') or {}
+                    leeg = {'eind': c0.get('finish_reason'), 'tokens': (r.get('usage') or {}).get('completion_tokens'),
+                            'denk_tekens': len(str(m0.get('reasoning_content') or '')), 'ruw_tekens': len(str(m0.get('content') or ''))}
+                except Exception:
+                    leeg = {}
+                with BREIN_BEZIG_SLOT: BREIN_BEZIG[0] += 1
+                try:
+                    r2 = brein_vraag({'messages': msgs, 'max_tokens': max(mt, 400), 'stream': False, 'cache_prompt': False, 'temperature': 0.7,
+                                      'chat_template_kwargs': {'enable_thinking': False}})
+                finally:
+                    with BREIN_BEZIG_SLOT: BREIN_BEZIG[0] -= 1
+                try:
+                    tekst = brein_tekst(r2['choices'][0]['message'])
+                    tps = (r2.get('timings') or {}).get('predicted_per_second') or tps
+                    leeg['opnieuw'] = 'gelukt' if tekst else 'weer leeg (eind %s)' % r2['choices'][0].get('finish_reason')
+                except Exception:
+                    leeg['opnieuw'] = 'geen antwoord'
             # 678 (17 nov, lesrij 2 "duits"): een vreemde vraag kreeg ondanks de herinnering een Duits antwoord. Dan EEN korte vertaling door het
             # brein zelf, alleen in dat geval: het antwoord moet altijd Nederlands zijn.
             if tekst and nl_herinnering(laatste) and nl_herinnering(tekst):
@@ -2000,7 +2057,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception: pass
             self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid,
                                              'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd')),
-                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time()}))
+                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg}))
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
@@ -8169,6 +8226,10 @@ except Exception: print("")' 2>/dev/null)"
 - Verzin nooit getallen, namen, serienummers of adressen. Weet je iets niet zeker, zeg dan eerlijk: "dat weet ik niet zeker". Je kent de datum, de dag en de IP-adressen niet.
 - Rekenen: schrijf EERST de tussenstappen op en dan pas het antwoord (bijvoorbeeld: 45 - 38 = 7 graden; 7 : 2 = 3,5 minuten). Een korte zin geldt niet voor rekenen. Handig: 1 GB = 1024 MB (ongeveer 1000), dus 3 GB = 3072 MB; tijd = aantal : tempo.
 - Antwoord kort en duidelijk, in een hele zin.
+- Het rek heeft VIER telefoons, elk met een eigen rol (brein, bibliothecaris, verdeler, helper/controle).
+- Valt een telefoon weg of antwoordt hij niet, dan start ARTEMIS hem VANZELF opnieuw (de waakhond); intussen valt een andere telefoon in. De eigenaar hoeft niets te doen. Herstarten doe jij niet zelf: dat doet ARTEMIS.
+- Vraagt de eigenaar naar de stand van het rek (welk model, hoeveel geheugen, hoe snel, wat draait er), gebruik dan ALLEEN de getallen uit "STAND VAN HET REK NU" als die erbij staat. Staat het er niet bij, zeg dan dat je het niet weet.
+- Vraagt de eigenaar iets te VERTALEN, geef dan de vertaling in de gevraagde taal. Dat is de enige uitzondering op Nederlands.
 - Vraagt iemand wie je bent of wat je in het rek doet: "Ik ben ${m:-het taalmodel}, het brein van het rek: ik beantwoord vragen en denk na; de andere telefoons bewaren, verdelen en helpen." Noem ALTIJD je modelnaam.
 - Vraagt iemand wat de controle-telefoon doet: "De controle-telefoon kijkt de antwoorden van het brein na met een ander taalmodel en zegt of ze kloppen." 
 - BELANGRIJK, ALTIJD: antwoord in het NEDERLANDS, ook als de vraag in het Engels of Duits is. Nooit in het Engels of Duits antwoorden.
@@ -8196,7 +8257,7 @@ brein_kennis_zet() {
 # de uitslag versleuteld terug via het kanaal. Een les tegelijk.
 brein_les() {
   local id="${1:-}" rij="${2:-1}" link code base
-  case "$rij" in 1|2) : ;; *) rij=1 ;; esac
+  case "$rij" in 1|2|3) : ;; *) rij=1 ;; esac
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || brein_doorsturing >/dev/null 2>&1
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || { zeg "Brein-les: het brein antwoordt niet (druk eerst op Brein: status)."; return 0; }
   if les_loopt; then zeg "Brein-les: er loopt al een les."; return 0; fi
@@ -8246,7 +8307,33 @@ LESSEN2 = [
   {'id': 'controle', 'vraag': 'Wat doet de controle-telefoon in het rek? Antwoord in een zin.', 'moet': [['nakijk', 'nagekeken', 'controleer', 'kijkt']], 'niet': []},
   {'id': 'duits', 'vraag': 'Was machst du in diesem Regal? Antworte kurz.', 'moet': [['ik', 'het', 'de', 'een']], 'niet': [' ich ', ' und ', ' das '], 'nl': True},
 ]
+# 678 (18 nov, eigenaar: "een moeilijkere lesrij 3 met echte vragen zoals ik ze in Veronica typ"). Kort, slordig, zonder hoofdletters; over de
+# ECHTE stand van het rek (de code leest die zelf uit de standbestanden en kijkt het getal na), plus wat de eigenaar echt vraagt: een procent,
+# een vertaling, een korte uitleg, "kun je ... herstarten", "wat nu". Ontbreekt een standbestand, dan is het juiste antwoord eerlijk "weet ik niet".
+REKD = os.path.dirname(os.environ.get('STAND') or '.')
+def _st(sub):
+    try: return json.load(open(os.path.join(REKD, sub, 'brein-stand.json') if sub else os.path.join(REKD, 'brein-stand.json')))
+    except Exception: return {}
+def _kort(m):   # Qwen3.5-2B-Q4_0.gguf -> qwen3.5-2b
+    return '-'.join(re.sub(r'\.gguf$', '', str(m or '')).lower().split('-')[:2])
+_cm = _kort(_st('controle').get('model')); _bv = _st('').get('vrij_mb')
+try: _tps = float(open(os.environ.get('TPSF', '')).read().split()[0])
+except Exception: _tps = None
+WEET = [['weet', 'niet', 'onbekend']]
+LESSEN3 = [
+  {'id': 'stand', 'vraag': 'hoe gaat het met het rek', 'moet': [['brein'], [fam]], 'niet': ['ik weet het niet']},
+  {'id': 'ctlmodel', 'vraag': 'welk model draait er op de controle telefoon?', 'moet': [[_cm]] if _cm else WEET, 'niet': []},
+  {'id': 'vrij', 'vraag': 'hoeveel geheugen heeft het brein vrij', 'moet': [['mb']] if isinstance(_bv, int) else WEET, 'getal': (_bv, 0.1) if isinstance(_bv, int) else None, 'niet': []},
+  {'id': 'snel', 'vraag': 'hoe snel ben je eigenlijk', 'moet': [['token', 'tok/s']] if _tps else WEET, 'getal': (_tps, 0.25) if _tps else None, 'niet': []},
+  {'id': 'herstart', 'vraag': 'kun je de verdeler even herstarten?', 'moet': [['nee', 'niet', 'voorstel', 'artemis']], 'niet': ['ik herstart', 'ik start de verdeler', 'is herstart', 'is opnieuw gestart']},
+  {'id': 'procent', 'vraag': 'wat is 15 procent van 240', 'moet': [['36']], 'niet': []},
+  {'id': 'vertaal', 'vraag': 'vertaal naar het engels: de telefoon is te warm', 'moet': [['phone'], ['hot', 'warm']], 'niet': []},
+  {'id': 'uitleg', 'vraag': 'leg in twee zinnen uit waarom oude telefoons nog nuttig zijn', 'moet': [['telefoon']], 'niet': [], 'nl': True, 'max_zinnen': 3},
+  {'id': 'weg', 'vraag': 'de verdeler antwoordt niet meer, wat nu?', 'moet': [['vanzelf', 'waakhond', 'artemis', 'opnieuw', 'herstart']], 'niet': ['fabrieksreset', 'wis de', 'wissen']},
+  {'id': 'engels', 'vraag': 'how many phones are in the rack?', 'moet': [['4', 'vier']], 'niet': [' the ', ' and ', ' there are '], 'nl': True},
+]
 if os.environ.get('RIJ') == '2': LESSEN = LESSEN2
+if os.environ.get('RIJ') == '3': LESSEN = LESSEN3
 NL = set('de het een en ik je jij is ben niet wat dat van op te in mag nooit denk na beantwoord vragen rek brein telefoon telefoons dit voor'.split())
 EN = set('the and i am you your my this rack think brain answer questions what do'.split())
 import subprocess
@@ -8275,6 +8362,7 @@ def vraag(tekst, met):
 # de rekenhulp (het brein schrijft de som, de code rekent) en de herinnering aan het Nederlands. Gaat dat niet (geen console of geen sleutel),
 # dan de oude weg: rechtstreeks naar het brein met de kennisbank. De bron staat in de uitslag, zodat te zien is wie het antwoord gaf.
 ECHT_FOUT = ['']
+DIAG = [None]
 def vraag_echt(tekst):
     # 678 (17 nov): het ECHTE pad van Veronica (de console: rekenhulp, invaller, keurmeester, bibliothecaris). Faalde dat, dan viel de les STIL
     # terug op een directe vraag aan het brein (bron "kennisbank") -- het echte pad werd zo nooit gemeten. Nu: met de brein-sleutel OF de
@@ -8296,6 +8384,8 @@ def vraag_echt(tekst):
         ECHT_FOUT[0] = type(e).__name__; return None
     if not isinstance(j, dict) or 'tekst' not in j: ECHT_FOUT[0] = 'onleesbaar antwoord'; return None
     bron = str(j.get('bron') or 'brein') + ('+nagedacht' if j.get('nagedacht') else '') + ('+verbeterd' if j.get('verbeterd') else '')
+    DIAG[0] = j.get('leeg') if isinstance(j.get('leeg'), dict) else None   # 678 (18 nov): waarom het antwoord leeg was, en of opnieuw vragen hielp
+    if DIAG[0] and DIAG[0].get('opnieuw') == 'gelukt': bron += '+opnieuw'
     return str(j.get('tekst') or '').strip(), j.get('tps'), round(time.time() - t0, 1), bron
 def kijk(les, a):
     if not a: return False, 'geen antwoord'
@@ -8305,6 +8395,12 @@ def kijk(les, a):
         if not any(w in l for w in groep): return False, 'mist: ' + '/'.join(groep)
     for w in les.get('niet', []):
         if w in l: return False, 'mag niet: ' + w.strip()
+    if les.get('getal'):   # 678 (18 nov, lesrij 3): een gemeten getal uit de stand -- een getal in het antwoord moet er dichtbij liggen
+        doel, marge = les['getal']
+        gs = [float(g.replace('.', '').replace(',', '.')) if re.fullmatch(r'\d{1,3}(\.\d{3})+', g) else float(g.replace(',', '.')) for g in re.findall(r'\d+(?:[.,]\d+)*', a)]
+        if not any(abs(g - doel) <= max(doel * marge, 0.15) for g in gs): return False, 'getal klopt niet (gemeten: %s)' % doel
+    if les.get('max_zinnen') and len([z for z in re.split(r'[.!?]+(?:\s|$)', a.strip()) if z.strip()]) > les['max_zinnen']:
+        return False, 'te lang (meer dan %d zinnen)' % les['max_zinnen']
     if les.get('nl'):   # Nederlands = minstens een Nederlands woord en GEEN Engels woord ("Ik denk na." is Nederlands; "I think." niet)
         w = set(re.findall(r'[a-zà-ÿ]+', l))
         if w & EN or not (w & NL): return False, 'geen Nederlands'
@@ -8319,11 +8415,12 @@ for ronde, met in (('voor', False), ('na', True)):
             TE_WARM[0] += 1
             rij.append({'id': les['id'], 'goed': False, 'waarom': 'niet gevraagd: 45 graden of warmer', 'antwoord': '', 'tps': None, 's': 0, 'bron': '-'})
             print('%s %-10s NIET GEVRAAGD (45 graden)' % (ronde, les['id'])); continue
+        DIAG[0] = None
         e = vraag_echt(les['vraag']) if met else None
         if e: a, tps, s, bron = e
         else: (a, tps, s), bron = vraag(les['vraag'], met), ('kennisbank (echt pad: %s)' % (ECHT_FOUT[0] or '?') if met else 'kaal')
         goed, waarom = kijk(les, a)
-        rij.append({'id': les['id'], 'goed': goed, 'waarom': waarom, 'antwoord': (a or '')[:300], 'tps': tps, 's': s, 'bron': bron})
+        rij.append(dict({'id': les['id'], 'goed': goed, 'waarom': waarom, 'antwoord': (a or '')[:300], 'tps': tps, 's': s, 'bron': bron}, **({'leeg': DIAG[0]} if DIAG[0] else {})))
         print('%s %-10s %s %s' % (ronde, les['id'], 'GOED' if goed else 'FOUT', waarom))
     uitslag['rondes'][ronde] = {'goed': sum(1 for x in rij if x['goed']), 'van': len(rij), 'lessen': rij}
 v, n = uitslag['rondes']['voor'], uitslag['rondes']['na']
@@ -8386,6 +8483,8 @@ brein_probeer() {   # [kanaal-id] [kandidaat, de naam op de telefoon; standaard 
   brein_slot_neem || { zeg "Probeer: het brein is bezet (proefbank of modelproef); later opnieuw."; return 1; }
   oud_m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; oud_mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
   t="$(mktemp)"
+  # 678 (18 nov): de snelheid van het HUIDIGE brein bewaren -- de les van de kandidaat schreef zijn eigen tempo (3,31) als "snelheid van het brein"
+  cp -p "$REK_MAP/brein-tps" "$t.tps" 2>/dev/null || : >"$t.tps"
   zeg "Probeer: $lokaal naast het huidige brein ($oud_m). Ophalen, starten, meten en lesrij 2; daarna het huidige brein terug."
   if ! pad="$(brein_model_haal "$repo" "$naam" "$sha" 0 "$lokaal" 2>/dev/null)"; then fout="$lokaal kon niet worden opgehaald (de volgende keer gaat hij door waar hij stopte)"
   else
@@ -8404,6 +8503,7 @@ brein_probeer() {   # [kanaal-id] [kandidaat, de naam op de telefoon; standaard 
     BREIN_MODEL_PROEF="$oud_mx" brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1 || logregel "Probeer: het huidige brein startte niet meteen; de waakhond probeert het opnieuw."
     brein_stand klaar "Het brein draait op $(toestel_naam "$s") (terug na de proef van $lokaal)." "$s" "$oud_m" ""
   fi
+  if [ -s "$t.tps" ]; then cp -p "$t.tps" "$REK_MAP/brein-tps"; else rm -f "$REK_MAP/brein-tps"; fi; rm -f "$t.tps"
   rm -rf "$REK_MAP/brein.lock"
   rek_zorg_crypto >/dev/null 2>&1 || true
   local link code base
@@ -8437,7 +8537,15 @@ else:
         r.append('| %s | %s | %s |' % (naam, ('%s/10' % p['rondes'][kant]['goed']) if p and kant in (p.get('rondes') or {}) else '?', ('%s/10' % hl['rondes'][kant]['goed']) if hl and kant in (hl.get('rondes') or {}) else '?'))
     if p:
         fout_na = [x for x in p['rondes'].get('na', {}).get('lessen', []) if not x.get('goed')]
-        if fout_na: r.append(''); r.append('Fout na, bij de proef: ' + '; '.join('%s (%s)' % (x.get('id'), x.get('waarom') or '') for x in fout_na))
+        # 678 (18 nov): per fout ook WIE antwoordde, hoe lang het duurde en (bij een leeg antwoord) waarom -- anders is "geen antwoord" niet te verklaren
+        def _lg(x):
+            l = x.get('leeg') or {}
+            return (', leeg: eind %s, %s tokens, %s tekens nadenken, opnieuw %s' % (l.get('eind'), l.get('tokens'), l.get('denk_tekens'), l.get('opnieuw'))) if l else ''
+        if fout_na:
+            r.append(''); r.append('Fout na, bij de proef:')
+            for x in fout_na:
+                r.append('- %s: %s (bron %s%s%s)%s' % (x.get('id'), x.get('waarom') or '', x.get('bron') or '?', (', %s s' % x['s']) if x.get('s') is not None else '', _lg(x),
+                                                           (' -- "%s"' % (x.get('antwoord') or '')[:120].replace('\n', ' ')) if x.get('antwoord') else ''))
     r += ['', 'Er is niet gewisseld: dat beslist een mens (of de modelproef). %s blijft op de telefoon staan.' % k]
 tekst = '\n'.join(r)
 print(tekst)
@@ -9087,7 +9195,7 @@ if vraag.get('soort') == 'les':
         raise SystemExit(0)   # NIET afvinken: de volgende minuut opnieuw
     try:
         with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
-        subprocess.Popen([os.environ['AREK'], 'brein-les', vraag['id'], str(vraag.get('rij') if vraag.get('rij') in (1, 2) else 1)], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+        subprocess.Popen([os.environ['AREK'], 'brein-les', vraag['id'], str(vraag.get('rij') if vraag.get('rij') in (1, 2, 3) else 1)], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
     except Exception:
         pass
     raise SystemExit(0)
@@ -9587,6 +9695,7 @@ case "${1:-status}" in
   brein-onderbreek) brein_onderbreek ;;
   brein-probeer) brein_probeer "${2:-}" "${3:-}" ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
   brein-les2) brein_les "" 2 ;;
+  brein-les3) brein_les "" 3 ;;
   controle-rol) controle_rol ;;                     # 678 (15 nov): de controle-telefoon (tweede model, andere familie) starten
   controle-status) zeg "== De controle-telefoon (kijkt de antwoorden van het brein na) =="; als_controle brein_status ;;
   controle-waak) rol_modelkeus controle-rol "$CONTROLE_MAP" || als_controle brein_waak ;;
