@@ -658,6 +658,98 @@ def verdeler_model():
     try:
         with open(os.path.join(REK, 'verdeler', 'brein-stand.json')) as fh: return re.sub(r'\.gguf$', '', str(json.load(fh).get('model') or ''))
     except Exception: return ''
+# 678 (18 nov, eigenaar 09:58: "kan het brein op internet zoeken via de telefoons als ik hem iets vraag in Veronica?"). ZOEKEN ALS DE KENNISBANK
+# HET NIET WEET. Eerst de kennisbank (de Cat); zegt het brein dat het iets niet weet -- of vraagt de eigenaar uitdrukkelijk om op te zoeken --
+# en gaat de vraag niet over het rek zelf, de datum of een adres, dan zoekt een REKTELEFOON (de verdeler, anders de controle; nooit het brein, nooit
+# de F8) via zijn bestaande deelvraag (/jarvis/zoek-deel: alleen de vaste lijst bronnen, met de rij-code). Lukt dat niet: SearXNG op deze computer
+# (als die draait), dan deze computer zelf. Het brein antwoordt dan ALLEEN uit de gevonden tekst, en de CODE zet de bron erachter. Zonder internet
+# (of met de offline-bewaker aan) wordt er niet gezocht: dan blijft het antwoord uit de kennisbank. Een zoekterm met een e-mailadres, een lang
+# getal, een IBAN of een geheim woord gaat nooit naar buiten.
+ZOEK_LOK = 18180
+ZOEK_FWD = [0.0]
+WEET_NIET_RE = re.compile(r'(?i)\b(weet ik niet|ik weet (het |dat )?niet|niet zeker|onbekend|geen (informatie|gegevens)|kan ik niet (vinden|zeggen)|dat weet ik niet)\b')
+ZOEK_EXPLICIET_RE = re.compile(r'(?i)\b(zoek (het |dat |eens )?op|op internet|online|op wikipedia|zoek uit)\b')
+NIET_ZOEKEN_RE = re.compile(r'(?i)\b(rek|brein|controle|verdeler|bibliothecaris|helper|jij|jou|jouw|je|ARTEMIS|Veronica|JARVIS|vandaag|datum|welke dag|ip-?adres|serienummer|wachtwoord|pincode|bsn|iban)\b')
+GEHEIM_RE = re.compile(r'(?i)([\w.+-]+@[\w-]+\.[\w.]+|\d{7,}|\b[A-Z]{2}\d{2}[A-Z]{4}\d{6,}\b|wachtwoord|pincode|\bbsn\b|\biban\b)')
+ZOEK_STOP = set('wat wie waar wanneer waarom hoe hoeveel welke welk is zijn was waren de het een van in op met voor over en of ik je jij wij mij me kun kan zoek eens dat dit die uit internet online wikipedia graag even ook nog'.split())
+def zoek_nodig(vraag, antwoord):
+    v = str(vraag or '')
+    if GEHEIM_RE.search(v): return False
+    if ZOEK_EXPLICIET_RE.search(v): return not NIET_ZOEKEN_RE.search(ZOEK_EXPLICIET_RE.sub(' ', v))
+    return bool(WEET_NIET_RE.search(str(antwoord or ''))) and not NIET_ZOEKEN_RE.search(v)
+def zoekterm(vraag):
+    w = [x for x in re.findall(r'[A-Za-zÀ-ÿ0-9-]+', ZOEK_EXPLICIET_RE.sub(' ', str(vraag or ''))) if x.lower() not in ZOEK_STOP and len(x) > 1]
+    return ' '.join(w[:8])
+def _zoek_get(url, via_tel=True):
+    # -> (tekst, via) of (None, None). Eerst een rektelefoon (de deelvraag), dan deze computer zelf.
+    if OFFLINE[0] > time.time(): return None, None
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    if via_tel:
+        try:
+            with open(os.path.join(REK, 'rek-token.conf')) as fh: code = fh.read().strip()
+        except Exception: code = ''
+        if code:
+            for poging in (0, 1):
+                if poging or time.time() - ZOEK_FWD[0] > 600:
+                    t = doe_args(['zoek-doorsturing'], 25)
+                    if 'OK' not in t: break
+                    ZOEK_FWD[0] = time.time(); ZOEK_FWD.append(t.split('OK', 1)[1].strip()[:40])
+                try:
+                    req = urllib.request.Request('http://127.0.0.1:%d/jarvis/zoek-deel' % ZOEK_LOK, data=json.dumps({'url': url}).encode(),
+                                                 headers={'Content-Type': 'application/json', 'X-Koppelcode': code})
+                    with op.open(req, timeout=25) as r: j = json.loads(r.read(600000).decode('utf-8', 'replace'))
+                    if j.get('status') == 200 and isinstance(j.get('data'), str): return j['data'], 'de rektelefoon ' + (ZOEK_FWD[-1] if len(ZOEK_FWD) > 1 else '')
+                    break
+                except Exception:
+                    continue
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'ARTEMIS-rek/1 (persoonlijk gebruik, lage frequentie)'})
+        with urllib.request.build_opener().open(req, timeout=15) as r: return r.read(600000).decode('utf-8', 'replace'), 'deze computer'
+    except Exception:
+        return None, None
+def web_zoek(vraag):
+    # -> ([{titel, tekst, url}], via). Wikipedia (nl, dan en) via een rektelefoon; anders SearXNG op deze computer.
+    q = zoekterm(vraag)
+    if len(q) < 2 or OFFLINE[0] > time.time(): return [], ''
+    for taal in ('nl', 'en'):
+        b = 'https://%s.wikipedia.org/w/api.php?' % taal
+        t, via = _zoek_get(b + urllib.parse.urlencode({'action': 'query', 'list': 'search', 'srsearch': q, 'srlimit': 2, 'format': 'json', 'utf8': 1}))
+        if not t: continue
+        try: titels = [x['title'] for x in json.loads(t)['query']['search']][:2]
+        except Exception: titels = []
+        if not titels: continue
+        t2, via2 = _zoek_get(b + urllib.parse.urlencode({'action': 'query', 'prop': 'extracts', 'exintro': 1, 'explaintext': 1, 'exsentences': 5,
+                                                         'redirects': 1, 'titles': '|'.join(titels), 'format': 'json', 'utf8': 1}))
+        try: pages = list(json.loads(t2)['query']['pages'].values())
+        except Exception: pages = []
+        uit = [{'titel': p.get('title', ''), 'tekst': re.sub(r'\s+', ' ', str(p.get('extract') or ''))[:900],
+                'url': 'https://%s.wikipedia.org/wiki/%s' % (taal, urllib.parse.quote(str(p.get('title', '')).replace(' ', '_')))} for p in pages if p.get('extract')]
+        if uit: return uit, (via2 or via)
+    try:   # SearXNG (eigen, op deze computer, alleen als hij draait)
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8888/search?' + urllib.parse.urlencode({'q': q, 'format': 'json', 'language': 'nl'}), timeout=12) as r:
+            res = json.loads(r.read(2000000).decode('utf-8', 'replace')).get('results') or []
+        uit = [{'titel': str(x.get('title', ''))[:120], 'tekst': re.sub(r'\s+', ' ', str(x.get('content') or ''))[:600], 'url': str(x.get('url', ''))[:300]}
+               for x in res[:3] if str(x.get('url', '')).startswith('https://') and x.get('content')]
+        if uit: return uit, 'SearXNG op deze computer'
+    except Exception:
+        pass
+    return [], ''
+def antwoord_uit_zoeken(vraag, wie, mt):
+    # -> (tekst met bron, via, tps) of (None, None, None)
+    res, via = web_zoek(vraag)
+    if not res: return None, None, None
+    blok = '\n\n'.join('[%d] %s: %s' % (i + 1, x['titel'], x['tekst']) for i, x in enumerate(res))
+    sysm = ((wie + '\n\n') if wie else '') + ('ZOEKRESULTATEN (gevonden op internet door een rektelefoon). Beantwoord de vraag ALLEEN met wat hieronder staat, kort en in '
+            'het Nederlands. Staat het antwoord er niet in, zeg dan: "Dat heb ik niet kunnen vinden." Verzin niets.\n\n' + blok)
+    r = brein_vraag({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': str(vraag)[:1500]}], 'max_tokens': max(mt, 300), 'stream': False,
+                     'temperature': 0.2, 'cache_prompt': False, 'chat_template_kwargs': {'enable_thinking': False}})
+    try:
+        t = brein_tekst(r['choices'][0]['message']).strip()
+        tps = (r.get('timings') or {}).get('predicted_per_second')
+    except Exception:
+        return None, None, None
+    if not t or WEET_NIET_RE.search(t) or 'niet kunnen vinden' in t: return None, None, None
+    return t + '\n\nBron: ' + ', '.join(x['url'] for x in res), via, tps
 # 678 (16 nov): de controle loopt NA het antwoord, op een eigen draad: Veronica krijgt het antwoord van het brein meteen en haalt het oordeel
 # daarna op (/brein/controle?id=). Alleen als de controle-telefoon bereikbaar is; anders geen id en dus geen oordeel.
 CONTROLE_UIT = {}
@@ -2146,6 +2238,12 @@ class H(BaseHTTPRequestHandler):
                     leeg['opnieuw'] = 'gelukt' if tekst else 'weer leeg (eind %s)' % r2['choices'][0].get('finish_reason')
                 except Exception:
                     leeg['opnieuw'] = 'geen antwoord'
+            # 678 (18 nov): weet het brein het niet uit de kennisbank (of vraagt de eigenaar om op te zoeken), dan zoekt een rektelefoon
+            zoek_via = None
+            if (not les or d.get('zoek') is True) and zoek_nodig(laatste, tekst):
+                zt, zoek_via, ztps = antwoord_uit_zoeken(laatste, brein_wie(), mt)
+                if zt: tekst = zt; tps = ztps or tps
+                else: zoek_via = None
             # 678 (17 nov, lesrij 2 "duits"): een vreemde vraag kreeg ondanks de herinnering een Duits antwoord. Dan EEN korte vertaling door het
             # brein zelf, alleen in dat geval: het antwoord moet altijd Nederlands zijn.
             if tekst and nl_herinnering(laatste) and nl_herinnering(tekst):
@@ -2176,7 +2274,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception: pass
             self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid,
                                              'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd')),
-                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg}))
+                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'bron': ('internet via ' + zoek_via) if zoek_via else None}))
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
@@ -9201,6 +9299,20 @@ print(n)' 2>/dev/null)"
   logregel "Fout-dagboek: $nieuw nieuwe vraag/vragen; lesrij 5 vanzelf."
   ( setsid "$0" brein-les "" 5 </dev/null >>"$REK_MAP/console-brein-les.log" 2>&1 & ) 2>/dev/null
 }
+# 678 (18 nov): DE ZOEKTELEFOON. Een doorsturing van poort 18180 op deze computer naar JARVIS (8080) op de verdeler, anders de controle, anders de
+# bibliothecaris -- nooit het brein (dat rekent) en nooit de F8. Alleen als JARVIS daar antwoordt. Geeft "OK <telefoon>".
+zoek_doorsturing() {
+  local rol s
+  for rol in verdeler controle bibliothecaris; do
+    s="$(als_$rol brein_nu 2>/dev/null)"; [ -n "$s" ] && ! is_f8 "$s" || continue
+    [ "$s" = "$(brein_nu)" ] && continue
+    "$ADB" -s "$s" forward tcp:18180 tcp:8080 >/dev/null 2>&1 || continue
+    curl -fsS -m 4 "http://127.0.0.1:18180/jarvis/status" >/dev/null 2>&1 || continue
+    echo "OK $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"; return 0
+  done
+  "$ADB" forward --remove tcp:18180 >/dev/null 2>&1 || true
+  echo "geen zoektelefoon"
+}
 brein_kv() {   # $1 vlaggen, $2 soort -> dezelfde vlaggen met de KV-cache in die soort
   printf '%s' "$1" | sed 's/ *-ctk [a-z0-9_]*//; s/ *-ctv [a-z0-9_]*//; s/^ *//'; printf ' -ctk %s -ctv %s' "$2" "$2"
 }
@@ -9493,7 +9605,7 @@ kanaal_tik() {
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   mkdir "$REK_MAP/kanaal.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/kanaal.lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] && rm -rf "$REK_MAP/kanaal.lock"; return 0; }
   rek_zorg_crypto >/dev/null 2>&1 || true
-  CODE="$code" BASE="$base" GEZIEN="$KANAAL_GEZIEN_F" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" AREK="$BIN_SELF/artemis-rek" LESLOG="$REK_MAP/console-brein-les.log" LESLOT="$REK_MAP/brein-les.lock" BSLOT="$REK_MAP/brein.lock" LESWACHT="$REK_MAP/les-wacht" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
+  CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" CODE="$code" BASE="$base" GEZIEN="$KANAAL_GEZIEN_F" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" AREK="$BIN_SELF/artemis-rek" LESLOG="$REK_MAP/console-brein-les.log" LESLOT="$REK_MAP/brein-les.lock" BSLOT="$REK_MAP/brein.lock" LESWACHT="$REK_MAP/les-wacht" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
 import os, json, hashlib, time, re, urllib.request
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -9562,6 +9674,17 @@ def _kanaal_antwoord(tekst, fout=''):   # 678 (18 nov): een kort antwoord van AR
         with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
     except Exception:
         pass
+if vraag.get('soort') == 'veronica':   # 678 (18 nov): een vraag langs PRECIES het pad van Veronica (/brein/chat: kennisbank, rekenhulp, zoeken, controle)
+    try: _sl = open(os.environ['SLEUTELF']).read().strip()
+    except Exception: _sl = ''
+    try:
+        _r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=json.dumps({'sleutel': _sl, 'messages': [{'role': 'user', 'content': str(vraag.get('vraag') or '')[:1500]}], 'max_tokens': 400}).encode(),
+                                            headers={'Content-Type': 'application/json'}), timeout=420)
+        _j = json.loads(_r.read(2000000).decode('utf-8', 'replace'))
+        _kanaal_antwoord('%s\n\n(via Veronica\'s pad; bron: %s; %s tok/s)' % (_j.get('tekst') or '(leeg)', _j.get('bron') or 'brein', _j.get('tps')))
+    except Exception as _e:
+        _kanaal_antwoord('', 'het pad van Veronica gaf geen antwoord (%s)' % type(_e).__name__)
+    raise SystemExit(0)
 if vraag.get('soort') == 'kennis':   # 678 (18 nov, punt 7): EXTRA KENNIS via het kanaal -- alleen regels "- ...", als tekst bewaard, nooit uitgevoerd
     import subprocess
     _rek = os.path.dirname(os.environ['STAND'])
@@ -10154,6 +10277,7 @@ case "${1:-status}" in
   brein-probeer) brein_probeer "${2:-}" "${3:-}" ;;
   brein-snelheid) brein_snelheid "${2:-}" ;;
   rollen-les) rollen_les "${2:-}" ;;
+  zoek-doorsturing) zoek_doorsturing ;;
   zelfstandig-tik) zelfstandig_tik ;;
   dagboek-tik) dagboek_tik ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
   brein-les2) brein_les "" 2 ;;
