@@ -3628,8 +3628,26 @@ jarvis_spraak_bewijs() {   # $1 serienummer -> een zin
 # rij-code (die gaat nooit in een melding). De zin is vast en niet persoonlijk. De uitslag komt ook in spraak-test.txt (voor Motor en spraak).
 SPRAAK_TEST_F="$REK_MAP/spraak-test.txt"
 spraak_kanaal() {   # 678 (18 nov, eigenaar: "de stem op de S10 testen: praat hij, hoe snel"): de rondgang stem -> oor, en de uitslag terug op het kanaal
+  # 678 (18 nov, 17:46 "geen verbinding met poort 8082"): de test zette stem en oor niet AAN. Nu eerst aan (alleen de proeftelefoon, nooit de
+  # F8: jarvis_spraak_proef), dan hoogstens drie minuten wachten tot de stem klaar zegt, dan pas de rondgang. De stand van de stem gaat mee.
+  local p s st i t; t="$(mktemp)"
+  jarvis_spraak_proef aan >"$t.aan" 2>&1 || true
+  p="$(head -1 "$JARVIS_PROEF_F" 2>/dev/null | tr -d '\r\n ')"
+  for s in $(verbonden); do [ "$(toestel_id "$s")" = "$p" ] && ! is_f8 "$s" && break; s=""; done
+  if [ -n "${s:-}" ]; then
+    for i in $(seq 1 18); do
+      st="$(stem_kabel_stand "$s")"
+      [ "$(stem_stand_veld "$st" klaar 2>/dev/null)" = True ] || [ "$(stem_stand_veld "$st" klaar 2>/dev/null)" = true ] && break
+      sleep 10
+    done
+  fi
   jarvis_spraak_test >/dev/null 2>&1 || true
-  kanaal_tekst_terug "${1:-}" "$SPRAAK_TEST_F"
+  { head -1 "$SPRAAK_TEST_F" 2>/dev/null
+    printf '\nStem en oor aanzetten: %s\n' "$(tail -1 "$t.aan" | cut -c1-200)"
+    [ -n "${st:-}" ] && printf 'Stand van de stem: fase %s, %s\n' "$(stem_stand_veld "$st" fase 2>/dev/null)" "$(stem_stand_veld "$st" zin 2>/dev/null | cut -c1-160)"
+  } >"$t"
+  kanaal_tekst_terug "${1:-}" "$t"
+  rm -f "$t" "$t.aan"
 }
 jarvis_spraak_test() {
   command -v "$ADB" >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || { zeg "Rondgang: adb of curl ontbreekt."; return 0; }
@@ -8637,15 +8655,16 @@ brein_kennis_zet() {
 # de uitslag versleuteld terug via het kanaal. Een les tegelijk.
 brein_les() {
   local id="${1:-}" rij="${2:-1}" link code base
-  case "$rij" in 1|2|3) : ;; 4) [ -s "$REK_MAP/lesrij4.json" ] || { zeg "Brein-les: lesrij 4 heeft nog geen vragen (die komen via het kanaal)."; return 0; } ;;
-    5) [ -s "$REK_MAP/fout-dagboek.jsonl" ] || { zeg "Brein-les: het fout-dagboek is leeg."; return 0; } ;; *) rij=1 ;; esac
+  # 678 (18 nov, avond): lesrij 4 en 5 komen als GEGEVENS via het kanaal; het fout-dagboek is rij 9 (was 5: de eigenaar wilde "lesrij 5" met nieuwe vragen)
+  case "$rij" in 1|2|3) : ;; 4|5) [ -s "$REK_MAP/lesrij$rij.json" ] || { zeg "Brein-les: lesrij $rij heeft nog geen vragen (die komen via het kanaal)."; return 0; } ;;
+    9) [ -s "$REK_MAP/fout-dagboek.jsonl" ] || { zeg "Brein-les: het fout-dagboek is leeg."; return 0; } ;; *) rij=1 ;; esac
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || brein_doorsturing >/dev/null 2>&1
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || { zeg "Brein-les: het brein antwoordt niet (druk eerst op Brein: status)."; return 0; }
   if les_loopt; then zeg "Brein-les: er loopt al een les."; return 0; fi
   rm -rf "$REK_MAP/brein-les.lock"; mkdir "$REK_MAP/brein-les.lock" 2>/dev/null || { zeg "Brein-les: er loopt al een les."; return 0; }
   printf '%s\n' "$$" >"$REK_MAP/brein-les.lock/pid"   # 678 (17 nov): het slot draagt het procesnummer (les_loopt)
   rm -f "$REK_MAP/les-wacht"
-  [ "$rij" = 5 ] && [ -z "${LES_UIT:-}" ] && local LES_UIT="$REK_MAP/brein-les-dagboek.json"   # 678 (18 nov): het dagboek apart van de vaste lesrijen
+  [ "$rij" = 9 ] && [ -z "${LES_UIT:-}" ] && local LES_UIT="$REK_MAP/brein-les-dagboek.json"   # 678 (18 nov): het dagboek apart van de vaste lesrijen
   zeg "Brein-les: de kennisbank zetten, dan de lesrij voor (zonder) en na (met de kennisbank). Dit duurt een kwartier tot een half uur."
   brein_kennis_zet
   link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
@@ -8729,12 +8748,12 @@ LESSEN3 = [
 if os.environ.get('RIJ') == '2': LESSEN = LESSEN2
 if os.environ.get('RIJ') == '3': LESSEN = LESSEN3
 DAGBOEK = os.path.join(REKD, 'fout-dagboek.jsonl')
-if os.environ.get('RIJ') == '5':   # 678 (18 nov, punt 5): de open vragen uit het fout-dagboek (hoogstens tien, de nieuwste) -- alleen het echte pad
+if os.environ.get('RIJ') == '9':   # 678 (18 nov, punt 5): de open vragen uit het fout-dagboek (hoogstens tien, de nieuwste) -- alleen het echte pad
     try: _db = [json.loads(x) for x in open(DAGBOEK) if x.strip()]
     except Exception: _db = []
     LESSEN = [{'id': 'd%d' % i, 'vraag': x['vraag'], 'moet': [], 'niet': [], 'dagboek': True} for i, x in enumerate([x for x in _db if not x.get('opgelost')][-10:], 1)]
-if os.environ.get('RIJ') == '4':   # 678 (18 nov, punt 4): lesrij 4 komt als GEGEVENS via het kanaal (vragen over de streek staan nooit in dit script)
-    try: LESSEN = [dict(x, moet=[[fam if w == '{fam}' else w for w in g] for g in x['moet']]) for x in json.load(open(os.path.join(REKD, 'lesrij4.json')))]
+if os.environ.get('RIJ') in ('4', '5'):   # 678 (18 nov, punt 4): lesrij 4 en 5 komen als GEGEVENS via het kanaal (vragen over de streek staan nooit in dit script)
+    try: LESSEN = [dict(x, moet=[[fam if w == '{fam}' else w for w in g] for g in x['moet']]) for x in json.load(open(os.path.join(REKD, 'lesrij%s.json' % os.environ['RIJ'])))]
     except Exception: LESSEN = []
 NL = set('de het een en ik je jij is ben niet wat dat van op te in mag nooit denk na beantwoord vragen rek brein telefoon telefoons dit voor'.split())
 EN = set('the and i am you your my this rack think brain answer questions what do'.split())
@@ -8834,7 +8853,7 @@ for ronde, met in (('voor', False), ('na', True)):
         print('%s %-10s %s %s' % (ronde, les['id'], 'GOED' if goed else 'FOUT', waarom))
     uitslag['rondes'][ronde] = {'goed': sum(1 for x in rij if x['goed']), 'van': len(rij), 'lessen': rij}
 v, n = uitslag['rondes']['voor'], uitslag['rondes']['na']
-if os.environ.get('RIJ') == '5':   # 678 (18 nov): wat nu goed ging heet opgelost; de vragen zelf blijven op deze computer
+if os.environ.get('RIJ') == '9':   # 678 (18 nov): wat nu goed ging heet opgelost; de vragen zelf blijven op deze computer
     _goed = {x['vraag'].lower() for x, r in zip(LESSEN, n['lessen']) if r['goed']}
     try:
         _db = [json.loads(x) for x in open(DAGBOEK) if x.strip()]
@@ -8861,10 +8880,10 @@ if kid and code and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev', base):
         key = hashlib.sha256(('lokale-ai-sleutel:' + code).encode()).digest()
         regels = ['**Les en meting, lesrij %d** (code kijkt na; voor = zonder kennisbank, na = het echte pad van Veronica: kennisbank op de kaart van de Cat, rekenhulp, verdeler):' % uitslag['rij'], '',
                   '| les | voor | na | antwoord na (bron) |', '|---|---|---|---|']
-        if uitslag['rij'] == 5:   # het dagboek: GEEN vraag- of antwoordtekst over het kanaal, alleen aantallen
-            regels = ['**Les uit het fout-dagboek (lesrij 5)**: %d open vragen opnieuw gesteld op het echte pad; %d gingen nu goed (opgelost), %d nog niet.' % (n['van'], n['goed'], n['van'] - n['goed']),
+        if uitslag['rij'] == 9:   # het dagboek: GEEN vraag- of antwoordtekst over het kanaal, alleen aantallen
+            regels = ['**Les uit het fout-dagboek**: %d open vragen opnieuw gesteld op het echte pad; %d gingen nu goed (opgelost), %d nog niet.' % (n['van'], n['goed'], n['van'] - n['goed']),
                       'De vragen zelf blijven op de computer van de eigenaar.']
-        for a, b in (zip(v['lessen'], n['lessen']) if uitslag['rij'] != 5 else []):
+        for a, b in (zip(v['lessen'], n['lessen']) if uitslag['rij'] != 9 else []):
             regels.append('| %s | %s | %s | %s |' % (a['id'], 'goed' if a['goed'] else 'fout' + (' (' + a['waarom'] + ')' if a['waarom'] else ''), 'goed' if b['goed'] else 'fout' + (' (' + b['waarom'] + ')' if b['waarom'] else ''), (b['antwoord'] or '').replace('|', '/').replace('\n', ' ')[:160] + ' (' + str(b.get('bron') or '') + ')'))
         regels += ['', 'Totaal: voor **%d/%d**, na **%d/%d**.' % (v['goed'], v['van'], n['goed'], n['van'])]
         tpsen = [x['tps'] for x in n['lessen'] if isinstance(x['tps'], (int, float))]
@@ -9426,21 +9445,43 @@ print(n)' 2>/dev/null)"
   les_loopt && return 0
   p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
   printf '%s\n' "$nu" >"$REK_MAP/dagboekles.t"
-  logregel "Fout-dagboek: $nieuw nieuwe vraag/vragen; lesrij 5 vanzelf."
-  ( setsid "$0" brein-les "" 5 </dev/null >>"$REK_MAP/console-brein-les.log" 2>&1 & ) 2>/dev/null
+  logregel "Fout-dagboek: $nieuw nieuwe vraag/vragen; de dagboekles vanzelf."
+  ( setsid "$0" brein-les "" 9 </dev/null >>"$REK_MAP/console-brein-les.log" 2>&1 & ) 2>/dev/null
 }
 # 678 (18 nov): DE ZOEKTELEFOON. Een doorsturing van poort 18180 op deze computer naar JARVIS (8080) op de verdeler, anders de controle, anders de
 # bibliothecaris -- nooit het brein (dat rekent) en nooit de F8. Alleen als JARVIS daar antwoordt. Geeft "OK <telefoon>".
+# 678 (18 nov, avond: de verdeler gaf 401 en daarna 429 -- zijn JARVIS volgt een eigen rij en kent de rij-code van Veronica niet). Nu: de eerste
+# rektelefoon die de rij-code ECHT aanneemt (een alleen-lezen GET /jarvis/vertrouwd met de code: 200 = goed). Een telefoon die weigert wordt een uur
+# overgeslagen (elke foute poging telt bij JARVIS mee; na vijf gaat hij een minuut dicht), en de reden -- zijn rol en voorkeur uit /jarvis/status,
+# zonder code -- komt in zoek-telefoon.txt (voor het verslag). De code gaat nooit in een melding.
+ZOEK_TEL_F="$REK_MAP/zoek-telefoon.txt"
 zoek_doorsturing() {
-  local rol s
+  local rol s tok id nu weg c st reden=""
+  tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$tok" ] || { echo "geen zoektelefoon (ARTEMIS kent de rij-code nog niet)"; return 0; }
+  nu="$(date +%s)"
   for rol in verdeler controle bibliothecaris; do
     s="$(als_$rol brein_nu 2>/dev/null)"; [ -n "$s" ] && ! is_f8 "$s" || continue
     [ "$s" = "$(brein_nu)" ] && continue
+    id="$(toestel_id "$s" | sha256sum | cut -c1-8)"
+    weg="$(head -1 "$REK_MAP/zoek-weg-$id" 2>/dev/null | tr -cd '0-9')"; [ -n "$weg" ] && [ "$nu" -lt "$weg" ] && continue
     "$ADB" -s "$s" forward tcp:18180 tcp:8080 >/dev/null 2>&1 || continue
-    curl -fsS -m 4 "http://127.0.0.1:18180/jarvis/status" >/dev/null 2>&1 || continue
-    echo "OK $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"; return 0
+    curl -fsS -m 4 "http://127.0.0.1:18180/jarvis/status" -o "$REK_MAP/zoek-st.json" 2>/dev/null || continue
+    c="$(curl -s -m 6 -o /dev/null -w '%{http_code}' -H "X-Koppelcode: $tok" "http://127.0.0.1:18180/jarvis/vertrouwd" 2>/dev/null)"
+    if [ "$c" = 200 ]; then
+      printf '%s %s (%s): neemt de rij-code aan; zoekt voor het brein\n' "$(date '+%d-%m %H:%M')" "$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')" "$rol" >"$ZOEK_TEL_F"
+      rm -f "$REK_MAP/zoek-st.json"; echo "OK $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"; return 0
+    fi
+    printf '%s\n' "$((nu + 3600))" >"$REK_MAP/zoek-weg-$id"
+    st="$(ST="$REK_MAP/zoek-st.json" python3 -I -c 'import json,os
+try: j=json.load(open(os.environ["ST"]))
+except Exception: j={}
+print("rol %s, voorkeur %s" % (j.get("rol") or "?", j.get("voorkeur") or "?"))' 2>/dev/null)"
+    reden="$reden$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-') ($rol): JARVIS gaf HTTP ${c:-000} op de rij-code ($st)$( case "$st" in *"voorkeur kern"*) echo ' -- staat als beheerder van een eigen rij: in Veronica op Maak werker' ;; *) echo ' -- volgt een eigen rij; Veronica zet dat recht zodra ze open staat' ;; esac); "
   done
+  rm -f "$REK_MAP/zoek-st.json"
   "$ADB" forward --remove tcp:18180 >/dev/null 2>&1 || true
+  [ -n "$reden" ] && printf '%s geen zoektelefoon: %s\n' "$(date '+%d-%m %H:%M')" "$reden" >"$ZOEK_TEL_F"
   echo "geen zoektelefoon"
 }
 brein_kv() {   # $1 vlaggen, $2 soort -> dezelfde vlaggen met de KV-cache in die soort
@@ -9593,6 +9634,7 @@ for x in n["lessen"]:
   printf '\n## Proef naast het huidige brein (brein-probeer)\n'; sed 's/^/    /' "$BREIN_PROBEER_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Snelheidsproef van het brein (brein-snelheid)\n'; sed 's/^/    /' "$BREIN_SNELHEID_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Rollen-les (controle en verdeler apart)\n'; sed 's/^/    /' "$ROLLEN_LES_F" 2>/dev/null || printf '    nog niet gedaan\n'
+  printf '\n## Zoektelefoon (zoeken op internet voor het brein)\n    %s\n' "$(head -1 "$ZOEK_TEL_F" 2>/dev/null || echo 'nog niet gezocht')"
   # 678 (18 nov, punt 5): het fout-dagboek -- alleen AANTALLEN (de vragen zelf blijven op deze computer)
   printf '\n## Fout-dagboek (vragen uit Veronica die fout of leeg gingen)\n'
   DB="$REK_MAP/fout-dagboek.jsonl" python3 -I -c 'import json,os
@@ -9909,14 +9951,14 @@ if vraag.get('soort') == 'les':
         raise SystemExit(0)   # NIET afvinken: de volgende minuut opnieuw
     try:
         with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
-        if vraag.get('rij') == 4:   # 678 (18 nov, punt 4): de vragen van lesrij 4 komen als gegevens mee (JSON), nooit als code
+        if vraag.get('rij') in (4, 5):   # 678 (18 nov, punt 4): de vragen van lesrij 4 en 5 komen als gegevens mee (JSON), nooit als code
             _l = json.loads(str(vraag.get('vraag') or '[]'))
             _ok = [x for x in (_l if isinstance(_l, list) else [])[:12] if isinstance(x, dict) and re.fullmatch(r'[a-z0-9_-]{1,20}', str(x.get('id', '')))
                    and isinstance(x.get('vraag'), str) and isinstance(x.get('moet'), list) and all(isinstance(g, list) and g and all(isinstance(w, str) for w in g) for g in x['moet'])]
-            with open(os.path.join(os.path.dirname(os.environ['STAND']), 'lesrij4.json'), 'w') as fh:
+            with open(os.path.join(os.path.dirname(os.environ['STAND']), 'lesrij%d.json' % vraag['rij']), 'w') as fh:
                 json.dump([{'id': x['id'], 'vraag': x['vraag'][:500], 'moet': [[w.lower()[:60] for w in g][:8] for g in x['moet']][:4],
                             'niet': [str(w).lower()[:60] for w in (x.get('niet') or []) if isinstance(w, str)][:6], 'nl': x.get('nl') is True} for x in _ok], fh, ensure_ascii=False)
-        subprocess.Popen([os.environ['AREK'], 'brein-les', vraag['id'], str(vraag.get('rij') if vraag.get('rij') in (1, 2, 3, 4, 5) else 1)], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+        subprocess.Popen([os.environ['AREK'], 'brein-les', vraag['id'], str(vraag.get('rij') if vraag.get('rij') in (1, 2, 3, 4, 5, 9) else 1)], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
     except Exception:
         pass
     raise SystemExit(0)
