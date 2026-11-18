@@ -7165,8 +7165,27 @@ meld_status() {
   done
   [ "$n" -gt 0 ] || zeg "  Geen rektelefoon verbonden."
 }
+# 678 (18 nov, eigenaar: "Veronica moet de telefoons goed laten zien als klaar, zonder te scannen of te tikken"). Op het rek draait ARTEMIS de
+# modellen zelf (brein, controle, verdeler, bibliothecaris: llama-server via adb); of zo'n telefoon KLAAR is weet dus ARTEMIS, niet JARVIS (die
+# op de brein-telefoon bewust slaapt, en op het gastnetwerk niet over het wifi te bereiken is). Per toestel daarom ook: welke rol (de vaste
+# telefoon van die rol, op serienummer), het model uit de stand van die rol, en klaar = de stand zegt klaar EN de server antwoordt NU op zijn
+# doorsturing. Het toestel-id van JARVIS komt, als JARVIS niet antwoordt, uit de stand van de rol (die las het bij het starten).
+rek_rol_van() {   # $1 serienummer -> "rol|klaar|model|toestel" (leeg als het toestel geen rol heeft)
+  local ser="$1" i rol map poort st m tid k
+  local rollen=(brein controle verdeler bibliothecaris) mappen=("$REK_MAP" "$CONTROLE_MAP" "$VERDELER_MAP" "$BIBLIO_MAP") poorten=("$BREIN_POORT_LOK" "$CONTROLE_POORT_LOK" "$VERDELER_POORT_LOK" "$BIBLIO_POORT_LOK")
+  for i in 0 1 2 3; do
+    rol="${rollen[$i]}"; map="${mappen[$i]}"; poort="${poorten[$i]}"
+    [ -n "$ser" ] && [ "$ser" = "$(head -1 "$map/brein-vast" 2>/dev/null | tr -d '\r\n ')" ] || continue
+    st="$(cat "$map/brein-stand.json" 2>/dev/null)"
+    m="$(printf '%s' "$st" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p' | sed 's/\.gguf$//' | tr -cd 'A-Za-z0-9._-' | cut -c1-60)"
+    tid="$(printf '%s' "$st" | sed -n 's/.*"toestel":"\([a-z0-9]*\)".*/\1/p' | cut -c1-32)"
+    k=false
+    if printf '%s' "$st" | grep -q '"stand":"klaar"' && curl -fsS -m 2 "http://127.0.0.1:$poort/health" 2>/dev/null | grep -q '"ok"'; then k=true; fi
+    printf '%s|%s|%s|%s' "$rol" "$k" "$m" "$tid"; return 0
+  done
+}
 rek_aanwezig() {
-  local eerste=1 s naam via sl tmp jid jver mld mld_json
+  local eerste=1 s naam via sl tmp jid jver mld mld_json ser rr rol rk rm rt
   printf '['
   for s in $(verbonden); do
     is_f8 "$s" && continue
@@ -7176,14 +7195,16 @@ rek_aanwezig() {
       127.0.0.1:56[0-9][0-9]) via="tailscale" ;;
       *:*) via="wifi" ;;
     esac
-    sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"
+    ser="$(toestel_id "$s")"; sl="$(printf '%s' "$ser" | sha256sum | cut -c1-8)"
     # 678: de BATTERIJTEMPERATUUR (dumpsys geeft tienden van graden). Leeg of onzin = null: nooit een getal verzinnen.
     tmp="$(timeout 8 "$ADB" -s "$s" shell dumpsys battery 2>/dev/null | tr -d '\r' | grep -m1 -oE 'temperature: *[0-9]+' | grep -oE '[0-9]+$')"
     case "$tmp" in ''|*[!0-9]*) tmp="null" ;; *) tmp="$(awk -v t="$tmp" 'BEGIN{printf "%.1f", t/10}')" ;; esac
     [ "$eerste" = 1 ] || printf ','; eerste=0
     jid="$(jarvis_toestel_id "$s" "$sl")"; jver="$(awk -v k="$sl" '$1==k && $4 != "" && $4 != "-" {print $4; exit}' "$JARVIS_ID_F" 2>/dev/null)"
     mld="$(meld_van "$jid")"; case "$mld" in ja*) mld_json=true ;; nee) mld_json=false ;; *) mld_json=null ;; esac
-    printf '{"model":%s,"via":%s,"sleutel":%s,"temp":%s,"toestel":%s,"jarvis":%s,"meldt":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")" "$tmp" "$([ -n "$jid" ] && json_s "$jid" || echo null)" "$([ -n "$jver" ] && json_s "$jver" || echo null)" "$mld_json"
+    rr="$(rek_rol_van "$ser")"; IFS='|' read -r rol rk rm rt <<<"$rr"
+    [ -n "$jid" ] || jid="$rt"
+    printf '{"model":%s,"via":%s,"sleutel":%s,"temp":%s,"toestel":%s,"jarvis":%s,"meldt":%s,"rol":%s,"rolKlaar":%s,"rolModel":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")" "$tmp" "$([ -n "$jid" ] && json_s "$jid" || echo null)" "$([ -n "$jver" ] && json_s "$jver" || echo null)" "$mld_json" "$([ -n "$rol" ] && json_s "$rol" || echo null)" "$([ "$rk" = true ] && echo true || echo false)" "$([ -n "$rm" ] && json_s "$rm" || echo null)"
   done
   printf ']\n'
 }
