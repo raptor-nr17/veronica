@@ -751,6 +751,9 @@ def _zoek_get(url, via_tel=True):
                     req = urllib.request.Request('http://127.0.0.1:%d/jarvis/zoek-deel' % ZOEK_LOK, data=json.dumps({'url': url}).encode(),
                                                  headers={'Content-Type': 'application/json', 'X-Koppelcode': code})
                     with op.open(req, timeout=25) as r: j = json.loads(r.read(600000).decode('utf-8', 'replace'))
+                    if j.get('status') == 429 and poging == 0:   # 678 (18 nov): de bron remt even (twee vragen kort na elkaar); twee seconden, dan nog eens
+                        time.sleep(2)
+                        with op.open(req, timeout=25) as r: j = json.loads(r.read(600000).decode('utf-8', 'replace'))
                     if j.get('status') == 200 and isinstance(j.get('data'), str): return j['data'], 'de rektelefoon ' + (ZOEK_FWD[-1] if len(ZOEK_FWD) > 1 else '')
                     ZOEK_DIAG[0]['telefoon'] = 'bron gaf %s' % (j.get('status') or j.get('fout'))
                     break
@@ -980,7 +983,8 @@ def feiten_som(vraag, kennis):
         w = None
         for regel in str(kennis or '').splitlines():
             if c in [x.upper() for x in re.findall(r'\b[A-Za-z]{1,3}\d{1,3}\b', regel)]:
-                m = re.search(r'(\d+(?:,\d+)?)\s*' + re.escape(eenheid), regel)
+                # 678 (18 nov, lesrij 5 "A2 - A1" werd 80,5 - 80,5: A1 en A2 stonden op EEN regel): het getal dat ACHTER deze code komt
+                m = re.search(r'(?i)\b' + re.escape(c) + r'\b[^0-9]*?(\d+(?:,\d+)?)\s*' + re.escape(eenheid), regel)
                 if m: w = m.group(1); break
         if w is None: return None
         waarden.append(w)
@@ -3642,7 +3646,20 @@ spraak_kanaal() {   # 678 (18 nov, eigenaar: "de stem op de S10 testen: praat hi
     done
   fi
   jarvis_spraak_test >/dev/null 2>&1 || true
+  # 678 (18 nov, 19:35: stem "klaar", maar 8082 antwoordde niet): de spraakserver draait in JARVIS en start met de pagina -- net als de webserver
+  # van de Cat ("luisterde niet; pagina geopend"). Dan: scherm wekken, de JARVIS-pagina openen (alleen de proeftelefoon; nooit het brein of de F8),
+  # even wachten en de rondgang een keer opnieuw.
+  local open=""
+  if [ -n "${s:-}" ] && grep -q 'geen verbinding met poort 8082' "$SPRAAK_TEST_F" 2>/dev/null; then
+    if [ "$(toestel_id "$s")" != "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ]; then
+      timeout 10 "$ADB" -s "$s" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+      timeout 10 "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+      sleep "${SPRAAK_PAGINA_WACHT_S:-25}"; open="ja"
+      jarvis_spraak_test >/dev/null 2>&1 || true
+    fi
+  fi
   { head -1 "$SPRAAK_TEST_F" 2>/dev/null
+    [ -n "$open" ] && printf '(de spraakserver antwoordde eerst niet; de JARVIS-pagina is geopend en de rondgang opnieuw gedaan)\n'
     printf '\nStem en oor aanzetten: %s\n' "$(tail -1 "$t.aan" | cut -c1-200)"
     [ -n "${st:-}" ] && printf 'Stand van de stem: fase %s, %s\n' "$(stem_stand_veld "$st" fase 2>/dev/null)" "$(stem_stand_veld "$st" zin 2>/dev/null | cut -c1-160)"
   } >"$t"
@@ -9614,8 +9631,9 @@ for x in n["lessen"]:
     is_f8 "$a" && { printf '    de dagelijkse telefoon (overgeslagen)\n'; continue; }
     i="$(toestel_id "$a")"; case "$zg" in *" $i "*) continue ;; esac; zg="$zg$i "
     # 678 (18 nov): ook wat Veronica over deze telefoon te zien krijgt (/rek.json): zijn rol en of die NU klaar is
-    local rr ro rk rm rt; rr="$(rek_rol_van "$i")"; IFS='|' read -r ro rk rm rt <<<"$rr"
-    printf '    %s (%s)%s%s\n' "$(toestel_naam "$a")" "$(brein_route "$a")" "$(toegestaan "$i" && echo ', op de lijst' || echo ', NIET op de lijst')" \
+    local rr ro rk rm rt jv; rr="$(rek_rol_van "$i")"; IFS='|' read -r ro rk rm rt <<<"$rr"
+    jv="$(jarvis_apk_versie "$a")"   # 678 (18 nov, na de vrijgave van 1.9.101): welke JARVIS er staat (alleen lezen)
+    printf '    %s (%s)%s%s%s\n' "$(toestel_naam "$a")" "$(brein_route "$a")" "$(toegestaan "$i" && echo ', op de lijst' || echo ', NIET op de lijst')" "${jv:+, JARVIS $jv}" \
       "$([ -n "$ro" ] && printf ' -- in Veronica: %s, %s%s' "$ro" "$([ "$rk" = true ] && echo klaar || echo 'nog niet klaar')" "$([ -n "$rm" ] && printf ' (%s)' "$rm")")"
   done
   printf '\n## JARVIS op de rol-telefoons\n    %s\n' "$(head -1 "$JARVIS_WEK_F" 2>/dev/null || echo 'nog niet nagekeken')"
