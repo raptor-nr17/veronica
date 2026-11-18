@@ -8985,7 +8985,10 @@ for x in n["lessen"]:
   for a in $(verbonden); do
     is_f8 "$a" && { printf '    de dagelijkse telefoon (overgeslagen)\n'; continue; }
     i="$(toestel_id "$a")"; case "$zg" in *" $i "*) continue ;; esac; zg="$zg$i "
-    printf '    %s (%s)%s\n' "$(toestel_naam "$a")" "$(brein_route "$a")" "$(toegestaan "$i" && echo ', op de lijst' || echo ', NIET op de lijst')"
+    # 678 (18 nov): ook wat Veronica over deze telefoon te zien krijgt (/rek.json): zijn rol en of die NU klaar is
+    local rr ro rk rm rt; rr="$(rek_rol_van "$i")"; IFS='|' read -r ro rk rm rt <<<"$rr"
+    printf '    %s (%s)%s%s\n' "$(toestel_naam "$a")" "$(brein_route "$a")" "$(toegestaan "$i" && echo ', op de lijst' || echo ', NIET op de lijst')" \
+      "$([ -n "$ro" ] && printf ' -- in Veronica: %s, %s%s' "$ro" "$([ "$rk" = true ] && echo klaar || echo 'nog niet klaar')" "$([ -n "$rm" ] && printf ' (%s)' "$rm")")"
   done
   printf '\n## JARVIS op de rol-telefoons\n    %s\n' "$(head -1 "$JARVIS_WEK_F" 2>/dev/null || echo 'nog niet nagekeken')"
   # 678 (17 nov): WAT HOUDT WAT VAST -- zo is van buiten te zien waarom een les of een proef niet begint
