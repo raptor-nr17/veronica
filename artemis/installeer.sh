@@ -744,7 +744,7 @@ def _zoek_get(url, via_tel=True):
         elif code:
             for poging in (0, 1):
                 if poging or time.time() - ZOEK_FWD[0] > 600:
-                    t = doe_args(['zoek-doorsturing'], 25)
+                    t = doe_args(['zoek-doorsturing'], 90)   # 678 (18 nov): ruim, want een pagina openen kost twintig seconden
                     if 'OK' not in t: ZOEK_TEL_WEG[0] = time.time() + 600; break
                     ZOEK_FWD[0] = time.time(); ZOEK_FWD.append(t.split('OK', 1)[1].strip()[:40])
                 try:
@@ -9492,7 +9492,17 @@ zoek_doorsturing() {
     id="$(toestel_id "$s" | sha256sum | cut -c1-8)"
     weg="$(head -1 "$REK_MAP/zoek-weg-$id" 2>/dev/null | tr -cd '0-9')"; [ -n "$weg" ] && [ "$nu" -lt "$weg" ] && continue
     "$ADB" -s "$s" forward tcp:18180 tcp:8080 >/dev/null 2>&1 || continue
-    curl -fsS -m 4 "http://127.0.0.1:18180/jarvis/status" -o "$REK_MAP/zoek-st.json" 2>/dev/null || continue
+    if ! curl -fsS -m 4 "http://127.0.0.1:18180/jarvis/status" -o "$REK_MAP/zoek-st.json" 2>/dev/null; then
+      # 678 (18 nov, 22:00): de S10 nam de rij-code om 21:06 aan, maar een uur later luisterde zijn JARVIS niet meer (de webserver hangt aan de
+      # pagina). Dan zocht de Chromebook. Nu: dezelfde zachte weg terug als de Cat (jarvis_web_herstel: scherm wekken, pagina openen; nooit het
+      # brein of de F8, hoogstens eens per 10 minuten), en EEN keer opnieuw.
+      jarvis_web_herstel "$s" "$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')" >/dev/null 2>&1 || true
+      "$ADB" -s "$s" forward tcp:18180 tcp:8080 >/dev/null 2>&1 || true
+      if ! curl -fsS -m 4 "http://127.0.0.1:18180/jarvis/status" -o "$REK_MAP/zoek-st.json" 2>/dev/null; then
+        reden="$reden$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-') ($rol): JARVIS luisterde niet op de telefoon (ook niet na het openen van de pagina); "
+        continue
+      fi
+    fi
     c="$(curl -s -m 6 -o /dev/null -w '%{http_code}' -H "X-Koppelcode: $tok" "http://127.0.0.1:18180/jarvis/vertrouwd" 2>/dev/null)"
     if [ "$c" = 200 ]; then
       printf '%s %s (%s): neemt de rij-code aan; zoekt voor het brein\n' "$(date '+%d-%m %H:%M')" "$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')" "$rol" >"$ZOEK_TEL_F"
