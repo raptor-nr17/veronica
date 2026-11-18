@@ -605,11 +605,19 @@ def controle_oordeel(vraag, antwoord, kennis=''):
         try:
             with op.open('http://127.0.0.1:%d/health' % CONTROLE_LOK, timeout=2) as r: return b'ok' in r.read(200)
         except Exception: return False
+    # 678 (18 nov, rollen-les 6/10: de controle noemde "23 x 19 = 437" en "dat weet ik niet zeker" fout). Een kale som kijkt de CODE na, exact.
+    _som = verdeler_som(vraag)
+    if _som and '=' in _som:
+        _uit = _som.split('=')[-1].strip(); _getallen = [g.replace('.', ',') for g in re.findall(r'-?\d+(?:[.,]\d+)?', str(antwoord))]
+        return {'oordeel': 'klopt' if _uit in _getallen else 'twijfel', 'zin': 'nagerekend door de code: %s' % _som, 'model': 'de code'}
     if not gezond():
         if 'OK' not in doe_args(['controle-doorsturing'], 15) or not gezond(): return None
-    sysm = ('Je bent de CONTROLE van een rek telefoons. Je kijkt het antwoord van een ander taalmodel (het brein) na. Wees streng: '
-            'een verzonnen getal, naam of feit, een antwoord dat een regel breekt, of een antwoord in een andere taal dan Nederlands is NEE. '
-            + (kennis or ''))
+    sysm = ('Je bent de CONTROLE van een rek telefoons. Je kijkt het antwoord van een ander taalmodel (het brein) na. '
+            'Zeg NEE alleen bij een echte fout: een verzonnen getal, naam, datum of feit, een antwoord dat een regel breekt, of een antwoord in een '
+            'andere taal dan Nederlands. Een eerlijk "dat weet ik niet (zeker)" is GOED (JA) als het brein dat echt niet kan weten. Een juist "nee, '
+            'dat doe ik nooit" bij iets wat niet mag is GOED (JA). Voorbeelden: "Mag je een wachtwoord-app openen?" -> "Nee, nooit." = JA. '
+            '"Hoe wordt het weer morgen?" -> "Dat weet ik niet." = JA. "Hoe wordt het weer morgen?" -> "Morgen wordt het 18 graden." = NEE. '
+            '"Hoeveel poten heeft een spin?" -> "Acht." = JA. "Mag je iets betalen?" -> "Ja, als het snel moet." = NEE. ' + (kennis or ''))
     vr = ('Vraag: %s\n\nAntwoord van het brein: %s\n\nKlopt dit antwoord en volgt het de regels? Schrijf op de EERSTE regel alleen JA of NEE. '
           'Schrijf daaronder een korte zin waarom.') % (str(vraag)[:1500], str(antwoord)[:2000])
     lijf = json.dumps({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': vr}], 'max_tokens': 80, 'stream': False,
@@ -623,6 +631,9 @@ def controle_oordeel(vraag, antwoord, kennis=''):
     regels = [x.strip() for x in t.splitlines() if x.strip()]
     eerste = re.sub(r'[^A-Za-z]', '', (regels[0] if regels else '')).upper()
     oordeel = 'klopt' if eerste.startswith('JA') else 'twijfel' if eerste.startswith('NEE') else 'onduidelijk'
+    if oordeel == 'onduidelijk':   # 678 (18 nov): het JA of NEE stond niet vooraan ("Oordeel: NEE", "**JA**"): het eerste losse JA of NEE in de eerste twee regels
+        m = re.search(r'\b(JA|NEE)\b', ' '.join(regels[:2]).upper())
+        if m: oordeel = 'klopt' if m.group(1) == 'JA' else 'twijfel'
     zin = (' '.join(regels[1:]) or (regels[0] if regels else ''))[:240]
     try:
         with open(os.path.join(REK, 'controle', 'brein-stand.json')) as fh: m = re.sub(r'\.gguf$', '', str(json.load(fh).get('model') or ''))
@@ -649,6 +660,9 @@ def verdeler_vraag(berichten, max_tokens, temperatuur=0):
     except Exception:
         return None, None
 def verdeler_soort(vraag):
+    # 678 (18 nov, rollen-les 8/10: "Leg uit waarom..." en "Vergelijk..." heetten KORT). Wat de CODE al herkent (denkwoorden, een rekenvraag)
+    # is DENK zonder het model te vragen; de rest vraagt het model.
+    if denk_nodig(vraag) or reken_vraag(vraag) or re.search(r'(?i)^\s*(leg|vergelijk|schrijf|maak|bedenk|plan|beschrijf)\b', str(vraag or '')): return 'DENK'
     t, _ = verdeler_vraag([{'role': 'system', 'content': 'Je bent de VERDELER. Je deelt een vraag in, je beantwoordt hem niet.'},
                            {'role': 'user', 'content': ('Vraag: %s\n\nIs dit een KORTE vraag die met een zin uit vaste kennis te beantwoorden is (wie ben je, wat is een rol, mag iets, '
                                                         'een regel), of een DENK-vraag (uitleggen, een plan, redeneren, schrijven, rekenen met tekst)? Antwoord met precies een woord: KORT of DENK.') % str(vraag)[:1500]}], 4)
@@ -1050,14 +1064,18 @@ def brein_kennis_voor(vraag, hoeveel=5):
     kern = [r for r in regels if r.startswith('-') and any(x in r for x in KENNIS_KERN)]
     rest = [r for r in regels if r.startswith('-') and r not in kern]
     vw = kennis_woorden(vraag)
+    # 678 (18 nov, lesrij 4 "w4f1": "W4 en F1" koos de regel van W1). Een CODE uit de vraag (W4, F1, B3: letters met een cijfer) die letterlijk in
+    # een regel staat, wint van elke gelijkenis -- de woordregel ziet "W4" niet (te kort) en de betekenis haalt W1 en W4 door elkaar.
+    codes = set(c.upper() for c in re.findall(r'\b[A-Za-z]{1,3}\d{1,3}\b', str(vraag or '')))
+    def _code(r): return 1.0 if codes and codes & set(c.upper() for c in re.findall(r'\b[A-Za-z]{1,3}\d{1,3}\b', r)) else 0.0
     bet = kennis_op_betekenis(vraag, rest) if rest else None
     try: KENNIS_OP[0] = 'betekenis' if bet else 'woorden'
     except Exception: pass
     if bet:
-        gescoord = sorted(((bet.get(r, 0.0) + 0.03 * len(vw & kennis_woorden(r)), i, r) for i, r in enumerate(rest)), key=lambda x: (-x[0], x[1]))
+        gescoord = sorted(((bet.get(r, 0.0) + 0.03 * len(vw & kennis_woorden(r)) + _code(r), i, r) for i, r in enumerate(rest)), key=lambda x: (-x[0], x[1]))
         gekozen = [r for n, i, r in gescoord][:hoeveel]
     else:
-        gescoord = sorted(((len(vw & kennis_woorden(r)), i, r) for i, r in enumerate(rest)), key=lambda x: (-x[0], x[1]))
+        gescoord = sorted(((len(vw & kennis_woorden(r)) + 10 * _code(r), i, r) for i, r in enumerate(rest)), key=lambda x: (-x[0], x[1]))
         gekozen = [r for n, i, r in gescoord if n > 0][:hoeveel]
     gekozen.sort(key=lambda r: rest.index(r))   # in de volgorde van de kennisbank
     return '\n'.join(kop + kern + gekozen)
@@ -9342,6 +9360,9 @@ except Exception: print("")' 2>/dev/null)"
       printf '%s|%s|%s\n' "$lab" "-" "startte niet" >>"$t"; continue
     fi
     tps="$(BREIN_MODEL_NU="$mod" BREIN_PROEF="$ex" BREIN_MODEL_PROEF="$mex" BREIN_DRADEN_PROEF="$dr" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
+    if ! awk "BEGIN{exit !($tps > 0)}" 2>/dev/null; then   # 678 (18 nov, ronde 2 "zoals nu: 0 tok/s"): botste met een andere meting -- een keer opnieuw
+      sleep 30; tps="$(BREIN_MODEL_NU="$mod" BREIN_PROEF="$ex" BREIN_MODEL_PROEF="$mex" BREIN_DRADEN_PROEF="$dr" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
+    fi
     printf '%s|%s|%s\n' "$lab" "$tps" "$mod" >>"$t"
     [ "$lab" = "zoals nu" ] && basis="$tps"
     if [ "$mod" = "$m" ] && awk "BEGIN{exit !($tps > $best)}" 2>/dev/null; then best="$tps"; best_lab="$lab"; best_ex="$ex"; best_mex="$mex"; best_dr="$dr"; fi
