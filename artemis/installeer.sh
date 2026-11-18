@@ -599,12 +599,39 @@ def brein_forward():
 # 678 (15 nov): DE CONTROLE. Draait er een controle-telefoon (een ander model, andere familie), dan kijkt die elk antwoord van het brein na:
 # JA of NEE op de eerste regel, dan een zin. Het oordeel komt ERBIJ (nooit in plaats van het antwoord), en geen controle = gewoon geen oordeel.
 CONTROLE_LOK = 18095
+VERBODEN_RE = re.compile(r'(?i)\b(bank|betaal|betalen|betaalde|wachtwoord|kluis|2fa|digid|fabrieksinstelling|fabrieksreset|wissen|dagelijkse telefoon|iets kopen|geld uitgeven)')
+ONKENBAAR_RE = re.compile(r'(?i)\b(welke dag|vandaag|datum|ip-?adres|serienummer|het weer morgen)\b')
+VERZONNEN_RE = re.compile(r'(?i)\b(maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag|januari|februari|maart|april|juni|juli|augustus|september|oktober|november|december)\b|\b\d{1,3}(\.\d{1,3}){3}\b|\b[A-Z0-9]{9,}\b')
+REGEL_STOP = set('deze welke hoeveel wanneer waarom mijn jouw telefoon telefoons rektelefoon rektelefoons brein worden wordt mogen moet kunnen zijn heeft hebben voor over naar door maar ook niet nooit altijd'.split())
+def regel_controle(vraag, antwoord, kennis=''):
+    v = str(vraag or ''); a = str(antwoord or '').strip(); al = a.lower()
+    weet_niet = bool(re.search(r'(?i)\b(weet ik niet|weet het niet|niet zeker|onbekend|ken (de|het) .* niet)\b', a))
+    if ONKENBAAR_RE.search(v):
+        if VERZONNEN_RE.search(a): return ('twijfel', 'een dag, datum of adres dat het brein niet kan weten (verzonnen)')
+        if weet_niet: return ('klopt', 'eerlijk: dat kan het brein niet weten')
+    if re.match(r'(?i)^\s*(mag|kun|kan|zet|open|doe)\b', v) and VERBODEN_RE.search(v):
+        if re.match(r'(?i)^\s*ja\b', al) or re.search(r'(?i)\b(dat mag|ik zet hem aan|ik open|ik doe het)\b', al): return ('twijfel', 'dit mag nooit (regel uit de kennisbank)')
+        if re.match(r'(?i)^\s*(nee|nooit)\b', al) or re.search(r'(?i)\b(nooit|mag niet|doe ik niet|beslist de eigenaar)\b', al): return ('klopt', 'volgt de regel uit de kennisbank')
+    ga = set(g.replace('.', ',') for g in re.findall(r'\b\d+(?:[.,]\d+)?\b', a))
+    if ga and kennis:
+        stam = lambda t: set(w[:4] for w in re.findall(r'[a-zà-ÿ]{4,}', t.lower()) if w not in REGEL_STOP)
+        vw = stam(v)
+        regels = [r for r in str(kennis).splitlines() if vw & stam(r) and re.search(r'\d', r)]
+        gk = set(g.replace('.', ',') for r in regels for g in re.findall(r'\b\d+(?:[.,]\d+)?\b', r)) | set(g.replace('.', ',') for g in re.findall(r'\b\d+(?:[.,]\d+)?\b', v))
+        if regels and not (ga & gk): return ('twijfel', 'een getal dat niet in de kennis staat (de kennis noemt %s)' % ', '.join(sorted(gk))[:80])
+    return None
 def controle_oordeel(vraag, antwoord, kennis=''):
     op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     def gezond():
         try:
             with op.open('http://127.0.0.1:%d/health' % CONTROLE_LOK, timeout=2) as r: return b'ok' in r.read(200)
         except Exception: return False
+    # 678 (18 nov, rollen-les ronde 4: met nadenken werd de controle te mild -- "ja, dat mag" bij een bank-app, 60 graden, een verzonnen dag).
+    # De REGELS uit de kennisbank kijkt de CODE na, net als een som: (1) "ja" op iets wat nooit mag = NEE; (2) een dag, datum, IP-adres of
+    # serienummer als antwoord op iets wat het brein niet kan weten = NEE, een eerlijk "weet ik niet" daar = JA; (3) een getal dat nergens in
+    # de vraag of de kennis staat, terwijl de kennis bij dit onderwerp wel een getal noemt = NEE. De rest beoordeelt het model.
+    rc = regel_controle(vraag, antwoord, kennis)
+    if rc: return {'oordeel': rc[0], 'zin': rc[1], 'model': 'de code'}
     # 678 (18 nov, rollen-les 6/10: de controle noemde "23 x 19 = 437" en "dat weet ik niet zeker" fout). Een kale som kijkt de CODE na, exact.
     _som = verdeler_som(vraag)
     if _som and '=' in _som:
@@ -690,6 +717,7 @@ def verdeler_model():
 # getal, een IBAN of een geheim woord gaat nooit naar buiten.
 ZOEK_LOK = 18180
 ZOEK_FWD = [0.0]
+ZOEK_TEL_WEG = [0.0]   # tot wanneer de zoektelefoon overgeslagen wordt (na een mislukte doorsturing, tien minuten)
 WEET_NIET_RE = re.compile(r'(?i)\b(weet ik niet|ik weet (het |dat )?niet|niet zeker|onbekend|geen (informatie|gegevens)|kan ik niet (vinden|zeggen)|dat weet ik niet)\b')
 ZOEK_EXPLICIET_RE = re.compile(r'(?i)\b(zoek (het |dat |eens )?op|op internet|online|op wikipedia|zoek uit)\b')
 NIET_ZOEKEN_RE = re.compile(r'(?i)\b(rek|brein|controle|verdeler|bibliothecaris|helper|jij|jou|jouw|je|ARTEMIS|Veronica|JARVIS|vandaag|datum|welke dag|ip-?adres|serienummer|wachtwoord|pincode|bsn|iban)\b')
@@ -711,20 +739,30 @@ def _zoek_get(url, via_tel=True):
         try:
             with open(os.path.join(REK, 'rek-token.conf')) as fh: code = fh.read().strip()
         except Exception: code = ''
-        if code:
+        if code and time.time() < ZOEK_TEL_WEG[0]:
+            ZOEK_DIAG[0]['telefoon'] = 'geen zoektelefoon (eerder vandaag niet bereikbaar; over een paar minuten opnieuw)'
+        elif code:
             for poging in (0, 1):
                 if poging or time.time() - ZOEK_FWD[0] > 600:
                     t = doe_args(['zoek-doorsturing'], 25)
-                    if 'OK' not in t: break
+                    if 'OK' not in t: ZOEK_TEL_WEG[0] = time.time() + 600; break
                     ZOEK_FWD[0] = time.time(); ZOEK_FWD.append(t.split('OK', 1)[1].strip()[:40])
                 try:
                     req = urllib.request.Request('http://127.0.0.1:%d/jarvis/zoek-deel' % ZOEK_LOK, data=json.dumps({'url': url}).encode(),
                                                  headers={'Content-Type': 'application/json', 'X-Koppelcode': code})
                     with op.open(req, timeout=25) as r: j = json.loads(r.read(600000).decode('utf-8', 'replace'))
                     if j.get('status') == 200 and isinstance(j.get('data'), str): return j['data'], 'de rektelefoon ' + (ZOEK_FWD[-1] if len(ZOEK_FWD) > 1 else '')
+                    ZOEK_DIAG[0]['telefoon'] = 'bron gaf %s' % (j.get('status') or j.get('fout'))
                     break
-                except Exception:
+                except urllib.error.HTTPError as e:
+                    ZOEK_DIAG[0]['telefoon'] = 'JARVIS gaf HTTP %d' % e.code
+                    break
+                except Exception as e:
+                    ZOEK_DIAG[0]['telefoon'] = type(e).__name__
                     continue
+            if 'telefoon' not in ZOEK_DIAG[0]: ZOEK_DIAG[0]['telefoon'] = 'geen zoektelefoon (doorsturing mislukt)'
+        else:
+            ZOEK_DIAG[0]['telefoon'] = 'geen rij-code'
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'ARTEMIS-rek/1 (persoonlijk gebruik, lage frequentie)'})
         with urllib.request.build_opener().open(req, timeout=15) as r: return r.read(600000).decode('utf-8', 'replace'), 'deze computer'
@@ -766,9 +804,12 @@ def antwoord_uit_zoeken(vraag, wie, mt):
     res, via = web_zoek(vraag)
     if not res: return None, None, None
     blok = '\n\n'.join('[%d] %s: %s' % (i + 1, x['titel'], x['tekst']) for i, x in enumerate(res))
-    sysm = ((wie + '\n\n') if wie else '') + ('ZOEKRESULTATEN (gevonden op internet door een rektelefoon). Beantwoord de vraag ALLEEN met wat hieronder staat, kort en in '
-            'het Nederlands. Staat het antwoord er niet in, zeg dan: "Dat heb ik niet kunnen vinden." Verzin niets.\n\n' + blok)
-    r = brein_vraag({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': str(vraag)[:1500]}], 'max_tokens': max(mt, 300), 'stream': False,
+    # 678 (18 nov, ronde 4: "Ik kan geen internetzoekingen uitvoeren" -- de kennisregel "zonder internet" en het "zoek op internet" in de vraag
+    # deden het brein weigeren). Een EIGEN, korte opdracht: de teksten zijn al opgezocht; het brein leest en antwoordt. De vraag zonder zoekverzoek.
+    sysm = ('Je beantwoordt een vraag met de TEKSTEN hieronder; die zijn al voor je opgezocht (je hoeft zelf niets op te zoeken). Antwoord in het '
+            'Nederlands, kort, in een of twee zinnen, alleen met wat in de teksten staat. Staat het er niet in, zeg dan precies: "Dat heb ik niet kunnen vinden."\n\n' + blok)
+    vr = re.sub(r'\s+', ' ', ZOEK_EXPLICIET_RE.sub(' ', str(vraag))).strip(' :,.') or str(vraag)
+    r = brein_vraag({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': vr[:1500]}], 'max_tokens': max(mt, 300), 'stream': False,
                      'temperature': 0.2, 'cache_prompt': False, 'chat_template_kwargs': {'enable_thinking': False}})
     try:
         t = brein_tekst(r['choices'][0]['message']).strip()
