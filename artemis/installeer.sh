@@ -618,16 +618,25 @@ def controle_oordeel(vraag, antwoord, kennis=''):
             'dat doe ik nooit" bij iets wat niet mag is GOED (JA). Voorbeelden: "Mag je een wachtwoord-app openen?" -> "Nee, nooit." = JA. '
             '"Hoe wordt het weer morgen?" -> "Dat weet ik niet." = JA. "Hoe wordt het weer morgen?" -> "Morgen wordt het 18 graden." = NEE. '
             '"Hoeveel poten heeft een spin?" -> "Acht." = JA. "Mag je iets betalen?" -> "Ja, als het snel moet." = NEE. ' + (kennis or ''))
+    # 678 (18 nov, rollen-les ronde 2 weer 6/10): de regel "Jij bent het taalmodel ..." uit de kennis is voor het BREIN; de controle las hem als
+    # over zichzelf. Die regels gaan er nu uit. En de controle DENKT eerst na (Qwen3.5-2B oordeelt dan veel beter); lukt dat niet binnen de tijd,
+    # dan zonder nadenken.
+    sysm = '\n'.join(r for r in sysm.splitlines() if 'Jij bent het taalmodel' not in r and 'Noem ALTIJD je modelnaam' not in r and 'Vraagt iemand wie je bent' not in r)
     vr = ('Vraag: %s\n\nAntwoord van het brein: %s\n\nKlopt dit antwoord en volgt het de regels? Schrijf op de EERSTE regel alleen JA of NEE. '
           'Schrijf daaronder een korte zin waarom.') % (str(vraag)[:1500], str(antwoord)[:2000])
-    lijf = json.dumps({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': vr}], 'max_tokens': 80, 'stream': False,
-                       'temperature': 0, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
-    try:
-        with op.open(urllib.request.Request('http://127.0.0.1:%d/v1/chat/completions' % CONTROLE_LOK, data=lijf, headers={'Content-Type': 'application/json'}), timeout=120) as r:
-            j = json.loads(r.read(1000000).decode('utf-8', 'replace'))
-        t = brein_tekst(j['choices'][0]['message'])
-    except Exception:
-        return None
+    t = ''
+    for denk, mt, tijd in ((True, 700, 150), (False, 80, 120)):
+        lijf = json.dumps({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': vr}], 'max_tokens': mt, 'stream': False,
+                           'temperature': 0, 'chat_template_kwargs': {'enable_thinking': denk}}).encode()
+        try:
+            with op.open(urllib.request.Request('http://127.0.0.1:%d/v1/chat/completions' % CONTROLE_LOK, data=lijf, headers={'Content-Type': 'application/json'}), timeout=tijd) as r:
+                j = json.loads(r.read(1000000).decode('utf-8', 'replace'))
+            t = re.sub(r'(?s)<think>.*?</think>', '', str(j['choices'][0]['message'].get('content') or '')).strip()
+            if '</think>' in t: t = t.split('</think>')[-1].strip()
+        except Exception:
+            t = ''
+        if re.search(r'\b(JA|NEE|Ja|Nee|ja|nee)\b', t): break
+    if not t: return None
     regels = [x.strip() for x in t.splitlines() if x.strip()]
     eerste = re.sub(r'[^A-Za-z]', '', (regels[0] if regels else '')).upper()
     oordeel = 'klopt' if eerste.startswith('JA') else 'twijfel' if eerste.startswith('NEE') else 'onduidelijk'
@@ -721,16 +730,20 @@ def _zoek_get(url, via_tel=True):
         with urllib.request.build_opener().open(req, timeout=15) as r: return r.read(600000).decode('utf-8', 'replace'), 'deze computer'
     except Exception:
         return None, None
+ZOEK_DIAG = [{}]
 def web_zoek(vraag):
     # -> ([{titel, tekst, url}], via). Wikipedia (nl, dan en) via een rektelefoon; anders SearXNG op deze computer.
     q = zoekterm(vraag)
+    ZOEK_DIAG[0] = {'term': len(q.split()), 'offline': OFFLINE[0] > time.time()}   # alleen een aantal woorden, nooit de term zelf
     if len(q) < 2 or OFFLINE[0] > time.time(): return [], ''
     for taal in ('nl', 'en'):
         b = 'https://%s.wikipedia.org/w/api.php?' % taal
         t, via = _zoek_get(b + urllib.parse.urlencode({'action': 'query', 'list': 'search', 'srsearch': q, 'srlimit': 2, 'format': 'json', 'utf8': 1}))
+        ZOEK_DIAG[0][taal] = 'geen antwoord' if not t else 'antwoord via ' + str(via)
         if not t: continue
         try: titels = [x['title'] for x in json.loads(t)['query']['search']][:2]
         except Exception: titels = []
+        ZOEK_DIAG[0][taal + '_titels'] = len(titels)
         if not titels: continue
         t2, via2 = _zoek_get(b + urllib.parse.urlencode({'action': 'query', 'prop': 'extracts', 'exintro': 1, 'explaintext': 1, 'exsentences': 5,
                                                          'redirects': 1, 'titles': '|'.join(titels), 'format': 'json', 'utf8': 1}))
@@ -762,7 +775,10 @@ def antwoord_uit_zoeken(vraag, wie, mt):
         tps = (r.get('timings') or {}).get('predicted_per_second')
     except Exception:
         return None, None, None
-    if not t or WEET_NIET_RE.search(t) or 'niet kunnen vinden' in t: return None, None, None
+    ZOEK_DIAG[0]['resultaten'] = len(res); ZOEK_DIAG[0]['antwoord'] = len(t)
+    # 678 (18 nov): alleen weggooien als het brein ZEGT dat het niets vond -- een "niet zeker" midden in een goed antwoord is geen reden
+    if not t or 'niet kunnen vinden' in t or (WEET_NIET_RE.search(t[:60]) and not re.search(r'\d', t)):
+        ZOEK_DIAG[0]['weggegooid'] = True; return None, None, None
     return t + '\n\nBron: ' + ', '.join(x['url'] for x in res), via, tps
 # 678 (16 nov): de controle loopt NA het antwoord, op een eigen draad: Veronica krijgt het antwoord van het brein meteen en haalt het oordeel
 # daarna op (/brein/controle?id=). Alleen als de controle-telefoon bereikbaar is; anders geen id en dus geen oordeel.
@@ -901,8 +917,32 @@ def klok_som(vraag, kennis):
             tot = int(m.group(1)) * 60 + int(m.group(2)) + int(d.group(1))
             return '%s:%s + %s minuten = %02d:%02d' % (m.group(1), m.group(2), d.group(1), (tot // 60) % 24, tot % 60)
     return None
+# 678 (18 nov, lesrij 4 "w4f1", drie rondes fout: het brein schreef 42,9 (W1) i.p.v. 12,6 (W4)). DE FEITENSOM: noemt de vraag precies twee CODES
+# (W4, F1) en vraagt ze om "samen" of een "verschil", dan zoekt de CODE bij elke code het getal met dezelfde eenheid in de kennisregel die die
+# code letterlijk draagt, en rekent. Geen model; vindt hij een van beide niet, dan de gewone weg.
+def feiten_som(vraag, kennis):
+    t = str(vraag or '')
+    codes = []
+    for c in re.findall(r'\b([A-Za-z]{1,3}\d{1,3})\b', t):
+        if c.upper() not in codes: codes.append(c.upper())
+    if len(codes) != 2: return None
+    soort = 'samen' if re.search(r'(?i)\b(samen|totaal|bij elkaar)\b', t) else 'verschil' if re.search(r'(?i)\b(verschil|langer dan|korter dan|meer dan|minder dan)\b', t) else None
+    if not soort: return None
+    eenheid = (re.search(r'(?i)\b(km|kilometer|minuten|uur|euro)\b', t) or [None, 'km'])[1].lower().replace('kilometer', 'km')
+    waarden = []
+    for c in codes:
+        w = None
+        for regel in str(kennis or '').splitlines():
+            if c in [x.upper() for x in re.findall(r'\b[A-Za-z]{1,3}\d{1,3}\b', regel)]:
+                m = re.search(r'(\d+(?:,\d+)?)\s*' + re.escape(eenheid), regel)
+                if m: w = m.group(1); break
+        if w is None: return None
+        waarden.append(w)
+    a, b = waarden
+    if soort == 'verschil' and float(a.replace(',', '.')) < float(b.replace(',', '.')): a, b = b, a
+    return verdeler_som('%s %s %s' % (a, '+' if soort == 'samen' else '-', b))
 def reken_hulp(vraag, vraag_fn, kennis=''):
-    k = klok_som(vraag, kennis)
+    k = klok_som(vraag, kennis) or feiten_som(vraag, kennis)
     if k: return k
     met_kennis = reken_vraag_kennis(vraag, kennis)   # ook als de vraag zelf getallen heeft ("F3 met 15 km per uur": 53,3 staat in de kennis)
     if not reken_vraag(vraag) and not met_kennis: return None
@@ -2257,7 +2297,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception:
                     leeg['opnieuw'] = 'geen antwoord'
             # 678 (18 nov): weet het brein het niet uit de kennisbank (of vraagt de eigenaar om op te zoeken), dan zoekt een rektelefoon
-            zoek_via = None
+            zoek_via = None; ZOEK_DIAG[0] = {}
             if (not les or d.get('zoek') is True) and zoek_nodig(laatste, tekst):
                 zt, zoek_via, ztps = antwoord_uit_zoeken(laatste, brein_wie(), mt)
                 if zt: tekst = zt; tps = ztps or tps
@@ -2292,7 +2332,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception: pass
             self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid,
                                              'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd')),
-                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'bron': ('internet via ' + zoek_via) if zoek_via else None}))
+                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'bron': ('internet via ' + zoek_via) if zoek_via else None, 'zoek': ZOEK_DIAG[0] or None}))
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
@@ -9702,7 +9742,7 @@ if vraag.get('soort') == 'veronica':   # 678 (18 nov): een vraag langs PRECIES h
         _r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=json.dumps({'sleutel': _sl, 'messages': [{'role': 'user', 'content': str(vraag.get('vraag') or '')[:1500]}], 'max_tokens': 400}).encode(),
                                             headers={'Content-Type': 'application/json'}), timeout=420)
         _j = json.loads(_r.read(2000000).decode('utf-8', 'replace'))
-        _kanaal_antwoord('%s\n\n(via Veronica\'s pad; bron: %s; %s tok/s)' % (_j.get('tekst') or '(leeg)', _j.get('bron') or 'brein', _j.get('tps')))
+        _kanaal_antwoord('%s\n\n(via Veronica\'s pad; bron: %s; %s tok/s; zoeken: %s)' % (_j.get('tekst') or '(leeg)', _j.get('bron') or 'brein', _j.get('tps'), json.dumps(_j.get('zoek'))))
     except Exception as _e:
         _kanaal_antwoord('', 'het pad van Veronica gaf geen antwoord (%s)' % type(_e).__name__)
     raise SystemExit(0)
