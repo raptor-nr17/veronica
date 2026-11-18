@@ -3627,6 +3627,10 @@ jarvis_spraak_bewijs() {   # $1 serienummer -> een zin
 # Zo zie je in een regel of allebei echt werken, met de tijden. Via een adb-doorsturing (loopback: de spraakserver laat dat toe) en met de
 # rij-code (die gaat nooit in een melding). De zin is vast en niet persoonlijk. De uitslag komt ook in spraak-test.txt (voor Motor en spraak).
 SPRAAK_TEST_F="$REK_MAP/spraak-test.txt"
+spraak_kanaal() {   # 678 (18 nov, eigenaar: "de stem op de S10 testen: praat hij, hoe snel"): de rondgang stem -> oor, en de uitslag terug op het kanaal
+  jarvis_spraak_test >/dev/null 2>&1 || true
+  kanaal_tekst_terug "${1:-}" "$SPRAAK_TEST_F"
+}
 jarvis_spraak_test() {
   command -v "$ADB" >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || { zeg "Rondgang: adb of curl ontbreekt."; return 0; }
   local tok p s w c t0 t1 t2 uit stat rol vk hs stem oor zin="Goedemorgen. De stem en het oor van het rek werken samen."
@@ -9835,6 +9839,14 @@ if vraag.get('soort') == 'kennis':   # 678 (18 nov, punt 7): EXTRA KENNIS via he
     except Exception: pass
     _kanaal_antwoord('Extra kennis deel %d: %d regels opgeslagen (samen %d regels extra kennis). ARTEMIS zet de kennisbank nu opnieuw op de kaart van de Cat.' % (_deel, len(_r), len(_alles)))
     raise SystemExit(0)
+if vraag.get('soort') == 'spraak':   # 678 (18 nov): de stem en het oor op de proeftelefoon; het brein is er niet voor nodig
+    import subprocess
+    try:
+        with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
+        subprocess.Popen([os.environ['AREK'], 'spraak-kanaal', vraag['id']], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+    except Exception:
+        pass
+    raise SystemExit(0)
 if vraag.get('soort') == 'rollen':   # 678 (18 nov, punt 6): de rollen-les (controle en verdeler); het brein is er niet voor nodig
     import subprocess
     try:
@@ -10406,6 +10418,7 @@ case "${1:-status}" in
   brein-probeer) brein_probeer "${2:-}" "${3:-}" ;;
   brein-snelheid) brein_snelheid "${2:-}" ;;
   rollen-les) rollen_les "${2:-}" ;;
+  spraak-kanaal) spraak_kanaal "${2:-}" ;;
   zoek-doorsturing) zoek_doorsturing ;;
   zelfstandig-tik) zelfstandig_tik ;;
   dagboek-tik) dagboek_tik ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
