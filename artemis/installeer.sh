@@ -7223,7 +7223,7 @@ BREIN_MODELLEN="${BREIN_MODELLEN:-ggml-org/gemma-4-E4B-it-GGUF Q4_K_M;Qwen/Qwen3
 BREIN_MAP_TEL="/data/local/tmp/brein"
 BREIN_POORT_TEL=8093                       # op de telefoon, alleen 127.0.0.1
 BREIN_POORT_LOK="${BREIN_POORT_LOK:-18093}" # de adb-doorsturing op deze computer
-BREIN_DRADEN="${BREIN_DRADEN:-4}"
+BREIN_DRADEN="${BREIN_DRADEN:-4}"; BREIN_DRADEN_STD="$BREIN_DRADEN"
 # 678 (16 nov, onderzoek stap 4+5): EXTRA VLAGGEN voor llama-server. Wat de proefbank als beste koos staat in brein-extra (per rol, in de map van
 # de rol); tijdens een proef zet de proefbank BREIN_PROEF (ook leeg = zonder extra). Alleen veilige tekens: geen ; of $ naar de telefoon.
 brein_extra() {
@@ -7314,12 +7314,16 @@ adb_push_heel() {   # $1 serienummer, $2 lokaal bestand, $3 doel op de telefoon 
   rm -rf "$tmp"
   return 1
 }
+brein_draden() {   # 678 (18 nov, snelheidsproef): hoeveel draden -- een proefwaarde, anders de keuze in brein-draden (per rol), anders BREIN_DRADEN
+  local d="${BREIN_DRADEN_PROEF:-$(head -1 "$REK_MAP/brein-draden" 2>/dev/null | tr -cd '0-9')}"
+  case "$d" in [1-8]) printf '%s' "$d" ;; *) printf '%s' "$BREIN_DRADEN" ;; esac
+}
 brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
   # 678 (16 nov, onderzoek stap 1): de snelle kernen per SOORT, uit /proc/cpuinfo ("CPU part"): alles behalve de zuinige kernen (A53 0xd03,
   # A55 0xd05, A510 0xd46, A520 0xd80) telt. Zo: 4x A78 = 4, 2x M4 + 2x A75 = 4, 2x A78 = 2, 2x A76 = 2. Lukt dat niet (geen CPU part),
   # dan de oude regel: max-frequentie minstens 90% van de hoogste. Geen GPU (Vulkan/OpenCL): de grafische chips (Mali/IMG) zijn hier trager dan
   # de processor; de server is alleen voor de CPU gebouwd, en -ngl 0 zegt het nog eens.
-  local x; x="$(brein_extra)"
+  local x BREIN_DRADEN; x="$(brein_extra)"; BREIN_DRADEN="$(BREIN_DRADEN="${BREIN_DRADEN_STD:-4}" brein_draden)"
   printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P $BREIN_MAP_TEL/llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja${x:+ $x} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
 }
 # 678 (16 nov, onderzoek stap 3): WELKE LLAMA-SERVER. De APK draagt er twee: libllamaserver.so (kale armv8.0, draait overal) en
@@ -8872,7 +8876,9 @@ brein_modelproef() {
   printf '%s | %s%s (nu) | schrijven %s tok/s | les %s/20\n' "$(date '+%d-%m %H:%M')" "$oud_m" "${oud_mx:+ $oud_mx}" "$tps" "$score" >>"$MODELPROEF_LOG_F"
   best_m="$oud_m"; best_mx="$oud_mx"; best_tps="$tps"; best_score="$score"; basis_tps="$tps"
   grens="$(awk "BEGIN{g = $basis_tps * 0.8; print (g < 3 ? g : 3)}")"
-  while IFS= read -r regel; do
+  # 678 (18 nov): via fd 3 -- adb shell (in brein_tel_zet, brein_herstart_met en de meting) las de rest van de kandidatenlijst van stdin op, en
+  # zo werd op 17 nov alleen de eerste kandidaat gemeten (Qwen3.5-4B, MTP en de vooruitrader kwamen nooit aan de beurt)
+  while IFS= read -r regel <&3; do
     [ -n "$regel" ] || continue
     # 678 (17 nov): WACHT ER EEN LES, dan eerst de les: het oude brein terug, slot los, geen sig -- de volgende keer verder
     if [ -f "$REK_MAP/les-wacht" ]; then
@@ -8902,23 +8908,115 @@ brein_modelproef() {
     if awk "BEGIN{exit !($tps >= $grens && ($score > $best_score || ($score == $best_score && $tps > $best_tps)))}"; then
       best_m="$lokaal"; best_mx="$mx"; best_tps="$tps"; best_score="$score"
     fi
-  done <<EOF_KAND
+  done 3<<EOF_KAND
 $BREIN_MODELPROEF_KANDIDATEN
 EOF_KAND
   printf '%s\n' "$best_m" >"$REK_MAP/brein-model"; printf '%s\n' "$best_mx" >"$REK_MAP/brein-model-extra"
   brein_herstart_met "$s" "$best_m" || logregel "Modelproef: het gekozen brein startte niet; de waakhond probeert het opnieuw."
   brein_stand klaar "Het brein draait op $(toestel_naam "$s") (gekozen door de modelproef)." "$s" "$best_m" ""
   # kandidaten die het niet werden weer van de telefoon (het oude brein blijft staan als terugval)
-  while IFS= read -r regel; do
+  while IFS= read -r regel <&3; do
     set -- $regel; lokaal="$4"; [ "$1" = huidig ] && continue
     [ "$lokaal" = "$best_m" ] || "$ADB" -s "$s" shell "rm -f $BREIN_MAP_TEL/$lokaal" >/dev/null 2>&1
-  done <<EOF_KAND
+  done 3<<EOF_KAND
 $BREIN_MODELPROEF_KANDIDATEN
 EOF_KAND
   case "$best_mx" in *"-md "*) : ;; *) "$ADB" -s "$s" shell "rm -f $BREIN_MAP_TEL/Qwen3-0.6B-Q4_0.gguf" >/dev/null 2>&1 ;; esac
   printf '%s\n' "$sig" >"$REK_MAP/modelproef.sig"
   rm -rf "$REK_MAP/brein.lock"
   logregel "Modelproef klaar: gekozen $best_m${best_mx:+ $best_mx} (les $best_score/20, schrijven $best_tps tok/s; was $oud_m)."
+}
+# 678 (18 nov, eigenaar punt 3: "sneller brein: meet MTP, threads en kv-cache, kies het snelste"). DE SNELHEIDSPROEF: een voor een, steeds de
+# vaste meting (brein_meet --nu): zoals nu, 3 en 2 draden, de KV-cache in f16 en q4_0 (nu q8_0), het huidige model met Qwen3-0.6B als
+# vooruitrader (-md), en Qwen3.5-4B-MTP met --spec-type draft-mtp naast Qwen3.5-4B zonder. Gekozen wordt ALLEEN voor het HUIDIGE model:
+# de snelste opstelling als die minstens 3% sneller schrijft (vlaggen in brein-extra / brein-model-extra, draden in brein-draden). Een ander
+# model wordt NOOIT op snelheid alleen gekozen (dat vraagt ook de les: brein-probeer). Altijd het brein terug; de snelheid van het brein blijft.
+BREIN_SNELHEID_F="$REK_MAP/brein-snelheid.txt"
+kanaal_tekst_terug() {   # $1 kanaal-id, $2 bestand met de tekst -> versleuteld op het kanaal (alleen met een id, een code en een relay)
+  local id="${1:-}" link code base
+  [ -n "$id" ] || return 0
+  link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
+  code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
+  base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
+  ID="$id" CODE="$code" BASE="$base" TEKST="$2" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
+import os, json, time, re, hashlib, urllib.request
+code = os.environ.get('CODE', ''); base = os.environ.get('BASE', '').rstrip('/'); kid = os.environ.get('ID', '')
+try: tekst = open(os.environ['TEKST']).read()
+except Exception: tekst = ''
+if kid and code and tekst and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev', base):
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        hx = lambda s: hashlib.sha256(s.encode()).hexdigest()
+        key = hashlib.sha256(('lokale-ai-sleutel:' + code).encode()).digest()
+        uit = {'v': 1, 'id': kid, 'antwoord': tekst, 'fout': '', 't': int(time.time() * 1000)}
+        iv = os.urandom(12); ct = AESGCM(key).encrypt(iv, json.dumps(uit).encode(), None)
+        lijf = json.dumps({'topic': 'la' + hx('lokale-ai-antwoord:' + code)[:30], 'message': json.dumps({'iv': iv.hex(), 'data': ct.hex()})}).encode()
+        urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(base + '/', data=lijf, headers={'Content-Type': 'application/json', 'User-Agent': 'artemis'}), timeout=20)
+        print('De uitslag staat versleuteld op het kanaal (%s).' % kid)
+    except Exception as e:
+        print('Kon de uitslag niet via het kanaal terugzetten (' + type(e).__name__ + ').')
+PY
+}
+brein_kv() {   # $1 vlaggen, $2 soort -> dezelfde vlaggen met de KV-cache in die soort
+  printf '%s' "$1" | sed 's/ *-ctk [a-z0-9_]*//; s/ *-ctv [a-z0-9_]*//; s/^ *//'; printf ' -ctk %s -ctv %s' "$2" "$2"
+}
+brein_snelheid() {   # [kanaal-id]
+  local id="${1:-}" s m mx cur oud_vrij t regel lab mod ex mex dr tps best best_lab best_ex best_mex best_dr basis uit k pad drep dnaam dsha
+  if les_loopt; then zeg "Snelheidsproef: er loopt een les; later opnieuw."; return 1; fi
+  s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || { zeg "Snelheidsproef: geen brein-telefoon."; return 0; }
+  brein_slot_neem || { zeg "Snelheidsproef: het brein is bezet; later opnieuw."; return 1; }
+  m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
+  cur="$(head -1 "$REK_MAP/brein-extra" 2>/dev/null | tr -cd 'A-Za-z0-9_+ .=-')"
+  oud_vrij="$(STAND="$BREIN_STAND_F" python3 -I -c 'import json,os
+try: v = json.load(open(os.environ["STAND"])).get("vrij_mb"); print(v * 1024 if isinstance(v, int) else "")
+except Exception: print("")' 2>/dev/null)"
+  t="$(mktemp)"; cp -p "$REK_MAP/brein-tps" "$t.tps" 2>/dev/null || : >"$t.tps"; : >"$t"
+  zeg "Snelheidsproef: $m, een voor een meten (draden, KV-cache, vooruitrader, MTP); daarna het snelste voor dit model."
+  # de vooruitrader en de MTP-kandidaat klaarzetten (een download die nog niet binnen is = die variant overslaan)
+  set -- $BREIN_VOORUITRADER; drep="$1"; dnaam="$2"; dsha="$3"
+  if pad="$(brein_model_haal "$drep" "$dnaam" "$dsha" 0 2>/dev/null)"; then brein_tel_zet "$s" "$pad" "$dnaam" >/dev/null 2>&1 || true; fi
+  regel="$(printf '%s\n' "$BREIN_MODELPROEF_KANDIDATEN" | awk '$4 == "Qwen3.5-4B-MTP-Q4_0.gguf" {print; exit}')"
+  if [ -n "$regel" ]; then set -- $regel; if pad="$(brein_model_haal "$1" "$2" "$3" 0 "$4" 2>/dev/null)"; then brein_tel_zet "$s" "$pad" "$4" >/dev/null 2>&1 || true; fi; fi
+  best=0; best_lab=""; basis=0
+  # LET OP: adb shell leest stdin; de lijst komt daarom via fd 3 (anders at de eerste adb-opdracht de rest van de lijst op)
+  while IFS='|' read -r lab mod ex mex dr <&3; do
+    [ -n "$lab" ] || continue
+    if [ -f "$REK_MAP/les-wacht" ]; then printf '%s|%s|%s\n' "$lab" "-" "overgeslagen: er wacht een les" >>"$t"; continue; fi
+    if ! BREIN_PROEF="$ex" BREIN_MODEL_PROEF="$mex" BREIN_DRADEN_PROEF="$dr" brein_herstart_met "$s" "$mod"; then
+      printf '%s|%s|%s\n' "$lab" "-" "startte niet" >>"$t"; continue
+    fi
+    tps="$(BREIN_MODEL_NU="$mod" BREIN_PROEF="$ex" BREIN_MODEL_PROEF="$mex" BREIN_DRADEN_PROEF="$dr" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
+    printf '%s|%s|%s\n' "$lab" "$tps" "$mod" >>"$t"
+    [ "$lab" = "zoals nu" ] && basis="$tps"
+    if [ "$mod" = "$m" ] && awk "BEGIN{exit !($tps > $best)}" 2>/dev/null; then best="$tps"; best_lab="$lab"; best_ex="$ex"; best_mex="$mex"; best_dr="$dr"; fi
+  done 3<<EOF_V
+zoals nu|$m|$cur|$mx|
+3 draden|$m|$cur|$mx|3
+2 draden|$m|$cur|$mx|2
+KV-cache f16|$m|$(brein_kv "$cur" f16)|$mx|
+KV-cache q4_0|$m|$(brein_kv "$cur" q4_0)|$mx|
+vooruitrader Qwen3-0.6B (-md)|$m|$cur|-md $dnaam|
+Qwen3.5-4B zonder MTP|Qwen3.5-4B-Q4_0.gguf|$cur||
+Qwen3.5-4B-MTP (--spec-type draft-mtp)|Qwen3.5-4B-MTP-Q4_0.gguf|$cur|--spec-type draft-mtp|
+EOF_V
+  uit="zoals nu"
+  if [ -n "$best_lab" ] && [ "$best_lab" != "zoals nu" ] && awk "BEGIN{exit !($basis > 0 && $best > $basis * 1.03)}" 2>/dev/null; then
+    printf '%s\n' "$best_ex" >"$REK_MAP/brein-extra"; printf '%s\n' "$best_mex" >"$REK_MAP/brein-model-extra"
+    if [ -n "$best_dr" ]; then printf '%s\n' "$best_dr" >"$REK_MAP/brein-draden"; else rm -f "$REK_MAP/brein-draden"; fi
+    uit="$best_lab"
+  fi
+  brein_herstart_met "$s" "$m" >/dev/null 2>&1 || logregel "Snelheidsproef: het brein startte niet meteen; de waakhond probeert het opnieuw."
+  brein_stand klaar "Het brein draait op $(toestel_naam "$s") (na de snelheidsproef)." "$s" "$m" "$oud_vrij"
+  if [ -s "$t.tps" ]; then cp -p "$t.tps" "$REK_MAP/brein-tps"; fi; rm -f "$t.tps"
+  rm -rf "$REK_MAP/brein.lock"
+  { printf '**Snelheidsproef van het brein (%s, %s)** -- de vaste meting, schrijven in tokens per seconde:\n\n| opstelling | schrijven |\n|---|---|\n' "$m" "$(date '+%d-%m %H:%M')"
+    while IFS='|' read -r lab tps mod; do printf '| %s | %s |\n' "$lab" "$( [ "$tps" = - ] && echo "$mod" || echo "$tps tok/s")"; done <"$t"
+    printf '\nGekozen voor %s: **%s**%s. Een ander model wordt niet op snelheid gekozen (dat vraagt ook de les).\n' "$m" "$uit" "$([ "$uit" = "zoals nu" ] && echo ' (niets was minstens 3% sneller)')"
+  } >"$BREIN_SNELHEID_F"
+  cat "$BREIN_SNELHEID_F" | while IFS= read -r L; do zeg "  $L"; done
+  kanaal_tekst_terug "$id" "$BREIN_SNELHEID_F"
+  rm -f "$t"
+  stand_tik --nu >/dev/null 2>&1 || true
 }
 # 678 (16 nov, onderzoek deel 2): DE ANDROID-REM UIT op de rektelefoons. Android 12+ stopt "phantom processes" (processen die niet bij een app
 # horen) en remt bij batterijbesparing; llama-server mag daar geen last van hebben. Per telefoon een keer (opnieuw na een herstart van
@@ -9004,6 +9102,7 @@ for x in n["lessen"]:
   printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
   printf '\n## Proef naast het huidige brein (brein-probeer)\n'; sed 's/^/    /' "$BREIN_PROBEER_F" 2>/dev/null || printf '    nog niet gedaan\n'
+  printf '\n## Snelheidsproef van het brein (brein-snelheid)\n'; sed 's/^/    /' "$BREIN_SNELHEID_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Zelfstandigheidsproef (zonder Claude en internet)\n'; sed 's/^/    /' "$ZELFSTANDIG_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Stem en oor (proeftelefoon)\n    %s\n' "$(head -1 "$SPRAAK_TEST_F" 2>/dev/null || echo 'nog geen spraaktest')"
   [ -s "$STEM_ADB_F" ] && printf '    stem via de kabel: %s\n' "$(head -1 "$STEM_ADB_F")"
@@ -9198,6 +9297,22 @@ if vraag.get('soort') == 'probeer':   # 678 (17 nov): een kandidaat naast het hu
     try:
         with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
         subprocess.Popen([os.environ['AREK'], 'brein-probeer', vraag['id'], _k], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+    except Exception:
+        pass
+    raise SystemExit(0)
+if vraag.get('soort') == 'snelheid':   # 678 (18 nov, punt 3): de snelheidsproef van het brein; zelfde regels als probeer
+    import subprocess
+    if _les_leeft_z(os.environ['LESLOT']):
+        raise SystemExit(0)
+    try:
+        with open(os.path.join(os.environ['BSLOT'], 'pid')) as fh: _p = int(fh.read().strip() or 0)
+        os.kill(_p, 0)
+        raise SystemExit(0)   # het brein is bezet: NIET afvinken, de volgende minuut opnieuw
+    except SystemExit: raise
+    except Exception: pass
+    try:
+        with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
+        subprocess.Popen([os.environ['AREK'], 'brein-snelheid', vraag['id']], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
     except Exception:
         pass
     raise SystemExit(0)
@@ -9737,7 +9852,8 @@ case "${1:-status}" in
   brein-les) brein_les "${2:-}" "${3:-}" ;;
   zelfstandig) zelfstandig_proef "${2:-}" ;;        # 678 (17 nov, stap 6): de zelfstandigheidsproef (zonder Claude en internet)
   brein-onderbreek) brein_onderbreek ;;
-  brein-probeer) brein_probeer "${2:-}" "${3:-}" ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
+  brein-probeer) brein_probeer "${2:-}" "${3:-}" ;;
+  brein-snelheid) brein_snelheid "${2:-}" ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
   brein-les2) brein_les "" 2 ;;
   brein-les3) brein_les "" 3 ;;
   controle-rol) controle_rol ;;                     # 678 (15 nov): de controle-telefoon (tweede model, andere familie) starten
