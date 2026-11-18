@@ -748,14 +748,22 @@ def _zoek_get(url, via_tel=True):
                     if 'OK' not in t: ZOEK_TEL_WEG[0] = time.time() + 600; break
                     ZOEK_FWD[0] = time.time(); ZOEK_FWD.append(t.split('OK', 1)[1].strip()[:40])
                 try:
+                    # 678 (18 nov, 21:05): Wikipedia gaf de telefoon 429 op de TWEEDE vraag kort na de eerste; Wikimedia wil vragen na elkaar
+                    # en niet vlak op elkaar. Daarom minstens anderhalve seconde tussen twee vragen via de telefoon.
+                    rust = ZOEK_RUST[0] + 1.5 - time.time()
+                    if rust > 0: time.sleep(rust)
+                    ZOEK_RUST[0] = time.time()
                     req = urllib.request.Request('http://127.0.0.1:%d/jarvis/zoek-deel' % ZOEK_LOK, data=json.dumps({'url': url}).encode(),
                                                  headers={'Content-Type': 'application/json', 'X-Koppelcode': code})
                     with op.open(req, timeout=25) as r: j = json.loads(r.read(600000).decode('utf-8', 'replace'))
-                    if j.get('status') == 429 and poging == 0:   # 678 (18 nov): de bron remt even (twee vragen kort na elkaar); twee seconden, dan nog eens
-                        time.sleep(2)
+                    if j.get('status') == 429 and poging == 0:   # 678 (18 nov): de bron remt even (twee vragen kort na elkaar); zes seconden, dan nog eens
+                        time.sleep(6); ZOEK_RUST[0] = time.time()
                         with op.open(req, timeout=25) as r: j = json.loads(r.read(600000).decode('utf-8', 'replace'))
-                    if j.get('status') == 200 and isinstance(j.get('data'), str): return j['data'], 'de rektelefoon ' + (ZOEK_FWD[-1] if len(ZOEK_FWD) > 1 else '')
+                    if j.get('status') == 200 and isinstance(j.get('data'), str):
+                        ZOEK_DIAG[0]['telefoon_ok'] = ZOEK_DIAG[0].get('telefoon_ok', 0) + 1
+                        return j['data'], 'de rektelefoon ' + (ZOEK_FWD[-1] if len(ZOEK_FWD) > 1 else '')
                     ZOEK_DIAG[0]['telefoon'] = 'bron gaf %s' % (j.get('status') or j.get('fout'))
+                    ZOEK_DIAG[0]['telefoon_ok'] = ZOEK_DIAG[0].get('telefoon_ok', 0)   # hoeveel vragen de telefoon WEL ophaalde
                     break
                 except urllib.error.HTTPError as e:
                     ZOEK_DIAG[0]['telefoon'] = 'JARVIS gaf HTTP %d' % e.code
@@ -774,6 +782,7 @@ def _zoek_get(url, via_tel=True):
     except Exception:
         return None, None
 ZOEK_DIAG = [{}]
+ZOEK_RUST = [0.0]
 def web_zoek(vraag):
     # -> ([{titel, tekst, url}], via). Wikipedia (nl, dan en) via een rektelefoon; anders SearXNG op deze computer.
     q = zoekterm(vraag)
