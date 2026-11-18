@@ -775,13 +775,40 @@ def tempo_som(vraag):
         if w[:5] == ding and b != a:
             return verdeler_som('%s : %s' % (b, a))
     return None
-def reken_hulp(vraag, vraag_fn):
-    if not reken_vraag(vraag): return None
+# 678 (18 nov, lesrij 4): REKENEN MET GETALLEN UIT DE KENNIS. "Ik wandel W4 en fiets F1, hoeveel km samen?" -- de getallen staan niet in de
+# vraag maar in de kennisbank, en het brein telde de verkeerde route op (39,8 i.p.v. 28,4). Nu: een vraag met een rekenwoord en een getal in de
+# gekozen kennis gaat ook langs de rekenhulp; het brein schrijft de som met de getallen uit de kennis, de code rekent. Een getal dat in de vraag
+# NOCH in de kennis staat wordt nog steeds geweigerd.
+REKEN_KENNIS_RE = re.compile(r'(?i)\b(samen|totaal|verschil|langer dan|korter dan|hoeveel (kilometer|km|minuten|uur|euro)|hoe lang ben|hoe lang doe|kosten? .* samen|wat kost(en)?)\b')
+def reken_vraag_kennis(t, kennis):
+    return bool(REKEN_KENNIS_RE.search(str(t or ''))) and bool(re.search(r'\d', str(kennis or '')))
+# 678 (18 nov, lesrij 4 "veer"): KLOKREKENEN. "Vertrekt om 10:15, hoe laat ben ik er?" -- de duur staat in de kennis ("80 minuten"). De code
+# telt op; alleen een duur uit een kennisregel die een woord met de vraag deelt.
+def klok_som(vraag, kennis):
+    t = str(vraag or '')
+    m = re.search(r'\b([01]?\d|2[0-3])[:.]([0-5]\d)\b', t)
+    if not m or not re.search(r'(?i)\bhoe ?laat\b', t): return None
+    vw = set(w[:6] for w in re.findall(r'[a-zà-ÿ]{5,}', t.lower()))
+    for regel in str(kennis or '').splitlines():
+        d = re.search(r'(\d{1,3})\s*minuten', regel)
+        if d and vw & set(w[:6] for w in re.findall(r'[a-zà-ÿ]{5,}', regel.lower())):
+            tot = int(m.group(1)) * 60 + int(m.group(2)) + int(d.group(1))
+            return '%s:%s + %s minuten = %02d:%02d' % (m.group(1), m.group(2), d.group(1), (tot // 60) % 24, tot % 60)
+    return None
+def reken_hulp(vraag, vraag_fn, kennis=''):
+    k = klok_som(vraag, kennis)
+    if k: return k
+    met_kennis = reken_vraag_kennis(vraag, kennis)   # ook als de vraag zelf getallen heeft ("F3 met 15 km per uur": 53,3 staat in de kennis)
+    if not reken_vraag(vraag) and not met_kennis: return None
     ts = tempo_som(vraag)
     if ts and ts != 'Delen door nul kan niet.': return ts
     sysm = ('Zet de rekenvraag om in EEN rekensom met de getallen uit de vraag. Gebruik alleen cijfers, + - x : en haakjes. Schrijf ALLEEN de som, '
             'zonder woorden en zonder uitkomst. Voorbeeld: "Een trein rijdt 60 km per uur. Hoe lang doet hij over 150 km?" -> 150 : 60. '
             'Kan het niet als som, schrijf GEEN.')
+    if met_kennis:
+        sysm += (' De getallen staan in de KENNIS hieronder, niet in de vraag: zoek de juiste regel (de juiste route, het juiste ding) en gebruik '
+                 'precies die getallen. Voorbeeld: "Ik wandel W4 en fiets F1, hoeveel km samen?" met de kennis "W4 is 12,6 km" en "F1 is 28,4 km" -> 12,6 + 28,4.'
+                 '\n\nKENNIS:\n' + str(kennis)[:2500])
     r = vraag_fn({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': str(vraag)[:600]}], 'max_tokens': 40, 'stream': False,
                   'temperature': 0, 'chat_template_kwargs': {'enable_thinking': False}})
     try: t = re.sub(r'(?s)<think>.*?</think>', '', str(r['choices'][0]['message'].get('content') or '')).strip()
@@ -790,9 +817,12 @@ def reken_hulp(vraag, vraag_fn):
     if not t or 'geen' in t.lower(): return None
     t = re.sub(r'[A-Za-zà-ÿ]{2,}', ' ', t).strip()   # 678 (17 nov): "400 woorden : 5" -- de woorden eruit (niet de x van keer), de som blijft
     getallen = lambda x: set(g.replace(',', '.') for g in re.findall(r'\d+(?:[.,]\d+)?', x))
-    if not getallen(t) <= (getallen(str(vraag)) | REKEN_VAST): return None   # een verzonnen getal: niet uitrekenen
+    if not getallen(t) <= (getallen(str(vraag)) | REKEN_VAST | (getallen(str(kennis)) if met_kennis else set())): return None   # een verzonnen getal: niet uitrekenen
     som = verdeler_som(t)
-    return som if som and som != 'Delen door nul kan niet.' else None
+    if som and som != 'Delen door nul kan niet.':   # 678 (18 nov): hoogstens twee cijfers achter de komma ("53,3 : 15 = 3,55", niet 3,553333)
+        som = re.sub(r'= (-?\d+),(\d{2})\d+$', lambda x: '= %s,%s' % (x.group(1), x.group(2)), som)
+        return som
+    return None
 # 678 (16 nov, lesrij 2: een Duitse vraag kreeg een Duits antwoord, ondanks de kennisbank). Een klein model volgt het LAATSTE wat het leest:
 # staat de vraag in het Duits of Engels, dan komt er vlak achter de vraag een korte herinnering "(Antwoord in het Nederlands.)".
 NL_W = set('de het een en ik je jij is ben niet wat dat van op te in mag nooit hoe waarom wie welke hoeveel kun kan'.split())
@@ -951,6 +981,11 @@ def denk_nodig(t):
     return len(t.split()) >= 5 and any(w in t for w in DENK_WOORDEN)
 # 678 (17 nov, eigenaar: "S10 als keurmeester die elk antwoord nakijkt en bij twijfel het brein laat verbeteren"). Zegt de controle NEE, dan krijgt
 # het brein zijn eigen antwoord en de opmerking van de controle terug, met de opdracht het te verbeteren (of, als het klopt, kort te herhalen).
+# 678 (18 nov, lesrij 4 "kosten"/"f3tijd"): het verbeteren gaf soms KRITIEK in plaats van een antwoord ("Het antwoord is niet correct. De regels
+# van het rek zijn niet nagekomen."). Zo'n tekst is geen verbetering: dan blijft het oorspronkelijke antwoord staan.
+VERBETER_KRITIEK = re.compile(r'(?i)^\s*(het|dit|je|jouw|mijn) (antwoord|vorige antwoord) (is|was) (niet )?(correct|juist|fout|onjuist)|de regels van het rek zijn niet|^\s*(het )?antwoord klopt( niet)?\b')
+def verbetering_bruikbaar(v):
+    return bool(v and v.strip()) and not VERBETER_KRITIEK.search(v)
 def brein_verbeter(vraag, antwoord, opmerking, kennis=''):
     berichten = [{'role': 'system', 'content': ((brein_wie() + ' ') if brein_wie() else '') + (kennis or brein_kennis_voor(vraag))},
                  {'role': 'user', 'content': str(vraag)[:3000]},
@@ -958,7 +993,9 @@ def brein_verbeter(vraag, antwoord, opmerking, kennis=''):
                  {'role': 'user', 'content': 'Een tweede taalmodel heeft je antwoord nagekeken en twijfelt: "%s". Verbeter je antwoord als dat nodig is. '
                                              'Verzin niets; weet je het niet zeker, zeg dat. Antwoord in het Nederlands, alleen met het verbeterde antwoord.' % str(opmerking)[:300]}]
     r = brein_vraag({'messages': berichten, 'max_tokens': 400, 'stream': False, 'temperature': 0.2, 'cache_prompt': True, 'chat_template_kwargs': {'enable_thinking': False}})
-    try: return brein_tekst(r['choices'][0]['message']).strip() or None
+    try:
+        v = brein_tekst(r['choices'][0]['message']).strip()
+        return v if verbetering_bruikbaar(v) else None
     except Exception: return None
 def brein_wie():
     # 678 (15 nov): de echte modelnaam en telefoon voor de systeemtekst (een klein model verzint anders wie het is)
@@ -2026,7 +2063,8 @@ class H(BaseHTTPRequestHandler):
             # VOORAAN (en de systeemtekst van Veronica erachter), dan hergebruikt llama-server dat begin uit zijn cache (cache_prompt) en hoeft
             # alleen het nieuwe stuk gelezen te worden. Stond het achter een wisselende tekst, dan moest elke vraag alles opnieuw lezen.
             laatste0 = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
-            wie = (brein_wie() + ' ' + brein_kennis_voor(laatste0)).strip()   # 678 (17 nov): de kern + alleen de best passende regels
+            kv0 = brein_kennis_voor(laatste0)
+            wie = (brein_wie() + ' ' + kv0).strip()   # 678 (17 nov): de kern + alleen de best passende regels
             if REK_VRAAG_RE.search(laatste0 or ''):   # 678 (18 nov): achter de vaste kern (de cache blijft), alleen bij een vraag over het rek
                 _rl = rek_live()
                 if _rl: wie = (wie + '\n\n' + _rl).strip()
@@ -2039,7 +2077,7 @@ class H(BaseHTTPRequestHandler):
             if som:
                 self._cors_json(200, json.dumps({'tekst': som, 'tps': None, 'ms': 0, 'bron': 'verdeler', 'controle_id': None})); return
             les = d.get('les') is True   # 678: de lesmeting meet het ECHTE pad, maar zonder de controle-telefoon erbij en met een vaste temperatuur
-            t0r = time.time(); som = reken_hulp(laatste, brein_vraag)
+            t0r = time.time(); som = reken_hulp(laatste, brein_vraag, kv0)
             if som:
                 self._cors_json(200, json.dumps({'tekst': som + ' (de som van het brein, uitgerekend door de code)', 'tps': None, 'ms': int((time.time() - t0r) * 1000),
                                                  'bron': 'rekenhulp', 'controle_id': None})); return
