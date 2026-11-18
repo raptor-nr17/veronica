@@ -756,6 +756,8 @@ def _zoek_get(url, via_tel=True):
                     break
                 except urllib.error.HTTPError as e:
                     ZOEK_DIAG[0]['telefoon'] = 'JARVIS gaf HTTP %d' % e.code
+                    # 678 (18 nov, ronde 5: 429): JARVIS kent deze code niet (of telt al te veel fouten); niet blijven proberen -- elke poging telt mee
+                    if e.code in (401, 403, 429): ZOEK_TEL_WEG[0] = time.time() + 3600
                     break
                 except Exception as e:
                     ZOEK_DIAG[0]['telefoon'] = type(e).__name__
@@ -783,7 +785,7 @@ def web_zoek(vraag):
         except Exception: titels = []
         ZOEK_DIAG[0][taal + '_titels'] = len(titels)
         if not titels: continue
-        t2, via2 = _zoek_get(b + urllib.parse.urlencode({'action': 'query', 'prop': 'extracts', 'exintro': 1, 'explaintext': 1, 'exsentences': 5,
+        t2, via2 = _zoek_get(b + urllib.parse.urlencode({'action': 'query', 'prop': 'extracts', 'exintro': 1, 'explaintext': 1, 'exsentences': 8,
                                                          'redirects': 1, 'titles': '|'.join(titels), 'format': 'json', 'utf8': 1}))
         try: pages = list(json.loads(t2)['query']['pages'].values())
         except Exception: pages = []
@@ -806,8 +808,11 @@ def antwoord_uit_zoeken(vraag, wie, mt):
     blok = '\n\n'.join('[%d] %s: %s' % (i + 1, x['titel'], x['tekst']) for i, x in enumerate(res))
     # 678 (18 nov, ronde 4: "Ik kan geen internetzoekingen uitvoeren" -- de kennisregel "zonder internet" en het "zoek op internet" in de vraag
     # deden het brein weigeren). Een EIGEN, korte opdracht: de teksten zijn al opgezocht; het brein leest en antwoordt. De vraag zonder zoekverzoek.
+    # 678 (18 nov, ronde 5: "Dat heb ik niet kunnen vinden" terwijl het artikel over het onderwerp ging -- te streng). Het beste antwoord dat UIT
+    # de teksten volgt; alleen als ze over iets anders gaan, niet gevonden.
     sysm = ('Je beantwoordt een vraag met de TEKSTEN hieronder; die zijn al voor je opgezocht (je hoeft zelf niets op te zoeken). Antwoord in het '
-            'Nederlands, kort, in een of twee zinnen, alleen met wat in de teksten staat. Staat het er niet in, zeg dan precies: "Dat heb ik niet kunnen vinden."\n\n' + blok)
+            'Nederlands, kort, in een of twee zinnen, met wat uit de teksten volgt (een jaartal, een naam, een plaats). Verzin niets wat er niet staat. '
+            'Alleen als de teksten over iets heel anders gaan, zeg je: "Dat heb ik niet kunnen vinden."\n\n' + blok)
     vr = re.sub(r'\s+', ' ', ZOEK_EXPLICIET_RE.sub(' ', str(vraag))).strip(' :,.') or str(vraag)
     r = brein_vraag({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': vr[:1500]}], 'max_tokens': max(mt, 300), 'stream': False,
                      'temperature': 0.2, 'cache_prompt': False, 'chat_template_kwargs': {'enable_thinking': False}})
@@ -816,7 +821,7 @@ def antwoord_uit_zoeken(vraag, wie, mt):
         tps = (r.get('timings') or {}).get('predicted_per_second')
     except Exception:
         return None, None, None
-    ZOEK_DIAG[0]['resultaten'] = len(res); ZOEK_DIAG[0]['antwoord'] = len(t)
+    ZOEK_DIAG[0]['resultaten'] = len(res); ZOEK_DIAG[0]['antwoord'] = len(t); ZOEK_DIAG[0]['tekens'] = sum(len(x['tekst']) for x in res)
     # 678 (18 nov): alleen weggooien als het brein ZEGT dat het niets vond -- een "niet zeker" midden in een goed antwoord is geen reden
     if not t or 'niet kunnen vinden' in t or (WEET_NIET_RE.search(t[:60]) and not re.search(r'\d', t)):
         ZOEK_DIAG[0]['weggegooid'] = True; return None, None, None
@@ -985,7 +990,10 @@ def feiten_som(vraag, kennis):
 def reken_hulp(vraag, vraag_fn, kennis=''):
     k = klok_som(vraag, kennis) or feiten_som(vraag, kennis)
     if k: return k
-    met_kennis = reken_vraag_kennis(vraag, kennis)   # ook als de vraag zelf getallen heeft ("F3 met 15 km per uur": 53,3 staat in de kennis)
+    # 678 (18 nov, lesrij 2 "som2" werd 45 - 38 = 7 zodra de kennis meeging): de kennis alleen als de vraag een CODE noemt (F3, W4) of zelf
+    # minder dan twee getallen heeft; een rekenverhaal met al zijn getallen in de vraag krijgt de oude, kale opdracht.
+    _n = len(re.findall(r'(?<![A-Za-z])\d+(?:[.,]\d+)?', str(vraag or '')))
+    met_kennis = reken_vraag_kennis(vraag, kennis) and (bool(re.search(r'\b[A-Za-z]{1,3}\d{1,3}\b', str(vraag or ''))) or _n < 2)
     if not reken_vraag(vraag) and not met_kennis: return None
     ts = tempo_som(vraag)
     if ts and ts != 'Delen door nul kan niet.': return ts
@@ -1039,6 +1047,19 @@ def vrij_nu(sub, max_oud=600):   # 678 (18 nov): de meting van de waakhond (vrij
         return int(mb) if time.time() - int(t) <= max_oud else None
     except Exception:
         return None
+def vaste_snelheid(model):
+    # 678 (18 nov, lesrij 3 "snel": de les vergeleek met 2,02 tok/s -- het tempo van het LAATSTE antwoord, een trage zoekvraag). De snelheid van het
+    # brein is de VASTE METING (brein-meet.log) van het huidige model; alleen als die er niet is het laatste antwoord.
+    try:
+        with open(os.path.join(REK, 'brein-meet.log')) as fh: regels = fh.read().splitlines()
+        for r in reversed(regels):
+            if model and ('| %s,' % model) in r:
+                m = re.search(r'schrijven ([0-9.]+) tok/s', r)
+                if m and float(m.group(1)) > 0: return float(m.group(1))
+    except Exception: pass
+    try:
+        with open(os.path.join(REK, 'brein-tps')) as fh: return float(fh.read().split()[0])
+    except Exception: return None
 def rek_live():
     regels = []
     for rol, sub in REK_ROLLEN:
@@ -1055,10 +1076,8 @@ def rek_live():
         if vn is not None: r += ', %d MB vrij geheugen nu' % vn
         else: r += (', %d MB vrij geheugen bij het starten' % st['vrij_mb']) if isinstance(st.get('vrij_mb'), int) else ', vrij geheugen onbekend'   # 18 nov: anders leende het brein het getal van de controle
         if rol == 'brein':
-            try:
-                with open(os.path.join(REK, 'brein-tps')) as fh: tps = float(fh.read().split()[0])
-                r += ', snelheid %s tokens per seconde (gemeten)' % ('%.1f' % tps).replace('.', ',')
-            except Exception: pass
+            tps = vaste_snelheid(str(st.get('model') or ''))
+            if tps: r += ', snelheid %s tokens per seconde (de vaste meting)' % ('%.1f' % tps).replace('.', ',')
         regels.append(r + '.')
     return ('STAND VAN HET REK NU (gemeten door ARTEMIS; gebruik alleen deze gegevens):\n' + '\n'.join(regels)) if regels else ''
 def brein_kennis():
@@ -8680,8 +8699,16 @@ try:   # 678 (18 nov): de verse meting van de waakhond gaat voor (dat noemt de c
     _vn = open(os.path.join(REKD, 'vrij-nu')).read().split()
     if time.time() - int(_vn[1]) <= 600: _bv, _bm = int(_vn[0]), 0.2
 except Exception: pass
-try: _tps = float(open(os.environ.get('TPSF', '')).read().split()[0])
-except Exception: _tps = None
+_tps = None
+try:   # 678 (18 nov): de vaste meting van het huidige model (dat noemt de console ook), anders het laatste antwoord
+    for _r in reversed(open(os.path.join(REKD, 'brein-meet.log')).read().splitlines()):
+        if ('| %s,' % str(stand.get('model') or '')) in _r:
+            _m = re.search(r'schrijven ([0-9.]+) tok/s', _r)
+            if _m and float(_m.group(1)) > 0: _tps = float(_m.group(1)); break
+except Exception: pass
+if _tps is None:
+    try: _tps = float(open(os.environ.get('TPSF', '')).read().split()[0])
+    except Exception: _tps = None
 WEET = [['weet', 'niet', 'onbekend']]
 LESSEN3 = [
   {'id': 'stand', 'vraag': 'hoe gaat het met het rek', 'moet': [['brein'], [fam]], 'niet': ['ik weet het niet']},
