@@ -1269,8 +1269,15 @@ def denk_nodig(t):
 VERBETER_KRITIEK = re.compile(r'(?i)^\s*(het|dit|je|jouw|mijn) (antwoord|vorige antwoord) (is|was) (niet )?(correct|juist|fout|onjuist)|de regels van het rek zijn niet|^\s*(het )?antwoord klopt( niet)?\b')
 def verbetering_bruikbaar(v):
     return bool(v and v.strip()) and not VERBETER_KRITIEK.search(v)
+# 678 (19 nov, lesrij 8 "engelsprijs", twee keer: "Ik weet het niet zeker." op de prijs die in de kennisbank staat). De controle twijfelde en het
+# verbeteren maakte van een antwoord MET een getal uit de kennis een kaal "weet ik niet". Dat is geen verbetering: de CODE kijkt na -- een
+# weet-niet zonder getal vervangt nooit een antwoord waarvan een getal letterlijk in de kennis staat.
+def verbetering_verliest(antwoord, v, kennis):
+    if not v or not WEET_NIET_RE.search(str(v)[:80]) or _getallen(v): return False
+    return bool(_getallen(antwoord) & _getallen(kennis))
 def brein_verbeter(vraag, antwoord, opmerking, kennis=''):
-    berichten = [{'role': 'system', 'content': ((brein_wie() + ' ') if brein_wie() else '') + (kennis or brein_kennis_voor(vraag))},
+    kennis = kennis or brein_kennis_voor(vraag)
+    berichten = [{'role': 'system', 'content': ((brein_wie() + ' ') if brein_wie() else '') + kennis},
                  {'role': 'user', 'content': str(vraag)[:3000]},
                  {'role': 'assistant', 'content': str(antwoord)[:3000]},
                  {'role': 'user', 'content': 'Een tweede taalmodel heeft je antwoord nagekeken en twijfelt: "%s". Verbeter je antwoord als dat nodig is. '
@@ -1278,7 +1285,7 @@ def brein_verbeter(vraag, antwoord, opmerking, kennis=''):
     r = brein_vraag({'messages': berichten, 'max_tokens': 400, 'stream': False, 'temperature': 0.2, 'cache_prompt': True, 'chat_template_kwargs': {'enable_thinking': False}})
     try:
         v = brein_tekst(r['choices'][0]['message']).strip()
-        return v if verbetering_bruikbaar(v) else None
+        return v if verbetering_bruikbaar(v) and not verbetering_verliest(antwoord, v, kennis) else None
     except Exception: return None
 def brein_wie():
     # 678 (15 nov): de echte modelnaam en telefoon voor de systeemtekst (een klein model verzint anders wie het is)
