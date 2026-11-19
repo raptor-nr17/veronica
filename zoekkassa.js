@@ -31,7 +31,11 @@
   const BLOK_MIN_MS = 15 * 60 * 1000;
   const BLOK_MAX_MS = 60 * 60 * 1000;
   // EEN User-Agent voor het hele huis.
-  const UA = 'JARVIS-Zoekkassa/1.9.27 (persoonlijk gebruik, lage frequentie, een IP-adres)';
+  const UA_BASIS = 'JARVIS-Zoekkassa/1.9.27 (persoonlijk gebruik, lage frequentie, een IP-adres)';
+  // 678 (19 nov): met het contactadres van de eigenaar als de pagina dat meegeeft (alleen JARVIS: contact.js, gevuld bij de bouw).
+  // Wikimedia vraagt een User-Agent met contact. Veronica heeft geen contactadres en haalt zelf niets op.
+  const CONTACT = (typeof self !== 'undefined' && typeof self.JARVIS_CONTACT === 'string' && /^[^\s()<>;@"'\\]+@[^\s()<>;@"'\\]+\.[A-Za-z]{2,}$/.test(self.JARVIS_CONTACT)) ? self.JARVIS_CONTACT : '';
+  const UA = CONTACT ? UA_BASIS.replace(/\)$/, `; ${CONTACT})`) : UA_BASIS;
 
   // Het register. Elke bron: de regel waaraan we ons houden en waar die vandaan komt. `toegestaan:false` = niet gebruiken,
   // met de reden erbij. Een nieuwe bron komt hier alleen bij nadat zijn voorwaarden gelezen zijn.
@@ -209,5 +213,5 @@
     return { vraag, delen, resultaten: voegSamen(delen, o.max), meldingen };
   }
 
-  return { REGISTER, UA, CACHE_MS, CACHE_MAX, maakKassa, planDeelvragen, voegSamen, normaalAdres, zoekVerdeeld };
+  return { REGISTER, UA, UA_BASIS, CACHE_MS, CACHE_MAX, maakKassa, planDeelvragen, voegSamen, normaalAdres, zoekVerdeeld };
 }));

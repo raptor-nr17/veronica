@@ -8297,6 +8297,17 @@ brein_nu() {
 # proces-nummer in het slot; is dat proces weg, dan is het slot verweesd en wordt het overgenomen. (Een levend proces houdt het slot, ook
 # als de modelproef uren downloadt.)
 brein_slot_neem() { slot_neem "$REK_MAP/brein.lock"; }
+# 678 (19 nov, de nachtles en de zelfstandigheidsproef draaiden niet meer sinds 18 nov 10:11): de ticks keken alleen of de MAP bestond. Een
+# proef die door een herstart of update afbrak liet zelfstandig.lock staan, en daarna stopte elke tik bij die map -- voor altijd. slot_neem
+# ruimde zo'n verweesd slot wel op, maar werd nooit meer bereikt. Nu: alleen een LEVEND proces (of een slot zonder pid van minder dan drie
+# uur oud) houdt een tik tegen.
+slot_levend() {   # $1 map -> 0 als een levend proces het slot houdt
+  local l="$1" p
+  [ -d "$l" ] || return 1
+  p="$(head -1 "$l/pid" 2>/dev/null | tr -cd '0-9')"
+  if [ -n "$p" ]; then kill -0 "$p" 2>/dev/null; return; fi
+  [ -z "$(find "$l" -maxdepth 0 -mmin +180 2>/dev/null)" ]
+}
 # slot_neem <map>: hetzelfde voor elk slot (ook de meting: die bleef op 16 nov achter en daarna stopte ELKE meting stil -- "0 tok/s")
 slot_neem() {
   local l="$1" p
@@ -9507,7 +9518,7 @@ zelfstandig_tik() {
   v="$(head -1 "$REK_MAP/laatste-vraag.t" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${v:-0})) -ge 1200 ] || return 0
   les_loopt && return 0
   p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
-  [ -d "$REK_MAP/zelfstandig.lock" ] && return 0
+  slot_levend "$REK_MAP/zelfstandig.lock" && return 0
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   printf '%s\n' "$nu" >"$REK_MAP/zelfstandig.t"
   logregel "Zelfstandigheidsproef: vanzelf (elke vier uur)."
@@ -9524,7 +9535,7 @@ vaste_les_tik() {
   v="$(head -1 "$REK_MAP/laatste-vraag.t" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${v:-0})) -ge 1200 ] || return 0
   les_loopt && return 0
   p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
-  [ -d "$REK_MAP/zelfstandig.lock" ] && return 0
+  slot_levend "$REK_MAP/zelfstandig.lock" && return 0
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   printf '%s\n' "$dag" >"$REK_MAP/vasteles.t"
   logregel "Vaste les: lesrij 5 vanzelf (elke nacht)."
@@ -9968,7 +9979,7 @@ if vraag.get('soort') == 'veronica':   # 678 (18 nov): een vraag langs PRECIES h
     try: _sl = open(os.environ['SLEUTELF']).read().strip()
     except Exception: _sl = ''
     try:
-        _r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=json.dumps({'sleutel': _sl, 'messages': [{'role': 'user', 'content': str(vraag.get('vraag') or '')[:1500]}], 'max_tokens': 400, 'toon_bronnen': True, 'prive': vraag.get('prive') is True}).encode(),   # 678 (19 nov): "<nr> veronica prive" = de privé-stand
+        _r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=json.dumps({'sleutel': _sl, 'messages': ([{'role': 'system', 'content': vraag['systeem'][:4000]}] if isinstance(vraag.get('systeem'), str) else []) + [{'role': 'user', 'content': str(vraag.get('vraag') or '')[:1500]}], 'max_tokens': 400, 'toon_bronnen': True, 'prive': vraag.get('prive') is True}).encode(),   # 678 (19 nov): "<nr> veronica prive" = de privé-stand
                                             headers={'Content-Type': 'application/json'}), timeout=420)
         _j = json.loads(_r.read(2000000).decode('utf-8', 'replace'))
         _z = dict(_j.get('zoek') or {}); _br = _z.pop('_bronnen', None) or []
