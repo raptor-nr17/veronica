@@ -7658,6 +7658,11 @@ BREIN_MAP_TEL="/data/local/tmp/brein"
 BREIN_POORT_TEL=8093                       # op de telefoon, alleen 127.0.0.1
 BREIN_POORT_LOK="${BREIN_POORT_LOK:-18093}" # de adb-doorsturing op deze computer
 BREIN_DRADEN="${BREIN_DRADEN:-4}"; BREIN_DRADEN_STD="$BREIN_DRADEN"
+# 678 (19 nov, 14:04): DE PROMPT-CACHE IN HET GEHEUGEN. Een nieuwe llama-server bewaart oude prompts in het werkgeheugen (--cache-ram,
+# standaard 8192 MiB). Op de brein-telefoon groeide llama-server zo van ~3 naar 6,2 GB, bleef er 485 MB vrij en zakte het schrijven naar
+# 0,09 tok/s (lesrij 6: 5/10, lesrij 7 bleef hangen). Nu een vaste grens; de cache van het lopende gesprek (de kennisbank vooraan) staat in de
+# KV van de slot en blijft gewoon werken. Een oude server zonder die vlag krijgt hem niet (anders start hij niet).
+BREIN_CACHE_RAM="${BREIN_CACHE_RAM:-256}"
 # 678 (16 nov, onderzoek stap 4+5): EXTRA VLAGGEN voor llama-server. Wat de proefbank als beste koos staat in brein-extra (per rol, in de map van
 # de rol); tijdens een proef zet de proefbank BREIN_PROEF (ook leeg = zonder extra). Alleen veilige tekens: geen ; of $ naar de telefoon.
 brein_extra() {
@@ -7758,7 +7763,7 @@ brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
   # dan de oude regel: max-frequentie minstens 90% van de hoogste. Geen GPU (Vulkan/OpenCL): de grafische chips (Mali/IMG) zijn hier trager dan
   # de processor; de server is alleen voor de CPU gebouwd, en -ngl 0 zegt het nog eens.
   local x BREIN_DRADEN; x="$(brein_extra)"; BREIN_DRADEN="$(BREIN_DRADEN="${BREIN_DRADEN_STD:-4}" brein_draden)"
-  printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; (setsid nohup \$P $BREIN_MAP_TEL/llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja${x:+ $x} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
+  printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; C=; $BREIN_MAP_TEL/llama-server --help 2>&1 | grep -q -e --cache-ram && C=\"--cache-ram ${BREIN_CACHE_RAM:-256}\"; if [ -n \"\$C\" ]; then echo 1 > cram.txt; else rm -f cram.txt; fi; (setsid nohup \$P $BREIN_MAP_TEL/llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja\${C:+ \$C}${x:+ $x} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
 }
 # 678 (16 nov, onderzoek stap 3): WELKE LLAMA-SERVER. De APK draagt er twee: libllamaserver.so (kale armv8.0, draait overal) en
 # libllamaserver_dp.so (armv8.2 met dotprod en fp16: sdot/udot en de snelle Q4_0-paden). Meldt de telefoon 'asimddp' in /proc/cpuinfo, dan de
@@ -8390,8 +8395,10 @@ except Exception: print(0)' 2>/dev/null)"
     fi
     # 678 (16 nov): een server van voor het vastzetten op de grote kernen (geen kernen.txt) ook een keer opnieuw
     if [ -n "$s1" ]; then
-      local bk; bk="$("$ADB" -s "$s1" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null; [ -s $BREIN_MAP_TEL/kernen.txt ] && echo kernen" 2>/dev/null | tr -d '\r')"
+      local bk; bk="$("$ADB" -s "$s1" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null; [ -s $BREIN_MAP_TEL/kernen.txt ] && echo kernen; [ -s $BREIN_MAP_TEL/cram.txt ] && echo cram-aan; $BREIN_MAP_TEL/llama-server --help 2>&1 | grep -q -e --cache-ram && echo cram-kan" 2>/dev/null | tr -d '\r')"
       case "$bk" in *kernen*) : ;; *) oud=1 ;; esac
+      # 678 (19 nov): kent de server een grens voor de prompt-cache maar draait hij zonder (gestart voor deze regel), dan EEN keer opnieuw
+      case "$bk" in *cram-kan*) case "$bk" in *cram-aan*) : ;; *) [ -z "$oud" ] && oud=cram ;; esac ;; esac
       # 678 (onderzoek stap 3): draait de basisversie terwijl er een dotprod-server te halen is, dan ook een keer opnieuw (uur-rem, niet tijdens een les)
       case "$bk" in *dotprod*) : ;; *) [ -z "$oud" ] && ! les_loopt && [ $((nu1 - t1)) -ge 3600 ] && brein_dp_beschikbaar "$s1" && oud=dp ;; esac
     fi
@@ -8399,7 +8406,8 @@ except Exception: print(0)' 2>/dev/null)"
       if [ -n "$s1" ] && ! is_f8 "$s1"; then
         printf '%s\n' "$nu1" >"$REK_MAP/brein-vakken.t"
         "$ADB" -s "$s1" shell "$(brein_kill_cmd)" >/dev/null 2>&1 || true
-        if [ "$oud" = dp ]; then logregel "${BREIN_LABEL:-Brein}: er is een llama-server met dotprod voor deze telefoon; opnieuw gestart om hem te gebruiken."
+        if [ "$oud" = cram ]; then logregel "${BREIN_LABEL:-Brein}: de server bewaarde oude prompts zonder grens in het geheugen (tot 8 GB); opnieuw gestart met een grens van $BREIN_CACHE_RAM MB."
+        elif [ "$oud" = dp ]; then logregel "${BREIN_LABEL:-Brein}: er is een llama-server met dotprod voor deze telefoon; opnieuw gestart om hem te gebruiken."
         elif [ -n "$oud" ]; then logregel "${BREIN_LABEL:-Brein}: de server draaide nog niet vast op de grote kernen; opnieuw gestart (grote kernen, een vak)."
         else logregel "${BREIN_LABEL:-Brein}: de server had $vak vakken (de context gedeeld, vragen delen de rekenkracht); opnieuw gestart met een vak."; fi
       fi
@@ -8774,7 +8782,7 @@ op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try: stand = json.load(open(os.environ['STAND']))
 except Exception: stand = {}
 model = re.sub(r'\.gguf$', '', str(stand.get('model') or ''))
-try: kennis = open(os.environ['KENNIS']).read()[:3500]
+try: kennis = open(os.environ['KENNIS']).read()[:4500]
 except Exception: kennis = ''
 ROL = 'Je bent de lokale AI van een rek oude telefoons. Antwoord in het Nederlands, kort en eerlijk.'
 # de lesrij: elke les heeft woorden waarvan er minstens een MOET staan (per groep), en woorden die NIET mogen. Nagekeken door code.
@@ -9240,7 +9248,7 @@ brein_meet() {   # [label] -> een regel in brein-meet.log
   LABEL="$model, kernen ${kern:-onbekend}, llama.cpp ${bouw:-basis}$(x="$(brein_extra)"; [ -n "$x" ] && printf ', %s' "$x")" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_MEET_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
 import os, json, time, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-try: kennis = open(os.environ['KENNIS']).read()[:3500]
+try: kennis = open(os.environ['KENNIS']).read()[:4500]
 except Exception: kennis = 'Je bent het brein van een rek oude telefoons.'
 def een(cache):
     lijf = json.dumps({'messages': [{'role': 'system', 'content': kennis}, {'role': 'user', 'content': 'Leg in vijf korte zinnen uit wat het rek doet.'}],
@@ -10099,7 +10107,7 @@ rol = ('Je bent de lokale AI van een rij oude telefoons (Veronica). Claude Code,
 # 678 (15 nov, v1): het brein noemde zich "Llama 3 (7B)" -- een klein model kent zijn eigen naam niet. Dus zeggen we het erbij.
 _m = re.sub(r'\.gguf$', '', str(stand.get('model') or ''))
 if _m: rol += ' Jij bent het taalmodel %s%s; noem jezelf zo als ernaar gevraagd wordt.' % (_m, (', en je draait op de telefoon ' + str(stand.get('telefoon'))) if stand.get('telefoon') else '')
-try: rol += ' ' + open(os.environ['KENNIS']).read()[:3500].strip()   # 678: de kennisbank (kaart van de Cat) als vaste instructie
+try: rol += ' ' + open(os.environ['KENNIS']).read()[:4500].strip()   # 678: de kennisbank (kaart van de Cat) als vaste instructie
 except Exception: pass
 lijf = json.dumps({'messages': [{'role': 'system', 'content': rol}, {'role': 'user', 'content': vraag['vraag'][:4000]}], 'max_tokens': 1024, 'stream': False, 'temperature': 0.7, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
 antwoord = None; tps = None; fout = ''
