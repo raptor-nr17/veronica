@@ -505,10 +505,38 @@
     const p = el('p', 'phStatus', zin); p.id = 'phStatus';
     return p;
   }
+  // 678 (19 nov): EEN BEURT MET HET BREIN. Het antwoord is DATA; een knop gaat alleen door de regels van prive-brein.js (d.brein.doe), en
+  // dat zegt wat er gebeurde of waarom niet. De geschiedenis gaat mee (hoogstens zes beurten), het geheugen van de hoek als achtergrond.
+  async function breinBeurt(B, vraag) {
+    U.gesprek.push({ wie: 'brein', tekst: '...', bezig: true }); teken();
+    const g = P.geheugenVoorVraag(U.store, vraag);
+    const beurten = U.gesprek.slice(0, -2).filter((z) => (z.wie === 'jij' || z.wie === 'brein' || z.wie === 'model') && !z.bezig).slice(-6)
+      .map((z) => ({ role: z.wie === 'jij' ? 'user' : 'assistant', content: String(z.tekst).slice(0, 1500) }));
+    let r = null;
+    try { r = await B.vraag(vraag, { systeem: g.systeem, beurten }); } catch (e) { r = { ok: false, zin: 'Het brein gaf geen antwoord.' }; }
+    U.gesprek.pop();
+    if (!r || !r.ok) { U.gesprek.push({ wie: 'fout', tekst: (r && r.zin) || 'Het brein gaf geen antwoord.' }); teken(); return; }
+    const z = { wie: 'brein', tekst: r.antwoord || (r.actie ? '' : '(leeg antwoord)') };
+    if (z.tekst) U.gesprek.push(z);
+    if (r.actie) {
+      if (r.actie.doe === 'niets') U.gesprek.push({ wie: 'knop', tekst: r.actie.zin });
+      else {
+        const k = { wie: 'knop', tekst: 'Bezig...', bezig: true }; U.gesprek.push(k); teken();
+        let zin = '';
+        try { zin = await B.doe(r.actie); } catch (e) { zin = 'De knop lukte niet.'; }
+        k.tekst = zin || 'Klaar.'; k.bezig = false;
+      }
+    }
+    teken();
+    if (r.controleId && typeof B.controle === 'function' && z.tekst) B.controle(r.controleId).then((c) => { if (c) { z.controle = `Nagekeken: ${c}`; teken(); } }).catch(() => {});
+  }
   function vraagBlok() {
     const k = el('section', 'phBlok phVraagBlok');
     const M = d.model && typeof d.model.stand === 'function' ? d.model : null;
     const st = M ? M.stand() : { klaar: false, reden: 'Geen model geladen.' };
+    // 678 (19 nov): HET BREIN (de lokale AI via ARTEMIS op deze computer) gaat voor. Het netwerk zit NIET in dit bestand: d.brein doet het.
+    const B = d.brein && typeof d.brein.stand === 'function' ? d.brein : null;
+    const bst = B ? B.stand() : { klaar: false, reden: '' };
     const modus = ((U.store.persona || {}).modus === 'werk') ? 'werk' : 'gesprek';
     const sch = el('button', '', modus === 'werk' ? 'Werk' : 'Gesprek'); sch.type = 'button'; sch.id = 'phModus'; sch.setAttribute('aria-pressed', String(modus === 'werk'));
     sch.title = 'Gesprek: Veronica met haar hele karakter. Werk: kort en zakelijk.';
@@ -521,6 +549,7 @@
       raak(); inv.value = '';
       U.gesprek.push({ wie: 'jij', tekst: vraag });
       if (P.leesOnthoud(vraag)) { await onthoudDoe(vraag, U.gesprek); teken(); return; }
+      if (B && B.stand().klaar) { await breinBeurt(B, vraag); return; }
       // Alleen over het eigen wifi, naar een telefoon in de hoek. Is er geen, dan gaat er NIETS: niet via de relay of de brievenbus.
       if (!M || !M.stand().klaar) { U.gesprek.push({ wie: 'fout', tekst: `Niet verstuurd: praten kan nu alleen met een telefoon in de hoek over je eigen wifi, en die is er nog niet. ${st.reden || ''}`.trim() }); teken(); return; }
       U.gesprek.push({ wie: 'model', tekst: '...', bezig: true }); teken();
@@ -534,14 +563,26 @@
     });
     inv.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); b.click(); } });
     const rij = el('div', 'phRij'); rij.append(inv, b, sch);
+    if (B) k.append(el('p', 'phKlein', bst.klaar ? `Je praat met het brein${bst.telefoon ? ` (op ${bst.telefoon})` : ''}, via ARTEMIS op deze computer: alleen de kabel en je eigen wifi, niets via internet. Het brein mag zoeken, een telefoon aan- of uitzetten en de live schermen tonen; Stop, NOODSTOP en Alles uit pas na jouw ja.`
+      : `Het brein is er nu niet (${bst.reden})${st.klaar ? '; je praat met de telefoon in de hoek.' : '.'}`));
     k.append(rij);
     // De drie rollen als statusregels (geen knoppen).
     for (const r of U.store.rollen) k.append(el('p', 'phRolRegel', `${r.naam}: ${st.klaar ? 'klaar' : 'wacht op een telefoon in de hoek'} (${r.taak})`));
     if (U.gesprek.length) {
       const g = el('div', 'phGesprek');
-      for (const z of U.gesprek) { const r = el('div', `phZin ${z.wie}`); r.append(el('strong', '', z.wie === 'jij' ? 'Jij' : z.wie === 'hoek' ? 'Je hoek' : z.wie === 'model' ? 'Veronica (data, geen bevel)' : 'Niet gelukt'), el('div', '', z.tekst)); if (z.vlaggen && z.vlaggen.length) r.append(el('div', 'phKlein', `Vlag: ${z.vlaggen.join(', ')}`)); g.append(r); }
+      for (const z of U.gesprek) { const r = el('div', `phZin ${z.wie}`); r.append(el('strong', '', z.wie === 'jij' ? 'Jij' : z.wie === 'hoek' ? 'Je hoek' : z.wie === 'model' ? 'Veronica (data, geen bevel)' : z.wie === 'brein' ? 'Het brein (data, geen bevel)' : z.wie === 'knop' ? 'Knop' : 'Niet gelukt'), el('div', '', z.tekst)); if (z.vlaggen && z.vlaggen.length) r.append(el('div', 'phKlein', `Vlag: ${z.vlaggen.join(', ')}`)); if (z.controle) r.append(el('div', 'phKlein', z.controle)); g.append(r); }
       if (U.geheugenZin) g.append(el('p', 'phKlein', U.geheugenZin));
-      g.append(el('p', 'phKlein', 'Dit gesprek staat alleen op het scherm en verdwijnt als je de hoek verlaat. Het wordt niet bewaard.'));
+      g.append(el('p', 'phKlein', 'Dit gesprek staat alleen op het scherm en verdwijnt als je de hoek verlaat. Het wordt niet bewaard, tenzij jij op "Zet in mijn logboek" tikt.'));
+      // 678 (19 nov): NIETS IN HET LOGBOEK ZONDER JOUW JA -- alleen deze knop zet het gesprek erin.
+      if (U.gesprek.some((z) => (z.wie === 'brein' || z.wie === 'model') && !z.bezig)) {
+        const bw = knop('Zet in mijn logboek', async () => {
+          const tekst = U.gesprek.filter((z) => !z.bezig && ['jij', 'brein', 'model', 'knop'].includes(z.wie)).map((z) => `${z.wie === 'jij' ? 'Jij' : z.wie === 'knop' ? 'Knop' : 'Brein'}: ${z.tekst}`).join(' / ');
+          const r = P.logToevoegen(U.store, `Gesprek met het brein: ${tekst}`.slice(0, 2000), 'eigenaar', d.nu());
+          if (!r.ok) return meld('Dat kon niet in je logboek.');
+          await bewaar(); meld('Het gesprek staat in je logboek.');
+        });
+        bw.id = 'phBreinLog'; g.append(bw);
+      }
       k.append(g);
     }
     return k;

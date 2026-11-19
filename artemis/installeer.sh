@@ -910,7 +910,7 @@ def fout_dagboek(vraag, reden):
         os.chmod(pad + '.nieuw', 0o600); os.replace(pad + '.nieuw', pad)
     except Exception:
         pass
-def controle_start(vraag, antwoord, kennis=''):
+def controle_start(vraag, antwoord, kennis='', dagboek=True):   # dagboek=False: een privé-vraag komt nooit in het fout-dagboek
     if not antwoord or not controle_bereikbaar(): return None
     nu = time.time()
     for k in [k for k, v in list(CONTROLE_UIT.items()) if nu - v.get('t', 0) > 900]: CONTROLE_UIT.pop(k, None)
@@ -920,7 +920,7 @@ def controle_start(vraag, antwoord, kennis=''):
         try: o = controle_oordeel(vraag, antwoord, kennis)
         except Exception: o = None
         if o and o.get('oordeel') == 'twijfel':
-            fout_dagboek(vraag, 'de controle twijfelde')
+            if dagboek: fout_dagboek(vraag, 'de controle twijfelde')
             try: v = brein_verbeter(vraag, antwoord, o.get('zin') or '', kennis)
             except Exception: v = None
             if v and v.strip() != str(antwoord).strip(): o = dict(o, verbeterd=v[:3000])
@@ -1211,7 +1211,7 @@ def kennis_op_betekenis(vraag, rest):
     q = bibliothecaris_embed(['task: question answering | query: ' + str(vraag)[:600]], timeout=4)
     if not q: return None
     return {r: _cos(q[0], KENNIS_VEC[r]) for r in rest if r in KENNIS_VEC}
-def brein_kennis_voor(vraag, hoeveel=5):
+def brein_kennis_voor(vraag, hoeveel=5, prive=False):   # prive: de vraag gaat alleen naar de bibliothecaris als die aan de kabel of op het eigen wifi zit
     k = brein_kennis()
     if not k: return ''
     regels = [r for r in k.splitlines() if r.strip()]
@@ -1223,7 +1223,7 @@ def brein_kennis_voor(vraag, hoeveel=5):
     # een regel staat, wint van elke gelijkenis -- de woordregel ziet "W4" niet (te kort) en de betekenis haalt W1 en W4 door elkaar.
     codes = set(c.upper() for c in re.findall(r'\b[A-Za-z]{1,3}\d{1,3}\b', str(vraag or '')))
     def _code(r): return 1.0 if codes and codes & set(c.upper() for c in re.findall(r'\b[A-Za-z]{1,3}\d{1,3}\b', r)) else 0.0
-    bet = kennis_op_betekenis(vraag, rest) if rest else None
+    bet = kennis_op_betekenis(vraag, rest) if rest and (not prive or rol_lokaal('bibliothecaris')) else None
     try: KENNIS_OP[0] = 'betekenis' if bet else 'woorden'
     except Exception: pass
     if bet:
@@ -1323,12 +1323,21 @@ def invaller_msgs(msgs, rol):
     else:
         uit.insert(0, {'role': 'system', 'content': eigen})
     return uit
-def invaller_vraag(msgs, mt):
+def rol_lokaal(rol=''):
+    # 678 (19 nov, de privé-hoek): zit deze rol (leeg = het brein) aan de KABEL of op het EIGEN WIFI? Niet via Tailscale (dat kan over internet
+    # lopen). Alleen dan gaat er privé-inhoud heen. Onbekend = nee.
+    try:
+        with open(os.path.join(REK, rol, 'brein-stand.json') if rol else os.path.join(REK, 'brein-stand.json')) as fh: rt = str(json.load(fh).get('route') or '')
+    except Exception:
+        return False
+    return rt in ('kabel', 'draadloos (wifi)')
+def invaller_vraag(msgs, mt, prive=False):
     # -> (tekst, tps, bron, model) of (None, None, None, None). Eerst de controle (groter model), dan de verdeler.
-    if controle_bereikbaar():
+    # 678 (19 nov): een privé-vraag alleen naar een invaller aan de kabel of op het eigen wifi
+    if (not prive or rol_lokaal('controle')) and controle_bereikbaar():
         t, tps = rol_vraag(CONTROLE_LOK, invaller_msgs(msgs, 'controle'), mt, 150)
         if t: return t, tps, 'controle-model', rol_model('controle')
-    if verdeler_bereikbaar():
+    if (not prive or rol_lokaal('verdeler')) and verdeler_bereikbaar():
         t, tps = rol_vraag(VERDELER_LOK, invaller_msgs(msgs, 'verdeler'), min(mt, 300), 120)
         if t: return t, tps, 'verdeler-model', rol_model('verdeler')
     return None, None, None, None
@@ -2329,8 +2338,13 @@ class H(BaseHTTPRequestHandler):
             # 678 (16 nov, onderzoek deel 2): HET VASTE DEEL BOVENAAN. De naam en de kennisbank veranderen niet tussen twee vragen; staan ze
             # VOORAAN (en de systeemtekst van Veronica erachter), dan hergebruikt llama-server dat begin uit zijn cache (cache_prompt) en hoeft
             # alleen het nieuwe stuk gelezen te worden. Stond het achter een wisselende tekst, dan moest elke vraag alles opnieuw lezen.
+            # 678 (19 nov): DE PRIVÉ-HOEK. Een privé-vraag gaat alleen naar telefoons aan de kabel of op het eigen wifi (niet via Tailscale),
+            # zoekt NIET op internet en komt niet in het fout-dagboek. Hangt het brein zelf niet zo, dan geen antwoord (en dat zegt het).
+            prive = d.get('prive') is True
+            if prive and not rol_lokaal(''):
+                self._cors_json(409, json.dumps({'fout': 'Het brein hangt nu niet aan de kabel of je eigen wifi (maar bijvoorbeeld via Tailscale). Privé praat ik er dan niet mee.'})); return
             laatste0 = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
-            kv0 = brein_kennis_voor(laatste0)
+            kv0 = brein_kennis_voor(laatste0, prive=prive)
             wie = (brein_wie() + ' ' + kv0).strip()   # 678 (17 nov): de kern + alleen de best passende regels
             if REK_VRAAG_RE.search(laatste0 or ''):   # 678 (18 nov): achter de vaste kern (de cache blijft), alleen bij een vraag over het rek
                 _rl = rek_live()
@@ -2359,7 +2373,7 @@ class H(BaseHTTPRequestHandler):
             # 678 (17 nov): DE INVALLER -- het brein is weg, of bezig met een andere vraag en dit is geen denkvraag: dan antwoordt een ander
             waarom = '' if les else ('weg' if not brein_gezond() else ('bezig' if BREIN_BEZIG[0] > 0 and not denk else ''))
             if waarom:
-                t, tps_i, bron_i, model_i = invaller_vraag(msgs, mt)
+                t, tps_i, bron_i, model_i = invaller_vraag(msgs, mt, prive)
                 if t:
                     self._cors_json(200, json.dumps({'tekst': t, 'tps': round(tps_i, 2) if isinstance(tps_i, (int, float)) else None, 'ms': int((time.time() - t0) * 1000),
                                                      'bron': bron_i, 'model': model_i, 'invaller': waarom, 'controle_id': None})); return
@@ -2378,7 +2392,7 @@ class H(BaseHTTPRequestHandler):
             finally:
                 with BREIN_BEZIG_SLOT: BREIN_BEZIG[0] -= 1
             if r is None and not les:   # 678 (17 nov): het brein viel onderweg weg -- dan alsnog een invaller
-                t, tps_i, bron_i, model_i = invaller_vraag(msgs, mt)
+                t, tps_i, bron_i, model_i = invaller_vraag(msgs, mt, prive)
                 if t:
                     self._cors_json(200, json.dumps({'tekst': t, 'tps': round(tps_i, 2) if isinstance(tps_i, (int, float)) else None, 'ms': int((time.time() - t0) * 1000),
                                                      'bron': bron_i, 'model': model_i, 'invaller': 'weg', 'controle_id': None})); return
@@ -2415,7 +2429,7 @@ class H(BaseHTTPRequestHandler):
                     leeg['opnieuw'] = 'geen antwoord'
             # 678 (18 nov): weet het brein het niet uit de kennisbank (of vraagt de eigenaar om op te zoeken), dan zoekt een rektelefoon
             zoek_via = None; ZOEK_DIAG[0] = {}; TOON_BRONNEN[0] = d.get('toon_bronnen') is True   # 678 (19 nov): alleen het kanaal vraagt de teksten
-            if (not les or d.get('zoek') is True) and zoek_nodig(laatste, tekst):
+            if not prive and (not les or d.get('zoek') is True) and zoek_nodig(laatste, tekst):   # privé: nooit internet
                 zt, zoek_via, ztps = antwoord_uit_zoeken(laatste, brein_wie(), mt)
                 if zt: tekst = zt; tps = ztps or tps
                 else: zoek_via = None
@@ -2432,11 +2446,12 @@ class H(BaseHTTPRequestHandler):
             ms = int((time.time() - t0) * 1000)
             vraag_tekst = next((m['content'] for m in reversed(msgs) if m.get('role') == 'user'), '')
             if not les:   # 678 (18 nov, punt 5 en 9): een leeg antwoord gaat in het fout-dagboek; en wanneer de eigenaar het laatst iets vroeg
-                if not tekst: fout_dagboek(laatste0, 'leeg antwoord')
+                if not tekst and not prive: fout_dagboek(laatste0, 'leeg antwoord')
                 try:
                     with open(os.path.join(REK, 'laatste-vraag.t'), 'w') as fh: fh.write(str(int(time.time())))
                 except Exception: pass
-            cid = controle_start(vraag_tekst, tekst, brein_kennis_voor(vraag_tekst)) if tekst and not les else None
+            cid = (controle_start(vraag_tekst, tekst, brein_kennis_voor(vraag_tekst, prive=prive), dagboek=not prive)
+                   if tekst and not les and (not prive or rol_lokaal('controle')) else None)
             kc = None
             if tekst and les and d.get('keur') is True and controle_bereikbaar():   # 678: de lesmeting kan de keurmeester meenemen (en wacht er dan op)
                 kc = controle_oordeel(vraag_tekst, tekst, brein_kennis_voor(vraag_tekst))
@@ -2449,7 +2464,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception: pass
             self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid,
                                              'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd')),
-                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'bron': ('internet via ' + zoek_via) if zoek_via else None, 'zoek': ZOEK_DIAG[0] or None}))   # _bronnen staat er alleen in als het kanaal erom vroeg
+                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'bron': ('internet via ' + zoek_via) if zoek_via else None, 'zoek': (ZOEK_DIAG[0] or None) if not prive else None, 'prive': prive}))   # _bronnen staat er alleen in als het kanaal erom vroeg
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
