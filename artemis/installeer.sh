@@ -763,6 +763,10 @@ def _zoek_get(url, via_tel=True):
                         ZOEK_DIAG[0]['telefoon_ok'] = ZOEK_DIAG[0].get('telefoon_ok', 0) + 1
                         return j['data'], 'de rektelefoon ' + (ZOEK_FWD[-1] if len(ZOEK_FWD) > 1 else '')
                     ZOEK_DIAG[0]['telefoon'] = 'bron gaf %s' % (j.get('status') or j.get('fout'))
+                    if j.get('status') == 429:   # 678 (19 nov): WAAROM de bron weigert (de eerste regels van zijn antwoord), zonder adressen
+                        b = re.sub(r'<[^>]+>', ' ', str(j.get('data') or ''))
+                        b = re.sub(r'\b\d{1,3}(?:\.\d{1,3}){3}\b', '<ip>', b); b = re.sub(r'\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7}\b', '<ip>', b)
+                        ZOEK_DIAG[0]['telefoon_429'] = re.sub(r'\s+', ' ', b).strip()[:300]
                     ZOEK_DIAG[0]['telefoon_ok'] = ZOEK_DIAG[0].get('telefoon_ok', 0)   # hoeveel vragen de telefoon WEL ophaalde
                     break
                 except urllib.error.HTTPError as e:
@@ -837,7 +841,42 @@ def antwoord_uit_zoeken(vraag, wie, mt):
     # 678 (18 nov): alleen weggooien als het brein ZEGT dat het niets vond -- een "niet zeker" midden in een goed antwoord is geen reden
     if not t or 'niet kunnen vinden' in t or (WEET_NIET_RE.search(t[:60]) and not re.search(r'\d', t)):
         ZOEK_DIAG[0]['weggegooid'] = True; return None, None, None
+    # 678 (19 nov, "de Houtribdijk is 11,5 km"): een GETAL in het antwoord moet LETTERLIJK in de opgezochte teksten staan. Zo niet: een keer
+    # opnieuw met die eis erbij; lukt dat ook niet, dan de zin uit de bron zelf (een citaat verzint niets). De code kijkt na, niet het brein.
+    if getal_buiten_bron(t, blok):
+        ZOEK_DIAG[0]['getal_niet_in_bron'] = getal_buiten_bron(t, blok)[:4]
+        try:
+            r2 = brein_vraag({'messages': [{'role': 'system', 'content': sysm + '\n\nLET OP: neem elk getal LETTERLIJK over uit de teksten. Noem geen getal dat er niet staat.'},
+                                           {'role': 'user', 'content': vr[:1500]}], 'max_tokens': max(mt, 300), 'stream': False, 'temperature': 0,
+                              'cache_prompt': False, 'chat_template_kwargs': {'enable_thinking': False}})
+            t2 = brein_tekst(r2['choices'][0]['message']).strip()
+        except Exception:
+            t2 = ''
+        if t2 and 'niet kunnen vinden' not in t2 and not getal_buiten_bron(t2, blok):
+            t = t2; ZOEK_DIAG[0]['herkansing'] = 'goed'
+        else:
+            zin = bron_zin(vr, res)
+            if not zin: ZOEK_DIAG[0]['herkansing'] = 'niets'; return None, None, None
+            t = 'Volgens de bron: "%s"' % zin; ZOEK_DIAG[0]['herkansing'] = 'citaat'
+    if TOON_BRONNEN[0]: ZOEK_DIAG[0]['_bronnen'] = [{'titel': x['titel'], 'tekst': x['tekst']} for x in res]
     return t + '\n\nBron: ' + ', '.join(x['url'] for x in res), via, tps
+def _getallen(t):
+    return set(re.sub(r'[.,]', ',', x) for x in re.findall(r'\d+(?:[.,]\d+)?', str(t)))
+def getal_buiten_bron(antwoord, bron):   # -> de getallen in het antwoord die NIET in de bron staan (gesorteerd)
+    return sorted(_getallen(antwoord) - _getallen(bron))
+def bron_zin(vraag, res):   # -> de zin uit de bron die het best bij de vraag past (met een getal als de vraag om een maat of jaar vraagt)
+    woorden = set(w for w in re.findall(r'[a-z\u00e0-\u00ff]{4,}', str(vraag).lower()) if w not in ('welke', 'wanneer', 'hoeveel', 'waarom', 'zoek', 'internet', 'eens'))
+    getal = bool(re.search(r'(?i)\b(hoe (lang|hoog|groot|breed|diep|ver|oud|veel)|hoeveel|wanneer|welk jaar|in welk)\b', str(vraag)))
+    maat = bool(re.search(r'(?i)\bhoe (lang|hoog|breed|diep|ver)\b', str(vraag)))
+    beste, score = '', 0
+    for x in res:
+        for z in re.split(r'(?<=[.!?])\s+', str(x.get('tekst') or '')):
+            sc = len(woorden & set(re.findall(r'[a-z\u00e0-\u00ff]{4,}', z.lower())))
+            if getal and re.search(r'\d', z): sc += 2
+            if maat and re.search(r'(?i)\b(km|kilometer|meter|m)\b', z): sc += 2
+            if sc > score: beste, score = z.strip(), sc
+    return beste[:300] if score >= 2 else ''
+TOON_BRONNEN = [False]
 # 678 (16 nov): de controle loopt NA het antwoord, op een eigen draad: Veronica krijgt het antwoord van het brein meteen en haalt het oordeel
 # daarna op (/brein/controle?id=). Alleen als de controle-telefoon bereikbaar is; anders geen id en dus geen oordeel.
 CONTROLE_UIT = {}
@@ -850,7 +889,7 @@ def controle_bereikbaar():
     return gezond() or ('OK' in doe_args(['controle-doorsturing'], 15) and gezond())
 # 678 (18 nov, eigenaar punt 5: "elk fout of leeg antwoord in Veronica wordt vanzelf een nieuwe les"). HET FOUT-DAGBOEK: een vraag uit Veronica
 # waarop het brein leeg bleef of waar de controle aan twijfelde, komt hier in -- ALLEEN op deze computer (600), nooit in het verslag, het logboek
-# of op het kanaal (daar gaan alleen aantallen heen). Lesrij 5 stelt die vragen opnieuw; een vraag die dan wel goed gaat heet opgelost.
+# of op het kanaal (daar gaan alleen aantallen heen). De dagboekles (rij 9) stelt die vragen opnieuw; een vraag die dan wel goed gaat heet opgelost.
 FOUT_DAGBOEK_MAX = 200
 def fout_dagboek(vraag, reden):
     v = re.sub(r'\s+', ' ', str(vraag or '')).strip()[:500]
@@ -1451,6 +1490,8 @@ def lus():
                 doe('beheerder-opslag')   # 609: de lokale beheerder -- elke ~3 uur de opslag van de rektelefoons bewaken + veilig opruimen (nooit de F8)
             if RONDE % 30 == 17:
                 doe('zelfstandig-tik')   # 678 (18 nov, punt 9): elke vier uur de zelfstandigheidsproef (beslist zelf of het nu kan; start op de achtergrond)
+            if RONDE % 30 == 11:
+                doe('vaste-les-tik')   # 678 (19 nov): elke nacht lesrij 5, de vaste vragenset (beslist zelf of het nu kan)
             if RONDE % 30 == 23:
                 doe('dagboek-tik')   # 678 (18 nov, punt 5): nieuwe vragen in het fout-dagboek = vanzelf een les (hoogstens eens per drie uur)
             if RONDE % 180 == 120:
@@ -2370,7 +2411,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception:
                     leeg['opnieuw'] = 'geen antwoord'
             # 678 (18 nov): weet het brein het niet uit de kennisbank (of vraagt de eigenaar om op te zoeken), dan zoekt een rektelefoon
-            zoek_via = None; ZOEK_DIAG[0] = {}
+            zoek_via = None; ZOEK_DIAG[0] = {}; TOON_BRONNEN[0] = d.get('toon_bronnen') is True   # 678 (19 nov): alleen het kanaal vraagt de teksten
             if (not les or d.get('zoek') is True) and zoek_nodig(laatste, tekst):
                 zt, zoek_via, ztps = antwoord_uit_zoeken(laatste, brein_wie(), mt)
                 if zt: tekst = zt; tps = ztps or tps
@@ -2405,7 +2446,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception: pass
             self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid,
                                              'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd')),
-                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'bron': ('internet via ' + zoek_via) if zoek_via else None, 'zoek': ZOEK_DIAG[0] or None}))
+                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'bron': ('internet via ' + zoek_via) if zoek_via else None, 'zoek': ZOEK_DIAG[0] or None}))   # _bronnen staat er alleen in als het kanaal erom vroeg
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
@@ -8682,7 +8723,8 @@ brein_kennis_zet() {
 brein_les() {
   local id="${1:-}" rij="${2:-1}" link code base
   # 678 (18 nov, avond): lesrij 4 en 5 komen als GEGEVENS via het kanaal; het fout-dagboek is rij 9 (was 5: de eigenaar wilde "lesrij 5" met nieuwe vragen)
-  case "$rij" in 1|2|3) : ;; 4|5) [ -s "$REK_MAP/lesrij$rij.json" ] || { zeg "Brein-les: lesrij $rij heeft nog geen vragen (die komen via het kanaal)."; return 0; } ;;
+  # 678 (19 nov): rij 4 t/m 8 zijn GEGEVENS-rijen; lesrij 5 is de VASTE vragenset (elke nacht, vaste_les_tik), een nieuwe set gaat naar 6, 7 of 8
+  case "$rij" in 1|2|3) : ;; 4|5|6|7|8) [ -s "$REK_MAP/lesrij$rij.json" ] || { zeg "Brein-les: lesrij $rij heeft nog geen vragen (die komen via het kanaal)."; return 0; } ;;
     9) [ -s "$REK_MAP/fout-dagboek.jsonl" ] || { zeg "Brein-les: het fout-dagboek is leeg."; return 0; } ;; *) rij=1 ;; esac
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || brein_doorsturing >/dev/null 2>&1
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || { zeg "Brein-les: het brein antwoordt niet (druk eerst op Brein: status)."; return 0; }
@@ -8778,7 +8820,7 @@ if os.environ.get('RIJ') == '9':   # 678 (18 nov, punt 5): de open vragen uit he
     try: _db = [json.loads(x) for x in open(DAGBOEK) if x.strip()]
     except Exception: _db = []
     LESSEN = [{'id': 'd%d' % i, 'vraag': x['vraag'], 'moet': [], 'niet': [], 'dagboek': True} for i, x in enumerate([x for x in _db if not x.get('opgelost')][-10:], 1)]
-if os.environ.get('RIJ') in ('4', '5'):   # 678 (18 nov, punt 4): lesrij 4 en 5 komen als GEGEVENS via het kanaal (vragen over de streek staan nooit in dit script)
+if os.environ.get('RIJ') in ('4', '5', '6', '7', '8'):   # 678 (18 nov, punt 4): lesrij 4 en 5 komen als GEGEVENS via het kanaal (vragen over de streek staan nooit in dit script)
     try: LESSEN = [dict(x, moet=[[fam if w == '{fam}' else w for w in g] for g in x['moet']]) for x in json.load(open(os.path.join(REKD, 'lesrij%s.json' % os.environ['RIJ'])))]
     except Exception: LESSEN = []
 NL = set('de het een en ik je jij is ben niet wat dat van op te in mag nooit denk na beantwoord vragen rek brein telefoon telefoons dit voor'.split())
@@ -9453,7 +9495,24 @@ zelfstandig_tik() {
   logregel "Zelfstandigheidsproef: vanzelf (elke vier uur)."
   ( setsid "$0" zelfstandig "" </dev/null >>"$REK_MAP/console-zelfstandig.log" 2>&1 & ) 2>/dev/null
 }
-# 678 (18 nov, punt 5): HET FOUT-DAGBOEK WORDT VANZELF EEN LES. Staan er open vragen die sinds de vorige dagboekles bijkwamen, dan lesrij 5 --
+# 678 (19 nov, eigenaar: "lesrij 5 als vaste vragenset"): LESRIJ 5 IS DE VASTE PROEF. Elke nacht (tussen twee en vijf uur, een keer per dag) stelt
+# ARTEMIS die tien vragen opnieuw langs het echte pad van Veronica (alleen NA: de kennisbank is er, dat scheelt de helft van de tijd), zodat een
+# wijziging die iets stuk maakt de volgende ochtend in het verslag staat. Niet als de eigenaar net iets vroeg, niet tijdens een les of proef.
+vaste_les_tik() {
+  local nu dag t v p u; nu="$(date +%s)"; u="$(date +%H)"; dag="$(date +%Y%m%d)"
+  [ -s "$REK_MAP/lesrij5.json" ] || return 0
+  case "$u" in 02|03|04) : ;; *) return 0 ;; esac
+  t="$(head -1 "$REK_MAP/vasteles.t" 2>/dev/null | tr -cd '0-9')"; [ "${t:-0}" = "$dag" ] && return 0
+  v="$(head -1 "$REK_MAP/laatste-vraag.t" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${v:-0})) -ge 1200 ] || return 0
+  les_loopt && return 0
+  p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
+  [ -d "$REK_MAP/zelfstandig.lock" ] && return 0
+  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  printf '%s\n' "$dag" >"$REK_MAP/vasteles.t"
+  logregel "Vaste les: lesrij 5 vanzelf (elke nacht)."
+  ( LES_ALLEEN_NA=1 setsid "$0" brein-les "" 5 </dev/null >>"$REK_MAP/console-brein-les.log" 2>&1 & ) 2>/dev/null
+}
+# 678 (18 nov, punt 5): HET FOUT-DAGBOEK WORDT VANZELF EEN LES. Staan er open vragen die sinds de vorige dagboekles bijkwamen, dan rij 9 --
 # hoogstens eens per drie uur, niet als de eigenaar net iets vroeg, niet tijdens een les of proef.
 dagboek_tik() {
   local nu t v p nieuw; nu="$(date +%s)"
@@ -9890,10 +9949,12 @@ if vraag.get('soort') == 'veronica':   # 678 (18 nov): een vraag langs PRECIES h
     try: _sl = open(os.environ['SLEUTELF']).read().strip()
     except Exception: _sl = ''
     try:
-        _r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=json.dumps({'sleutel': _sl, 'messages': [{'role': 'user', 'content': str(vraag.get('vraag') or '')[:1500]}], 'max_tokens': 400}).encode(),
+        _r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=json.dumps({'sleutel': _sl, 'messages': [{'role': 'user', 'content': str(vraag.get('vraag') or '')[:1500]}], 'max_tokens': 400, 'toon_bronnen': True}).encode(),
                                             headers={'Content-Type': 'application/json'}), timeout=420)
         _j = json.loads(_r.read(2000000).decode('utf-8', 'replace'))
-        _kanaal_antwoord('%s\n\n(via Veronica\'s pad; bron: %s; %s tok/s; zoeken: %s)' % (_j.get('tekst') or '(leeg)', _j.get('bron') or 'brein', _j.get('tps'), json.dumps(_j.get('zoek'))))
+        _z = dict(_j.get('zoek') or {}); _br = _z.pop('_bronnen', None) or []
+        _kanaal_antwoord('%s\n\n(via Veronica\'s pad; bron: %s; %s tok/s; zoeken: %s)%s' % (_j.get('tekst') or '(leeg)', _j.get('bron') or 'brein', _j.get('tps'), json.dumps(_z or None),
+                         ''.join('\n\nOpgezochte tekst [%d] %s: %s' % (i + 1, str(b.get('titel'))[:120], str(b.get('tekst'))[:900]) for i, b in enumerate(_br[:3]))))
     except Exception as _e:
         _kanaal_antwoord('', 'het pad van Veronica gaf geen antwoord (%s)' % type(_e).__name__)
     raise SystemExit(0)
@@ -9988,14 +10049,14 @@ if vraag.get('soort') == 'les':
         raise SystemExit(0)   # NIET afvinken: de volgende minuut opnieuw
     try:
         with open(os.environ['GEZIEN'], 'a') as fh: fh.write(vraag['id'] + '\n')
-        if vraag.get('rij') in (4, 5):   # 678 (18 nov, punt 4): de vragen van lesrij 4 en 5 komen als gegevens mee (JSON), nooit als code
+        if vraag.get('rij') in (4, 5, 6, 7, 8):   # 678 (18 nov, punt 4): de vragen van lesrij 4 en 5 komen als gegevens mee (JSON), nooit als code
             _l = json.loads(str(vraag.get('vraag') or '[]'))
             _ok = [x for x in (_l if isinstance(_l, list) else [])[:12] if isinstance(x, dict) and re.fullmatch(r'[a-z0-9_-]{1,20}', str(x.get('id', '')))
                    and isinstance(x.get('vraag'), str) and isinstance(x.get('moet'), list) and all(isinstance(g, list) and g and all(isinstance(w, str) for w in g) for g in x['moet'])]
             with open(os.path.join(os.path.dirname(os.environ['STAND']), 'lesrij%d.json' % vraag['rij']), 'w') as fh:
                 json.dump([{'id': x['id'], 'vraag': x['vraag'][:500], 'moet': [[w.lower()[:60] for w in g][:8] for g in x['moet']][:4],
                             'niet': [str(w).lower()[:60] for w in (x.get('niet') or []) if isinstance(w, str)][:6], 'nl': x.get('nl') is True} for x in _ok], fh, ensure_ascii=False)
-        subprocess.Popen([os.environ['AREK'], 'brein-les', vraag['id'], str(vraag.get('rij') if vraag.get('rij') in (1, 2, 3, 4, 5, 9) else 1)], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
+        subprocess.Popen([os.environ['AREK'], 'brein-les', vraag['id'], str(vraag.get('rij') if vraag.get('rij') in (1, 2, 3, 4, 5, 6, 7, 8, 9) else 1)], stdin=subprocess.DEVNULL, stdout=open(os.environ['LESLOG'], 'ab'), stderr=subprocess.STDOUT, start_new_session=True)
     except Exception:
         pass
     raise SystemExit(0)
@@ -10500,6 +10561,7 @@ case "${1:-status}" in
   spraak-kanaal) spraak_kanaal "${2:-}" ;;
   zoek-doorsturing) zoek_doorsturing ;;
   zelfstandig-tik) zelfstandig_tik ;;
+  vaste-les-tik) vaste_les_tik ;;   # 678 (19 nov): lesrij 5 elke nacht
   dagboek-tik) dagboek_tik ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
   brein-les2) brein_les "" 2 ;;
   brein-les3) brein_les "" 3 ;;
