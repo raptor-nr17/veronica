@@ -3383,13 +3383,16 @@ jarvis_proef_bron() {
 jarvis_proef_installeer() {   # $1 serienummer -> 0 = de proefversie staat erop
   local s="$1" naam route uit groot op code tel=/data/local/tmp/jarvis-proef.apk
   is_f8 "$s" && return 1
-  naam="$(toestel_naam "$s")"; route="$(case "$s" in *:*) echo Tailscale-adb ;; *) echo kabel ;; esac)"
+  naam="$(toestel_naam "$s")"; [ -n "$naam" ] || naam="de proeftelefoon"; route="$(case "$s" in *:*) echo Tailscale-adb ;; *) echo kabel ;; esac)"
   [ -s "$JARVIS_PROEF_APK" ] || { logregel "Proef: er staat geen proefversie op deze computer."; return 1; }
   code="$(tr -dc 0-9 < "$JARVIS_PROEF_APK.code" 2>/dev/null)"; op="$(jarvis_apk_code "$s")"; case "$op" in ''|*[!0-9]*) op=0 ;; esac
   if [ -n "$code" ] && [ "$op" -ge "$code" ]; then logregel "Proef: $naam heeft code $op al (de proefversie is $code)."; return 0; fi
   groot="$(stat -c %s "$JARVIS_PROEF_APK" 2>/dev/null)"
-  timeout 1800 "$ADB" -s "$s" push "$JARVIS_PROEF_APK" "$tel" >/dev/null 2>&1 \
-    || { logregel "Proef: de apk kwam niet op $naam (adb push via $route brak af of duurde langer dan 30 min)."; "$ADB" -s "$s" shell rm -f "$tel" >/dev/null 2>&1; return 1; }
+  # 678 (19 nov, JARVIS 1.9.102 kwam drie keer niet op de S10): een apk van 42 MB in een keer over Tailscale brak af en begon elke poging bij
+  # nul. Nu dezelfde weg als de modellen (adb_push_heel): in blokken van 8 MB, elk blok nagekeken, hervatten waar het afbrak, en aan het eind
+  # de sha256 op de telefoon zelf. Een afgebroken poging laat de .deel staan; de volgende gaat daar verder.
+  ADB_BLOK_MB=8 adb_push_heel "$s" "$JARVIS_PROEF_APK" "$tel" \
+    || { logregel "Proef: de apk kwam nog niet heel op $naam (via $route); de volgende poging gaat verder waar deze stopte."; return 1; }
   if [ "$("$ADB" -s "$s" shell stat -c %s "$tel" 2>/dev/null | tr -d '\r ')" != "$groot" ]; then
     logregel "Proef: de apk staat niet heel op $naam (via $route); weggehaald, de volgende keer opnieuw."; "$ADB" -s "$s" shell rm -f "$tel" >/dev/null 2>&1; return 1
   fi
@@ -3441,6 +3444,8 @@ jarvis_proef_zet() {
 # uur), hoogstens eens per half uur kijken, alleen de proeftelefoon, nooit de F8, eerst de terugval bewaard. Twintig minuten later (het model van
 # stem en oor komt binnen op wifi en aan de lader) doet hij zelf de rondgang stem -> oor, en zet stem en oor daarna weer UIT, zoals de eigenaar
 # ze liet staan. De uitslag staat in het standverslag. Vrijgeven blijft een besluit van een mens.
+# 678 (19 nov): acht pogingen per versie in plaats van drie -- een poging gaat nu verder waar de vorige stopte, dus elke poging schiet op.
+PROEF_POGINGEN=8
 PROEF_VANZELF_T="$REK_MAP/proef-vanzelf.t"; PROEF_VANZELF_CODE="$REK_MAP/proef-vanzelf.code"; PROEF_SPRAAK_NA="$REK_MAP/proef-spraak-na"
 proef_vanzelf() {
   command -v "$ADB" >/dev/null 2>&1 || return 0
@@ -3468,7 +3473,7 @@ proef_vanzelf() {
   # 678 (17 nov): de markering kwam VOOR de installatie, en een poging die in de tijdslimiet liep (over Tailscale) werd nooit herhaald. Nu: per
   # versie hoogstens drie pogingen, en pas "gedaan" na een geslaagde installatie.
   local pog; pog="$(awk -v c="$nieuw" '$1 == c {print $2}' "$PROEF_VANZELF_CODE" 2>/dev/null)"; pog="${pog:-0}"
-  [ "$pog" -ge 3 ] 2>/dev/null && return 0
+  [ "$pog" -ge "$PROEF_POGINGEN" ] 2>/dev/null && return 0
   printf '%s %s\n' "$nieuw" "$((pog + 1))" > "$PROEF_VANZELF_CODE"
   jarvis_terugval_bewaar "$s" "$op"
   if jarvis_proef_installeer "$s"; then
@@ -3477,7 +3482,7 @@ proef_vanzelf() {
     jarvis_spraak_proef aan >/dev/null 2>&1 || true
     printf '%s\n' "$((nu + 1200))" > "$PROEF_SPRAAK_NA"
   else
-    logregel "Proef: poging $((pog + 1)) van 3 voor JARVIS ${JARVIS_PROEF_VERSIE:-?} lukte niet; over een half uur opnieuw."
+    logregel "Proef: poging $((pog + 1)) van $PROEF_POGINGEN voor JARVIS ${JARVIS_PROEF_VERSIE:-?} lukte niet; over een half uur opnieuw."
   fi
 }
 jarvis_proef_uit() { rm -f "$JARVIS_PROEF_F" 2>/dev/null || true; zeg "Geen proeftelefoon meer: alle rektelefoons blijven op de vrijgegeven versie (code $JARVIS_VRIJ_CODE)."; }
