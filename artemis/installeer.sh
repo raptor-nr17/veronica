@@ -9968,11 +9968,11 @@ if vraag.get('soort') == 'veronica':   # 678 (18 nov): een vraag langs PRECIES h
     try: _sl = open(os.environ['SLEUTELF']).read().strip()
     except Exception: _sl = ''
     try:
-        _r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=json.dumps({'sleutel': _sl, 'messages': [{'role': 'user', 'content': str(vraag.get('vraag') or '')[:1500]}], 'max_tokens': 400, 'toon_bronnen': True}).encode(),
+        _r = op.open(urllib.request.Request('http://127.0.0.1:%s/brein/chat' % os.environ['CPOORT'], data=json.dumps({'sleutel': _sl, 'messages': [{'role': 'user', 'content': str(vraag.get('vraag') or '')[:1500]}], 'max_tokens': 400, 'toon_bronnen': True, 'prive': vraag.get('prive') is True}).encode(),   # 678 (19 nov): "<nr> veronica prive" = de privé-stand
                                             headers={'Content-Type': 'application/json'}), timeout=420)
         _j = json.loads(_r.read(2000000).decode('utf-8', 'replace'))
         _z = dict(_j.get('zoek') or {}); _br = _z.pop('_bronnen', None) or []
-        _kanaal_antwoord('%s\n\n(via Veronica\'s pad; bron: %s; %s tok/s; zoeken: %s)%s' % (_j.get('tekst') or '(leeg)', _j.get('bron') or 'brein', _j.get('tps'), json.dumps(_z or None),
+        _kanaal_antwoord('%s\n\n(via Veronica\'s pad%s; bron: %s; %s tok/s; zoeken: %s)%s' % (_j.get('tekst') or '(leeg)', ', privé-stand' if _j.get('prive') else '', _j.get('bron') or 'brein', _j.get('tps'), json.dumps(_z or None),
                          ''.join('\n\nOpgezochte tekst [%d] %s: %s' % (i + 1, str(b.get('titel'))[:120], str(b.get('tekst'))[:900]) for i, b in enumerate(_br[:3]))))
     except Exception as _e:
         _kanaal_antwoord('', 'het pad van Veronica gaf geen antwoord (%s)' % type(_e).__name__)
