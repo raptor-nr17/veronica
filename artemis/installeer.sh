@@ -717,6 +717,7 @@ def verdeler_model():
 # getal, een IBAN of een geheim woord gaat nooit naar buiten.
 ZOEK_LOK = 18180
 ZOEK_FWD = [0.0]
+ZOEK_WEG_REDEN = ['']   # 678 (19 nov): waarom de zoektelefoon de vorige keer niet lukte
 ZOEK_TEL_WEG = [0.0]   # tot wanneer de zoektelefoon overgeslagen wordt (na een mislukte doorsturing, tien minuten)
 WEET_NIET_RE = re.compile(r'(?i)\b(weet ik niet|ik weet (het |dat )?niet|niet zeker|onbekend|geen (informatie|gegevens)|kan ik niet (vinden|zeggen)|dat weet ik niet)\b')
 ZOEK_EXPLICIET_RE = re.compile(r'(?i)\b(zoek (het |dat |eens )?op|op internet|online|op wikipedia|zoek uit)\b')
@@ -740,12 +741,14 @@ def _zoek_get(url, via_tel=True):
             with open(os.path.join(REK, 'rek-token.conf')) as fh: code = fh.read().strip()
         except Exception: code = ''
         if code and time.time() < ZOEK_TEL_WEG[0]:
-            ZOEK_DIAG[0]['telefoon'] = 'geen zoektelefoon (eerder vandaag niet bereikbaar; over een paar minuten opnieuw)'
+            ZOEK_DIAG[0]['telefoon'] = 'geen zoektelefoon (eerder vandaag niet bereikbaar; over een paar minuten opnieuw)' + (': ' + ZOEK_WEG_REDEN[0] if ZOEK_WEG_REDEN[0] else '')
         elif code:
             for poging in (0, 1):
                 if poging or time.time() - ZOEK_FWD[0] > 600:
                     t = doe_args(['zoek-doorsturing'], 90)   # 678 (18 nov): ruim, want een pagina openen kost twintig seconden
-                    if 'OK' not in t: ZOEK_TEL_WEG[0] = time.time() + 600; break
+                    if 'OK' not in t:   # 678 (19 nov): de REDEN bewaren -- anders zegt de volgende vraag alleen "eerder niet bereikbaar"
+                        ZOEK_TEL_WEG[0] = time.time() + 600; ZOEK_WEG_REDEN[0] = re.sub(r'\s+', ' ', str(t or 'geen antwoord van de doorsturing')).strip()[-200:]
+                        ZOEK_DIAG[0]['telefoon'] = 'geen zoektelefoon: ' + ZOEK_WEG_REDEN[0]; break
                     ZOEK_FWD[0] = time.time(); ZOEK_FWD.append(t.split('OK', 1)[1].strip()[:40])
                 try:
                     # 678 (18 nov, 21:05): Wikipedia gaf de telefoon 429 op de TWEEDE vraag kort na de eerste; Wikimedia wil vragen na elkaar
@@ -9549,8 +9552,9 @@ zoek_doorsturing() {
     s="$(als_$rol brein_nu 2>/dev/null)"; [ -n "$s" ] && ! is_f8 "$s" || continue
     [ "$s" = "$(brein_nu)" ] && continue
     id="$(toestel_id "$s" | sha256sum | cut -c1-8)"
-    weg="$(head -1 "$REK_MAP/zoek-weg-$id" 2>/dev/null | tr -cd '0-9')"; [ -n "$weg" ] && [ "$nu" -lt "$weg" ] && continue
-    "$ADB" -s "$s" forward tcp:18180 tcp:8080 >/dev/null 2>&1 || continue
+    weg="$(head -1 "$REK_MAP/zoek-weg-$id" 2>/dev/null | tr -cd '0-9')"
+    if [ -n "$weg" ] && [ "$nu" -lt "$weg" ]; then reden="$reden$rol: weigerde eerder de rij-code (nog $(( (weg - nu) / 60 )) min wachten); "; continue; fi
+    "$ADB" -s "$s" forward tcp:18180 tcp:8080 >/dev/null 2>&1 || { reden="$reden$rol: niet bereikbaar via adb; "; continue; }
     if ! curl -fsS -m 4 "http://127.0.0.1:18180/jarvis/status" -o "$REK_MAP/zoek-st.json" 2>/dev/null; then
       # 678 (18 nov, 22:00): de S10 nam de rij-code om 21:06 aan, maar een uur later luisterde zijn JARVIS niet meer (de webserver hangt aan de
       # pagina). Dan zocht de Chromebook. Nu: dezelfde zachte weg terug als de Cat (jarvis_web_herstel: scherm wekken, pagina openen; nooit het
@@ -9577,7 +9581,7 @@ print("rol %s, voorkeur %s" % (j.get("rol") or "?", j.get("voorkeur") or "?"))' 
   rm -f "$REK_MAP/zoek-st.json"
   "$ADB" forward --remove tcp:18180 >/dev/null 2>&1 || true
   [ -n "$reden" ] && printf '%s geen zoektelefoon: %s\n' "$(date '+%d-%m %H:%M')" "$reden" >"$ZOEK_TEL_F"
-  echo "geen zoektelefoon"
+  echo "geen zoektelefoon${reden:+: $reden}"   # 678 (19 nov): met de reden per rol (naar het verslag en de zoekdiagnose)
 }
 brein_kv() {   # $1 vlaggen, $2 soort -> dezelfde vlaggen met de KV-cache in die soort
   printf '%s' "$1" | sed 's/ *-ctk [a-z0-9_]*//; s/ *-ctv [a-z0-9_]*//; s/^ *//'; printf ' -ctk %s -ctv %s' "$2" "$2"
