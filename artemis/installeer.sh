@@ -1085,6 +1085,19 @@ VREEMD_W = set('the and you what how why who your are do does this that machst d
 def nl_herinnering(t):
     w = re.findall(r'[a-zà-ÿ]+', str(t or '').lower())
     return sum(1 for x in w if x in VREEMD_W) > sum(1 for x in w if x in NL_W)
+# 678 (19 nov, lesrij 8 "vertaal"): "Vertaal naar het Engels: ..." kreeg een Nederlands antwoord -- de regel "antwoord in het Nederlands"
+# woog zwaarder dan de opdracht. Een VERTAALOPDRACHT naar een andere taal is de ene uitzondering: dan zegt de code er uitdrukkelijk bij in welke
+# taal, en het antwoord wordt niet terugvertaald. Alleen de doeltaal uit de vraag zelf, nooit geraden.
+VERTAAL_DOEL = (('engels', 'Engels'), ('english', 'Engels'), ('englisch', 'Engels'), ('duits', 'Duits'), ('german', 'Duits'), ('deutsch', 'Duits'),
+                ('frans', 'Frans'), ('french', 'Frans'), ('französisch', 'Frans'), ('fries', 'Fries'))
+VERTAAL_RE = re.compile(r'(?i)\b(vertaal|vertaling|translate|übersetze|uebersetze)\b[^.:?!]{0,40}?\b(?:naar|in|into|to|ins|auf)\s+(?:het\s+)?([a-zà-ÿ]+)')
+def vertaal_doel(t):
+    m = VERTAAL_RE.search(str(t or ''))
+    if not m: return None
+    w = m.group(2).lower()
+    for k, naam in VERTAAL_DOEL:
+        if w.startswith(k): return naam
+    return None
 def brein_tekst(m):
     # 678 (15 nov): het antwoord zonder denkstappen; bleef het antwoord leeg (alles ging op aan nadenken), dan het nadenken zelf, eerlijk gemarkeerd
     t = re.sub(r'(?s)<think>.*?</think>', '', str((m or {}).get('content') or '')).strip()
@@ -2367,7 +2380,11 @@ class H(BaseHTTPRequestHandler):
             if som:
                 self._cors_json(200, json.dumps({'tekst': som + ' (de som van het brein, uitgerekend door de code)', 'tps': None, 'ms': int((time.time() - t0r) * 1000),
                                                  'bron': 'rekenhulp', 'controle_id': None})); return
-            if nl_herinnering(laatste):
+            doeltaal = vertaal_doel(laatste)
+            if doeltaal:
+                for m in reversed(msgs):
+                    if m.get('role') == 'user': m['content'] = m['content'] + '\n\n(Dit is een vertaalopdracht: schrijf de vertaling in het %s, alleen de vertaling.)' % doeltaal; break
+            elif nl_herinnering(laatste):
                 for m in reversed(msgs):
                     if m.get('role') == 'user': m['content'] = m['content'] + '\n\n(Antwoord in het Nederlands.)'; break
             # 678 (16 nov, onderzoek stap 7): GEEN WERK OVER WIFI VOOR EEN ANTWOORD. De verdeler (een andere telefoon, via Tailscale) zat in het
@@ -2440,7 +2457,7 @@ class H(BaseHTTPRequestHandler):
                 else: zoek_via = None
             # 678 (17 nov, lesrij 2 "duits"): een vreemde vraag kreeg ondanks de herinnering een Duits antwoord. Dan EEN korte vertaling door het
             # brein zelf, alleen in dat geval: het antwoord moet altijd Nederlands zijn.
-            if tekst and nl_herinnering(laatste) and nl_herinnering(tekst):
+            if tekst and not doeltaal and nl_herinnering(laatste) and nl_herinnering(tekst):
                 rv = brein_vraag({'messages': [{'role': 'system', 'content': 'Vertaal de tekst naar natuurlijk Nederlands. Schrijf alleen de vertaling, niets anders.'},
                                                {'role': 'user', 'content': tekst[:1500]}], 'max_tokens': mt, 'stream': False, 'temperature': 0,
                                   'chat_template_kwargs': {'enable_thinking': False}}, timeout=90)
