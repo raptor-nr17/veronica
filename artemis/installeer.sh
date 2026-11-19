@@ -1011,7 +1011,12 @@ def klok_som(vraag, kennis):
     m = re.search(r'\b([01]?\d|2[0-3])[:.]([0-5]\d)\b', t)
     if not m or not re.search(r'(?i)\bhoe ?laat\b', t): return None
     vw = set(w[:6] for w in re.findall(r'[a-zà-ÿ]{5,}', t.lower()))
-    for regel in str(kennis or '').splitlines():
+    regels = str(kennis or '').splitlines()
+    # 678 (19 nov, lesrij 6 "veerretour": "om 13:40 heen en meteen terug" werd 13:40 + 80 = 15:00): gaat de vraag over HEEN EN TERUG, dan eerst
+    # de kennisregel die zelf over terug of retour gaat (2 x 80 = 160 minuten), daarna pas de enkele reis.
+    if re.search(r'(?i)\b(terug|retour|heen en weer)\b', t):
+        regels = sorted(regels, key=lambda r: 0 if re.search(r'(?i)\b(terug|retour)\b', r) else 1)
+    for regel in regels:
         d = re.search(r'(\d{1,3})\s*minuten', regel)
         if d and vw & set(w[:6] for w in re.findall(r'[a-zà-ÿ]{5,}', regel.lower())):
             tot = int(m.group(1)) * 60 + int(m.group(2)) + int(d.group(1))
