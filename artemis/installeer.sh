@@ -7657,10 +7657,17 @@ jarvis_diag() {   # $1 serienummer -> een regel
   slot=nee; tel_vergrendeld "$s" && slot=ja
   luist=nee; jarvis_8080_luistert "$s" && luist=ja
   [ "$luist" = nee ] && jarvis_slaapt "$s" && voor="${voor:-?} -- JARVIS STAAT OP UIT (pauzescherm \"JARVIS slaapt\"; in Veronica: rekdokter, of in de console: JARVIS weer aan via de kabel)"
-  log="$(timeout 15 "$ADB" -s "$s" logcat -d -t 400 2>/dev/null | tr -d '\r' | grep -E 'Capacitor/Console|chromium.*CONSOLE|JarvisWeb|Jarvis[A-Z][a-zA-Z]*:' | grep -viE 'koppelcode|sleutel|token|wachtwoord|password' \
+  # 678 (20 nov, avond): alleen de regels van JARVIS' EIGEN proces (--pid), de waarschuwingen en fouten eerst; de JavaScript-fout die de
+  # pagina stillegt staat daar als "Capacitor/Console" of "chromium ... CONSOLE(regel)".
+  log=""
+  [ -n "$pid" ] && log="$(timeout 15 "$ADB" -s "$s" logcat -d --pid="$pid" -t 3000 2>/dev/null | tr -d '\r' | grep -E ' [EW] |Capacitor/Console|CONSOLE|Uncaught|Exception|Error' | grep -viE 'koppelcode|sleutel|token|wachtwoord|password|bearer' \
+    | sed -E 's/[0-9]{6,}/######/g; s/(jv|vh|vr|vm|lv|la)[a-z0-9]{20,}/\1***/g; s/[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/x.x.x.x/g; s/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ //' | tail -n "${JARVIS_DIAG_REGELS:-8}" | cut -c1-200 | tr '\n' '|')"
+  [ -n "$log" ] || log="$(timeout 15 "$ADB" -s "$s" logcat -d -t 400 2>/dev/null | tr -d '\r' | grep -E 'Capacitor/Console|chromium.*CONSOLE|JarvisWeb|Jarvis[A-Z][a-zA-Z]*:' | grep -viE 'koppelcode|sleutel|token|wachtwoord|password' \
     | sed -E 's/[0-9]{6,}/######/g; s/(jv|vh|vr|vm|lv|la)[a-z0-9]{20,}/\1***/g; s/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ [A-Z] //' | tail -n 4 | cut -c1-160 | tr '\n' '|')"
-  printf 'JARVIS %s; vooraan: %s; scherm op slot: %s; webserver (8080): %s; laatste regels van JARVIS: %s' \
-    "$([ -n "$pid" ] && echo "draait (pid $pid)" || echo 'draait NIET')" "${voor:-onbekend}" "$slot" "$luist" "${log:-geen}"
+  # welke poorten van JARVIS luisteren (8080 de webserver, 8081 de eigen motor, 8082 de stem/het oor)
+  local poorten; poorten="$(timeout 10 "$ADB" -s "$s" shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' 2>/dev/null | tr -d '\r' | awk '$4=="0A" && toupper($2) ~ /:1F9[012]$/ {h=toupper(substr($2, length($2))); print (h=="0" ? 8080 : h=="1" ? 8081 : 8082)}' | sort -u | tr '\n' ' ')"
+  printf 'JARVIS %s; vooraan: %s; scherm op slot: %s; webserver (8080): %s; luisterende poorten: %s; laatste regels van JARVIS: %s' \
+    "$([ -n "$pid" ] && echo "draait (pid $pid)" || echo 'draait NIET')" "${voor:-onbekend}" "$slot" "$luist" "${poorten:-geen}" "${log:-geen}"
 }
 jarvis_web_herstel() {   # $1 serienummer, $2 naam -> een zin (leeg = niets te doen)
   local s="$1" naam="${2:-telefoon}" sl rem nu laatst leefde
