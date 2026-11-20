@@ -7560,6 +7560,7 @@ kabel_koppel_auto() {   # de console-lus: stil, hoogstens eens per 30 minuten pe
   for s in $(verbonden); do
     is_f8 "$s" && continue
     idv="$(toestel_id "$s")"; toegestaan "$idv" || continue
+    is_brein_tel "$s" && continue   # 678 (20 nov): nooit JARVIS openen op de brein-telefoon
     sl="$(printf '%s' "$idv" | sha256sum | cut -c1-8)"; jid="$(jarvis_toestel_id "$s" "$sl")"; [ -n "$jid" ] || continue
     m="$(meld_van "$jid")"; [ "$m" = nee ] || continue
     f="$REK_MAP/kabel-koppel-$sl.t"; t="$(cat "$f" 2>/dev/null || echo 0)"; case "$t" in ''|*[!0-9]*) t=0 ;; esac
@@ -10425,6 +10426,12 @@ verhuis_tik() {
 # De code komt nooit in een melding, het logboek of de uitvoer. Elke foute vraag telt bij JARVIS mee (na vijf gaat hij een minuut dicht): daarom
 # hoogstens eens per tien minuten per telefoon vragen, en na het sturen twee keer kijken (na drie kwartier en na anderhalve minuut).
 RIJCODE_POORT="${RIJCODE_POORT:-18093}"
+# 678 (20 nov): de BREIN-telefoon laat JARVIS met opzet op de achtergrond (het geheugen is voor het brein). Koppelen via de kabel opende daar
+# telkens de JARVIS-pagina (482 MB) en het brein viel stil. Wat JARVIS nodig heeft (koppelen, de rij-code) slaat de brein-telefoon dus over.
+is_brein_tel() {   # een keer per proces uitgerekend (brein_nu kan even duren)
+  [ -n "${BREIN_TEL_C+x}" ] || { BREIN_TEL_C="$(brein_nu 2>/dev/null)"; BREIN_TEL_ID="$([ -n "$BREIN_TEL_C" ] && toestel_id "$BREIN_TEL_C")"; }
+  [ -n "$BREIN_TEL_C" ] && { [ "$1" = "$BREIN_TEL_C" ] || [ "$(toestel_id "$1")" = "$BREIN_TEL_ID" ]; }
+}
 rijcode_stuur() {   # $1 JARVIS-toestel-id -> OK | FOUT <reden>
   local o tok; o="$(head -1 "$REK_ONDERWERP_F" 2>/dev/null | tr -d '\r\n ')"; tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
   printf '%s' "$o" | grep -qE '^jv[a-z0-9]{30}$' || { printf 'FOUT geen-onderwerp'; return 0; }
@@ -10495,6 +10502,7 @@ rijcode_zet() {   # knop en rekdokter: elke rektelefoon aan adb nakijken en waar
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
     naam="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"; naam="${naam:-een telefoon}"; n=$((n + 1))
+    if is_brein_tel "$s"; then zeg "  $naam: de brein-telefoon; JARVIS staat daar met opzet op de achtergrond, dus die sla ik over."; continue; fi
     u="$(RIJCODE_NU=1 rijcode_een "$s")"
     case "$u" in
       GOED) zeg "  $naam: neemt de rij-code van Veronica al aan." ;;
@@ -10525,6 +10533,7 @@ rijcode_auto() {   # de console-lus: stil; per telefoon hoogstens eens per tien 
   for s in $(verbonden); do
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
+    is_brein_tel "$s" && continue   # de brein-telefoon: JARVIS staat daar met opzet op de achtergrond
     sl="$(toestel_id "$s" | sha256sum | cut -c1-8)"; naam="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"
     local open=""; [ -e "$REK_MAP/rijcode-open-$sl" ] && open=1
     u="$(rijcode_een "$s")"
