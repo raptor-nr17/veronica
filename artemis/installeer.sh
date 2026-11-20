@@ -1465,6 +1465,29 @@ def waak_zorg():
     if leeft_pid(os.path.join(REK, 'waakbewaker.pid')): return
     try: subprocess.Popen([AREK, 'waakbewaker'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception: pass
+SLAAP_STAP = 20      # zo vaak kijkt de slaapwacht op de klok (seconden)
+SLAAP_GRENS = 180    # zoveel later dan verwacht = de computer sliep
+def slaap_gat(vorige, nu, stap=SLAAP_STAP, grens=SLAAP_GRENS):
+    # hoeveel seconden de wandklok VERDER sprong dan de stap die we wachtten; 0 = gewoon doorgelopen (ook bij een klok die terug gaat)
+    gat = (nu - vorige) - stap
+    return int(gat) if gat >= grens else 0
+def na_slaap_doen(gat):
+    # 678 (20 nov): de computer sliep. Eerst opruimen (na-slaap: de onderbroken les klaarzetten), dan meteen de waakhonden van de rollen (de
+    # doorsturingen via adb zijn na een slaap weg), en na een paar minuten het verslag -- zodat van buiten te zien is dat het rek weer loopt.
+    doe_args(['na-slaap', str(int(gat))], 120)
+    for w in ('brein-waak', 'controle-waak', 'verdeler-waak', 'bibliothecaris-waak'):
+        threading.Thread(target=doe_args, args=([w], 330), daemon=True).start()
+    time.sleep(int(os.environ.get('ARTEMIS_SLAAP_STANDWACHT') or 180))
+    doe_args(['stand-tik', '--nu'], 900)
+def slaapwacht():
+    # een eigen draadje dat alleen op de klok kijkt (de lus zelf kan minuten bezig zijn; dat is geen slaap)
+    vorige = time.time()
+    while True:
+        time.sleep(SLAAP_STAP)
+        nu = time.time(); gat = slaap_gat(vorige, nu); vorige = nu
+        if gat:
+            try: threading.Thread(target=na_slaap_doen, args=(gat,), daemon=True).start()
+            except Exception: pass
 def lus():
     # elke minuut: nieuwe telefoons zoeken; en ARTEMIS aanhouden als de gewenste stand "aan" is.
     # 583: NIET meer blind 'start' aanroepen (dat startte ARTEMIS elke minuut opnieuw, en ARTEMIS opende elke keer een
@@ -1498,6 +1521,7 @@ def lus():
                 threading.Thread(target=doe_args, args=(['rem-uit'], 300), daemon=True).start()   # 678 (16 nov): de Android-rem uit (een keer per telefoon)   # 678 (16 nov): een nieuwe proef-JARVIS en de spraaktest, zonder knop
             if RONDE % 5 == 3:
                 threading.Thread(target=doe_args, args=(['stand-tik'], 900), daemon=True).start()   # 678 (16 nov): het standverslag (alleen bij verandering of na een uur)
+            threading.Thread(target=doe_args, args=(['les-hervat-tik'], 60), daemon=True).start()   # 678 (20 nov): een onderbroken les (slaap, of geen antwoorden) opnieuw
             threading.Thread(target=doe_args, args=(['kanaal-tik'], 330), daemon=True).start()   # 678 (15 nov): een vraag van Claude Code aan het brein? (eigen draad: een antwoord kan minuten duren; een slot voorkomt dubbel)
             if RONDE % 15 == 9:
                 threading.Thread(target=doe, args=('zelfronde',), daemon=True).start()   # 678 (14 nov): de rondes van Cowork, nu zelf; op een eigen draad (adb/relay kosten even)
@@ -2600,6 +2624,7 @@ class H(BaseHTTPRequestHandler):
             self._schrijf(200, doe(cmd))
         else: self._schrijf(400, 'onbekende opdracht')
 threading.Thread(target=lus, daemon=True).start()
+threading.Thread(target=slaapwacht, daemon=True).start()   # 678 (20 nov): merkt een slaap van de computer op
 # 587: bind met korte herhaling. Na een zelf-herstart (herstart_als_nieuwer) start deze verse console terwijl de OUDE de poort
 # nog een ogenblik vasthoudt; zonder herhaling zou de verse meteen op OSError sterven en bleef er niets draaien. Max ~6 s wachten.
 srv = None
@@ -8802,6 +8827,10 @@ brein_les() {
   if les_loopt; then zeg "Brein-les: er loopt al een les."; return 0; fi
   rm -rf "$REK_MAP/brein-les.lock"; mkdir "$REK_MAP/brein-les.lock" 2>/dev/null || { zeg "Brein-les: er loopt al een les."; return 0; }
   printf '%s\n' "$$" >"$REK_MAP/brein-les.lock/pid"   # 678 (17 nov): het slot draagt het procesnummer (les_loopt)
+  # 678 (20 nov): wat deze les is (kanaal-id, rij, alleen-na) staat in het slot, zodat na_slaap hem na een slaap van de computer opnieuw kan beginnen
+  printf '%s %s %s\n' "${id:--}" "$rij" "${LES_ALLEEN_NA:--}" >"$REK_MAP/brein-les.lock/args"
+  # een les die vooral "geen antwoord" kreeg (het rek haperde) mag EEN keer opnieuw -- niet de proeven met een eigen uitvoerbestand
+  local herh=""; [ -z "${LES_HERHAALD:-}" ] && [ -z "${LES_UIT:-}" ] && herh=1
   rm -f "$REK_MAP/les-wacht"
   [ "$rij" = 9 ] && [ -z "${LES_UIT:-}" ] && local LES_UIT="$REK_MAP/brein-les-dagboek.json"   # 678 (18 nov): het dagboek apart van de vaste lesrijen
   zeg "Brein-les: de kennisbank zetten, dan de lesrij voor (zonder) en na (met de kennisbank). Dit duurt een kwartier tot een half uur."
@@ -8810,7 +8839,7 @@ brein_les() {
   code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
   base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
   rek_zorg_crypto >/dev/null 2>&1 || true
-  ALLEEN_NA="${LES_ALLEEN_NA:-}" RIJ="$rij" CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" REKTOKEN="$REK_MAP/rek-token.conf" SERIE="$(brein_nu)" ADBP="$ADB" TPSF="$REK_MAP/brein-tps" ID="$id" CODE="$code" BASE="$base" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="${LES_UIT:-$BREIN_LES_F}" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
+  HERHAALBAAR="$herh" ALLEEN_NA="${LES_ALLEEN_NA:-}" RIJ="$rij" CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" REKTOKEN="$REK_MAP/rek-token.conf" SERIE="$(brein_nu)" ADBP="$ADB" TPSF="$REK_MAP/brein-tps" ID="$id" CODE="$code" BASE="$base" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="${LES_UIT:-$BREIN_LES_F}" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>&1 | while IFS= read -r L; do zeg "  $L"; done
 import os, json, re, time, hashlib, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try: stand = json.load(open(os.environ['STAND']))
@@ -9007,12 +9036,17 @@ if _t:
     try:
         with open(os.environ['TPSF'], 'w') as fh: fh.write('%.2f %d\n' % (sum(_t) / len(_t), int(time.time())))
     except Exception: pass
+# 678 (20 nov): kreeg minstens de helft GEEN ANTWOORD, dan haperde het rek (het brein herstartte, de computer sliep) -- dat zegt niets over de
+# les. Zo'n uitslag gaat niet het kanaal op; de les begint een keer opnieuw zodra het brein weer antwoordt (les_hervat_tik).
+_ga = sum(1 for x in n['lessen'] if x['waarom'] == 'geen antwoord')
+uitslag['herhaal'] = bool(os.environ.get('HERHAALBAAR')) and n['van'] >= 4 and _ga * 2 >= n['van']
+if uitslag['herhaal']: print('LET OP: %d van de %d vragen kregen geen antwoord: dat ligt aan het rek, niet aan de les. De les begint zo vanzelf opnieuw (een keer).' % (_ga, n['van']))
 print('Uitslag (lesrij %d): voor %d van %d goed, na (met de kennisbank) %d van %d goed.%s' % (uitslag['rij'], v['goed'], v['van'], n['goed'], n['van'], (' %d vragen niet gesteld: de telefoon was 45 graden of warmer.' % TE_WARM[0]) if TE_WARM[0] else ''))
 with open(os.environ['UIT'], 'w') as fh: json.dump(uitslag, fh, ensure_ascii=False, indent=1)
 os.chmod(os.environ['UIT'], 0o600)
 # terug via het kanaal (alleen met een kanaal-id, een code en een relay)
 code = os.environ.get('CODE', ''); base = os.environ.get('BASE', '').rstrip('/'); kid = os.environ.get('ID', '')
-if kid and code and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev', base):
+if kid and code and not uitslag['herhaal'] and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev', base):
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         h = lambda s: hashlib.sha256(s.encode()).hexdigest()
@@ -9035,7 +9069,64 @@ if kid and code and re.fullmatch(r'https://[a-z0-9.-]+\.workers\.dev', base):
         print('Kon de uitslag niet via het kanaal terugzetten (' + type(e).__name__ + ').')
 PY
   rm -rf "$REK_MAP/brein-les.lock"
+  if [ -n "$herh" ] && grep -q '"herhaal": true' "${LES_UIT:-$BREIN_LES_F}" 2>/dev/null; then
+    printf '%s %s %s h\n' "${id:--}" "$rij" "${LES_ALLEEN_NA:--}" >"$LES_HERVAT_F"
+    logregel "Les (lesrij $rij): de meeste vragen kregen geen antwoord (het rek haperde). De les begint vanzelf opnieuw zodra het brein antwoordt."
+  fi
   stand_tik --nu >/dev/null 2>&1 || true   # 678 (16 nov): de uitslag meteen in het standverslag
+}
+# 678 (20 nov, eigenaar: "zorg dat het rek na slapen van de Chromebook vanzelf weer verder gaat"). De computer sliep in tijdens lesrij 7; de les
+# bleef half hangen en het rek leek uren stil. Nu merkt de console een slaap zelf op (de wandklok sprong, zie slaapwacht in de console) en roept
+# na_slaap aan: (1) het opschrijven (het verslag toont het), (2) een les die door de slaap heen liep stoppen en klaarzetten om opnieuw te beginnen --
+# zijn vragen zijn in het niets beland, de uitslag zou niets zeggen, (3) sloten van voor de slaap weghalen. De waakhonden van de rollen en het
+# verslag start de console daarna zelf. Een slapende computer kan NIETS doen: niet laten slapen is een instelling van de computer zelf.
+LES_HERVAT_F="$REK_MAP/les-hervat"
+SLAAP_LOG_F="$REK_MAP/slaap.log"
+na_slaap() {
+  local sec p pg arg sl
+  sec="$(printf '%s' "${1:-0}" | tr -cd '0-9' | cut -c1-9)"; sec="${sec:-0}"
+  printf '%s %s\n' "$(date +%s)" "$sec" >>"$SLAAP_LOG_F" 2>/dev/null || true
+  tail -n 20 "$SLAAP_LOG_F" >"$SLAAP_LOG_F.nieuw" 2>/dev/null && mv -f "$SLAAP_LOG_F.nieuw" "$SLAAP_LOG_F" 2>/dev/null || true
+  logregel "Wakker: de computer sliep ongeveer $((sec / 60)) minuten. Ik loop het rek na en ga vanzelf verder."
+  if [ -d "$REK_MAP/brein-les.lock" ]; then
+    p="$(head -1 "$REK_MAP/brein-les.lock/pid" 2>/dev/null | tr -cd '0-9')"
+    arg="$(head -1 "$REK_MAP/brein-les.lock/args" 2>/dev/null)"
+    if [ -n "$p" ] && [ "$p" != "$$" ] && kill -0 "$p" 2>/dev/null; then
+      # het lesproces en zijn kinderen (de vragensteller): de groep als het lesproces die leidt, anders alleen het proces en zijn kinderen
+      pg="$(ps -o pgid= -p "$p" 2>/dev/null | tr -cd '0-9')"
+      if [ -n "$pg" ] && [ "$pg" = "$p" ]; then kill -TERM -- "-$p" 2>/dev/null || true; else pkill -TERM -P "$p" 2>/dev/null || true; kill -TERM "$p" 2>/dev/null || true; fi
+    fi
+    rm -rf "$REK_MAP/brein-les.lock"
+    if printf '%s' "$arg" | grep -Eq '^(-|v[0-9]{1,9}) [1-9] (-|1)$'; then
+      printf '%s\n' "$arg" >"$LES_HERVAT_F"
+      logregel "De les die liep toen de computer ging slapen (lesrij $(printf '%s' "$arg" | cut -d' ' -f2)) begint opnieuw zodra het brein antwoordt."
+    fi
+  fi
+  for sl in kanaal.lock stand.lock; do rm -rf "$REK_MAP/$sl" 2>/dev/null || true; done   # hun werk van voor de slaap is weg; de volgende ronde begint schoon
+  # sliep hij een half uur of langer, dan stond het hele rek zo lang stil: de eigenaar hoort dat (hoogstens eens per dag), met wat eraan te doen is
+  local m0; m0="$(head -1 "$REK_MAP/slaap-gemeld.t" 2>/dev/null | tr -cd '0-9')"
+  if [ "$sec" -ge 1800 ] && [ $(( $(date +%s) - ${m0:-0} )) -ge 86400 ]; then
+    date +%s >"$REK_MAP/slaap-gemeld.t" 2>/dev/null || true
+    relay_meld "De computer van het rek sliep $((sec / 60)) minuten; zo lang stond het rek stil. Het gaat nu vanzelf verder. Wil je dat niet meer: zet in de instellingen van de computer slapen uit zolang hij aan de lader hangt." >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+# les_hervat_tik (elke minuut): staat er een les klaar om opnieuw te beginnen (na een slaap, of na een les die geen antwoorden kreeg) en antwoordt het
+# brein weer, dan begint hij -- met hetzelfde kanaal-id, zodat de uitslag bij de vraag van toen terechtkomt. Ouder dan zes uur = laten vallen.
+les_hervat_tik() {
+  local id rij na h p
+  [ -s "$LES_HERVAT_F" ] || return 0
+  if [ -n "$(find "$LES_HERVAT_F" -mmin +360 2>/dev/null)" ]; then rm -f "$LES_HERVAT_F"; logregel "De les die opnieuw zou beginnen wachtte langer dan zes uur op het brein; ik laat hem vallen."; return 0; fi
+  les_loopt && return 0
+  p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
+  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  read -r id rij na h <"$LES_HERVAT_F" || true
+  rm -f "$LES_HERVAT_F"
+  printf '%s %s %s' "$id" "$rij" "$na" | grep -Eq '^(-|v[0-9]{1,9}) [1-9] (-|1)$' || return 0
+  [ "$id" = - ] && id=""; [ "$na" = - ] && na=""
+  logregel "De onderbroken les (lesrij $rij) begint nu opnieuw."
+  ( LES_ALLEEN_NA="$na" LES_HERHAALD="$([ "$h" = h ] && echo 1)" setsid "$0" brein-les "$id" "$rij" </dev/null >>"$REK_MAP/console-brein-les.log" 2>&1 & ) 2>/dev/null
+  return 0
 }
 # 678 (17 nov, eigenaar stap 6): DE ZELFSTANDIGHEIDSPROEF -- zonder Claude en zonder internet blijft het rek antwoorden en neemt het werk over.
 # Claude en de relay zitten niet in het antwoordpad; het internet wordt AANTOONBAAR uitgezet: de console weigert tijdens de proef elke verbinding
@@ -9796,6 +9887,12 @@ for x in n["lessen"]:
     printf '    %s: sinds %s, %s\n' "$sl" "$(date -d "@$(stat -c %Y "$REK_MAP/$sl")" '+%d-%m %H:%M' 2>/dev/null)" \
       "$( [ -n "$sp" ] && { kill -0 "$sp" 2>/dev/null && echo "proces $sp leeft ($(tr '\0' ' ' </proc/$sp/cmdline 2>/dev/null | sed 's#.*/##' | cut -c1-40))" || echo "proces $sp is weg (verweesd)"; } || echo 'zonder procesnummer')"
   done
+  [ -s "$LES_HERVAT_F" ] && printf '    een onderbroken les begint opnieuw zodra het brein antwoordt (lesrij %s, klaargezet %s)\n' "$(cut -d' ' -f2 "$LES_HERVAT_F" 2>/dev/null | tr -cd '0-9')" "$(date -d "@$(stat -c %Y "$LES_HERVAT_F")" '+%d-%m %H:%M' 2>/dev/null)"
+  if [ -s "$SLAAP_LOG_F" ]; then   # 678 (20 nov): wanneer de computer sliep -- dan stond het hele rek stil
+    printf '    de computer sliep laatst: '
+    tail -n 3 "$SLAAP_LOG_F" | while read -r _st _sd; do _st="$(printf '%s' "$_st" | tr -cd '0-9')"; _sd="$(printf '%s' "$_sd" | tr -cd '0-9')"; [ -n "$_st" ] && [ -n "$_sd" ] && printf '%s tot %s (%s min); ' "$(date -d "@$((_st - _sd))" '+%d-%m %H:%M' 2>/dev/null)" "$(date -d "@$_st" '+%d-%m %H:%M' 2>/dev/null)" "$((_sd / 60))"; done
+    printf 'daarna ging het rek vanzelf verder\n'
+  fi
   [ -f "$REK_MAP/les-wacht" ] && printf '    er wacht een les (sinds %s)\n' "$(date -d "@$(stat -c %Y "$REK_MAP/les-wacht")" '+%d-%m %H:%M' 2>/dev/null)"
   printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
@@ -10633,6 +10730,8 @@ case "${1:-status}" in
   spraak-kanaal) spraak_kanaal "${2:-}" ;;
   zoek-doorsturing) zoek_doorsturing ;;
   zelfstandig-tik) zelfstandig_tik ;;
+  na-slaap) na_slaap "${2:-0}" ;;   # 678 (20 nov): de console merkte dat de computer sliep
+  les-hervat-tik) les_hervat_tik ;;
   vaste-les-tik) vaste_les_tik ;;   # 678 (19 nov): lesrij 5 elke nacht
   dagboek-tik) dagboek_tik ;;   # 678 (17 nov): een kandidaat naast het huidige brein (lesrij 2), zonder te wisselen
   brein-les2) brein_les "" 2 ;;
