@@ -7589,6 +7589,22 @@ jarvis_pagina_leeft() {
 #  (2) het scherm wekken en de pagina openen/naar voren halen (dezelfde LAUNCHER-start als "JARVIS lag stil"); de pagina start de server.
 # Staat JARVIS op Uit (de noodstop, een bewuste keuze van een mens), dan blijft de pagina leven en de server uit: dat zet ARTEMIS NIET
 # zelf terug -- het zegt het en meldt het een keer in Veronica. Hoogstens eens per 10 minuten per telefoon.
+# 678 (20 nov, na de verhuizing): de telefoons waren herstart en stonden op het VERGRENDELSCHERM. Dan opent de JARVIS-pagina niet en luistert
+# zijn webserver niet ("pagina geopend, maar de webserver luistert nog niet", elke tien minuten opnieuw). Een vergrendeling ZONDER code veegt
+# ARTEMIS zelf weg (wakker maken + dismiss-keyguard, wat ook een mens met een veeg doet); een vergrendeling MET een code typt hij nooit in --
+# dan zegt hij het eerlijk. tel_vergrendeld -> 0 als het vergrendelscherm er nu staat.
+tel_vergrendeld() {
+  local w; w="$(timeout 10 "$ADB" -s "$1" shell dumpsys window 2>/dev/null | tr -d '\r')"
+  printf '%s' "$w" | grep -qE 'mShowingLockscreen=true|isKeyguardShowing=true|mDreamingLockscreen=true|KeyguardShowing=true|keyguardShowing=true'
+}
+tel_ontgrendel() {   # $1 serienummer -> 0 = niet (meer) vergrendeld
+  tel_vergrendeld "$1" || return 0
+  timeout 10 "$ADB" -s "$1" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+  timeout 10 "$ADB" -s "$1" shell wm dismiss-keyguard >/dev/null 2>&1 || true
+  sleep 2
+  tel_vergrendeld "$1" && return 1
+  return 0
+}
 jarvis_web_herstel() {   # $1 serienummer, $2 naam -> een zin (leeg = niets te doen)
   local s="$1" naam="${2:-telefoon}" sl rem nu laatst leefde
   is_f8 "$s" && return 0
@@ -7602,6 +7618,13 @@ jarvis_web_herstel() {   # $1 serienummer, $2 naam -> een zin (leeg = niets te d
   [ $((nu - laatst)) -lt "${WEB_HERSTEL_REM_S:-600}" ] && return 0
   printf '%s\n' "$nu" >"$rem" 2>/dev/null; chmod 600 "$rem" 2>/dev/null || true
   leefde=0; jarvis_pagina_leeft "$s" && leefde=1
+  if ! tel_ontgrendel "$s"; then
+    logregel "$naam: het scherm is vergrendeld met een code; JARVIS kan pas starten na een keer ontgrendelen. Een code typ ik nooit in."
+    local mf="$REK_MAP/slot-gemeld-$sl" mt; mt="$(head -1 "$mf" 2>/dev/null | tr -cd '0-9')"
+    if [ $((nu - ${mt:-0})) -ge 3600 ]; then printf '%s\n' "$nu" >"$mf" 2>/dev/null; relay_meld "$naam staat op het vergrendelscherm met een code (waarschijnlijk herstart). JARVIS start pas na een keer ontgrendelen; ontgrendel hem een keer, de rest gaat vanzelf." >/dev/null 2>&1 || true; fi
+    printf '%s: het scherm staat op slot met een code (de telefoon is waarschijnlijk herstart). JARVIS kan pas starten als hij een keer ontgrendeld is; een code typ ik nooit in.' "$naam"
+    return 0
+  fi
   timeout 10 "$ADB" -s "$s" shell appops set "$JARVIS_PKG" SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1 || true
   timeout 10 "$ADB" -s "$s" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
   timeout 10 "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
@@ -10323,7 +10346,7 @@ PY
 TS_AAN_F="$REK_MAP/ts-aan.t"
 VERHUIS_F="$REK_MAP/verhuis.txt"
 NET_SIG_F="$REK_MAP/net.sig"
-tel_ts_ip() { "$ADB" -s "$1" shell ip -o -4 addr 2>/dev/null | tr -d '\r' | grep -oE '100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+' | head -1; }
+tel_ts_ip() { timeout 15 "$ADB" -s "$1" shell ip -o -4 addr 2>/dev/null | tr -d '\r' | grep -oE '100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+' | head -1; }
 tel_wifi_stand() {   # $1 serienummer -> "ok" | "geen-internet" | "geen-wifi"
   local d; d="$(timeout 12 "$ADB" -s "$1" shell dumpsys connectivity 2>/dev/null | tr -d '\r')"
   printf '%s' "$d" | grep -E 'NetworkAgentInfo|Transports:' | grep -q 'WIFI' || { printf 'geen-wifi'; return 0; }
@@ -10335,20 +10358,21 @@ ts_telefoon_aan() {
   local s="$1" ip sl t nu
   is_f8 "$s" && { printf 'NIET'; return 0; }
   ip="$(tel_ts_ip "$s")"; [ -n "$ip" ] && { printf 'AL %s' "$ip"; return 0; }
-  "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1 || { printf 'GEEN-APP'; return 0; }
+  timeout 15 "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1 || { printf 'GEEN-APP'; return 0; }
   sl="$(toestel_id "$s" | sha256sum | cut -c1-8)"; nu="$(date +%s 2>/dev/null || echo 0)"
   t="$(awk -v k="$sl" '$1==k{print $2}' "$TS_AAN_F" 2>/dev/null | tail -1)"; case "$t" in ''|*[!0-9]*) t=0 ;; esac
   [ -z "${2:-}" ] && [ $((nu - t)) -lt "${TS_AAN_REM:-600}" ] && { printf 'WACHT'; return 0; }
   { awk -v k="$sl" '$1!=k' "$TS_AAN_F" 2>/dev/null; printf '%s %s\n' "$sl" "$nu"; } >"$TS_AAN_F.t" 2>/dev/null && mv -f "$TS_AAN_F.t" "$TS_AAN_F" 2>/dev/null || true
-  "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 || true
-  "$ADB" -s "$s" shell am broadcast -a com.tailscale.ipn.CONNECT_VPN -n com.tailscale.ipn/.IPNReceiver >/dev/null 2>&1 || true
+  timeout 15 "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 || true
+  timeout 15 "$ADB" -s "$s" shell am broadcast -a com.tailscale.ipn.CONNECT_VPN -n com.tailscale.ipn/.IPNReceiver >/dev/null 2>&1 || true
   sleep "${TS_AAN_WACHT_S:-6}"; ip="$(tel_ts_ip "$s")"; [ -n "$ip" ] && { printf 'AAN %s' "$ip"; return 0; }
   # niet genoeg: de app zelf even openen (zijn dienst start dan), nog eens aanzetten, en terug naar het beginscherm
-  "$ADB" -s "$s" shell am start -n com.tailscale.ipn/.MainActivity >/dev/null 2>&1 || true
+  timeout 15 "$ADB" -s "$s" shell am start -n com.tailscale.ipn/.MainActivity >/dev/null 2>&1 || true
   sleep 3
-  "$ADB" -s "$s" shell am broadcast -a com.tailscale.ipn.CONNECT_VPN -n com.tailscale.ipn/.IPNReceiver >/dev/null 2>&1 || true
+  timeout 15 "$ADB" -s "$s" shell am broadcast -a com.tailscale.ipn.CONNECT_VPN -n com.tailscale.ipn/.IPNReceiver >/dev/null 2>&1 || true
   sleep "${TS_AAN_WACHT_S:-6}"
-  "$ADB" -s "$s" shell input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
+  # NIET naar het beginscherm: dat zette de JARVIS-pagina op de achtergrond. Terug naar JARVIS zelf (alleen op een telefoon die niet het brein is).
+  is_brein_tel "$s" || timeout 15 "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
   ip="$(tel_ts_ip "$s")"; [ -n "$ip" ] && { printf 'AAN %s' "$ip"; return 0; }
   printf 'NIET'
 }
@@ -10358,13 +10382,14 @@ verhuis_ronde() {
   slot_levend "$REK_MAP/verhuis.lock" && { zeg "Verhuisronde: er loopt er al een."; return 0; }
   rm -rf "$REK_MAP/verhuis.lock"; mkdir "$REK_MAP/verhuis.lock" 2>/dev/null || return 0; printf '%s\n' "$$" >"$REK_MAP/verhuis.lock/pid"
   "$ADB" start-server >/dev/null 2>&1 || true
-  local waarom="${1:-met de hand}" s naam w ts m u regels="" n=0 nietaan="" geenapp="" gw=""
+  local waarom="${1:-met de hand}" s naam w ts m u regels="" n=0 nietaan="" geenapp="" gw="" slot=""
   zeg "Verhuisronde ($waarom): wifi, Tailscale, het rek via Tailscale, koppelen, rij-code en rollen."
   verbind_draadloos >/dev/null 2>&1 || true; rek_verbind_lijst >/dev/null 2>&1 || true
   for s in $(verbonden); do
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
     naam="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"; naam="${naam:-een telefoon}"; n=$((n + 1))
+    tel_ontgrendel "$s" || slot="$slot $naam"   # een herstarte telefoon staat op het vergrendelscherm: zonder code zelf wegvegen
     w="$(tel_wifi_stand "$s")"
     case "$w" in geen-wifi) gw="$gw $naam" ;; esac
     ts="$(ts_telefoon_aan "$s" nu)"
@@ -10383,7 +10408,8 @@ verhuis_ronde() {
   [ -n "$nietaan" ] && kort="$kort Tailscale ging niet vanzelf aan op:$nietaan (open daar een keer de Tailscale-app)."
   [ -n "$geenapp" ] && kort="$kort Geen Tailscale-app op:$geenapp."
   [ -n "$gw" ] && kort="$kort Niet op het wifi:$gw (het wifi-wachtwoord moet een keer op die telefoon)."
-  [ -z "$nietaan$geenapp$gw" ] && kort="$kort Alles weer op het wifi en in Tailscale; de rollen starten vanzelf."
+  [ -n "$slot" ] && kort="$kort Op slot met een code (herstart):$slot -- ontgrendel ze een keer, dan start JARVIS vanzelf."
+  [ -z "$nietaan$geenapp$gw$slot" ] && kort="$kort Alles weer op het wifi en in Tailscale; de rollen starten vanzelf."
   { printf '%s %s\n' "$(date '+%d-%m %H:%M')" "$kort"; printf '%s' "$regels"; } >"$VERHUIS_F" 2>/dev/null || true
   logregel "$kort"; relay_meld "$kort" >/dev/null 2>&1 || true
   rm -rf "$REK_MAP/verhuis.lock"
@@ -10394,7 +10420,7 @@ verhuis_los() {
   slot_levend "$REK_MAP/verhuis.lock" && return 0
   : >"$REK_MAP/verhuis-gestart" 2>/dev/null || true
   if [ -n "${VERHUIS_TEST:-}" ]; then verhuis_ronde "$1" >/dev/null 2>&1; return 0; fi
-  ( setsid "$0" verhuis-ronde-los "$1" </dev/null >>"$REK_MAP/console-verhuis.log" 2>&1 & ) 2>/dev/null
+  ( setsid timeout 1500 "$0" verhuis-ronde-los "$1" </dev/null >>"$REK_MAP/console-verhuis.log" 2>&1 & ) 2>/dev/null   # hoogstens 25 minuten: een hangende adb houdt het slot niet voor altijd vast
 }
 # verhuis_tik (elke vijf minuten, stil): een ANDER NETWERK voor deze computer (de standaardroute en het eigen adres) = een verhuizing -> de hele
 # ronde. Anders alleen stap 2: een rektelefoon aan adb zonder 100.x krijgt Tailscale weer aan (hoogstens eens per tien minuten per telefoon).
