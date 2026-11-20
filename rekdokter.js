@@ -29,13 +29,14 @@
     // zelf over en raakt alleen het JARVIS-pakket aan. Deze handelingen gaan over ALLE rektelefoons die ARTEMIS ziet, niet over een.
     'artemis-waak': { label: 'Laat ARTEMIS JARVIS nakijken en herstarten', wat: 'ARTEMIS kijkt via adb of JARVIS draait, start hem zo nodig opnieuw en zet zijn batterij op Onbeperkt (op elke rektelefoon die hij ziet)', nooit: ['dagelijks'], artemis: 'jarvis-waak' },
     'artemis-terugval': { label: 'Zet de vrijgegeven JARVIS terug (proeftelefoon)', wat: 'ARTEMIS zet op de proeftelefoon de bewaarde vrijgegeven JARVIS terug; de gegevens blijven staan', nooit: ['dagelijks', 'kern'], artemis: 'jarvis-terugval', bevestig: true },
+    'artemis-aan': { label: 'Zet JARVIS weer aan via de kabel', wat: 'ARTEMIS tikt op de rektelefoon op Aan (van het pauzescherm "JARVIS slaapt"); nodig als de telefoon een andere rij-code heeft en de roep van Veronica hem daardoor niet bereikt', nooit: ['dagelijks'], artemis: 'jarvis-aan-kabel', bevestig: true },
     'artemis-rijcode': { label: 'Laat ARTEMIS de rij-code via de kabel zetten', wat: 'ARTEMIS geeft elke rektelefoon aan de kabel of Tailscale de rij-code van Veronica, zonder QR en zonder tik op de telefoon', nooit: ['dagelijks', 'kern'], artemis: 'rijcode-zet' },
     'artemis-meld': { label: 'Laat ARTEMIS de meldingen nakijken', wat: 'ARTEMIS kijkt per rektelefoon of hij zich bij de relay meldt, en waarom niet (alleen lezen)', nooit: [], artemis: 'meld-status' },
   });
 
   // De redenen van kern.wegRedenen (code) -> hoe erg en welke acties. Zonder actie = alleen een advies (de zin van wegRedenen zegt al wat te doen).
   const REDEN = Object.freeze({
-    uit: { ernst: 3, acties: ['jarvis-aan'] },
+    uit: { ernst: 3, acties: ['jarvis-aan', 'artemis-aan'] },
     motor: { ernst: 2, acties: ['motor-herstel'] },
     code: { ernst: 2, acties: [] },
     gestopt: { ernst: 1, acties: [] },
@@ -114,8 +115,8 @@
       const t = { id: a.toestel || `artemis-${a.sleutel || n}`, naam, voorkeur: 'rek', dagelijks: false };
       const voeg = (soort, ernst, zin, acties) => { n += 1; uit.push({ id: `p${n}`, telefoon: t.id, naam, soort, ernst, zin, acties: acties.filter((x) => magActie(x, t)) }); };
       if (!a.toestel) voeg('jarvis-weg', 3, `${naam}: ARTEMIS ziet de telefoon (${via}), maar JARVIS antwoordt er niet. Draait JARVIS daar nog?`, ['artemis-waak']);
-      else if (a.meldt === false) voeg('meldt-niet', 3, `${naam}: ARTEMIS ziet hem (${via})${a.jarvis ? ` en JARVIS ${a.jarvis} draait` : ''}, maar hij meldt zich niet bij Veronica. Meestal mist hij het onderwerp of het relay-adres.`, ['artemis-meld', 'artemis-waak']);
-      else voeg('meldt-niet', 2, `${naam}: ARTEMIS ziet hem (${via})${a.jarvis ? ` en JARVIS ${a.jarvis} draait` : ''}, maar Veronica heeft het laatste etmaal geen hartslag van hem.`, ['artemis-meld', 'artemis-waak']);
+      else if (a.meldt === false) voeg('meldt-niet', 3, `${naam}: ARTEMIS ziet hem (${via})${a.jarvis ? ` en JARVIS ${a.jarvis} draait` : ''}, maar hij meldt zich niet bij Veronica. Meestal mist hij het onderwerp of het relay-adres, of JARVIS staat daar op Uit.`, ['artemis-meld', 'artemis-aan', 'artemis-waak']);
+      else voeg('meldt-niet', 2, `${naam}: ARTEMIS ziet hem (${via})${a.jarvis ? ` en JARVIS ${a.jarvis} draait` : ''}, maar Veronica heeft het laatste etmaal geen hartslag van hem (staat JARVIS daar op Uit?).`, ['artemis-meld', 'artemis-aan', 'artemis-waak']);
     }
     return uit.sort((a, b) => b.ernst - a.ernst);
   }
