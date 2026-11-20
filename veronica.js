@@ -117,27 +117,38 @@
   // 612: Veronica checkt zelf of al haar knoppen te raken zijn. Pure DOM-controle, KLIKT niets (verandert niets). Per data-proef-knop:
   // bestaat hij, is hij nu zichtbaar, en ligt hij dan ook echt bovenaan (elementFromPoint -- les van 99). Een knop in een gesloten
   // paneel is nu niet zichtbaar en telt NIET als fout; alleen een zichtbare knop die onder iets anders ligt is stuk.
+  const ProefLijstV = { tekst: '' };
   function zelftestKnoppen() {
     const knoppen = (typeof document !== 'undefined' && document.querySelectorAll) ? [...document.querySelectorAll('[data-proef]')] : [];
     const stuk = []; let zichtbaar = 0; let verborgen = 0;
+    // 678 (20 nov): de controle gaf VALS ALARM ("tab-live en meer-openen liggen onder iets anders"): een knop die buiten beeld gescrold was of
+    // net onder de vaste kop zat, telde als onraakbaar. Nu schuift de controle elke knop eerst naar het midden van het scherm (in een keer, en
+    // zet de pagina daarna terug waar hij stond -- je ziet er niets van) en kijkt dan pas wat er bovenop ligt.
+    const sx = window.scrollX, sy = window.scrollY;
+    const raak = (el) => {
+      const b = el.getBoundingClientRect();
+      const cx = Math.round(b.left + b.width / 2), cy = Math.round(b.top + b.height / 2);
+      if (cx < 0 || cy < 0 || cx >= window.innerWidth || cy >= window.innerHeight) return null;   // buiten beeld: niet te zeggen
+      const top = document.elementFromPoint(cx, cy);
+      return !!(top && (top === el || el.contains(top) || top.contains(el)));
+    };
     for (const el of knoppen) {
       const naam = el.getAttribute('data-proef') || '?';
       const r = el.getClientRects ? el.getClientRects() : [];
       if (!r || !r.length) { verborgen++; continue; }   // in een gesloten paneel: nu niet te zien, geen fout
       zichtbaar++;
-      const b = el.getBoundingClientRect();
-      const cx = Math.round(b.left + b.width / 2), cy = Math.round(b.top + b.height / 2);
-      const top = document.elementFromPoint(cx, cy);
-      const raakbaar = top && (top === el || el.contains(top) || top.contains(el));
-      if (!raakbaar) stuk.push({ naam, reden: 'ligt onder iets anders' });
+      let ok = raak(el);
+      if (ok !== true) { try { el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }); } catch (e) { try { el.scrollIntoView(); } catch (x) { /* dan zoals hij staat */ } } ok = raak(el); }
+      if (ok === false) stuk.push({ naam, reden: 'ligt onder iets anders' });
     }
+    try { window.scrollTo(sx, sy); } catch (e) { /* laat staan */ }
     return { totaal: knoppen.length, zichtbaar, verborgen, stuk };
   }
   function zelftestKnoppenTekst() {
     const r = zelftestKnoppen();
-    const kop = `${r.totaal} knoppen gevonden; ${r.zichtbaar} nu zichtbaar, ${r.verborgen} in een gesloten paneel.`;
-    if (!r.stuk.length) return `${kop}\nAlles wat nu open staat is te raken. Niets stuk.`;
-    return `${kop}\nLET OP, deze zijn open maar niet te raken (liggen onder iets):\n` + r.stuk.map((x) => `- ${x.naam}: ${x.reden}`).join('\n');
+    const kop = `${r.totaal} knoppen nagekeken: ${r.zichtbaar} staan nu open, ${r.verborgen} zitten in een gesloten paneel (die tellen niet mee).`;
+    if (!r.stuk.length) return `UITSLAG: IN ORDE. Elke knop die nu open staat is te raken.\n${kop}`;
+    return `UITSLAG: NIET IN ORDE. ${r.stuk.length} ${r.stuk.length === 1 ? 'knop is' : 'knoppen zijn'} open maar niet te raken (er ligt iets overheen):\n` + r.stuk.map((x) => `- ${x.naam}: ${x.reden}`).join('\n') + `\n${kop}`;
   }
 
   // ---- Opslag: IndexedDB, alleen op deze computer ----
@@ -433,16 +444,51 @@
     // 678 (15 nov): NIET meer overslaan op rol 'baas'. Een rektelefoon die alleen via de kabel gekoppeld is (onderwerp + relay, geen
     // rij-code) leidt zijn eigen rij van een en meldt rol 'baas' -- zo kon de proeftelefoon zijn stem en oor (sleutel = zijn rij-code) niet
     // laten nakijken. Alleen de BEHEERDER (voorkeur kern) en de dagelijkse telefoon blijven altijd met rust.
-    if (!h.codeVinger || h.voorkeur === 'kern' || h.dagelijks) return;   // geen vinger, de beheerder of de dagelijkse telefoon: met rust laten
+    // 678 (20 nov): een REKTELEFOON (een AI-rol in het rek, of ARTEMIS ziet hem aan de kabel) die een eigen rij leidt (voorkeur kern) hoort
+    // ook de code van Veronica te hebben: drie rektelefoons stonden zo elk met een eigen code, en Veronica kon ze niets vragen.
+    if (!h.codeVinger || h.dagelijks || (h.voorkeur === 'kern' && !isRekTelefoon(h.id))) return;   // geen vinger, de dagelijkse telefoon of de echte beheerder: met rust laten
     const sleutel = `${S.ntfy.onderwerp}:${S.code}`;
     if (CodeHerstelV.vingerCode !== sleutel) { CodeHerstelV.vinger = await window.Hartslag.codeVinger(S.ntfy.onderwerp, S.code); CodeHerstelV.vingerCode = sleutel; }
     if (!CodeHerstelV.vinger || h.codeVinger === CodeHerstelV.vinger) return;   // de code klopt al, of we konden geen vinger maken
     const vorig = CodeHerstelV.per[h.id] || 0;
     if (nu() - vorig < CodeHerstelV.MIN_MS) return;
     CodeHerstelV.per[h.id] = nu();
-    const ok = await roepNaarId(h.id, { soort: 'word-werker', van: 'veronica', codeOvernemen: true, alleenCode: true });
+    // ALLEEN de brievenbus/relay (derde argument): de omweg via een andere telefoon (doorgeef, 514) is versleuteld met de rij-code, en die
+    // heeft deze telefoon juist niet -- zo ging de herstelroep stil verloren zodra er een andere telefoon over het wifi antwoordde.
+    const ok = await roepNaarId(h.id, { soort: 'word-werker', van: 'veronica', codeOvernemen: true, alleenCode: true }, true);
+    if (artemisGebruikt() && nu() - CodeZetV.artemisT >= CodeZetV.MIN_MS) { CodeZetV.artemisT = nu(); rekDokArtemis('rijcode-zet', '').catch(() => {}); }   // en ARTEMIS via de kabel (zonder QR)
     logRegel(ok ? `${h.naam || 'Een telefoon'} gebruikte nog een oude rij-code; ik stuur hem de huidige code zodat hij weer meedoet.`
       : `${h.naam || 'Een telefoon'} heeft een oude rij-code, maar ik kon hem de nieuwe nu niet sturen (de brievenbus was niet te bereiken). Ik probeer het straks weer.`);
+  }
+  // 678 (20 nov, eigenaar: "zet de goede code zelf op de telefoons, zonder QR scannen"): EEN plek die een telefoon met een andere rij-code de
+  // code van Veronica stuurt -- via de brievenbus (word-werker, alleen de code: geen rolwissel) en, als ARTEMIS op deze computer draait, ook
+  // via de kabel (ARTEMIS: rijcode-zet). Nooit de dagelijkse telefoon. Hoogstens eens per vijf minuten per telefoon. Geeft de zin terug die
+  // de knop toont; er wordt NOOIT meer om een code gevraagd.
+  const CodeZetV = { per: {}, artemisT: 0, MIN_MS: 5 * 60 * 1000 };
+  const isRekTelefoon = (id) => !!(id && (RekRol.rolVan(id) || (RekAanw.lijst || []).some((x) => x && x.toestel === id)));
+  async function stuurGoedeCode(t) {
+    const id = t && (t.id || (t.toestel && t.toestel.id)); const naam = (t && t.naam) || 'Deze telefoon';
+    const h = (id && HB.per[id]) || (t && t.adres ? hartslagVoorAdres(t.adres) : null) || {};
+    if (h.dagelijks || /(^|[^a-z])f8([^a-z]|$)/i.test(String(naam))) return `${naam} is de dagelijkse telefoon; die laat ik met rust.`;
+    const sleutel = id || (t && t.adres) || naam; const tijd = nu();
+    if (tijd - (CodeZetV.per[sleutel] || 0) < CodeZetV.MIN_MS) return `${naam} gebruikt nog een andere rij-code dan Veronica. De goede code is al onderweg (zonder QR); over een paar minuten werkt dit.`;
+    CodeZetV.per[sleutel] = tijd;
+    let bus = false; let kabel = false;
+    if (id && S.code) bus = await roepNaarId(id, { soort: 'word-werker', van: 'veronica', codeOvernemen: true, alleenCode: true }, true);
+    if (artemisGebruikt() && S.code && tijd - CodeZetV.artemisT >= CodeZetV.MIN_MS) { CodeZetV.artemisT = tijd; kabel = true; rekDokArtemis('rijcode-zet', '').catch(() => {}); }
+    const zin = (bus || kabel) ? `${naam} gebruikt een andere rij-code dan Veronica. Ik stuur hem de goede code${bus && kabel ? ' (via de brievenbus en via ARTEMIS aan de kabel)' : kabel ? ' (via ARTEMIS aan de kabel)' : ' (via de brievenbus)'}, zonder QR. Over een paar minuten werkt dit; probeer het dan opnieuw.`
+      : `${naam} gebruikt een andere rij-code dan Veronica, en ik kan hem de goede nu niet sturen (geen brievenbus en ARTEMIS antwoordt niet op deze computer). Start ARTEMIS (open de Terminal-app); dan gaat het vanzelf.`;
+    logRegel(zin);
+    return zin;
+  }
+  // Wijkt de rij-code van deze telefoon af van die van Veronica? true/false, of null als het niet te zeggen is (geen hartslag met een vinger).
+  async function codeWijktAf(t) {
+    const id = t && (t.id || (t.toestel && t.toestel.id));
+    const h = (id && HB.per[id]) || (t && t.adres ? hartslagVoorAdres(t.adres) : null);
+    if (!h || !h.codeVinger || !S.code || !S.ntfy || !S.ntfy.onderwerp || !window.Hartslag || !window.Hartslag.codeVinger) return null;
+    const sl = `${S.ntfy.onderwerp}:${S.code}`;
+    if (CodeHerstelV.vingerCode !== sl) { try { CodeHerstelV.vinger = await window.Hartslag.codeVinger(S.ntfy.onderwerp, S.code); CodeHerstelV.vingerCode = sl; } catch (e) { return null; } }
+    return CodeHerstelV.vinger ? h.codeVinger !== CodeHerstelV.vinger : null;
   }
   async function hartslagRegel(o, regel) {
     if (!window.Hartslag) return false;
@@ -457,6 +503,7 @@
     geefPostbusViaBrievenbus(h).catch(() => {});   // 504: een telefoon die zich meldt krijgt de verse code (een keer)
     herstelMotor(h).catch(() => {});   // 505: een vastgelopen motor weer op gang
     rekVanzelfHart(h).catch(() => {});   // 522: een werker met de motor uit, ook op het gastnetwerk
+    zorgCodeVinger().catch(() => {});   // 678 (20 nov): de vinger van de eigen code, zodat het vraagveld kan zeggen wie een andere code heeft
     codeHerstel(h).catch(() => {});   // 638: een werker met een oude rij-code krijgt vanzelf de huidige (word-werker, alleenCode)
     geefRelay(h).catch(() => {});   // 529: het relay-adres (of uit) als zijn hartslag iets anders zegt
     MeetV.boek = K.meetboekBij(MeetV.boek, h, nu()); Opslag.schrijf('meetboek', MeetV.boek).catch(() => {});   // 529: meetplan B en D
@@ -826,14 +873,24 @@
     if (!S.code || (!dwing && nu() - rondT < 15000)) return;
     rondT = nu();
     const lijst = K.metHartslagen(K.metLedenBrief(K.rondvraagLijst(S), LB.brief, nu()), HB.per, nu());   // 482: de ledenbrief eerst; 500: verse hartslagen nog daarvoor
-    let gevonden = null;
+    let gevonden = null; let geweigerd = 0;
     for (let i = 0; i < lijst.length && !gevonden; i += 4) {
       const uit = await Promise.all(lijst.slice(i, i + 4).map(async (a) => {
-        try { const r = await haal(`${a}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': S.code } }, 2000); return r.ok ? { a, d: await r.json() } : null; } catch (e) { return null; }
+        try { const r = await haal(`${a}/jarvis/vertrouwd`, { headers: { 'X-Koppelcode': S.code } }, 2000); if (r.status === 401 || r.status === 403) geweigerd += 1; return r.ok ? { a, d: await r.json() } : null; } catch (e) { return null; }
       }));
       gevonden = uit.find(Boolean) || null;
     }
     const v = $('vindUitleg');
+    if (!gevonden && geweigerd) {
+      // 678 (20 nov): "Ik vind niemand meer" stond boven kaarten die "Verbonden" zeiden. De telefoons ANTWOORDDEN wel, maar namen de rij-code niet
+      // aan (401). Dat is geen zoekprobleem: zeg wat er is, en stuur de goede code zelf (brievenbus, en ARTEMIS via de kabel) -- zonder QR.
+      const af = codeAfwijkers();
+      for (const h of af) stuurGoedeCode({ id: h.id, naam: h.naam }).catch(() => {});
+      if (!af.length && artemisGebruikt() && nu() - CodeZetV.artemisT >= CodeZetV.MIN_MS) { CodeZetV.artemisT = nu(); rekDokArtemis('rijcode-zet', '').catch(() => {}); }
+      const u = `De telefoons antwoorden wel, maar ${geweigerd === 1 ? 'een telefoon neemt' : `${geweigerd} telefoons nemen`} mijn rij-code niet aan. Ik stuur de goede code zelf (zonder QR te scannen); dat duurt een paar minuten.${artemisGebruikt() && BreinV.artemisWeg ? ' ARTEMIS antwoordt niet op deze computer; open de Terminal-app, dan gaat het via de kabel sneller.' : ''}`;
+      if (v) { v.textContent = u; v.hidden = false; }
+      return;
+    }
     if (!gevonden) {
       // 476: na twee stille rondes (ruim 20 s) zoekt Veronica de telefoons ZELF opnieuw op het netwerk (ander wifi).
       // Die zoeker zet zijn eigen zin in hetzelfde vak; zolang hij loopt blijft die staan.
@@ -1480,6 +1537,10 @@
     $('ntfyNaam').textContent = n.onderwerp;
     const link = K.Ntfy.abonneerLink(n.onderwerp);
     $('ntfyOpen').href = link || '#';
+    if (!$('ntfyOpen').dataset.klik) { $('ntfyOpen').dataset.klik = '1'; $('ntfyOpen').addEventListener('click', (e) => {   // 678 (20 nov): zonder de app gebeurde er niets zichtbaars
+      if (/#$/.test($('ntfyOpen').getAttribute('href') || '#')) { e.preventDefault(); meld('Er is nog geen naam voor de meldingen; die komt vanzelf zodra Veronica gekoppeld is.'); return; }
+      meld('Ik open de app ntfy. Gebeurt er niets, dan staat die app niet op dit toestel: scan dan de QR hiernaast met je telefoon.');
+    }); }
     if (NtfyV.qrVoor !== n.onderwerp && typeof window.qrcode === 'function' && link) {
       const q = window.qrcode(0, 'M'); q.addData(link); q.make();
       $('ntfyQr').src = q.createDataURL(5, 8);
@@ -1565,6 +1626,12 @@
   // Nederlandse stemmen maar geen enkele lokale, dan blijft ze stil (en zegt dat een keer) in plaats van tekst naar buiten te sturen.
   const lokaleStemmen = () => stemmen().filter((v) => v.localService !== false);
   const StemV = { gemeld: false };
+  // 678 (20 nov): zeggen EN laten zien -- voor knoppen die een zin laten horen. Kan de stem nu niet, dan staat erbij waarom.
+  function zegEnToon(zin, soort) {
+    const ok = spreek(zin, soort);
+    meld(ok ? `Ik zeg: "${zin}"` : `Uitspreken kan nu niet (de stem staat uit, het is stil-tijd, of deze computer heeft geen eigen Nederlandse stem). De zin is: "${zin}"`);
+    return ok;
+  }
   function spreek(zin, soort) {
     const tekst = String(zin || '').trim();
     if (!tekst || !kanSpreken()) return false;
@@ -2127,6 +2194,9 @@
       zin = ctrl.signal.aborted ? 'Test mislukt: na 30 seconden nog geen antwoord. Het model laadt misschien nog, of de telefoon is te traag.'
         : snel ? (t.motor ? 'Test mislukt: de eigen motor weigert de verbinding. Is het model al geladen?' : 'Test mislukt: OlliteRT weigert de verbinding. Staat de server aan op die telefoon?') : (t.motor ? 'Test mislukt: geen antwoord van de eigen motor.' : 'Test mislukt: geen antwoord van OlliteRT.');
     } finally { clearTimeout(klok); s.bezig = false; }
+    // 678 (20 nov): mislukt de test en heeft deze telefoon een andere rij-code dan Veronica, dan is DAT de reden (de motor weigert de sleutel
+    // en zet Veronica een minuut buiten): zeg dat, en stuur hem de goede code.
+    if (/^Test mislukt/.test(zin) && (await codeWijktAf(t)) === true) zin = `Test mislukt: ${await stuurGoedeCode(t)}`;
     S.testUitslag[t.adres] = { zin };
     logRegel(`${t.naam}: ${zin}`);
     tekenLive();
@@ -2190,8 +2260,9 @@
     try {
       const r = await haal(`${t.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'word-baas', van: 'veronica' }) }, 3000);
       ok = r.ok;
+      if (r.status === 401 || r.status === 403) { meld(`${await stuurGoedeCode(t)} ${oud ? `${oud.naam} blijft tot dan de baas.` : ''}`.trim()); return; }
     } catch (e) { ok = false; }
-    if (!ok) { logRegel(`${t.naam} antwoordt niet. ${oud ? `${oud.naam} blijft de baas.` : 'Er verandert niets.'}`); return; }
+    if (!ok) { const z = `${t.naam} antwoordt niet. ${oud ? `${oud.naam} blijft de baas.` : 'Er verandert niets.'}`; logRegel(z); meld(z); return; }
     if (oud && oud.jarvis) {
       try { await haal(`${oud.jarvis}/jarvis/roep`, { method: 'POST', headers: { 'X-Koppelcode': S.code }, body: JSON.stringify({ soort: 'word-werker', baas: t.naam, van: 'veronica' }) }, 3000); } catch (e) { /* de verkeersleider regelt het ook */ }
     }
@@ -2418,7 +2489,13 @@
         // 508: JARVIS die vers antwoordt op /jarvis/status IS over het wifi bereikbaar, ook als zijn model (nog) zwijgt
         const wifiJ = jarvisVers(meet(t.adres).status, tijd);
         const bb = ((meet(t.adres).status || {}).brievenbus || {}).waarde || null;
-        tegel.appendChild(el('div', 'tHartslag', window.Hartslag.diagnose(echt, { antwoordt: s.bereikbaar === true || wifiJ ? true : (s.bereikbaar === false ? false : null), uitleg: K.brievenbusUitleg(bb, NtfyGeefV.mijn) }, tijd)));
+        // 678 (20 nov, "28 uur weg en 3 seconden geleden tegelijk"): antwoordt de telefoon NU rechtstreeks over het wifi, dan is een oude hartslag
+        // geen "al lang niets gehoord". Dan staat er wat waar is: hij antwoordt, alleen zijn hartslag via de brievenbus is oud.
+        const antwNu = s.bereikbaar === true || wifiJ;
+        const hartOud = !!(echt && tijd - echt.t > 3 * window.Hartslag.VERS_MS);
+        tegel.appendChild(el('div', 'tHartslag', antwNu && hartOud
+          ? `Antwoordt nu rechtstreeks over het wifi${echt.versie ? ` · JARVIS ${echt.versie}` : ''}. Alleen zijn hartslag via de brievenbus is oud (${window.Hartslag.minutenZin(tijd - echt.t)}); dat is geen storing zolang hij zo antwoordt.`
+          : window.Hartslag.diagnose(echt, { antwoordt: antwNu ? true : (s.bereikbaar === false ? false : null), uitleg: K.brievenbusUitleg(bb, NtfyGeefV.mijn) }, tijd)));
         if (echt) tegel.appendChild(el('div', 'tMotorRegel', window.Hartslag.motorZin(echt)));
         if (echt && window.Hartslag.lijnZin && window.Hartslag.lijnZin(echt)) tegel.appendChild(el('div', 'tLijnen', window.Hartslag.lijnZin(echt)));   // 520
         // 501: de motor-instellingen die nu gelden, in gewone taal, en een knop om ze voor deze telefoon aan te passen
@@ -2640,8 +2717,11 @@
         if (sch.url) img.src = sch.url;
         tegel.appendChild(img);
         tegel.appendChild(el('div', 'tBron', sch.zin || ''));
-      }
+      } else if (sch.zin) tegel.appendChild(el('div', 'tBron', sch.zin));   // 678 (20 nov): waarom meekijken niet aanging (bv. een andere rij-code) staat op de kaart zelf
       vereenvoudigTegel(tegel, t, tijd);   // 556
+      // 678 (20 nov): elke knop op een telefoonkaart heeft een NAAM voor een schermlezer: wat hij doet EN bij welke telefoon (er staan vier
+      // dezelfde knoppen onder elkaar). De zichtbare tekst blijft zoals hij is.
+      for (const b of tegel.querySelectorAll('button')) { if (!b.getAttribute('aria-label')) { const wat = (b.textContent || '').trim() || (b.title || '').trim() || 'Knop'; b.setAttribute('aria-label', `${wat}: ${t.naam}`); } }
       return tegel;
     })));
     // De stekkers: aan/uit, watt en kWh, elk met bron en leeftijd, en (1.9.15) de handknop.
@@ -2980,7 +3060,7 @@
     // "geen antwoord van Rektelefoon 1/2" terwijl de hartslag (die geen code gebruikt) wél binnenkwam. Alleen op de brievenbus/relay
     // (met het ntfy-onderwerp versleuteld), na de klik van een mens.
     const ok = (await roepNaarId(id, { soort: 'word-werker', van: 'veronica', codeOvernemen: true }, true)) || (await roepNaarId(id, { soort: 'word-werker', van: 'veronica', codeOvernemen: true }));
-    if (ok) { WensV.per[id].bus = nu(); bewaarWens(); }
+    if (ok && WensV.per[id]) { WensV.per[id].bus = nu(); bewaarWens(); }   // 678 (20 nov): de wens kan tijdens het wachten al vervuld en gewist zijn (gaf een TypeError)
     logRegel(ok ? `${h.naam || 'Een telefoon'}: "maak werker" is onderweg. Hij neemt het over zodra hij de brievenbus leest, zet zijn motor aan en meldt het in zijn volgende hartslag. Ik blijf het een dag lang herhalen tot hij het meldt.`
       : `${h.naam || 'Een telefoon'}: "maak werker" kwam nu niet aan (de brievenbus was niet te bereiken). Ik probeer het vanzelf opnieuw.`);
     return ok;
@@ -3136,7 +3216,7 @@
   // 678 (punt 22): de telefoonlijst toont per rektelefoon of hij AANWEZIG is (wat ARTEMIS via kabel/wifi/Tailscale ziet, dus niet alleen de
   // hartslag) en of hij in het pantser zit. Alleen LEZEN van de console (/rek.json). "Aanwezig" is niet "klaar": klaar zegt alleen de
   // telefoon zelf; een ARTEMIS-toestel wordt aan een Veronica-telefoon gekoppeld ALLEEN via een naam die de eigenaar zelf gaf.
-  const RekAanw = { lijst: [], t: 0, bezig: false };
+  const RekAanw = { lijst: [], t: 0, bezig: false, okT: 0, fout: 0, HOUD_MS: 10 * 60 * 1000 };
   const rekNamen = () => { try { return window.Rekaanwezig.namen(localStorage.getItem(window.Rekaanwezig.SLEUTEL)); } catch (e) { return {}; } };
   const rekKoel = () => { try { return window.Rekaanwezig.gekoeld(localStorage.getItem(window.Rekaanwezig.KOEL_SLEUTEL)); } catch (e) { return {}; } };
   function rekBekend() {
@@ -3148,14 +3228,17 @@
   function tekenRekAanwezig() {
     const vak = $('rekAanwezig'); if (!vak || !window.Rekaanwezig) return;
     const r = window.Rekaanwezig.rijen(RekAanw.lijst, rekNamen(), rekBekend(), rekKoel());
-    vak.hidden = !r.length;
-    if (!r.length) { vak.textContent = ''; return; }
-    morphKinderen(vak, [(() => { const d = el('div', 'pantserHelpRegel', window.Rekaanwezig.samenvatting(r, pantserStand())); d.dataset.sleutel = 'samenvatting'; return d; })()].concat(r.map((x) => {
+    // ARTEMIS hoort op deze computer te draaien maar antwoordt (twee keer achter elkaar) niet: dat staat er, met wat eraan te doen is
+    const weg = artemisGebruikt() && RekAanw.fout >= 2;
+    const wegZin = !weg ? '' : `ARTEMIS antwoordt nu niet op deze computer${RekAanw.okT ? ` (laatst om ${new Date(RekAanw.okT).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })})` : ''}, dus het brein en de andere rollen van het rek ${r.length ? 'staan hier met hun laatste stand' : 'zijn nu niet te zien'}. Meestal staat Linux uit: open één keer de Terminal-app, dan start ARTEMIS vanzelf.`;
+    vak.hidden = !r.length && !weg;
+    if (!r.length && !weg) { vak.textContent = ''; return; }
+    morphKinderen(vak, (weg ? [(() => { const d = el('div', 'pantserHelpRegel', wegZin); d.dataset.sleutel = 'artemis-weg|' + wegZin; d.id = 'artemisWegRegel'; return d; })()] : []).concat(!r.length ? [] : [(() => { const d = el('div', 'pantserHelpRegel', window.Rekaanwezig.samenvatting(r, pantserStand())); d.dataset.sleutel = 'samenvatting'; return d; })()].concat(r.map((x) => {
       const d = el('div', 'pantserHelpRegel', x.zin); d.dataset.sleutel = `${x.sleutel}|${x.zin}`;
       const k = el('button', '', x.benoemd ? 'Andere naam' : 'Geef een naam'); k.dataset.rekNaam = x.sleutel; k.dataset.rekModel = x.model; d.append(' ', k);
       const kk = el('button', '', x.gekoeld ? 'Ligt niet op de cooler' : 'Ligt op de cooler'); kk.dataset.rekKoel = x.sleutel; kk.dataset.rekKoelNu = x.gekoeld ? '1' : '0'; d.append(' ', kk);   // 678: een menselijke keuze
       return d;
-    })));
+    }))));
   }
   async function artemisRekKijk() {
     if (!artemisGebruikt() || RekAanw.bezig || !window.Rekaanwezig || volLokaal()) return;
@@ -3165,8 +3248,12 @@
     const ab = new AbortController(); const klok = setTimeout(() => ab.abort(), 15000);   // 678: de console leest per toestel de batterijtemperatuur (adb), dat kost even
     try {
       const resp = await fetch(url, Object.assign({ cache: 'no-store', signal: ab.signal }, K.lnaOpties(url)));
-      RekAanw.lijst = resp.ok ? window.Rekaanwezig.lees(await resp.text()) : [];
-    } catch (e) { RekAanw.lijst = []; } finally { clearTimeout(klok); RekAanw.bezig = false; }
+      // 678 (20 nov, "Pantser wisselt tussen 4 van 5 klaar en 0 van 4 klaar", en de brein-telefoon verdween uit de lijst): EEN gemiste vraag aan
+      // ARTEMIS gooide de hele lijst met rollen weg. Nu blijft de laatste lijst tien minuten staan; pas daarna is hij leeg, en dan staat er
+      // met zoveel woorden dat ARTEMIS niet antwoordt.
+      if (resp.ok) { RekAanw.lijst = window.Rekaanwezig.lees(await resp.text()); RekAanw.okT = Date.now(); RekAanw.fout = 0; }
+      else { RekAanw.fout = (RekAanw.fout || 0) + 1; if (Date.now() - (RekAanw.okT || 0) > RekAanw.HOUD_MS) RekAanw.lijst = []; }
+    } catch (e) { RekAanw.fout = (RekAanw.fout || 0) + 1; if (Date.now() - (RekAanw.okT || 0) > RekAanw.HOUD_MS) RekAanw.lijst = []; } finally { clearTimeout(klok); RekAanw.bezig = false; }
     rekRollenVanzelf();
     await rekTegelsBijwerken();
     tekenRekAanwezig();
@@ -3249,7 +3336,9 @@
     const r = $('artemisLokaalRegel'); if (!r) return null;
     if (!artemisGebruikt()) { r.textContent = ''; return null; }
     const g = gastBreinAdres();
-    if (!g) { r.textContent = 'Lokaal model: nog geen gast-brein in de hartslag dat nu mag meerekenen (de F8 thuis, OlliteRT aan, 30% accu of meer). Zodra dat er is, geef ik zijn adres door aan ARTEMIS.'; return null; }
+    // 678 (20 nov): de oude zin over het gast-brein (met de naam van een app die het rek niet meer gebruikt) is weg: het lokale model IS het brein
+    // van het rek, via ARTEMIS. Wat er nu draait staat hier; een gast-brein dat zich meldt wordt nog steeds doorgegeven.
+    if (!g) { r.textContent = BreinV.antwoordt ? `Lokaal model: het brein draait op ${BreinV.telefoon || 'de brein-telefoon'}${BreinV.model ? ` (${BreinV.model.replace(/\.gguf$/, '')})` : ''}, via ARTEMIS.` : 'Lokaal model: het brein van het rek antwoordt nu niet. ARTEMIS probeert het vanzelf opnieuw te starten.'; return null; }
     const base = 'http://' + g.ip + ':' + OLLITE_POORT + '/v1';
     const url = ARTEMIS_ADRES + 'lokaal-zet';
     const ab = new AbortController(); const klok = setTimeout(() => ab.abort(), 8000);
@@ -3738,7 +3827,7 @@
     if (!t || !KaartjeL) return;
     if (t.id === 'kaartjeKies') { const r = await KaartjeL.kies(); $('kaartjeMelding').textContent = r.ok ? 'Map gekozen.' : kaartjeZin(r); await tekenKaartje(); }
     else if (t.id === 'kaartjeToestemming') { const r = await KaartjeL.vraagToestemming(); $('kaartjeMelding').textContent = r.ok ? 'Toestemming gegeven.' : kaartjeZin(r); await tekenKaartje(); }
-    else if (t.id === 'kaartjeKijk') { await tekenKaartje(); }
+    else if (t.id === 'kaartjeKijk') { await tekenKaartje(); $('kaartjeMelding').textContent = `Opnieuw gekeken om ${new Date().toLocaleTimeString('nl-NL')}: de stand in dit vak is van nu.`; }
     else if (t.dataset && t.dataset.kaartje) {
       const r = await KaartjeL.schrijf(t.dataset.kaartje, kaartjeGegevens(t.dataset.kaartje), kaartjeVerboden(), nu());
       $('kaartjeMelding').textContent = r.ok ? (r.plek === 'kaartje' ? `Bewaard op het kaartje: ${r.naam}.` : `Bewaard (intern): ${r.naam}. ${r.zin || ''}`.trim()) : kaartjeZin(r);
@@ -4515,11 +4604,11 @@
     const sch = S.scherm[t.adres] = S.scherm[t.adres] || {};
     if (sch.aan) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; if (sch.vorigUrl) URL.revokeObjectURL(sch.vorigUrl); sch.vorigUrl = null; tekenLive(); return; }
     if (!magScherm(t)) { meld('De F8 (dagelijkse telefoon) kijken we nooit mee; alleen de rektelefoons.'); return; }
-    if (!sch.code) {
-      const c = await vraagTekst(`De code van ${t.naam} (staat op die telefoon bij Apparaten, Veronica):`, { inputMode: 'numeric' });
-      if (!/^\d{6}$/.test(String(c || '').trim())) return;
-      sch.code = String(c).trim();
-    }
+    // 678 (20 nov): NOOIT meer om een code vragen. De code van een rektelefoon IS de rij-code van Veronica; wijkt hij af, dan stuurt
+    // Veronica (en ARTEMIS via de kabel) hem de goede, en zegt dat hier.
+    if (!S.code) { meld('Veronica is nog niet aan de rij gekoppeld; meekijken kan daarna vanzelf.'); return; }
+    if ((await codeWijktAf(t)) === true) { sch.zin = await stuurGoedeCode(t); meld(sch.zin); tekenLive(); return; }
+    sch.code = S.code; sch.zin = '';
     sch.aan = true;
     tekenLive();
   }
@@ -4528,7 +4617,7 @@
     for (const t of S.telefoons) {
       if (!magScherm(t)) continue;
       const sch = S.scherm[t.adres] = S.scherm[t.adres] || {};
-      if (aan && !sch.aan) { if (sch.code) sch.aan = true; else await schermWissel(t); }
+      if (aan && !sch.aan) await schermWissel(t);
       else if (!aan && sch.aan) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; if (sch.vorigUrl) URL.revokeObjectURL(sch.vorigUrl); sch.vorigUrl = null; }
     }
     tekenLive();
@@ -4540,7 +4629,7 @@
       if (!magScherm(t)) { sch.aan = false; if (sch.url) URL.revokeObjectURL(sch.url); sch.url = null; if (sch.vorigUrl) URL.revokeObjectURL(sch.vorigUrl); sch.vorigUrl = null; continue; }   // (#150) nooit de F8
       try {
         const r = await haal(`${t.jarvis}/jarvis/scherm.jpg`, { headers: { 'X-Koppelcode': sch.code } }, 2000);
-        if (r.status === 401) { sch.aan = false; sch.code = null; logRegel(`De code van ${t.naam} klopt niet.`); continue; }
+        if (r.status === 401) { sch.aan = false; sch.code = null; sch.zin = await stuurGoedeCode(t); meld(sch.zin); continue; }
         if (!r.ok) { sch.zin = 'Scherm meekijken staat uit op de telefoon (of geen nieuw beeld).'; continue; }
         const blob = await r.blob();
         // 640: NIET de huidige objectURL meteen intrekken -- het live <img> in de wand wijst er nog naar, en elke extra tekenLive
@@ -5669,10 +5758,12 @@
   // ---- Wakker blijven, volledig scherm ----
   async function wakker() {
     if (S.wakeLock || S.wilWakker) {
+      try { localStorage.setItem('veronica-wakker-rek', 'uit'); } catch (e) { /* alleen voor nu */ }   // 678 (20 nov): de knop wint van "vanzelf aan voor het rek"
       S.wilWakker = false; await Opslag.schrijf('wakker', false);
       if (S.wakeLock) { try { await S.wakeLock.release(); } catch (e) { /* al los */ } }
       S.wakeLock = null; tekenWakker(); return;
     }
+    try { localStorage.removeItem('veronica-wakker-rek'); } catch (e) { /* alleen voor nu */ }
     S.wilWakker = true; await Opslag.schrijf('wakker', true);
     await vraagWakker();
   }
@@ -5858,7 +5949,7 @@
       let browser = null;
       try { browser = typeof caches !== 'undefined' ? await caches.open(STT_CACHE) : null; } catch (e) { browser = null; }
       const cache = SttModel.kaartjeCache(KaartjeL, browser);
-      const m = await SttModel.laad({ importeer: (pad) => import(pad), opVoortgang: (p) => { SttM.procent = p; luisterModelUiVernieuw(); }, cache });
+      const m = await SttModel.laad({ importeer: (pad) => import(pad), opVoortgang: (p) => { SttM.procent = Math.max(0, Math.min(100, Math.round(Number(p) || 0))); luisterModelUiVernieuw(); }   /* 678 (20 nov): nooit meer dan 100% (er stond 103%) */, cache });
       Object.assign(SttM, { verstaander: m.verstaander, naam: m.naam, stand: 'klaar' });
       try { localStorage.setItem(STT_SLEUTEL, '1'); } catch (e) { /* dan de volgende keer weer een tik */ }
     } catch (e) { SttM.stand = volLokaal() ? 'lokaal' : 'fout'; }
@@ -6387,7 +6478,7 @@
     $('motorAlleKnop').addEventListener('click', () => { motorAlleAan().catch(() => {}); });
     $('bureauKnop').addEventListener('click', () => zetBureau(!S.bureau));
     $('noodstop').addEventListener('click', noodstop);
-    $('vervangKnop').addEventListener('click', () => { const a = $('vervangKeus').value; if (a) vervang(a); });
+    $('vervangKnop').addEventListener('click', () => { const a = $('vervangKeus').value; if (a) vervang(a); else meld('Kies eerst in de lijst ernaast welke telefoon je vervangt.'); });
     $('wakkerKnop').addEventListener('click', wakker);
     $('volKnop').addEventListener('click', () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); });
     $('koppelKnop').addEventListener('click', koppelMetCode);
@@ -6407,9 +6498,15 @@
     $('proefrondeKnop').addEventListener('click', async () => {
       const vak = $('proefrondeVak'); const uit = $('proefrondeTekst');
       vak.hidden = !vak.hidden;
-      if (!vak.hidden && uit && !uit.textContent) {
-        try { uit.textContent = await (await fetch('PROEFRONDE.md', { cache: 'no-store' })).text(); }
-        catch (e) { uit.textContent = 'De proeflijst staat in PROEFRONDE.md (kon hem nu niet laden).'; }
+      if (!vak.hidden && uit) {
+        // 678 (20 nov): een duidelijke uitkomst bovenaan -- de snelle controle van nu -- en erbij wat dit is: de LIJST waarmee elke knop
+        // wordt nagekeken, geen test die zelf loopt.
+        const kop = `${zelftestKnoppenTekst().split('\n')[0]}\nHieronder staat de lijst waarmee elke knop een voor een wordt nagekeken (een lijst om af te vinken; hij loopt niet zelf).\n\n`;
+        if (!ProefLijstV.tekst) {
+          try { ProefLijstV.tekst = await (await fetch('PROEFRONDE.md', { cache: 'no-store' })).text(); }
+          catch (e) { ProefLijstV.tekst = ''; }
+        }
+        uit.textContent = kop + (ProefLijstV.tekst || 'De proeflijst staat in PROEFRONDE.md (kon hem nu niet laden).');
       }
     });
     // 612: Veronica checkt zelf of al haar knoppen te raken zijn. Dit KLIKT niets echt aan (verandert niets); het kijkt per
@@ -6444,13 +6541,18 @@
     $('wandUit').addEventListener('click', (e) => { e.stopPropagation(); Wand.stilT = nu(); zetWand(false); });
     $('wandAutoKnop').addEventListener('click', wisselWandAuto);
     $('micKnop').addEventListener('click', () => luister(false));
-    $('heyKnop').addEventListener('click', () => luister(true));
+    $('heyKnop').addEventListener('click', () => {   // 678 (20 nov): zonder microfoon gebeurde er niets zichtbaars
+      if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && !(window.SpeechRecognition || window.webkitSpeechRecognition)) { meld('Deze browser heeft geen microfoon of geeft er geen toegang toe; typ je vraag in het vraagveld.'); return; }
+      meld('Ik luister… (zeg je vraag; tik nog eens om te stoppen)');
+      luister(true);
+    });
     $('noodstopBevestig').addEventListener('click', () => { Spr.noodstopT = 0; $('noodstopBevestig').hidden = true; noodstop(); });
     $('spraakKnop').addEventListener('click', () => { S.spraak.aan = !S.spraak.aan; if (!S.spraak.aan && kanSpreken()) window.speechSynthesis.cancel(); bewaarSpraak(); });
     $('spraakVolume').addEventListener('input', () => { S.spraak.volume = Math.max(0, Math.min(1, Number($('spraakVolume').value) || 0)); bewaarSpraak(); });
     $('spraakTempo').addEventListener('change', () => { S.spraak.tempo = Number($('spraakTempo').value) || 1; bewaarSpraak(); });
     $('stemKeus').addEventListener('change', () => { S.spraak.stem = $('stemKeus').value; bewaarSpraak(); });
-    $('spraakProef').addEventListener('click', () => { const st = statusNu(); spreek(K.veronicaZin(S.karakter, 'status', Object.assign({ naam: S.eigenaar }, st)), 'proef'); });
+    // 678 (20 nov): een knop die alleen iets ZEGT deed in beeld niets. De zin staat er nu ook, en als uitspreken niet kan staat erbij waarom.
+    $('spraakProef').addEventListener('click', () => { const st = statusNu(); const zin = K.veronicaZin(S.karakter, 'status', Object.assign({ naam: S.eigenaar }, st)); zegEnToon(zin, 'proef'); });
     $('eigenaarNaam').addEventListener('change', async () => {
       S.eigenaar = K.leesEigenaar($('eigenaarNaam').value);
       S.eigenaarZelf = !!S.eigenaar;
@@ -6543,7 +6645,12 @@
     ledenStroom();   // 482: de ledenbrief van de baas (een verbinding; opnieuw na een fout, met wachten)
     setInterval(() => { ledenStroom(); }, 30000);
     lnaLees().catch(() => {});   // 548
-    $('lnaKnop').addEventListener('click', () => { lnaVraag().catch(() => {}); });
+    $('lnaKnop').addEventListener('click', () => {   // 678 (20 nov): na de klik staat er wat Chrome antwoordde (er gebeurde niets zichtbaars)
+      meld('Ik vraag Chrome om toestemming voor het lokale netwerk…');
+      lnaVraag().then((ok) => meld(ok ? 'Lokaal netwerk is toegestaan: ik praat rechtstreeks met de telefoons.'
+        : LnaV.stand === 'denied' ? 'Chrome weigert het lokale netwerk. Zet het aan via het slotje links van het adres (Lokaal netwerk: toestaan).'
+        : 'Chrome stelde geen vraag: deze browser kent die toestemming niet, of er is nog geen telefoon met JARVIS bekend. Er verandert niets.')).catch(() => {});
+    });
     $('avengersKnop').addEventListener('click', () => { avOpen().catch(() => {}); });   // 549
     hoofdschermStart();   // 556
     if (!breinKoppelUitAdres()) breinTik().catch(() => {});   // 678: het brein meteen proberen, niet pas na een minuut
@@ -6559,7 +6666,14 @@
     (async () => { try { const k = await PriveOpslag.lees('fenna-lang-kopie'); if (k && Array.isArray(k.metingen)) SlimV.cache = k.metingen.slice(-200); } catch (e) { /* geen kopie */ } tekenSlim(); })();
     $('avJa').addEventListener('click', () => { avAssemble().catch(() => {}); });
     $('avNee').addEventListener('click', () => { $('avengersPaneel').hidden = true; });
-    $('avSluit').addEventListener('click', () => { $('avengersPaneel').hidden = true; });
+    // 678 (20 nov): na "Sluit dit paneel" bleef de grote knop op Stop staan terwijl er niets liep. Loopt er geen klus (geen modus, geen trap), dan
+    // is bij elkaar roepen daarmee voorbij en staat de knop weer op Start; loopt er wel een, dan loopt die door en zegt Veronica dat.
+    $('avSluit').addEventListener('click', () => {
+      $('avengersPaneel').hidden = true;
+      if (!AvV.modus && !TrapV.bezig) AvV.actief = false;
+      else meld('Het paneel is dicht; de klus loopt door. Met de knop Stop stop je hem.');
+      tekenStatusRegel();
+    });
     $('avModiLijst').addEventListener('click', (e) => { const b = e.target && e.target.closest && e.target.closest('[data-av-modus]'); if (b) avKies(b.dataset.avModus).catch(() => {}); });
     setInterval(() => { avTik().catch(() => {}); }, 30000);
     setInterval(() => { relayStroom().catch(() => {}); }, 15000);   // 529/548: de relay, elke 15 s (doet niets zonder adres)
@@ -7214,11 +7328,17 @@
     avOpen().catch(() => {}); return 'start';
   }
   // Het scherm blijft vanzelf aan zolang er een klus loopt (en mag daarna weer slapen, tenzij je het zelf vroeg).
+  // 678 (20 nov, de computer van het rek viel twee keer in slaap en het hele rek stond stil): draait ARTEMIS op DEZE computer, dan hangt het rek
+  // eraan -- dan houdt Veronica het scherm aan zolang ze open en zichtbaar is (tenzij de eigenaar dat met de knop uitzette). Na een slaap of
+  // een verborgen tabblad laat Chrome het slot los; zodra Veronica weer zichtbaar is vraagt ze het opnieuw (dat gebeurde eerst niet).
+  const wakkerVoorRek = () => { try { return artemisGebruikt() && localStorage.getItem('veronica-wakker-rek') !== 'uit'; } catch (e) { return false; } };
   function wakkerVanzelf() {
-    const bezig = !!(TrapV.bezig || AvV.actief || OnderzoekV.bezig || StapelV.bezig || S.taken.some((t) => t.status === 'bezig'));
-    if (bezig && !S.wakeLock && !HoofdV.wakkerVanzelf && 'wakeLock' in navigator) {
+    const rek = wakkerVoorRek();
+    const bezig = !!(rek || TrapV.bezig || AvV.actief || OnderzoekV.bezig || StapelV.bezig || S.taken.some((t) => t.status === 'bezig'));
+    if (rek !== HoofdV.wakkerRek) { HoofdV.wakkerRek = rek; const z = $('wakkerZin'); if (z && rek) z.textContent = 'Het scherm blijft vanzelf aan zolang Veronica open en zichtbaar is: het rek draait via deze computer en staat stil als hij slaapt. Met de klep dicht, of met Veronica niet vooraan, slaapt de computer toch -- zet dan in de instellingen van de computer slapen uit aan de lader.'; }
+    if (bezig && !S.wakeLock && !HoofdV.wakkerVanzelf && 'wakeLock' in navigator && document.visibilityState === 'visible') {
       HoofdV.wakkerVanzelf = true;
-      navigator.wakeLock.request('screen').then((w) => { S.wakeLock = w; w.addEventListener('release', () => { S.wakeLock = null; tekenWakker(); }); tekenWakker(); }).catch(() => { HoofdV.wakkerVanzelf = false; });
+      navigator.wakeLock.request('screen').then((w) => { S.wakeLock = w; w.addEventListener('release', () => { S.wakeLock = null; HoofdV.wakkerVanzelf = false; tekenWakker(); }); tekenWakker(); }).catch(() => { HoofdV.wakkerVanzelf = false; });
     } else if (!bezig && HoofdV.wakkerVanzelf && !S.wilWakker && S.wakeLock) {
       HoofdV.wakkerVanzelf = false;
       S.wakeLock.release().catch(() => {});
@@ -7238,6 +7358,7 @@
   }
   function zetLokaalStand(st) {
     if (!LOKAAL_ZIN[st]) return false;
+    if (st === lokaalStand()) meld(`Dit staat al zo: ${LOKAAL_ZIN[st]}`);   // 678 (20 nov): een klik op de stand die al aan staat deed niets zichtbaars
     if (st !== lokaalStand()) {
       if (st === 'vol') { if (!VolL.aan) zetVolLokaal(true); if (!AlleenL.aan) zetAlleenLokaal(true); }
       else if (st === 'alleen') { if (VolL.aan) zetVolLokaal(false); if (!AlleenL.aan) zetAlleenLokaal(true); }
@@ -7292,7 +7413,7 @@
       if (!h || !h.id || !h.t || tijd - (h.ontvangen || h.t) > 24 * 3600 * 1000) continue;   // een dag niets = niet meer in de rij
       const crashes = (Array.isArray(h.stops) ? h.stops : []).filter((x) => x && (x.reden === 4 || x.reden === 5) && tijd - x.t <= 24 * 3600 * 1000).length;
       lijst.push({
-        id: h.id, naam: h.naam || '', voorkeur: h.voorkeur || '', dagelijks: !!h.dagelijks,
+        id: h.id, naam: h.naam || '', voorkeur: h.voorkeur || '', dagelijks: !!h.dagelijks, rek: isRekTelefoon(h.id),
         verbinding: K.verbinding({ hart: h.ontvangen || h.t, relay: !!RelayV.adres, elke: K.verwachtElke(h) }, tijd),
         redenen: K.wegRedenen(h, tijd),
         codeOud: !!(RekDokV.vinger && h.codeVinger && h.codeVinger !== RekDokV.vinger),
@@ -7369,9 +7490,9 @@
     const x = l.problemen.find((y) => y.id === probleemId);
     if (!x || x.acties.indexOf(actie) === -1 || !window.Rekdokter.ACTIES[actie]) return false;
     const h = HB.per[x.telefoon] || { id: x.telefoon, naam: x.naam };
-    if (!window.Rekdokter.magActie(actie, { voorkeur: h.voorkeur, dagelijks: !!h.dagelijks })) return false;   // de rol kan sinds de diagnose veranderd zijn
+    if (!window.Rekdokter.magActie(actie, { voorkeur: h.voorkeur, dagelijks: !!h.dagelijks, rek: isRekTelefoon(h.id) })) return false;   // de rol kan sinds de diagnose veranderd zijn
     let ok = false;
-    if (actie === 'code-herstel') ok = await roepNaarId(x.telefoon, { soort: 'word-werker', van: 'veronica', codeOvernemen: true, alleenCode: true });
+    if (actie === 'code-herstel') ok = await roepNaarId(x.telefoon, { soort: 'word-werker', van: 'veronica', codeOvernemen: true, alleenCode: true }, true);   // alleen de brievenbus: de omweg via een andere telefoon kan hij met zijn oude code niet lezen
     else if (actie === 'jarvis-aan') ok = await roepNaarId(x.telefoon, { soort: 'jarvis-aan', van: 'veronica' }, true);
     else if (actie === 'motor-herstel') ok = await roepNaarId(x.telefoon, { soort: 'motor-aan', van: 'veronica' });
     else if (actie === 'bijwerk-nu') ok = await bijwerkNuVoor(x.telefoon);
@@ -7454,7 +7575,8 @@
       const d = r.ok ? await r.json() : {};
       BreinV.stand = String(d.stand || ''); BreinV.antwoordt = d.antwoordt === true; BreinV.toestel = /^[a-z0-9]{12,40}$/.test(String(d.toestel || '')) ? String(d.toestel) : '';
       BreinV.vrijMb = typeof d.vrij_mb === 'number' ? d.vrij_mb : null; BreinV.telefoon = String(d.telefoon || '').slice(0, 40); BreinV.model = String(d.model || '').slice(0, 80);
-    } catch (e) { BreinV.antwoordt = false; } finally { clearTimeout(klok); BreinV.t = nu(); }
+      BreinV.artemisWeg = false;
+    } catch (e) { BreinV.antwoordt = false; BreinV.artemisWeg = true; } finally { clearTimeout(klok); BreinV.t = nu(); }   // 678 (20 nov): geen verbinding = ARTEMIS zelf antwoordt niet (dat zeggen we hardop)
   }
   // breinVraag(vraag, metGeschiedenis): { tekst, tps, ms } of null.
   // 678 (15 nov, 19:45): Veronica zonder code aan het brein. De knop "Open Veronica, gekoppeld aan het brein" in de ARTEMIS-console opent deze
@@ -7611,6 +7733,36 @@
     });
     return true;
   }
+  // 678 (20 nov, eigenaar: "de vraag gaf geen antwoord en ook geen foutmelding"): WAAROM KOMT ER GEEN ANTWOORD? Twee dingen die Veronica zelf
+  // kan zien: ARTEMIS (het brein) antwoordt niet op deze computer, en telefoons met een andere rij-code (die nemen haar vraag niet aan). De zin
+  // komt in het vraagveld zodra een vraag langer dan twaalf seconden wacht; de telefoons met een andere code krijgen meteen de goede (zonder QR).
+  function codeAfwijkers() {
+    const v = CodeHerstelV.vinger; if (!v) return [];
+    const tijd = nu(); const uit = [];
+    for (const h of Object.values(HB.per || {})) {
+      if (!h || !h.id || !h.codeVinger || h.dagelijks || h.codeVinger === v) continue;
+      if (tijd - (h.ontvangen || h.t || 0) > 24 * 3600 * 1000) continue;
+      if (h.voorkeur === 'kern' && !isRekTelefoon(h.id)) continue;
+      uit.push(h);
+    }
+    return uit;
+  }
+  async function zorgCodeVinger() {
+    if (!S.code || !S.ntfy || !S.ntfy.onderwerp || !window.Hartslag || !window.Hartslag.codeVinger) return;
+    const sl = `${S.ntfy.onderwerp}:${S.code}`;
+    if (CodeHerstelV.vingerCode !== sl) { try { CodeHerstelV.vinger = await window.Hartslag.codeVinger(S.ntfy.onderwerp, S.code); CodeHerstelV.vingerCode = sl; } catch (e) { /* de volgende keer */ } }
+  }
+  function vraagHindernis() {
+    const delen = [];
+    const af = codeAfwijkers();
+    if (af.length) {
+      const namen = af.map((h) => h.naam || 'een telefoon'); const lijst = namen.length === 1 ? namen[0] : `${namen.slice(0, -1).join(', ')} en ${namen[namen.length - 1]}`;
+      delen.push(`${lijst} ${af.length === 1 ? 'gebruikt' : 'gebruiken'} een andere rij-code dan Veronica en ${af.length === 1 ? 'neemt' : 'nemen'} mijn vraag daarom niet aan. Ik stuur de goede code zelf (zonder QR); dat duurt een paar minuten.`);
+      for (const h of af) stuurGoedeCode({ id: h.id, naam: h.naam }).catch(() => {});
+    }
+    if (artemisGebruikt() && BreinV.artemisWeg && !BreinV.antwoordt) delen.push('ARTEMIS antwoordt niet op deze computer, dus het brein is niet te bereiken. Meestal staat Linux uit: open één keer de Terminal-app, dan start ARTEMIS vanzelf.');
+    return delen.join(' ');
+  }
   function vraagStatusTik() {
     const p = $('vraagStatus');
     if (!p) return;
@@ -7627,9 +7779,11 @@
       return;
     }
     if (taak.status === 'fout') { zet(`Dat lukte niet: ${String(taak.uitkomst || 'onbekende reden')}`, 'fout'); return; }
-    if (taak.status === 'bezig') { zet(`Ik denk na over je vraag… (${taak.telefoon || 'een telefoon'})`, 'bezig'); return; }
+    const wacht = Math.round((nu() - HoofdV.sinds) / 1000);
+    const hind = wacht >= 12 ? vraagHindernis() : '';   // 678 (20 nov): na twaalf seconden zonder antwoord zeggen WAT er in de weg zit
+    if (taak.status === 'bezig') { zet(hind ? `Nog geen antwoord na ${wacht} seconden. ${hind}` : `Ik denk na over je vraag… (${taak.telefoon || 'een telefoon'})${wacht >= 30 ? ` -- al ${wacht} seconden; een telefoon doet er soms een minuut over.` : ''}`, hind ? 'fout' : 'bezig'); return; }
     // nog in de wachtrij: na een korte tijd zeggen WAAROM als niemand hem oppakt
-    zet(nu() - HoofdV.sinds < 3500 ? 'Je vraag staat klaar; ik zoek een telefoon…' : vraagStatusReden(), 'bezig');
+    zet(nu() - HoofdV.sinds < 3500 ? 'Je vraag staat klaar; ik zoek een telefoon…' : (hind ? `Nog geen antwoord na ${wacht} seconden. ${hind}` : vraagStatusReden()), hind ? 'fout' : 'bezig');
   }
   function hoofdschermStart() {
     $('meerKnop').addEventListener('click', () => { toonScherm($('scherm-meer').hidden ? 'meer' : 'live'); if (!$('scherm-meer').hidden) { artemisKijk().then((d) => { if (d) { lokaalZet().catch(() => {}); relayZet().catch(() => {}); } }).catch(() => {}); searxKijk().catch(() => {}); } });
@@ -7648,7 +7802,7 @@
       const stem = $('stemKeus').value || '';
       S.spraak.stem = stem; bewaarSpraak().catch(() => {});
       if (kanSpreken()) try { window.speechSynthesis.cancel(); } catch (e) { /* niets */ }
-      spreek('Is goed, ik regel het. De Cat is weer koel.', 'proef');
+      zegEnToon('Is goed, ik regel het. De Cat is weer koel.', 'proef');
     });
     // 641: het luistermodel (Whisper) ophalen op een tik. Daarna versta ik ook zonder internet en zonder telefoon.
     if ($('luisterModelKnop')) $('luisterModelKnop').addEventListener('click', async () => {
@@ -7802,6 +7956,7 @@
     $('hoekStatus').textContent = H.statusZin({ volLokaal: volLokaal(), pantser: !!S.aan, totaal: kaarten.length, bereikbaar });
     $('hoekVolLokaal').textContent = `Vol lokaal: ${volLokaal() ? 'AAN' : 'UIT'}`;
     $('hoekVolLokaal').setAttribute('aria-pressed', String(volLokaal()));
+    if (HoekV.railPlek) HoekV.railPlek();
     morphKinderen($('hoekWand'), kaarten.length ? kaarten.map((k) => {
       const d = el('div', `hoekKaart stand-${k.stand}`);
       d.dataset.sleutel = k.id;
@@ -7962,7 +8117,21 @@
       for (const b of $('hoekRail').querySelectorAll('button')) b.setAttribute('aria-current', String(b.dataset.hoekZone === z));
       const sec = $(`hoekZone-${z}`) || $('hoekVeilig');
       if (sec && sec.scrollIntoView) sec.scrollIntoView({ block: 'start' });
+      // 678 (20 nov): stond de zone al in beeld, dan gebeurde er niets zichtbaars. Nu licht de gekozen zone even op.
+      if (sec) { for (const x of document.querySelectorAll('.hoekZoneNu')) x.classList.remove('hoekZoneNu'); sec.classList.add('hoekZoneNu'); setTimeout(() => sec.classList.remove('hoekZoneNu'), 2500); }
     });
+    // 678 (20 nov): de zoneknoppen (links, vast) lagen ONDER de vaste kop zodra de statuszin daar over twee regels liep: niet te raken. De
+    // rij begint nu altijd net onder de kop (gemeten), en de zones schuiven er niet meer achter.
+    const hoekRailPlek = () => {
+      const kop = $('hoekVeilig'); const rail = $('hoekRail'); if (!kop || !rail) return;
+      const breed = window.matchMedia ? !window.matchMedia('(max-width: 899px)').matches : true;
+      const h = Math.ceil(kop.getBoundingClientRect().height);
+      rail.style.top = breed && h ? `${h + 8}px` : '';
+      document.documentElement.style.setProperty('--hoekKop', `${h}px`);
+    };
+    HoekV.railPlek = hoekRailPlek;
+    try { if (window.ResizeObserver) new ResizeObserver(hoekRailPlek).observe($('hoekVeilig')); } catch (e) { /* dan bij elke tekenbeurt */ }
+    window.addEventListener('resize', hoekRailPlek);
     window.addEventListener('hashchange', hoekVolgHash);
     hoekVolgHash();
   }
@@ -8037,7 +8206,7 @@
       return d;
     });
     if ($('priveRekStatus')) $('priveRekStatus').textContent = lijst.length
-      ? `${live} van ${lijst.length} ${lijst.length === 1 ? 'telefoon' : 'telefoons'} in de hoek · AI helpt ${aiAan ? 'AAN' : 'UIT'}`
+      ? `${live} van ${lijst.length} ${lijst.length === 1 ? 'telefoon' : 'telefoons'} van het rek bereikbaar · AI helpt ${aiAan ? 'AAN' : 'UIT'}`   // 678 (20 nov): "in de hoek" betekende hier iets anders dan drie regels lager (een privé-sleutel); nu zegt elke teller wat hij telt
       : 'Nog geen telefoon in beeld. Zodra een rektelefoon verschijnt (wifi of hartslag), staat hij hier vanzelf.';
     morphKinderen($('priveRekWand'), tegels.length ? tegels : [el('p', 'eerlijk', 'Nog geen telefoon in beeld.')]);
     if ($('priveRekAiHelpt')) { $('priveRekAiHelpt').textContent = `AI helpt: ${aiAan ? 'AAN' : 'UIT'}`; $('priveRekAiHelpt').setAttribute('aria-pressed', String(aiAan)); }
@@ -8064,6 +8233,12 @@
     uit.replaceChildren();
     if (!r || !r.ok) { stand.textContent = (r && r.zin) || 'Zoeken lukte niet.'; return; }
     stand.textContent = `${r.uitslagen.length} ${r.uitslagen.length === 1 ? 'vraag' : 'vragen'} klaar.`;
+    // 678 (20 nov, "0 resultaten" zonder uitleg): komt er nergens iets terug, dan staat erbij WAAROM dat het meest waarschijnlijk is -- een telefoon
+    // met een andere rij-code neemt de zoekvraag niet aan (en krijgt dan meteen de goede code), anders gaven de bronnen zelf niets.
+    if (!r.uitslagen.some((x) => x.uitslag && x.uitslag.ok && x.uitslag.aantal > 0)) {
+      const hind = vraagHindernis();
+      stand.textContent = hind ? `Geen resultaten: ${hind}` : 'Geen resultaten: de telefoons kregen van geen enkele bron iets terug op deze woorden. Probeer het met andere woorden, of kijk of de telefoons internet hebben.';
+    }
     for (const x of r.uitslagen) {
       const u = x.uitslag || {}; const k2 = x.kern || null;
       const kaart = el('div', 'zoekRes');
@@ -8097,7 +8272,26 @@
       const adres = e.target && e.target.dataset && e.target.dataset.rekModel; if (!adres) return;
       const t = S.telefoons.find((x) => x.adres === adres); openInstel(t ? t.id : adres, adres);
     });
-    if ($('priveRekSchermKnop')) $('priveRekSchermKnop').addEventListener('click', () => { const f = $('priveRekWandFrame'); if (f) priveRekSchermen(f.hidden); });
+    if ($('priveRekSchermKnop')) $('priveRekSchermKnop').addEventListener('click', () => {
+      const f = $('priveRekWandFrame'); if (!f) return;
+      const open = f.hidden; priveRekSchermen(open);
+      // 678 (20 nov, "de wand blijft leeg"): de rektelefoons hangen aan ARTEMIS (adb), dus Chrome ziet ze hier niet via USB. Dat staat er nu bij.
+      if ($('priveRekSchermStand')) $('priveRekSchermStand').textContent = !open ? '' : artemisGebruikt()
+        ? 'Dit vak blijft leeg voor de rektelefoons: die hangen aan ARTEMIS. Hun schermen staan in de schermenwand van het rek (de knop "Open de schermenwand van het rek"). "Telefoon toevoegen" in dit vak werkt alleen voor een telefoon die met een eigen kabel rechtstreeks aan deze computer hangt.'
+        : 'Tik in het vak op "Telefoon toevoegen" en kies de telefoon die met de kabel aan deze computer hangt.';
+    });
+    if ($('priveRekArtemisWand')) {
+      $('priveRekArtemisWand').hidden = !artemisGebruikt();
+      $('priveRekArtemisWand').addEventListener('click', async () => {
+        const st = $('priveRekSchermStand');
+        const ab = new AbortController(); const klok = setTimeout(() => ab.abort(), 2500);
+        let draait = false;
+        try { await fetch(ARTEMIS_ADRES, { mode: 'no-cors', cache: 'no-store', signal: ab.signal }); draait = true; } catch (e) { draait = false; } finally { clearTimeout(klok); }
+        if (!draait) { if (st) st.textContent = 'ARTEMIS antwoordt niet op deze computer, dus de schermenwand van het rek is nu niet te openen. Meestal staat Linux uit: open één keer de Terminal-app, dan start ARTEMIS vanzelf.'; return; }
+        try { window.open(ARTEMIS_ADRES + 'wand', '_blank', 'noopener'); } catch (e) { /* de zin hieronder zegt waar hij staat */ }
+        if (st) st.textContent = 'De schermenwand van het rek is geopend in een nieuw tabblad (kijken en bedienen; nooit de dagelijkse telefoon, nooit bank- of kluis-apps).';
+      });
+    }
   }
 
   // ===================================================================

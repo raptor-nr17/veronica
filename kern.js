@@ -113,7 +113,7 @@
   function leesHealth(d, t, bronNaam) {
     const x = d && typeof d === 'object' ? d : {};
     const m = x.metrics && typeof x.metrics === 'object' ? x.metrics : {};
-    const bron = bronNaam || 'OlliteRT /health';
+    const bron = bronNaam || 'het model op de telefoon (/health)';
     const getal = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
     const uit = {
       model: meting(typeof (m.model || x.model) === 'string' ? (m.model || x.model) : null, bron, t),
@@ -1580,6 +1580,32 @@
       veranderd = true;
     }
     lijst = uit;
+    // 3b. 678 (20 nov, "de S10 staat er twee keer in, op poort 8081 en 8000"): HETZELFDE TOESTEL OP TWEE POORTEN. Twee regels met dezelfde host
+    //     waarvan hoogstens een een id heeft (of allebei hetzelfde) zijn een telefoon: de oude poort (8000) en de eigen motor (8081). Wie het
+    //     laatst rechtstreeks antwoordde blijft, anders de regel met een id, anders de eigen motor; het andere adres gaat mee als alternatief.
+    {
+      const poort = (t) => { try { return Number(new URL(t.adres).port) || 0; } catch (e) { return 0; } };
+      const hostA = (t) => hostVan(t.adres) || hostVan(t.jarvis);
+      const weg2 = new Set();
+      for (const t of lijst) {
+        if (weg2.has(t)) continue;
+        const h = hostA(t); if (!h) continue;
+        for (const x of lijst) {
+          if (x === t || weg2.has(x) || hostA(x) !== h || poort(x) === poort(t) || ![8000, 8081].includes(poort(x)) || ![8000, 8081].includes(poort(t))) continue;   // alleen het bekende paar: de oude poort en de eigen motor
+          if (t.id && x.id && t.id !== x.id) continue;   // echt twee toestellen: stap 4 beslist
+          const rang = (y) => [direct(y), y.id ? 1 : 0, poort(y) === 8081 ? 1 : 0];
+          const a = rang(t), b = rang(x);
+          const tWint = a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] >= b[2];
+          const w = tWint ? t : x, v = tWint ? x : t;
+          w.id = w.id || v.id || null; w.kern = !!(w.kern || v.kern);
+          w.laatstGezien = Math.max(w.laatstGezien || 0, v.laatstGezien || 0);
+          w.alternatieven = [...new Set([].concat(w.alternatieven || [], [v.adres], v.alternatieven || []).filter((y) => y && y !== w.adres))];
+          weg2.add(v); samen.push({ naam: w.naam, met: [`${v.naam} (${hostA(v)}, poort ${poort(v) || '?'})`] }); veranderd = true;
+          if (!tWint) break;
+        }
+      }
+      if (weg2.size) lijst = lijst.filter((t) => !weg2.has(t));
+    }
     // 4. twee ids op een adres: wie het adres nu bewijst blijft
     const bewijst = (t, host) => statusIds[host] === t.id || !!(t.id && hartVan(t.id) && (hartVan(t.id).adressen || []).includes(host));
     lijst = lijst.filter((t) => {

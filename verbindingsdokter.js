@@ -116,7 +116,7 @@
       // Concrete stap: open JARVIS, op dit wifi, en werk bij -- de nieuwste JARVIS stuurt vanzelf een hartslag via de relay (zodat
       // een telefoon met een oude versie of een oude rij-code zich na het bijwerken weer meldt). Dit is de meest voorkomende oorzaak
       // dat een telefoon na een wifi-wissel toch stil blijft.
-      return `${namen} ${ww} nog geen teken sinds de verhuizing. Open op ${ontbrekend.length === 1 ? 'die telefoon' : 'elk'} JARVIS, controleer dat hij op dit wifi zit, en werk hem bij (de nieuwste JARVIS meldt zich vanzelf via de relay).`;
+      return `${namen} ${ww} nog geen teken van leven. Open op ${ontbrekend.length === 1 ? 'die telefoon' : 'elk'} JARVIS, controleer dat hij op dit wifi zit, en werk hem bij (de nieuwste JARVIS meldt zich vanzelf via de relay).`;
     }
     return '';
   }

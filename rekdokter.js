@@ -29,6 +29,7 @@
     // zelf over en raakt alleen het JARVIS-pakket aan. Deze handelingen gaan over ALLE rektelefoons die ARTEMIS ziet, niet over een.
     'artemis-waak': { label: 'Laat ARTEMIS JARVIS nakijken en herstarten', wat: 'ARTEMIS kijkt via adb of JARVIS draait, start hem zo nodig opnieuw en zet zijn batterij op Onbeperkt (op elke rektelefoon die hij ziet)', nooit: ['dagelijks'], artemis: 'jarvis-waak' },
     'artemis-terugval': { label: 'Zet de vrijgegeven JARVIS terug (proeftelefoon)', wat: 'ARTEMIS zet op de proeftelefoon de bewaarde vrijgegeven JARVIS terug; de gegevens blijven staan', nooit: ['dagelijks', 'kern'], artemis: 'jarvis-terugval', bevestig: true },
+    'artemis-rijcode': { label: 'Laat ARTEMIS de rij-code via de kabel zetten', wat: 'ARTEMIS geeft elke rektelefoon aan de kabel of Tailscale de rij-code van Veronica, zonder QR en zonder tik op de telefoon', nooit: ['dagelijks', 'kern'], artemis: 'rijcode-zet' },
     'artemis-meld': { label: 'Laat ARTEMIS de meldingen nakijken', wat: 'ARTEMIS kijkt per rektelefoon of hij zich bij de relay meldt, en waarom niet (alleen lezen)', nooit: [], artemis: 'meld-status' },
   });
 
@@ -57,7 +58,9 @@
     for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); }
     return false;
   }
-  const rolVan = (t) => (t.dagelijks ? 'dagelijks' : t.voorkeur === 'kern' ? 'kern' : 'rek');
+  // 678 (20 nov): een telefoon met een AI-rol in het rek (t.rek) is een REKTELEFOON, ook als hij een eigen rij leidt (voorkeur kern): die krijgt
+  // gewoon de code van Veronica. Alleen de echte beheerder (kern, geen rektelefoon) en de dagelijkse telefoon blijven met rust.
+  const rolVan = (t) => (t.dagelijks ? 'dagelijks' : (t.voorkeur === 'kern' && t.rek !== true) ? 'kern' : 'rek');
   const magActie = (actie, t) => !!ACTIES[actie] && ACTIES[actie].nooit.indexOf(rolVan(t)) === -1;
   const naamVan = (t) => String(t.naam || 'Een telefoon').replace(/[\u0000-\u001f]/g, ' ').slice(0, 40);
 
@@ -87,7 +90,7 @@
       if (kleur === 'rood') voeg('stil', 3, `${naam}: ${t.verbinding.zin}${a ? ` ARTEMIS ziet hem wel (${VIA_ZIN[a.via] || a.via}), dus hij staat aan; het zit in JARVIS of in de verbinding.` : ''}`, ['rij-oproepen', 'jarvis-aan', 'artemis-waak', 'artemis-meld']);
       if (a && typeof a.temp === 'number' && a.temp >= 42) voeg('warm', 2, `${naam} is warm: de batterij is ${String(a.temp).replace('.', ',')} graden. Laat hem afkoelen (van de lader, uit de zon) voor hij weer zwaar werk krijgt.`, []);
       if (t.codeOud === true) {
-        if (rolVan(t) === 'rek') voeg('code-oud', 3, `${naam} gebruikt een andere rij-code dan Veronica: Veronica en de andere telefoons kunnen hem dan niets vragen (de motor en de stem zeggen "verkeerde sleutel").`, ['code-herstel']);
+        if (rolVan(t) === 'rek') voeg('code-oud', 3, `${naam} gebruikt een andere rij-code dan Veronica: Veronica en de andere telefoons kunnen hem dan niets vragen (de motor en de stem zeggen "verkeerde sleutel"). Dat is zonder QR op te lossen.`, ['code-herstel', 'artemis-rijcode']);
         else if (rolVan(t) === 'kern') voeg('code-oud', 2, `${naam} is de beheerder, maar zijn rij-code wijkt af van die van Veronica. Dat zet ik niet zelf om: scan de koppel-QR opnieuw als dat niet de bedoeling is.`, []);
       }
       if (typeof t.crashes === 'number' && t.crashes >= 1) {
