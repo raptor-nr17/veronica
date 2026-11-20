@@ -10447,6 +10447,60 @@ ts_lockdown_los() {
   timeout 10 "$ADB" -s "$1" shell settings put secure always_on_vpn_lockdown 0 >/dev/null 2>&1 || true
   printf 'LOS'
 }
+# 678 (20 nov, avond): de lockdown-instelling op 0 zetten is niet genoeg. Android leest die instelling pas bij het OPSTARTEN; tot dan blijft
+# JARVIS (die zich aan het wifi bindt) "socket failed: EPERM" krijgen -- gemeten: een half uur na het uitzetten nog steeds, op alle drie.
+# Een keer herstarten haalt het weg. ARTEMIS doet dat ZELF alleen als:
+#   - de telefoon aan de KABEL zit (over Tailscale-adb verliest ARTEMIS hem bij een herstart, en daarmee zijn rol tot er een kabel in gaat);
+#   - JARVIS draait, 8080 niet luistert, het eigen log van JARVIS EPERM zegt, en de lockdown-instelling al op 0 staat;
+#   - er GEEN ontgrendelcode op zit (dumpsys lock_settings: CredentialType NONE/-1; onbekend = er zit wel een op) -- een code typt ARTEMIS nooit;
+#   - het niet de F8 en niet de brein-telefoon is, en hoogstens eens per zes uur per telefoon.
+# Anders zegt hij precies wat er moet gebeuren (aan de kabel, of een keer uit en aan + ontgrendelen). Nooit force-stop, nooit iets wissen.
+jarvis_eperm() {   # $1 serienummer -> 0 als JARVIS draait, 8080 niet luistert en zijn log EPERM zegt
+  local s="$1" pid
+  pid="$(timeout 10 "$ADB" -s "$s" shell pidof "$JARVIS_PKG" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$pid" ] || return 1
+  jarvis_8080_luistert "$s" && return 1
+  timeout 15 "$ADB" -s "$s" logcat -d --pid="$pid" -t 600 2>/dev/null | grep -qE 'EPERM|Operation not permitted'
+}
+tel_heeft_code() {   # $1 serienummer -> 0 als er (misschien) een ontgrendelcode op zit; alleen bij een zekere "geen" niet
+  local c; c="$(timeout 10 "$ADB" -s "$1" shell dumpsys lock_settings 2>/dev/null | tr -d '\r' | grep -m1 -iE 'CredentialType' | sed -E 's/.*CredentialType[: =]+//; s/ .*//')"
+  case "$c" in NONE|none|None|-1) return 1 ;; esac
+  return 0
+}
+jarvis_eperm_herstel() {   # $1 serienummer -> een zin (leeg = niets te doen)
+  local s="$1" naam sl rem nu laatst ld
+  is_f8 "$s" && return 0
+  toegestaan "$(toestel_id "$s")" || return 0
+  is_brein_tel "$s" && return 0
+  jarvis_eperm "$s" || return 0
+  naam="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"
+  ld="$(timeout 10 "$ADB" -s "$s" shell settings get secure always_on_vpn_lockdown 2>/dev/null | tr -d '\r\n ')"
+  [ "$ld" = 1 ] && { ts_lockdown_los "$s" >/dev/null; return 0; }   # eerst de instelling; de herstart komt de ronde erna
+  local id k; id="$(toestel_id "$s")"
+  case "$s" in *:*)   # dezelfde telefoon ook aan de kabel? Dan doet de kabel-regel het
+    for k in $(verbonden); do case "$k" in *:*) continue ;; esac; [ "$(toestel_id "$k")" = "$id" ] && return 0; done ;; esac
+  sl="$(printf '%s' "$id" | sha256sum | cut -c1-8)"; rem="$REK_MAP/eperm-herstel-$sl-$(case "$s" in *:*) echo draadloos ;; *) echo kabel ;; esac)"; nu="$(date +%s)"
+  laatst="$(head -1 "$rem" 2>/dev/null)"; case "$laatst" in ''|*[!0-9]*) laatst=0 ;; esac
+  [ $((nu - laatst)) -lt "${EPERM_REM_S:-21600}" ] && return 0
+  printf '%s\n' "$nu" >"$rem" 2>/dev/null; chmod 600 "$rem" 2>/dev/null || true
+  case "$s" in
+    *:*)
+      logregel "$naam: JARVIS krijgt geen verbinding (EPERM) tot de telefoon een keer herstart. Over Tailscale doe ik dat niet (dan ben ik hem kwijt tot er een kabel in gaat): sluit hem aan de kabel aan, dan herstart ik hem zelf."
+      relay_meld "$naam: JARVIS krijgt geen verbinding tot de telefoon een keer herstart. Sluit hem aan de USB-kabel van de computer aan; de rest gaat vanzelf." >/dev/null 2>&1 || true
+      printf '%s: herstart nodig (EPERM); aan de kabel doe ik het zelf.' "$naam" ;;
+    *)
+      if tel_heeft_code "$s"; then
+        logregel "$naam: JARVIS krijgt geen verbinding (EPERM) tot de telefoon een keer herstart, maar er zit een ontgrendelcode op (of dat weet ik niet zeker). Zet hem een keer uit en aan en ontgrendel hem; een code typ ik nooit."
+        relay_meld "$naam: zet hem een keer uit en aan en ontgrendel hem; dan krijgt JARVIS weer verbinding. Laat hem aan de kabel tot hij weer meedoet." >/dev/null 2>&1 || true
+        printf '%s: herstart nodig (EPERM), maar er zit een ontgrendelcode op: een mens zet hem uit en aan.' "$naam"
+      else
+        logregel "$naam: JARVIS krijgt geen verbinding (EPERM) sinds 'verbindingen zonder VPN blokkeren' aan stond; Android leest het uitzetten pas bij een herstart. Ik herstart hem een keer via de kabel (geen ontgrendelcode). Laat hem aan de kabel tot hij weer meedoet."
+        relay_meld "$naam herstart ik een keer via de kabel, zodat JARVIS weer verbinding krijgt. Laat hem aan de kabel tot hij weer meedoet." >/dev/null 2>&1 || true
+        timeout 20 "$ADB" -s "$s" reboot >/dev/null 2>&1 || true
+        printf '%s: herstart via de kabel (EPERM; Android leest het uitzetten van de lockdown pas bij een herstart).' "$naam"
+      fi ;;
+  esac
+}
 # ts_telefoon_aan <serienummer> [nu] -> AAN <100.x> | AL <100.x> | GEEN-APP | NIET (nog geen adres) | WACHT (pas geprobeerd)
 ts_telefoon_aan() {
   local s="$1" ip sl t nu
@@ -10535,6 +10589,7 @@ verhuis_tik() {
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
     [ "$(ts_lockdown_los "$s")" = LOS ] && logregel "Op $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-') stond 'verbindingen zonder VPN blokkeren' aan; dat legde JARVIS stil (EPERM). Uitgezet."
+    jarvis_eperm_herstel "$s" >/dev/null 2>&1 || true
     ts="$(ts_telefoon_aan "$s")"
     case "$ts" in AAN*) logregel "Tailscale stond uit op $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-'); ik heb hem weer aangezet (${ts#AAN })."; bh_ts_herstel >/dev/null 2>&1 || true ;; esac
   done
