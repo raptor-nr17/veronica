@@ -10391,6 +10391,7 @@ verhuis_ronde() {
 # uitkomst verloren). Een tegelijk: het slot in verhuis_ronde.
 verhuis_los() {
   slot_levend "$REK_MAP/verhuis.lock" && return 0
+  : >"$REK_MAP/verhuis-gestart" 2>/dev/null || true
   if [ -n "${VERHUIS_TEST:-}" ]; then verhuis_ronde "$1" >/dev/null 2>&1; return 0; fi
   ( setsid "$0" verhuis-ronde-los "$1" </dev/null >>"$REK_MAP/console-verhuis.log" 2>&1 & ) 2>/dev/null
 }
@@ -10404,7 +10405,7 @@ verhuis_tik() {
   oud="$(head -1 "$NET_SIG_F" 2>/dev/null)"
   printf '%s\n' "$sig" >"$NET_SIG_F" 2>/dev/null || true
   if [ -n "$oud" ] && [ "$sig" != "$oud" ] && [ "$sig" != "|" ]; then verhuis_los "een ander netwerk"; return 0; fi
-  if [ -z "$oud" ]; then verhuis_los "de eerste keer met deze versie"; return 0; fi   # nog nooit nagelopen (net verhuisd en net bijgewerkt): een keer de hele ronde
+  if [ -z "$oud" ] || [ ! -e "$REK_MAP/verhuis-gestart" ]; then verhuis_los "de eerste keer met deze versie"; return 0; fi   # nog nooit een ronde gestart   # nog nooit nagelopen (net verhuisd en net bijgewerkt): een keer de hele ronde
   for s in $(verbonden); do
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
