@@ -10476,6 +10476,19 @@ jarvis_eperm_herstel() {   # $1 serienummer -> een zin (leeg = niets te doen)
   naam="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"
   ld="$(timeout 10 "$ADB" -s "$s" shell settings get secure always_on_vpn_lockdown 2>/dev/null | tr -d '\r\n ')"
   [ "$ld" = 1 ] && { ts_lockdown_los "$s" >/dev/null; return 0; }   # eerst de instelling; de herstart komt de ronde erna
+  # 678 (20 nov, later gemeten): ook ZONDER lockdown gaf JARVIS EPERM (de verdeler had nooit een always-on VPN). De echte oorzaak: JARVIS
+  # bond zich aan het wifi terwijl Tailscale aanstond, en onder een VPN mag een app dat niet. JARVIS 1.9.103 (code 110) bindt dan niet meer;
+  # een herstart lost het NIET op. Dus: een oudere JARVIS = zeggen dat 1.9.103 nodig is, en NIET herstarten.
+  local jc; jc="$(jarvis_apk_code "$s")"; case "$jc" in ''|*[!0-9]*) jc=0 ;; esac
+  if [ "$jc" -lt "${JARVIS_VPN_FIX_CODE:-110}" ]; then
+    local mf; mf="$REK_MAP/eperm-oud-$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"; nu="$(date +%s)"
+    laatst="$(head -1 "$mf" 2>/dev/null)"; case "$laatst" in ''|*[!0-9]*) laatst=0 ;; esac
+    [ $((nu - laatst)) -lt 3600 ] && return 0
+    printf '%s\n' "$nu" >"$mf" 2>/dev/null || true
+    logregel "$naam: JARVIS krijgt geen verbinding (EPERM): hij bindt zich aan het wifi terwijl Tailscale aanstaat. JARVIS 1.9.103 lost dat op; een herstart niet."
+    printf '%s: EPERM onder Tailscale; JARVIS 1.9.103 nodig (een herstart helpt niet).' "$naam"
+    return 0
+  fi
   local id k; id="$(toestel_id "$s")"
   case "$s" in *:*)   # dezelfde telefoon ook aan de kabel? Dan doet de kabel-regel het
     for k in $(verbonden); do case "$k" in *:*) continue ;; esac; [ "$(toestel_id "$k")" = "$id" ] && return 0; done ;; esac
