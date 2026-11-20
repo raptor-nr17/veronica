@@ -7605,6 +7605,21 @@ tel_ontgrendel() {   # $1 serienummer -> 0 = niet (meer) vergrendeld
   tel_vergrendeld "$1" && return 1
   return 0
 }
+# 678 (20 nov): WAAROM LUISTERT JARVIS NIET? Na de verhuizing opende ARTEMIS de JARVIS-pagina op drie telefoons elke tien minuten en luisterde
+# de webserver nooit. Van buiten was niet te zien waarom. jarvis_diag geeft per telefoon in EEN regel: draait JARVIS, wat staat er vooraan,
+# staat het scherm op slot, luistert 8080, en de laatste regels die JARVIS zelf schreef (alleen zijn eigen console-regels; elk getal van zes
+# cijfers of meer en elk onderwerp wordt onleesbaar gemaakt -- een code komt nooit in het verslag). Alleen lezen.
+jarvis_diag() {   # $1 serienummer -> een regel
+  local s="$1" pid voor slot luist log
+  pid="$(timeout 10 "$ADB" -s "$s" shell pidof "$JARVIS_PKG" 2>/dev/null | tr -d '\r\n ')"
+  voor="$(timeout 10 "$ADB" -s "$s" shell dumpsys activity activities 2>/dev/null | tr -d '\r' | grep -m1 -E 'mResumedActivity|topResumedActivity' | grep -oE '[a-z][a-z0-9_.]+/[A-Za-z0-9_.$]+' | head -1)"
+  slot=nee; tel_vergrendeld "$s" && slot=ja
+  luist=nee; jarvis_8080_luistert "$s" && luist=ja
+  log="$(timeout 15 "$ADB" -s "$s" logcat -d -t 400 2>/dev/null | tr -d '\r' | grep -E 'Capacitor/Console|chromium.*CONSOLE|JarvisWeb|Jarvis[A-Z][a-zA-Z]*:' | grep -viE 'koppelcode|sleutel|token|wachtwoord|password' \
+    | sed -E 's/[0-9]{6,}/######/g; s/(jv|vh|vr|vm|lv|la)[a-z0-9]{20,}/\1***/g; s/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ [A-Z] //' | tail -n 4 | cut -c1-160 | tr '\n' '|')"
+  printf 'JARVIS %s; vooraan: %s; scherm op slot: %s; webserver (8080): %s; laatste regels van JARVIS: %s' \
+    "$([ -n "$pid" ] && echo "draait (pid $pid)" || echo 'draait NIET')" "${voor:-onbekend}" "$slot" "$luist" "${log:-geen}"
+}
 jarvis_web_herstel() {   # $1 serienummer, $2 naam -> een zin (leeg = niets te doen)
   local s="$1" naam="${2:-telefoon}" sl rem nu laatst leefde
   is_f8 "$s" && return 0
@@ -9948,6 +9963,11 @@ for x in n["lessen"]:
   done
   printf '\n## JARVIS op de rol-telefoons\n    %s\n' "$(head -1 "$JARVIS_WEK_F" 2>/dev/null || echo 'nog niet nagekeken')"
   [ -s "$VERHUIS_F" ] && { printf '\n## Laatste verhuisronde (wifi, Tailscale, koppelen, rollen)\n'; sed 's/^/    /' "$VERHUIS_F"; }
+  # 678 (20 nov): per rektelefoon (niet het brein, nooit de F8) waarom JARVIS wel of niet luistert -- alleen lezen
+  printf '\n## JARVIS per telefoon (diagnose)\n'
+  local _dt
+  for _dt in $(verbonden); do is_f8 "$_dt" && continue; toegestaan "$(toestel_id "$_dt")" || continue; is_brein_tel "$_dt" && continue
+    printf '    %s: %s\n' "$(toestel_naam "$_dt" | tr -cd 'A-Za-z0-9 ._-')" "$(jarvis_diag "$_dt")"; done
   # 678 (17 nov): WAT HOUDT WAT VAST -- zo is van buiten te zien waarom een les of een proef niet begint
   printf '\n## Sloten en wachtrij\n'
   local sl sp
