@@ -1444,6 +1444,15 @@ def herstart_als_nieuwer():
         if time.time() - os.path.getmtime(_bm) < 21600: return
     except Exception:
         pass
+    # 678 (20 nov): ook niet tijdens een VERHUISRONDE (hoogstens dertig minuten): onder systemd sloopt een herstart alles wat de console startte,
+    # en de ronde (Tailscale aan, rollen) verdween zo bij elke nieuwe versie halverwege.
+    try:
+        _vm = os.path.join(REK, 'verhuis.lock')
+        with open(os.path.join(_vm, 'pid')) as fh: _vp = int(fh.read().strip() or 0)
+        os.kill(_vp, 0)
+        if time.time() - os.path.getmtime(_vm) < 1800: return
+    except Exception:
+        pass
     try:   # 678: de verse console maakt af wat Bijwerken verder doet (na-update), zonder dat iemand op de knop drukt
         with open(os.path.join(REK, 'na-update'), 'w') as fh: fh.write(str(int(time.time())))
     except Exception: pass
@@ -7610,7 +7619,7 @@ tel_ontgrendel() {   # $1 serienummer -> 0 = niet (meer) vergrendeld
 # staat het scherm op slot, luistert 8080, en de laatste regels die JARVIS zelf schreef (alleen zijn eigen console-regels; elk getal van zes
 # cijfers of meer en elk onderwerp wordt onleesbaar gemaakt -- een code komt nooit in het verslag). Alleen lezen.
 # 678 (20 nov): STAAT JARVIS OP UIT? Na de verhuizing stonden drie telefoons op het pauzescherm ("JARVIS slaapt"): dan geen webserver en geen
-# hartslag, en JARVIS luistert alleen nog naar "jarvis-aan" van Veronica -- maar die roep moet zijn OUDE rij-code dragen, dus kwam hij nooit aan.
+# hartslag, en JARVIS luistert alleen nog naar de roep "zet aan" van Veronica -- maar die roep moet zijn OUDE rij-code dragen, dus kwam hij nooit aan.
 # jarvis_slaapt leest het scherm (uiautomator, alleen lezen). jarvis_aan_kabel tikt op "Aan", zoals een mens doet: ALLEEN als een mens daarom
 # vraagt (knop in de console of de rekdokter in Veronica) -- een noodstop heft ARTEMIS nooit uit zichzelf op. Nooit de F8, nooit het brein.
 jarvis_slaapt() {
@@ -10442,7 +10451,8 @@ verhuis_ronde() {
   "$ADB" start-server >/dev/null 2>&1 || true
   local waarom="${1:-met de hand}" s naam w ts m u regels="" n=0 nietaan="" geenapp="" gw="" slot=""
   zeg "Verhuisronde ($waarom): wifi, Tailscale, het rek via Tailscale, koppelen, rij-code en rollen."
-  verbind_draadloos >/dev/null 2>&1 || true; rek_verbind_lijst >/dev/null 2>&1 || true
+  printf '%s Verhuisronde (%s) begonnen.\n' "$(date '+%d-%m %H:%M')" "$waarom" >"$VERHUIS_F" 2>/dev/null || true
+  # eerst wat al in adb hangt (snel: Tailscale aan), pas daarna het trage zoeken naar draadloze telefoons
   for s in $(verbonden); do
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
@@ -10458,6 +10468,7 @@ verhuis_ronde() {
     { printf '%s Verhuisronde (%s) loopt nog...\n' "$(date '+%d-%m %H:%M')" "$waarom"; printf '%s' "$regels"; } >"$VERHUIS_F" 2>/dev/null || true   # tussenstand: wat al gedaan is gaat nooit verloren
   done
   zeg "${regels%$'\n'}"
+  verbind_draadloos >/dev/null 2>&1 || true; rek_verbind_lijst >/dev/null 2>&1 || true   # daarna het trage zoeken (draadloze telefoons die nog niet in adb hingen)
   rek_via_tailscale >/dev/null 2>&1 || true
   kabel_koppel_auto >/dev/null 2>&1 || true
   RIJCODE_WACHT_S=0 rijcode_auto >/dev/null 2>&1 || true
