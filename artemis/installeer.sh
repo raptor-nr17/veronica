@@ -7657,6 +7657,18 @@ jarvis_diag() {   # $1 serienummer -> een regel
   luist=nee; jarvis_8080_luistert "$s" && luist=ja
   local ld; ld="$(timeout 10 "$ADB" -s "$s" shell settings get secure always_on_vpn_lockdown 2>/dev/null | tr -d '\r\n ')"
   [ "$ld" = 1 ] && voor="${voor:-?} -- LET OP: 'verbindingen zonder VPN blokkeren' staat AAN (legt JARVIS stil; de verhuisronde zet het uit)"
+  # 678 (20 nov, 21:00): de verdeler-telefoon gaf dezelfde EPERM zonder lockdown. Wat het netwerk van JARVIS' uid nog kan dichtzetten, in een paar woorden
+  # (geen adressen, geen namen): de VPN-app, INTERNET-recht, achtergronddata, en wat netpolicy en connectivity over deze uid zeggen.
+  local net uid; uid="$(timeout 10 "$ADB" -s "$s" shell "dumpsys package $JARVIS_PKG" 2>/dev/null | tr -d '\r' | grep -m1 -oE 'userId=[0-9]+' | cut -d= -f2)"
+  net="vpn-app: $(timeout 10 "$ADB" -s "$s" shell settings get secure always_on_vpn_app 2>/dev/null | tr -d '\r\n ' | sed -r 's/^null$/geen/')"
+  net="$net, lockdown: ${ld:-?}"
+  net="$net, INTERNET: $(timeout 10 "$ADB" -s "$s" shell "dumpsys package $JARVIS_PKG" 2>/dev/null | tr -d '\r' | grep -m1 -oE 'android.permission.INTERNET: granted=(true|false)' | sed 's/.*granted=//' | grep . || echo onbekend)"
+  net="$net, achtergronddata: $(timeout 10 "$ADB" -s "$s" shell cmd netpolicy get restrict-background 2>/dev/null | tr -d '\r' | grep -oE 'enabled|disabled' | head -1 | grep . || echo onbekend)"
+  if [ -n "$uid" ]; then
+    net="$net, netpolicy: $(timeout 10 "$ADB" -s "$s" shell dumpsys netpolicy 2>/dev/null | tr -d '\r' | grep -E "(UID|uid)=$uid[^0-9]" | sed -r 's/^ +//' | head -2 | cut -c1-90 | tr '\n' ';' | grep . || echo niets)"
+    net="$net, connectivity: $(timeout 15 "$ADB" -s "$s" shell dumpsys connectivity 2>/dev/null | tr -d '\r' | grep -iE "uid[= ]$uid[^0-9]|lockdown|blocked" | sed -r 's/^ +//; s/[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/x.x.x.x/g' | head -3 | cut -c1-90 | tr '\n' ';' | grep . || echo niets)"
+  fi
+  voor="${voor:-?} [netwerk van JARVIS: $net]"
   [ "$luist" = nee ] && jarvis_slaapt "$s" && voor="${voor:-?} -- JARVIS STAAT OP UIT (pauzescherm \"JARVIS slaapt\"; in Veronica: rekdokter, of in de console: JARVIS weer aan via de kabel)"
   # 678 (20 nov, avond): alleen de regels van JARVIS' EIGEN proces (--pid), de waarschuwingen en fouten eerst; de JavaScript-fout die de
   # pagina stillegt staat daar als "Capacitor/Console" of "chromium ... CONSOLE(regel)".
