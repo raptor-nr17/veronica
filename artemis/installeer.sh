@@ -2714,6 +2714,9 @@ waak_ronde() {
     # de meting (een tunnel-telefoon via 127.0.0.1:5600 werd als 'onbekend' gezien; ARTEMIS + de meet-lezer gingen uit, de tunnels vielen weg).
     via_ts=0; case "$s" in 127.0.0.1:56[0-9][0-9]) { { [ -f "$TS_BRUG_F" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$TS_BRUG_F" 2>/dev/null; } || { [ -f "$REK_MAP/brein-brug" ] && awk -v p="${s##*:}" '$1==p{f=1} END{exit !f}' "$REK_MAP/brein-brug" 2>/dev/null; }; } && via_ts=1 ;; esac
     naam="$(toestel_naam "$s")"
+    # 678 (20 nov): na de verhuizing vielen de draadloze telefoons steeds weg -- een telefoon die net even niet antwoordde (wifi in slaap, het
+    # model rekent) werd meteen losgekoppeld. Eerst nog een keer vragen, pas dan loskoppelen.
+    [ -z "$naam" ] && case "$s" in *:*) sleep 3; naam="$(toestel_naam "$s")" ;; esac
     # 675: een toestel dat GEEN modelnaam teruggeeft is half-verbonden/offline (de adb-shell antwoordt niet). Geen veiligheidsrisico
     # (niet te besturen, geen schermfoto) en dus GEEN reden om ARTEMIS te stoppen. Een DOOD draadloos adres ruimen we op; een BEZIGE
     # Tailscale-meettunnel laten we met rust (die moet blijven staan).
@@ -9142,7 +9145,7 @@ na_slaap() {
     fi
   fi
   for sl in kanaal.lock stand.lock; do rm -rf "$REK_MAP/$sl" 2>/dev/null || true; done   # hun werk van voor de slaap is weg; de volgende ronde begint schoon
-  [ "$sec" -ge 600 ] && ( setsid "$0" verhuis-ronde </dev/null >>"$REK_MAP/console-verhuis.log" 2>&1 & ) 2>/dev/null   # 678 (20 nov): na een lange slaap (vaak: een verhuizing) de verhuisronde
+  [ "$sec" -ge 600 ] && ( setsid "$0" verhuis-ronde-los "na een slaap" </dev/null >>"$REK_MAP/console-verhuis.log" 2>&1 & ) 2>/dev/null   # 678 (20 nov): na een lange slaap (vaak: een verhuizing) de verhuisronde
   # sliep hij een half uur of langer, dan stond het hele rek zo lang stil: de eigenaar hoort dat (hoogstens eens per dag), met wat eraan te doen is
   local m0; m0="$(head -1 "$REK_MAP/slaap-gemeld.t" 2>/dev/null | tr -cd '0-9')"
   if [ "$sec" -ge 1800 ] && [ $(( $(date +%s) - ${m0:-0} )) -ge 86400 ]; then
@@ -9747,7 +9750,9 @@ zoek_doorsturing() {
   tok="$(head -1 "$REK_MAP/rek-token.conf" 2>/dev/null | tr -d '\r\n ')"
   [ -n "$tok" ] || { echo "geen zoektelefoon (ARTEMIS kent de rij-code nog niet)"; return 0; }
   nu="$(date +%s)"
-  for rol in verdeler controle bibliothecaris; do
+  # 678 (20 nov): de controle-telefoon EERST -- daar staat de JARVIS die zich bij Wikipedia met een contactadres meldt (zonder kreeg de verdeler
+  # 429); de anderen blijven de terugval. Zoeken is een verzoek van JARVIS, niet van het model: de controle wordt er niet trager van.
+  for rol in controle verdeler bibliothecaris; do
     s="$(als_$rol brein_nu 2>/dev/null)"; [ -n "$s" ] && ! is_f8 "$s" || continue
     [ "$s" = "$(brein_nu)" ] && continue
     id="$(toestel_id "$s" | sha256sum | cut -c1-8)"
@@ -10365,12 +10370,14 @@ verhuis_ronde() {
     case "$ts" in NIET) nietaan="$nietaan $naam" ;; GEEN-APP) geenapp="$geenapp $naam" ;; esac
     regels="$regels  $naam: wifi $(case "$w" in ok) echo 'met internet' ;; geen-internet) echo 'ZONDER internet' ;; *) echo 'NIET verbonden' ;; esac); Tailscale $(case "$ts" in AL*) echo "stond aan (${ts#AL })" ;; AAN*) echo "aangezet (${ts#AAN })" ;; GEEN-APP) echo 'staat er niet op' ;; *) echo 'ging niet aan' ;; esac)
 "
+    case "$ts" in AAN*) logregel "Verhuisronde: Tailscale stond uit op $naam; ik heb hem weer aangezet (${ts#AAN })." ;; NIET) logregel "Verhuisronde: Tailscale ging niet vanzelf aan op $naam." ;; esac
+    { printf '%s Verhuisronde (%s) loopt nog...\n' "$(date '+%d-%m %H:%M')" "$waarom"; printf '%s' "$regels"; } >"$VERHUIS_F" 2>/dev/null || true   # tussenstand: wat al gedaan is gaat nooit verloren
   done
   zeg "${regels%$'\n'}"
   rek_via_tailscale >/dev/null 2>&1 || true
   kabel_koppel_auto >/dev/null 2>&1 || true
   RIJCODE_WACHT_S=0 rijcode_auto >/dev/null 2>&1 || true
-  for r in brein-waak controle-waak verdeler-waak bibliothecaris-waak; do "$0" "$r" >/dev/null 2>&1 & done; wait
+  for r in brein-waak controle-waak verdeler-waak bibliothecaris-waak; do ( setsid "$0" "$r" </dev/null >/dev/null 2>&1 & ) 2>/dev/null; done   # de rollen starten los (kan minuten duren)
   local kort="Verhuisronde ($waarom): $n rektelefoon(s) nagelopen."
   [ -n "$nietaan" ] && kort="$kort Tailscale ging niet vanzelf aan op:$nietaan (open daar een keer de Tailscale-app)."
   [ -n "$geenapp" ] && kort="$kort Geen Tailscale-app op:$geenapp."
@@ -10380,16 +10387,24 @@ verhuis_ronde() {
   logregel "$kort"; relay_meld "$kort" >/dev/null 2>&1 || true
   rm -rf "$REK_MAP/verhuis.lock"
 }
+# de ronde LOS van de lus starten: de lus geeft een tik hoogstens tien minuten, en een ronde over vier telefoons kan langer duren (dan ging de
+# uitkomst verloren). Een tegelijk: het slot in verhuis_ronde.
+verhuis_los() {
+  slot_levend "$REK_MAP/verhuis.lock" && return 0
+  if [ -n "${VERHUIS_TEST:-}" ]; then verhuis_ronde "$1" >/dev/null 2>&1; return 0; fi
+  ( setsid "$0" verhuis-ronde-los "$1" </dev/null >>"$REK_MAP/console-verhuis.log" 2>&1 & ) 2>/dev/null
+}
 # verhuis_tik (elke vijf minuten, stil): een ANDER NETWERK voor deze computer (de standaardroute en het eigen adres) = een verhuizing -> de hele
 # ronde. Anders alleen stap 2: een rektelefoon aan adb zonder 100.x krijgt Tailscale weer aan (hoogstens eens per tien minuten per telefoon).
 verhuis_tik() {
   command -v "$ADB" >/dev/null 2>&1 || return 0
+  slot_levend "$REK_MAP/verhuis.lock" && return 0
   local sig oud s ts
   sig="$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')|$(ip -4 -o addr 2>/dev/null | awk '$2!="lo" && $4 !~ /^100\./ {print $4}' | sort | tr '\n' ',')"
   oud="$(head -1 "$NET_SIG_F" 2>/dev/null)"
   printf '%s\n' "$sig" >"$NET_SIG_F" 2>/dev/null || true
-  if [ -n "$oud" ] && [ "$sig" != "$oud" ] && [ "$sig" != "|" ]; then verhuis_ronde "een ander netwerk" >/dev/null 2>&1; return 0; fi
-  if [ -z "$oud" ]; then verhuis_ronde "de eerste keer met deze versie" >/dev/null 2>&1; return 0; fi   # nog nooit nagelopen (net verhuisd en net bijgewerkt): een keer de hele ronde
+  if [ -n "$oud" ] && [ "$sig" != "$oud" ] && [ "$sig" != "|" ]; then verhuis_los "een ander netwerk"; return 0; fi
+  if [ -z "$oud" ]; then verhuis_los "de eerste keer met deze versie"; return 0; fi   # nog nooit nagelopen (net verhuisd en net bijgewerkt): een keer de hele ronde
   for s in $(verbonden); do
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
@@ -10975,7 +10990,8 @@ case "${1:-status}" in
   kabel-koppel) kabel_koppel ;;                  # 678 (13 nov): het onderwerp van Veronica via adb aan JARVIS geven (geen tik op de telefoon)
   kabel-koppel-auto) kabel_koppel_auto >/dev/null 2>&1 || true ;;
   rijcode-zet) rijcode_zet ;;
-  verhuis-ronde) verhuis_ronde "met de hand" ;;   # 678 (20 nov): na een verhuizing de vijf stappen
+  verhuis-ronde) verhuis_ronde "met de hand" ;;
+  verhuis-ronde-los) verhuis_ronde "${2:-vanzelf}" ;;   # 678 (20 nov): na een verhuizing de vijf stappen
   verhuis-tik) verhuis_tik >/dev/null 2>&1 || true ;;                    # 678 (20 nov): de rij-code van Veronica zelf op de rektelefoons (zonder QR)
   rijcode-auto) rijcode_auto >/dev/null 2>&1 || true ;;
   jarvis-proef) jarvis_proef_zet ;;               # 678 (14 nov): de telefoon aan de USB-kabel wordt de proeftelefoon (krijgt als enige een nieuwe JARVIS)
