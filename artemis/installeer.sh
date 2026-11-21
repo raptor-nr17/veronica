@@ -4172,7 +4172,16 @@ jarvis_bijwerk_een() {
   fi
   # install -r: gegevens blijven, alleen onze JARVIS (Android weigert een andere handtekening op hetzelfde pakket). 598b: een
   # gedownloade apk heeft nog geen bekende code -- die leiden we hierna van de telefoon af.
-  uit="$("$ADB" -s "$s" install -r "$JAPK_PLEK/jarvis.apk" 2>&1)"
+  # 678 (21 nov): over Tailscale (draadloos) brak een apk van 42 MB in een keer af -- dan in blokken van 8 MB, elk nagekeken, hervatten waar
+  # het afbrak (dezelfde weg als de proefversie en de modellen), en daarna pm install op de telefoon zelf. Aan de kabel blijft het adb install.
+  case "$s" in
+    *:*) local tel=/data/local/tmp/jarvis-bijwerk.apk groot; groot="$(stat -c %s "$JAPK_PLEK/jarvis.apk" 2>/dev/null)"
+         if ADB_BLOK_MB=8 adb_push_heel "$s" "$JAPK_PLEK/jarvis.apk" "$tel" && [ "$("$ADB" -s "$s" shell stat -c %s "$tel" 2>/dev/null | tr -d '\r ')" = "$groot" ]; then
+           uit="$(timeout 600 "$ADB" -s "$s" shell pm install -r "$tel" 2>&1 | tr -d '\r')"
+         else uit="de apk kwam nog niet heel over (Tailscale); de volgende ronde gaat verder waar deze stopte"; fi
+         "$ADB" -s "$s" shell rm -f "$tel" >/dev/null 2>&1 || true ;;
+    *) uit="$("$ADB" -s "$s" install -r "$JAPK_PLEK/jarvis.apk" 2>&1)" ;;
+  esac
   if printf '%s' "$uit" | grep -qi 'Success'; then
     nieuw="$(jarvis_apk_code "$s")"
     [ -n "$nieuw" ] && printf '%s\n' "$nieuw" > "$JAPK_PLEK/jarvis.apk.code"   # onbekende code na de install afgeleid
