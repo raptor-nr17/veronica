@@ -10752,6 +10752,10 @@ ts_telefoon_aan() {
   [ -z "${2:-}" ] && [ $((nu - t)) -lt "${TS_AAN_REM:-600}" ] && { printf 'WACHT'; return 0; }
   { awk -v k="$sl" '$1!=k' "$TS_AAN_F" 2>/dev/null; printf '%s %s\n' "$sl" "$nu"; } >"$TS_AAN_F.t" 2>/dev/null && mv -f "$TS_AAN_F.t" "$TS_AAN_F" 2>/dev/null || true
   timeout 15 "$ADB" -s "$s" shell appops set com.tailscale.ipn ACTIVATE_VPN allow >/dev/null 2>&1 || true
+  # 678 (21 nov): op de Cat ging Tailscale twee keer vanzelf uit (Android legde de app stil). Nu ook: Tailscale mag op de achtergrond blijven
+  # draaien (geen doze, geen achtergrondrem). Alleen het Tailscale-pakket; nooit de F8 (hierboven al geweigerd).
+  timeout 15 "$ADB" -s "$s" shell cmd deviceidle whitelist +com.tailscale.ipn >/dev/null 2>&1 || true
+  timeout 15 "$ADB" -s "$s" shell appops set com.tailscale.ipn RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || true
   timeout 15 "$ADB" -s "$s" shell am broadcast -a com.tailscale.ipn.CONNECT_VPN -n com.tailscale.ipn/.IPNReceiver >/dev/null 2>&1 || true
   sleep "${TS_AAN_WACHT_S:-6}"; ip="$(tel_ts_ip "$s")"; [ -n "$ip" ] && { printf 'AAN %s' "$ip"; return 0; }
   # niet genoeg: de app zelf even openen (zijn dienst start dan), nog eens aanzetten, en terug naar het beginscherm
