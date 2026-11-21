@@ -604,6 +604,7 @@ VERBODEN_RE = re.compile(r'(?i)\b(bank|betaal|betalen|betaalde|wachtwoord|kluis|
 ONKENBAAR_RE = re.compile(r'(?i)\b(welke dag|vandaag|datum|ip-?adres|serienummer|het weer morgen)\b')
 VERZONNEN_RE = re.compile(r'(?i)\b(maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag|januari|februari|maart|april|juni|juli|augustus|september|oktober|november|december)\b|\b\d{1,3}(\.\d{1,3}){3}\b|\b[A-Z0-9]{9,}\b')
 REGEL_STOP = set('deze welke hoeveel wanneer waarom mijn jouw telefoon telefoons rektelefoon rektelefoons brein worden wordt mogen moet kunnen zijn heeft hebben voor over naar door maar ook niet nooit altijd'.split())
+EENHEID_STAM = {'grad', 'minu', 'seco', 'uren', 'proc', 'euro', 'cent', 'kilo', 'mete', 'dage', 'jare', 'maan', 'week', 'kwar', 'stuk'}
 def regel_controle(vraag, antwoord, kennis=''):
     v = str(vraag or ''); a = str(antwoord or '').strip(); al = a.lower()
     weet_niet = bool(re.search(r'(?i)\b(weet ik niet|weet het niet|niet zeker|onbekend|ken (de|het) .* niet)\b', a))
@@ -617,7 +618,11 @@ def regel_controle(vraag, antwoord, kennis=''):
     if ga and kennis:
         stam = lambda t: set(w[:4] for w in re.findall(r'[a-zà-ÿ]{4,}', t.lower()) if w not in REGEL_STOP)
         vw = stam(v)
-        regels = [r for r in str(kennis).splitlines() if vw & stam(r) and re.search(r'\d', r)]
+        # 678 (21 nov, controle-proef ronde 2: "water kookt bij 100 graden" en "drie uur is 180 minuten" kregen bij ELK model twijfel, omdat
+        # een EENHEID ("graden", "minuten") ook in een kennisregel met een ander getal stond -- de warmtegrens). Een eenheid zegt niets over het
+        # onderwerp; alleen de andere woorden tellen ("warm" in "hoe warm mag een rektelefoon" en "Warmte: de grens is 45 graden").
+        vw = vw - EENHEID_STAM
+        regels = [r for r in str(kennis).splitlines() if vw & (stam(r) - EENHEID_STAM) and re.search(r'\d', r)]
         gk = set(g.replace('.', ',') for r in regels for g in re.findall(r'\b\d+(?:[.,]\d+)?\b', r)) | set(g.replace('.', ',') for g in re.findall(r'\b\d+(?:[.,]\d+)?\b', v))
         if regels and not (ga & gk): return ('twijfel', 'een getal dat niet in de kennis staat (de kennis noemt %s)' % ', '.join(sorted(gk))[:80])
     return None
