@@ -1963,6 +1963,16 @@ class H(BaseHTTPRequestHandler):
             # 678 punt 22: alleen LEZEN -- welke rektelefoons ARTEMIS nu ziet (kabel/wifi/Tailscale), voor de lijst in Veronica.
             t = doe_args(['rek-aanwezig'], 45)
             self._cors_json(200, t if t.startswith('[') else '[]')
+        elif p.path == '/besluiten.json':
+            # 678 (21 nov): de echte besluiten voor de eigenaar en het korte verslag van het brein, alleen LEZEN (CORS), voor Live in Veronica
+            try:
+                with open(os.path.join(REK, 'besluiten.json')) as fh: b = json.loads(fh.read() or '{}')
+            except Exception: b = {}
+            try:
+                with open(os.path.join(REK, 'kort-verslag.json')) as fh: kv = json.loads(fh.read() or '{}')
+            except Exception: kv = {}
+            lijst = [{'sleutel': k, 'tekst': str(v.get('tekst', ''))[:300], 't': v.get('t')} for k, v in b.items() if isinstance(v, dict)]
+            self._cors_json(200, json.dumps({'besluiten': lijst, 'verslag': kv}))
         elif p.path == '/brein/controle':
             # 678 (16 nov): het oordeel van de controle-telefoon ophalen (alleen lezen; een onbekend id = niets)
             cid = (q.get('id', [''])[0]).strip()
@@ -6108,6 +6118,37 @@ rek_relay_bases() {   # welke bases ARTEMIS afleest: de relay (als geldig) EN nt
 # 'melding'-topic (soort 'melding' in hartslag.js: vm + sha256('veronica-melding:'+O)[:30], sleutel sha256('veronica-melding-sleutel:'+O)).
 # Best-effort en stil: geen onderwerp/crypto/relay = niets doen, nooit een fout. Ook lokaal bewaard, zodat Status/Log het altijd toont.
 MELD_F="$REK_MAP/meldingen.log"
+# 678 (21 nov, eigenaar: "de echte besluiten voor de eigenaar in een lijstje in Veronica"). DE BESLUITEN. Waar ARTEMIS niet verder kan zonder een mens
+# (een ontgrendelcode, een noodstop die alleen een mens opheft, Docker dat een wachtwoord vraagt), legt hij dat vast als EEN regel met een vaste
+# sleutel; is het opgelost, dan gaat de regel weg. Veronica leest de lijst (/besluiten.json) en toont hem op Live. Nooit een code, adres of
+# serienummer in de tekst; hoogstens twintig regels van hoogstens 300 tekens.
+BESLUIT_F="$REK_MAP/besluiten.json"
+besluit_zet() {   # $1 sleutel, $2 tekst
+  SL="$1" TEKST="$2" F="$BESLUIT_F" python3 -I - <<'PY' 2>/dev/null || true
+import os, json, re, time
+try: b = json.load(open(os.environ['F']))
+except Exception: b = {}
+sl = re.sub(r'[^a-z0-9-]', '', os.environ['SL'].lower())[:40]
+t = re.sub(r'\s+', ' ', os.environ['TEKST']).strip()[:300]
+if sl and t:
+    oud = b.get(sl) or {}
+    b[sl] = {'tekst': t, 't': oud.get('t') if oud.get('tekst') == t else int(time.time())}
+    b = dict(sorted(b.items(), key=lambda x: -x[1]['t'])[:20])
+    tmp = os.environ['F'] + '.t'; json.dump(b, open(tmp, 'w')); os.replace(tmp, os.environ['F'])
+PY
+}
+besluit_weg() {   # $1 sleutel (of een begin ervan met een * erachter)
+  SL="$1" F="$BESLUIT_F" python3 -I - <<'PY' 2>/dev/null || true
+import os, json
+try: b = json.load(open(os.environ['F']))
+except Exception: raise SystemExit(0)
+sl = os.environ['SL']
+n = {k: v for k, v in b.items() if not (k == sl or (sl.endswith('*') and k.startswith(sl[:-1])))}
+if n != b:
+    tmp = os.environ['F'] + '.t'; json.dump(n, open(tmp, 'w')); os.replace(tmp, os.environ['F'])
+PY
+}
+tel_sl() { toestel_id "$1" | sha256sum | cut -c1-8; }
 relay_meld() {
   local tekst="$1"; [ -n "$tekst" ] || return 0
   printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$tekst" >>"$MELD_F" 2>/dev/null || true; chmod 600 "$MELD_F" 2>/dev/null || true
@@ -6808,9 +6849,10 @@ searxng_auto() {
       logregel "SearXNG: Docker staat er niet; ik installeer hem (sudo zonder wachtwoord)."
       sudo -n apt-get install -y docker.io >/dev/null 2>&1 && sudo -n usermod -aG docker "$(id -un)" >/dev/null 2>&1 || true
     fi
-    command -v docker >/dev/null 2>&1 || { logregel "SearXNG: Docker staat er niet en installeren zonder wachtwoord lukte niet. In de Linux-terminal: sudo apt-get install -y docker.io"; return 0; }
+    command -v docker >/dev/null 2>&1 || { logregel "SearXNG: Docker staat er niet en installeren zonder wachtwoord lukte niet. In de Linux-terminal: sudo apt-get install -y docker.io"
+      besluit_zet "searxng-docker" "Voor je eigen zoekmachine (SearXNG) is Docker nodig, en dat vraagt een wachtwoord. Een regel in de Linux-terminal: sudo apt-get install -y docker.io"; return 0; }
   fi
-  if SEARX_DOCKER=searx_dk searxng >/dev/null 2>&1; then logregel "SearXNG: zelf gestart op http://127.0.0.1:8888 (alleen deze computer)."
+  if SEARX_DOCKER=searx_dk searxng >/dev/null 2>&1; then besluit_weg "searxng-docker"; logregel "SearXNG: zelf gestart op http://127.0.0.1:8888 (alleen deze computer)."
   else logregel "SearXNG: starten lukte niet (staat Docker aan?); over zes uur probeer ik het opnieuw."; fi
 }
 searxng() {
@@ -7739,14 +7781,16 @@ jarvis_web_herstel() {   # $1 serienummer, $2 naam -> een zin (leeg = niets te d
   # (0,66 in plaats van ~5 tok/s). Het brein heeft de webserver van JARVIS niet nodig.
   [ -n "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && [ "$(toestel_id "$s")" = "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && return 0
   [ -n "$(timeout 10 "$ADB" -s "$s" shell pidof "$JARVIS_PKG" 2>/dev/null | tr -d '\r\n ')" ] || return 0
-  jarvis_8080_luistert "$s" && return 0
-  sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"; rem="$REK_MAP/web-herstel-$sl"; nu="$(date +%s)"
+  sl="$(printf '%s' "$(toestel_id "$s")" | sha256sum | cut -c1-8)"
+  jarvis_8080_luistert "$s" && { besluit_weg "slot-$sl"; besluit_weg "uit-$sl"; besluit_weg "herstart-$sl"; return 0; }   # 678 (21 nov): opgelost = van het lijstje
+  rem="$REK_MAP/web-herstel-$sl"; nu="$(date +%s)"
   laatst="$(head -1 "$rem" 2>/dev/null)"; case "$laatst" in ''|*[!0-9]*) laatst=0 ;; esac
   [ $((nu - laatst)) -lt "${WEB_HERSTEL_REM_S:-600}" ] && return 0
   printf '%s\n' "$nu" >"$rem" 2>/dev/null; chmod 600 "$rem" 2>/dev/null || true
   leefde=0; jarvis_pagina_leeft "$s" && leefde=1
   if ! tel_ontgrendel "$s"; then
     logregel "$naam: het scherm is vergrendeld met een code; JARVIS kan pas starten na een keer ontgrendelen. Een code typ ik nooit in."
+    besluit_zet "slot-$sl" "$naam staat op het vergrendelscherm met een code (waarschijnlijk herstart). Ontgrendel hem een keer; de rest gaat vanzelf."
     local mf="$REK_MAP/slot-gemeld-$sl" mt; mt="$(head -1 "$mf" 2>/dev/null | tr -cd '0-9')"
     if [ $((nu - ${mt:-0})) -ge 3600 ]; then printf '%s\n' "$nu" >"$mf" 2>/dev/null; relay_meld "$naam staat op het vergrendelscherm met een code (waarschijnlijk herstart). JARVIS start pas na een keer ontgrendelen; ontgrendel hem een keer, de rest gaat vanzelf." >/dev/null 2>&1 || true; fi
     printf '%s: het scherm staat op slot met een code (de telefoon is waarschijnlijk herstart). JARVIS kan pas starten als hij een keer ontgrendeld is; een code typ ik nooit in.' "$naam"
@@ -7765,6 +7809,7 @@ jarvis_web_herstel() {   # $1 serienummer, $2 naam -> een zin (leeg = niets te d
     printf '%s: JARVIS staat waarschijnlijk op Uit (de noodstop): de pagina leeft, maar de webserver blijft uit. Dat zet ik bewust niet zelf terug; zet hem aan op de telefoon of hef de noodstop op in Veronica.' "$naam"
   elif jarvis_slaapt "$s"; then
     logregel "$naam: JARVIS staat op Uit (pauzescherm). Dat zet ik niet zelf terug; een mens kan het met een tik (Veronica: rekdokter, of de console)."
+    besluit_zet "uit-$sl" "$naam: JARVIS staat op Uit (de noodstop). Weer aanzetten? Een tik in de rekdokter of in de console (JARVIS weer aan via de kabel)."
     local uf="$REK_MAP/uit-gemeld-$sl" ut; ut="$(head -1 "$uf" 2>/dev/null | tr -cd '0-9')"
     if [ $((nu - ${ut:-0})) -ge 3600 ]; then printf '%s\n' "$nu" >"$uf" 2>/dev/null; relay_meld "$naam: JARVIS staat op Uit (het pauzescherm), dus hij rekent en meldt niets. Zet hem aan met een tik: in Veronica bij de rekdokter (Zet JARVIS weer aan via de kabel), in de ARTEMIS-console, of op de telefoon op Aan." >/dev/null 2>&1 || true; fi
     printf '%s: JARVIS staat op Uit (het pauzescherm "JARVIS slaapt"). Een noodstop hef ik niet zelf op; zet hem aan met een tik (Veronica: rekdokter, of de console: JARVIS weer aan via de kabel).' "$naam"
@@ -8888,6 +8933,52 @@ r, e = st.get('rondes', 0), st.get('eens', 0)
 print('%d rondes; het brein was het %d keer eens met de vaste regel (%d%%); %d keer uitgevoerd' % (r, e, (100 * e // r) if r else 0, st.get('uitgevoerd', 0)))
 for x in st.get('laatste', [])[-5:]:
     print('%s brein: %s, regel: %s, uitgevoerd: %s%s' % (time.strftime('%d-%m %H:%M', time.localtime(x['t'])), x['brein'], x['regel'], x['uitgevoerd'], (' -- ' + x['reden']) if x.get('reden') else ''))
+PY
+}
+# 678 (21 nov, eigenaar: "het brein schrijft zelf het korte standverslag, getallen uit de code, zoals bij het dagrapport"). HET KORTE VERSLAG.
+# De CODE telt (rektelefoons, rij-code goed, JARVIS stil, de laatste les, de beheerronde, de nieuwsrem, de besluiten); het brein schrijft EEN korte
+# alinea met {plekhouders} en zonder eigen getal; de CODE vult de getallen in. Een rauw getal in de tekst van het brein, of geen antwoord = de kale
+# zin uit de code. Komt bovenaan het standverslag en in Veronica (via /besluiten.json). Zonder internet: het brein draait op het rek.
+KORT_F="$REK_MAP/kort-verslag.json"
+kort_verslag() {
+  REK="$REK_MAP" LES="$BREIN_LES_F" BEH="$BEHEER_F" NR="$NIEUWSREM_F" BES="$BESLUIT_F" UIT="$KORT_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" ANTW="${KORT_ANTWOORD:-}" python3 -I - <<'PY' 2>/dev/null
+import os, json, re, glob, time, urllib.request
+def lees(f):
+    try: return json.load(open(f))
+    except Exception: return {}
+uit = [open(f).read().split() for f in glob.glob(os.path.join(os.environ['REK'], 'rijcode-*.uit'))]
+uit = [u for u in uit if len(u) >= 2]
+les = lees(os.environ['LES']); na = (les.get('rondes') or {}).get('na') or {}
+beh = lees(os.environ['BEH']); nr = lees(os.environ['NR']); bes = lees(os.environ['BES'])
+c = {'telefoons': len(uit), 'rijcodeGoed': sum(1 for u in uit if u[1] == 'goed'), 'jarvisStil': sum(1 for u in uit if u[1] == 'stil'),
+     'lesRij': les.get('rij') if les else None, 'lesGoed': na.get('goed'), 'lesVan': na.get('van'),
+     'beheerRondes': beh.get('rondes', 0), 'beheerEens': beh.get('eens', 0), 'pauze': len(nr.get('pauze') or []), 'besluiten': len(bes)}
+nl = lambda x: '?' if x is None else str(x)
+def code_zin(c):
+    z = ['%s van de %s rektelefoons nemen de rij-code van Veronica aan' % (nl(c['rijcodeGoed']), nl(c['telefoons'])) + (', bij %s antwoordt JARVIS niet' % c['jarvisStil'] if c['jarvisStil'] else '') + '.']
+    if c['lesRij'] is not None: z.append('De laatste les (lesrij %s) haalde %s van de %s.' % (nl(c['lesRij']), nl(c['lesGoed']), nl(c['lesVan'])))
+    if c['beheerRondes']: z.append('Het brein koos %s van de %s keer dezelfde stap als de vaste regel.' % (c['beheerEens'], c['beheerRondes']))
+    z.append(('Er wacht%s %s besluit%s op de eigenaar.' % ('' if c['besluiten'] == 1 else 'en', c['besluiten'], '' if c['besluiten'] == 1 else 'en')) if c['besluiten'] else 'Er wacht geen besluit op de eigenaar.')
+    return ' '.join(z)
+t = os.environ.get('ANTW') or ''
+if not t:
+    v = ('Schrijf EEN korte alinea (hoogstens drie zinnen) in het Nederlands over de stand van een rek telefoons. Gebruik voor ELK getal een plekhouder '
+         'tussen accolades en schrijf NOOIT zelf een getal. Plekhouders: {telefoons}, {rijcodeGoed}, {jarvisStil}, {lesRij}, {lesGoed}, {lesVan}, '
+         '{beheerRondes}, {beheerEens}, {pauze}, {besluiten}. Ter informatie (niet zelf overnemen): ' + json.dumps(c) + '\nGeef alleen de alinea.')
+    lijf = json.dumps({'messages': [{'role': 'user', 'content': v}], 'max_tokens': 160, 'temperature': 0.2, 'stream': False, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
+    try:
+        r = urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=150)
+        t = re.sub(r'(?s)<think>.*?</think>', '', json.loads(r.read(500000))['choices'][0]['message'].get('content') or '').strip()
+    except Exception: t = ''
+t = re.sub(r'\s+', ' ', t).strip()[:600]
+zonder = re.sub(r'\{[a-zA-Z]+\}', '', t)
+onbekend = [k for k in re.findall(r'\{([a-zA-Z]+)\}', t) if k not in c]
+if t and not re.search(r'\d', zonder) and re.search(r'\{[a-zA-Z]+\}', t) and not onbekend:
+    tekst = re.sub(r'\{([a-zA-Z]+)\}', lambda m: nl(c[m.group(1)]), t); bron = 'brein'
+else:
+    tekst = code_zin(c); bron = 'code'
+json.dump({'tekst': tekst, 'bron': bron, 't': int(time.time())}, open(os.environ['UIT'], 'w'))
+print(tekst + (' (het brein schreef dit; de getallen komen uit de code)' if bron == 'brein' else ' (de code schreef dit; het brein antwoordde niet of schreef een eigen getal)'))
 PY
 }
 # 678 (21 nov, eigenaar: "de nieuwsrem mag aan voor de papierhandel; kies zelf een gratis nieuwsbron zonder kosten of sleutel"). DE NIEUWSREM.
@@ -10395,6 +10486,12 @@ for x in n["lessen"]:
   [ -f "$REK_MAP/les-wacht" ] && printf '    er wacht een les (sinds %s)\n' "$(date -d "@$(stat -c %Y "$REK_MAP/les-wacht")" '+%d-%m %H:%M' 2>/dev/null)"
   printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
+  printf '\n## Besluiten voor de eigenaar (ARTEMIS kan hier niet verder zonder een mens)\n'
+  F="$BESLUIT_F" python3 -I -c 'import json,os,time
+b = {}
+try: b = json.load(open(os.environ["F"]))
+except Exception: pass
+print("\n".join("    %s %s" % (time.strftime("%d-%m %H:%M", time.localtime(v.get("t") or 0)), v.get("tekst", "")) for v in b.values()) or "    geen")' 2>/dev/null
   printf '\n## Beheerder: het brein kiest de volgende stap (stap 1)\n'; beheer_stand | sed 's/^/    /'
   printf '\n## Nieuwsrem (papierhandel)\n'; nieuwsrem_stand | sed 's/^/    /'
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
@@ -10484,20 +10581,10 @@ stand_tik() {
   if [ "${1:-}" != --nu ] && [ $((nu - st0)) -lt 3600 ]; then sam="$(cat "$REK_MAP/stand-samenvatting" 2>/dev/null)"
   elif ! les_loopt && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
     : >"$REK_MAP/stand-samenvatting.poging"
-    sam="$(TEKST="$(printf '%s' "$tekst" | sed '/^## Log/,$d' | head -c 3000)" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" python3 -I - <<'PY' 2>/dev/null
-import os, json, re, urllib.request
-op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-v = ('Hieronder staat de stand van het rek telefoons. Vat hem samen voor Claude Code in hoogstens drie korte zinnen in het Nederlands: wat werkt, '
-     'wat niet werkt, en wat ARTEMIS zelf opnieuw probeert. Verzin niets dat er niet staat.\n\n' + os.environ['TEKST'][:3000])
-lijf = json.dumps({'messages': [{'role': 'user', 'content': v}], 'max_tokens': 160, 'temperature': 0.2, 'stream': False, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
-try:
-    r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=150)
-    print(re.sub(r'(?s)<think>.*?</think>', '', json.loads(r.read(500000))['choices'][0]['message'].get('content') or '').strip()[:800])
-except Exception:
-    pass
-PY
-)"
+    sam="$(kort_verslag)"   # 678 (21 nov): het brein schrijft met {plekhouders}, de code vult de getallen in (geen verzonnen getal meer)
     [ -n "$sam" ] && { printf '%s\n' "$sam" >"$REK_MAP/stand-samenvatting"; chmod 600 "$REK_MAP/stand-samenvatting" 2>/dev/null || true; }
+  else
+    sam="$(KORT_ANTWOORD=- kort_verslag)"   # 678 (21 nov): geen brein (of een les loopt) = toch een kort verslag, van de code
   fi
   rek_zorg_crypto >/dev/null 2>&1 || true
   # 678 (17 nov, gezien in de console: "versturen mislukte" vier keer achter elkaar): DE RELAY NEEMT HOOGSTENS 12288 TEKENS PER BERICHT. Het
@@ -10850,6 +10937,7 @@ jarvis_eperm_herstel() {   # $1 serienummer -> een zin (leeg = niets te doen)
       if tel_heeft_code "$s"; then
         logregel "$naam: JARVIS krijgt geen verbinding (EPERM) tot de telefoon een keer herstart, maar er zit een ontgrendelcode op (of dat weet ik niet zeker). Zet hem een keer uit en aan en ontgrendel hem; een code typ ik nooit."
         relay_meld "$naam: zet hem een keer uit en aan en ontgrendel hem; dan krijgt JARVIS weer verbinding. Laat hem aan de kabel tot hij weer meedoet." >/dev/null 2>&1 || true
+        besluit_zet "herstart-$(tel_sl "$s")" "$naam moet een keer uit en aan en daarna ontgrendeld (er zit een ontgrendelcode op); dan krijgt JARVIS weer verbinding."
         printf '%s: herstart nodig (EPERM), maar er zit een ontgrendelcode op: een mens zet hem uit en aan.' "$naam"
       else
         logregel "$naam: JARVIS krijgt geen verbinding (EPERM) sinds 'verbindingen zonder VPN blokkeren' aan stond; Android leest het uitzetten pas bij een herstart. Ik herstart hem een keer via de kabel (geen ontgrendelcode). Laat hem aan de kabel tot hij weer meedoet."
