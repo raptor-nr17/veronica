@@ -8370,6 +8370,10 @@ brein_start_kern() {
   keus="$(brein_model_kies "$mem")" || { zeg "  geen enkel model past in $((mem / 1024)) MB vrij geheugen, ook niet na het vrijmaken (drempel: $(brein_drempel_zin))."; brein_stand fout "Geen model past in $((mem / 1024)) MB vrij geheugen (drempel: $(brein_drempel_zin))." "$s" "" "$mem"; return 0; }
   set -- $keus; repo="$1"; ctx="${5:-$BREIN_CONTEXT}"
   zeg "  gekozen: $repo ($2, $(( $4 / 1000000 )) MB), context $ctx, $BREIN_DRADEN draden, alleen op de telefoon zelf (127.0.0.1)."
+  # 678 (21 nov, eigenaar: "waarom schommelt de snelheid van het brein, maak hem stabiel snel"): de VASTE PRESTATIESTAND van Android (geen
+  # klokwisselingen door de energiebesparing). Alleen voor het brein (niet de controle of de verdeler: die rekenen minder); omkeerbaar; een
+  # telefoon die het niet kent negeert het. Nooit de F8 (hierboven al geweigerd).
+  [ -z "${BREIN_ROLNAAM:-}" ] && { timeout 10 "$ADB" -s "$s" shell cmd power set-fixed-performance-mode-enabled true >/dev/null 2>&1 || true; }
   # 1. llama-server uit JARVIS (statisch) naar /data/local/tmp kopieren -- daar mag de shell hem uitvoeren
   lib="$("$ADB" -s "$s" shell pm path "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | sed -n 's#^package:\(.*\)/base\.apk$#\1#p' | head -1)"
   [ -n "$lib" ] || { zeg "  JARVIS staat niet op deze telefoon."; brein_stand fout "JARVIS staat niet op de brein-telefoon." "$s" "" "$mem"; return 0; }
@@ -8851,9 +8855,36 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
 # het brein meer zelf mag. Elke actie hoogstens drie keer per dag; nooit tijdens een les; een besluit dat geld kost of een account vraagt staat niet in
 # de lijst (dat blijft bij de eigenaar). Elk half uur, vanzelf.
 BEHEER_F="$REK_MAP/beheer-brein.json"
-BEHEER_ACTIES="niets rijcode-zet jarvis-waak les-opnieuw"
+# 678 STAP 2 (21 nov, eigenaar: "bouw stap 2"): twee acties erbij die ARTEMIS al veilig zelf kan -- Tailscale weer aanzetten op een rektelefoon
+# zonder 100.x-adres (ts_telefoon_aan: nooit de F8, alleen het Tailscale-pakket) en SearXNG starten als de container niet draait (searxng_auto,
+# met zijn eigen rem van zes uur en alleen 127.0.0.1). Dezelfde poort als stap 1: alleen uitvoeren als de vaste regel het eens is. Het brein mag
+# nog NIET iets doen als de regel "niets" zegt; dat komt pas als het percentage "eens" over genoeg rondes hoog genoeg is (cijfers eerst).
+BEHEER_ACTIES="niets rijcode-zet jarvis-waak tailscale-aan searxng-start les-opnieuw"
+# de rektelefoons in adb zonder Tailscale-adres (nooit de F8, alleen toegestane); test: BEHEER_TS_UIT = namen, een per regel ('-' = geen)
+beheer_ts_uit() {
+  if [ -n "${BEHEER_TS_UIT:-}" ]; then [ "$BEHEER_TS_UIT" = - ] || printf '%s\n' "$BEHEER_TS_UIT"; return 0; fi
+  command -v verbonden >/dev/null 2>&1 && command -v tel_ts_ip >/dev/null 2>&1 || return 0
+  local s
+  for s in $(verbonden); do
+    is_f8 "$s" && continue; toegestaan "$(toestel_id "$s")" || continue
+    [ -n "$(tel_ts_ip "$s")" ] || printf '%s\n' "$s"
+  done
+}
+# draait SearXNG? -> draait | uit | onbekend (geen Docker: dan staat er al een besluit voor de eigenaar). Test: BEHEER_SEARX.
+beheer_searx() {
+  [ -n "${BEHEER_SEARX:-}" ] && { printf '%s' "$BEHEER_SEARX"; return 0; }
+  command -v docker >/dev/null 2>&1 && command -v searx_dk >/dev/null 2>&1 || { printf 'onbekend'; return 0; }
+  [ -n "$(searx_dk ps --filter name=^searxng$ --format '{{.Names}}' 2>/dev/null)" ] && printf 'draait' || printf 'uit'
+}
+beheer_ts_aan() {   # de actie tailscale-aan: per telefoon zonder adres een keer ts_telefoon_aan (die heeft zijn eigen rem van tien minuten)
+  local s ts
+  for s in $(BEHEER_TS_UIT= beheer_ts_uit); do
+    ts="$(ts_telefoon_aan "$s")"
+    case "$ts" in AAN*) logregel "Beheerder (het brein): Tailscale weer aangezet op $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-') (${ts#AAN })." ;; esac
+  done
+}
 beheer_feiten() {   # de feiten als korte regels (alleen wat de code zeker weet; nooit een code of adres)
-  local f t u n
+  local f t u n s
   for f in "$REK_MAP"/rijcode-*.uit; do [ -s "$f" ] || continue; read -r t u n <"$f"
     printf '%s: %s\n' "${n:-telefoon}" "$(case "$u" in goed) echo 'rij-code goed, JARVIS antwoordt' ;; stil) echo 'JARVIS antwoordt niet' ;; *) echo 'andere rij-code dan Veronica' ;; esac)"; done
   LES="$BREIN_LES_F" python3 -I -c 'import json,os,time
@@ -8861,11 +8892,19 @@ try:
     j = json.load(open(os.environ["LES"])); n = (j.get("rondes") or {}).get("na") or {}
     print("laatste les: lesrij %s, %s/%s goed, %d uur geleden" % (j.get("rij"), n.get("goed"), n.get("van"), (time.time() - int(j.get("t") or 0)) // 3600))
 except Exception: print("laatste les: onbekend")' 2>/dev/null
+  while IFS= read -r s; do [ -n "$s" ] || continue
+    n="$( [ -n "${BEHEER_TS_UIT:-}" ] && printf '%s' "$s" || toestel_naam "$s" 2>/dev/null | tr -cd 'A-Za-z0-9 ._-')"; printf '%s: Tailscale staat uit\n' "${n:-telefoon}"
+  done <<EOT
+$(beheer_ts_uit)
+EOT
+  case "$(beheer_searx)" in draait) echo 'SearXNG draait' ;; uit) echo 'SearXNG draait niet' ;; esac
 }
 beheer_verwacht() {   # de vaste regel (in deze volgorde): $1 = de feiten -> een actie uit BEHEER_ACTIES
   local fe="$1"
   printf '%s' "$fe" | grep -q 'andere rij-code dan Veronica' && { printf 'rijcode-zet'; return; }
   printf '%s' "$fe" | grep -q 'JARVIS antwoordt niet' && { printf 'jarvis-waak'; return; }
+  printf '%s' "$fe" | grep -q 'Tailscale staat uit' && { printf 'tailscale-aan'; return; }
+  printf '%s' "$fe" | grep -q 'SearXNG draait niet' && { printf 'searxng-start'; return; }
   printf '%s' "$fe" | grep -Eq 'laatste les: lesrij [0-9]+, ([0-9]|10)/10 goed, ([6-9]|[1-9][0-9]+) uur geleden' && ! printf '%s' "$fe" | grep -q ', 10/10 goed' && { printf 'les-opnieuw'; return; }
   printf 'niets'
 }
@@ -8880,6 +8919,8 @@ acties = os.environ['ACTIES'].split()
 v = ('Je bent de BEHEERDER van een rek telefoons. Hieronder staan de feiten. Kies precies EEN actie uit deze lijst:\n'
      '- rijcode-zet: als een telefoon een andere rij-code heeft dan Veronica (dit gaat voor alles);\n'
      '- jarvis-waak: als JARVIS op een telefoon niet antwoordt;\n'
+     '- tailscale-aan: als Tailscale op een telefoon uit staat;\n'
+     '- searxng-start: als SearXNG niet draait;\n'
      '- les-opnieuw: als de laatste les niet 10/10 was en minstens zes uur geleden is;\n'
      '- niets: als alles in orde is.\n'
      'Antwoord ALLEEN met JSON: {"actie": "...", "reden": "een korte zin"}.\n\nFeiten:\n' + os.environ['FEITEN'][:1500])
@@ -8909,6 +8950,8 @@ PY
       case "$actie" in
         rijcode-zet) RIJCODE_KIJK_S=0 rijcode_zet >/dev/null 2>&1 || true ;;
         jarvis-waak) jarvis_waak >/dev/null 2>&1 || true ;;
+        tailscale-aan) beheer_ts_aan >/dev/null 2>&1 || true ;;
+        searxng-start) searxng_auto >/dev/null 2>&1 || true ;;
         les-opnieuw) ( setsid "$0" brein-les "" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("rij") or 1)' "$BREIN_LES_F" 2>/dev/null || echo 1)" </dev/null >>"$REK_MAP/console-brein-les.log" 2>&1 & ) 2>/dev/null ;;
       esac
     else uitv="rem"; fi
@@ -9932,6 +9975,14 @@ STAND_SIG_F="$REK_MAP/stand.sig"
 # keer: zonder cache (wat kost het lezen van de vraag, en hoe snel schrijft hij) en met cache (de tijd tot het eerste woord als het vaste begin
 # al gelezen is). Alles uit de timings van llama.cpp zelf, niets geschat. Niet tijdens een les. De regels staan in het standverslag.
 BREIN_MEET_F="$REK_MAP/brein-meet.log"
+brein_belasting() {   # $1 serienummer -> "belasting 1,8; klok grote kern 2,40 GHz; prestatiestand aan; drukste: dex2oat 95%" (alleen lezen)
+  local s="$1" la khz pm top
+  la="$(timeout 10 "$ADB" -s "$s" shell cat /proc/loadavg 2>/dev/null | awk '{print $1}' | tr -d '\r')"
+  khz="$(timeout 10 "$ADB" -s "$s" shell 'for c in 7 6 5 4; do f=/sys/devices/system/cpu/cpu$c/cpufreq/scaling_cur_freq; [ -r $f ] && { cat $f; break; }; done' 2>/dev/null | tr -cd '0-9')"
+  pm="$(timeout 10 "$ADB" -s "$s" shell dumpsys power 2>/dev/null | tr -d '\r' | grep -m1 -iE 'mFixedPerformanceModeEnabled|fixed.?performance' | grep -qi true && echo aan || echo 'uit of onbekend')"
+  top="$(timeout 15 "$ADB" -s "$s" shell top -b -n 1 -o %CPU,ARGS 2>/dev/null | tr -d '\r' | awk 'NR>7 && $1+0 > 20 && $2 !~ /llama-server|top/ {print $2" "int($1)"%"}' | head -2 | sed 's#.*/##' | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
+  printf 'belasting %s; klok grote kern %s; prestatiestand %s%s' "${la:-?}" "$( [ -n "$khz" ] && awk -v k="$khz" 'BEGIN{printf "%.2f GHz", k/1000000}' || echo '?')" "$pm" "${top:+; drukste: $top}"
+}
 brein_meet() {   # [label] -> een regel in brein-meet.log
   les_loopt && return 0
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
@@ -9946,7 +9997,9 @@ brein_meet() {   # [label] -> een regel in brein-meet.log
   fi
   slot_neem "$REK_MAP/brein-meet.lock" || return 0
   printf '%s\n%s\n' "$sig" "$nu" >"$REK_MAP/brein-meet.sig"
-  LABEL="$model, kernen ${kern:-onbekend}, llama.cpp ${bouw:-basis}$(x="$(brein_extra)"; [ -n "$x" ] && printf ', %s' "$x")" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_MEET_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
+  timeout 10 "$ADB" -s "$s" shell cmd power set-fixed-performance-mode-enabled true >/dev/null 2>&1 || true   # 678 (21 nov): de vaste prestatiestand (ook zonder herstart van het brein)
+  local belast; belast="$(brein_belasting "$s")"   # 678 (21 nov): wat de telefoon op dat moment nog meer doet, om een dip te verklaren
+  BELAST="$belast" LABEL="$model, kernen ${kern:-onbekend}, llama.cpp ${bouw:-basis}$(x="$(brein_extra)"; [ -n "$x" ] && printf ', %s' "$x")" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" UIT="$BREIN_MEET_F" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
 import os, json, time, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try: kennis = open(os.environ['KENNIS']).read()[:4500]
@@ -9957,10 +10010,13 @@ def een(cache):
     r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=600)
     return json.loads(r.read(4000000).decode('utf-8', 'replace')).get('timings') or {}
 try:
-    a = een(False); b = een(True)
-    regel = '%s | %s | lezen %.1f tok/s (%d tokens) | schrijven %.2f tok/s | eerste woord %.1f s, met cache %.1f s' % (
+    # 678 (21 nov): EEN run van 96 tokens gaf 3,8 tot 5,1 tok/s -- een drukke seconde op de telefoon (een installatie, een ander proces) telt dan
+    # zwaar mee. Nu: de eerste run (zonder cache) voor het lezen, en DRIE schrijfrondes met cache; de MIDDELSTE telt, de spreiding staat erbij.
+    a = een(False); b = een(True); c = [x.get('predicted_per_second') or 0 for x in (a, b, een(True))]
+    c.sort(); spr = (c[-1] - c[0]) if c else 0
+    regel = '%s | %s | lezen %.1f tok/s (%d tokens) | schrijven %.2f tok/s (middelste van 3, spreiding %.2f) | eerste woord %.1f s, met cache %.1f s%s' % (
         time.strftime('%d-%m %H:%M'), os.environ['LABEL'], a.get('prompt_per_second') or 0, a.get('prompt_n') or 0,
-        a.get('predicted_per_second') or 0, (a.get('prompt_ms') or 0) / 1000, (b.get('prompt_ms') or 0) / 1000)
+        c[1], spr, (a.get('prompt_ms') or 0) / 1000, (b.get('prompt_ms') or 0) / 1000, (' | ' + os.environ['BELAST']) if os.environ.get('BELAST') else '')
 except Exception as e:
     regel = '%s | %s | meting mislukt (%s)' % (time.strftime('%d-%m %H:%M'), os.environ['LABEL'], type(e).__name__)
 with open(os.environ['UIT'], 'a') as fh: fh.write(regel + '\n')
@@ -10947,6 +11003,21 @@ jarvis_eperm_herstel() {   # $1 serienummer -> een zin (leeg = niets te doen)
       fi ;;
   esac
 }
+# 678 (21 nov, eigenaar: "de Tailscale-app op alle rektelefoons batterij onbeperkt via ARTEMIS, zodat hij niet meer vanzelf uitgaat"). Een keer per
+# dag per rektelefoon (ook als Tailscale al aanstaat): geen doze en geen achtergrondrem voor het Tailscale-pakket. Echo ZET als het nieuw gezet is.
+# Alleen het Tailscale-pakket; nooit de F8; alleen een telefoon waar Tailscale op staat.
+ts_onbeperkt() {
+  local s="$1" sl f dag
+  is_f8 "$s" && return 0
+  sl="$(toestel_id "$s" | sha256sum | cut -c1-8)"; f="$REK_MAP/ts-onbeperkt-$sl"; dag="$(date +%Y%m%d)"
+  [ "$(head -1 "$f" 2>/dev/null)" = "$dag" ] && return 0
+  timeout 15 "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1 || return 0
+  timeout 15 "$ADB" -s "$s" shell cmd deviceidle whitelist +com.tailscale.ipn >/dev/null 2>&1 || true
+  timeout 15 "$ADB" -s "$s" shell appops set com.tailscale.ipn RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || true
+  timeout 15 "$ADB" -s "$s" shell appops set com.tailscale.ipn RUN_IN_BACKGROUND allow >/dev/null 2>&1 || true
+  printf '%s\n' "$dag" >"$f" 2>/dev/null || true
+  printf 'ZET'
+}
 # ts_telefoon_aan <serienummer> [nu] -> AAN <100.x> | AL <100.x> | GEEN-APP | NIET (nog geen adres) | WACHT (pas geprobeerd)
 ts_telefoon_aan() {
   local s="$1" ip sl t nu
@@ -11039,6 +11110,7 @@ verhuis_tik() {
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
     [ "$(ts_lockdown_los "$s")" = LOS ] && logregel "Op $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-') stond 'verbindingen zonder VPN blokkeren' aan; dat legde JARVIS stil (EPERM). Uitgezet."
+    [ "$(ts_onbeperkt "$s")" = ZET ] && logregel "Tailscale op $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-'): batterij onbeperkt (geen doze, geen achtergrondrem), zodat hij niet meer vanzelf uitgaat."
     jarvis_eperm_herstel "$s" >/dev/null 2>&1 || true
     ts="$(ts_telefoon_aan "$s")"
     case "$ts" in AAN*) logregel "Tailscale stond uit op $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-'); ik heb hem weer aangezet (${ts#AAN })."; bh_ts_herstel >/dev/null 2>&1 || true ;; esac
