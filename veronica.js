@@ -7840,7 +7840,9 @@
   // uit de verse hartslagen: bereikbaar, motor aan, warmste, laagste accu, gidswerk); er staat nooit een verzonnen getal in. Nooit de dagelijkse
   // telefoon. Het gaat als EEN melding (waarschuw: de hoofdtelefoon thuis, anders ntfy; Vol lokaal = niets naar buiten). Uit te zetten met
   // localStorage 'veronica-dagrapport' = 'uit'. Zonder hartslagen geen rapport (niets te melden is niet "alles goed").
-  const DagRapV = { SLEUTEL: 'veronica-dagrapport-dag', VAN: 8, TOT: 12, laatst: '' };
+  // vraagModel: het lokale brein (via ARTEMIS op deze computer, nooit naar buiten) schrijft EEN alinea met {plekhouders}; de code vult de
+  // getallen in (Dagrapport.rapport). Een rauw getal in de modeltekst, of geen antwoord = de kale code-zin. Een haak, zodat de test hem zet.
+  const DagRapV = { SLEUTEL: 'veronica-dagrapport-dag', VAN: 8, TOT: 12, laatst: '', vraagModel: (p) => breinVraag(p, false) };
   function nlDagUur(t) {
     const p = new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(t));
     const g = (k) => (p.find((x) => x.type === k) || {}).value;
@@ -7866,7 +7868,10 @@
     const tel = dagrapportTelefoons(per || HB.per, t);
     if (!tel.length) return null;
     try { localStorage.setItem(DagRapV.SLEUTEL, dag); } catch (e) { /* hoogstens een tweede keer */ }
-    const r = window.Dagrapport.rapport(window.Dagrapport.samenvatting(tel, { datum: dag, nu: t }), '');
+    const sam = window.Dagrapport.samenvatting(tel, { datum: dag, nu: t });
+    let alinea = '';
+    try { const m = await DagRapV.vraagModel(window.Dagrapport.maakPrompt(sam)); alinea = (m && typeof m.tekst === 'string') ? m.tekst : ''; } catch (e) { alinea = ''; }
+    const r = window.Dagrapport.rapport(sam, alinea);
     DagRapV.laatst = r.tekst;
     logRegel(`Dagrapport: ${r.tekst}`);
     let w = null; try { w = await waarschuw('dagrapport', `Dagrapport ${r.tekst}`, false); } catch (e) { w = { gestuurd: false, reden: 'fout' }; }
