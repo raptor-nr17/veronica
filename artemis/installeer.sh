@@ -1584,6 +1584,8 @@ def lus():
             if RONDE % 5 == 4:
                 threading.Thread(target=doe_args, args=(['verhuis-tik'], 600), daemon=True).start()   # 678 (20 nov): een ander netwerk = de verhuisronde; Tailscale uit = weer aan
                 threading.Thread(target=doe_args, args=(['controle-proef-tik'], 120), daemon=True).start()   # 678 (21 nov): de controle-proef, een keer per kandidatenlijst
+            if RONDE % 60 == 30:
+                threading.Thread(target=doe_args, args=(['nieuwsrem-tik'], 120), daemon=True).start()   # 678 (21 nov): de nieuwsrem, elk uur
             if RONDE % 5 == 2:
                 threading.Thread(target=doe_args, args=(['rijcode-auto'], 300), daemon=True).start()   # 678 (20 nov): een rektelefoon met een andere rij-code krijgt die van Veronica (zonder QR)
             if RONDE % 10 == 4:
@@ -8771,6 +8773,86 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
 # vraag VERSLEUTELD op de relay; hier leest ARTEMIS hem (elke minuut, alleen als het brein antwoordt), vraagt het brein en legt het antwoord
 # versleuteld terug. Sleutel en onderwerpen uit de code van de vaste downloadlink (veld APK-link). Het brein ANTWOORDT alleen: hier wordt niets
 # uitgevoerd wat in een vraag staat. Een vraag tegelijk (slot), elke vraag een keer (kanaal-gezien), geen inhoud in een logboek.
+# 678 (21 nov, eigenaar: "de nieuwsrem mag aan voor de papierhandel; kies zelf een gratis nieuwsbron zonder kosten of sleutel"). DE NIEUWSREM.
+# Elk uur de openbare RSS-feed van CoinDesk (gratis, geen sleutel); elke NIEUWE kop wordt ingedeeld met DEZELFDE signaalwoorden als
+# tools/veronica/nieuwsrem.js (hack, insolventie, verbod, delisting, neutraal; check_brein vergelijkt de twee lijsten). Noemt een vlag een munt,
+# dan staat het KOPEN van die munt 24 uur op pauze -- alleen voor de papierhandel; verkopen doet de rem nooit, een order bestaat niet. Elke vlag
+# krijgt de koers (de openbare API van CoinGecko, gratis, geen sleutel) en na een uur en na een dag nog eens, voor de evaluatie na drie maanden.
+# Alles in $REK_MAP/nieuwsrem.json en in het standverslag. Uit: NIEUWSREM_AAN=0 in de omgeving. Geen sleutel, geen account, niets persoonlijks.
+NIEUWSREM_F="$REK_MAP/nieuwsrem.json"
+NIEUWSREM_BRON="${NIEUWSREM_BRON:-https://www.coindesk.com/arc/outboundfeeds/rss/}"
+NIEUWSREM_KOERS="${NIEUWSREM_KOERS:-https://api.coingecko.com/api/v3/simple/price}"
+nieuwsrem_tik() {
+  [ "${NIEUWSREM_AAN:-1}" = 1 ] || return 0
+  NF="$NIEUWSREM_F" BRON="$NIEUWSREM_BRON" KOERS="$NIEUWSREM_KOERS" NU="${NIEUWSREM_NU:-}" python3 -I - <<'PY' 2>/dev/null
+import os, re, json, time, hashlib, urllib.request, html
+op = urllib.request.build_opener()
+NU = float(os.environ.get('NU') or time.time())
+UUR, DAG = 3600, 86400
+SIGNAAL = {
+  'hack': ['hack', 'gehackt', 'hacked', 'exploit', 'gestolen', 'stolen', 'drained', 'leeggehaald', 'lek in', 'breach', 'aanval op'],
+  'insolventie': ['faillissement', 'failliet', 'bankrupt', 'bankruptcy', 'insolvent', 'insolventie', 'surseance', 'chapter 11', 'uitbetalingen stopgezet', 'halts withdrawals', 'withdrawals paused'],
+  'verbod': ['verbod', 'verboden', 'verbiedt', 'ban ', 'banned', 'bans ', 'illegaal verklaard', 'aanklacht', 'lawsuit', 'sued', 'charges', 'toezichthouder', 'regulator'],
+  'delisting': ['delisting', 'delist', 'delisted', 'van de beurs gehaald', 'uit de handel', 'handel stopgezet', 'trading halted', 'suspends trading'],
+}
+MUNTEN = {'bitcoin': ('BTC', 'bitcoin'), 'btc': ('BTC', 'bitcoin'), 'ether': ('ETH', 'ethereum'), 'ethereum': ('ETH', 'ethereum'), 'eth': ('ETH', 'ethereum'),
+          'solana': ('SOL', 'solana'), 'sol': ('SOL', 'solana'), 'xrp': ('XRP', 'ripple'), 'cardano': ('ADA', 'cardano'), 'dogecoin': ('DOGE', 'dogecoin'),
+          'doge': ('DOGE', 'dogecoin'), 'litecoin': ('LTC', 'litecoin'), 'polkadot': ('DOT', 'polkadot'), 'chainlink': ('LINK', 'chainlink')}
+def deel(kop):
+    t = ' %s ' % kop.lower()
+    for c in ('hack', 'insolventie', 'verbod', 'delisting'):
+        if any(w in t for w in SIGNAAL[c]): return c
+    return 'neutraal'
+def munt(kop):
+    for w in re.findall(r'[a-z]+', kop.lower()):
+        if w in MUNTEN: return MUNTEN[w]
+    return None
+def haal(url, n=600000):
+    if url.startswith('file://'): return open(url[7:].split('?')[0], 'rb').read(n)
+    with op.open(urllib.request.Request(url, headers={'User-Agent': 'artemis-nieuwsrem'}), timeout=20) as r: return r.read(n)
+def koers(gid):
+    try:
+        j = json.loads(haal('%s?ids=%s&vs_currencies=eur' % (os.environ['KOERS'], gid)).decode('utf-8', 'replace'))
+        v = (j.get(gid) or {}).get('eur'); return float(v) if isinstance(v, (int, float)) else None
+    except Exception: return None
+try: st = json.load(open(os.environ['NF']))
+except Exception: st = {}
+st.setdefault('vlaggen', []); st.setdefault('gezien', []); st['aan'] = True; st['papier'] = True
+gezien = set(st['gezien']); nieuw = 0; fout = ''
+try:
+    xml = haal(os.environ['BRON']).decode('utf-8', 'replace')
+    koppen = [html.unescape(re.sub(r'<!\[CDATA\[|\]\]>', '', m).strip()) for m in re.findall(r'(?s)<item>.*?<title>(.*?)</title>', xml)]
+except Exception as e:
+    koppen = []; fout = type(e).__name__
+for kop in koppen[:60]:
+    h = hashlib.sha256(kop.encode()).hexdigest()[:16]
+    if h in gezien: continue
+    gezien.add(h); st['gezien'].append(h)
+    c = deel(kop); m = munt(kop)
+    if c == 'neutraal' or not m: continue
+    st['vlaggen'].append({'t': int(NU), 'kop': kop[:200], 'categorie': c, 'symbool': m[0], 'gid': m[1], 'koers': koers(m[1]), 'koersUur': None, 'koersDag': None})
+    nieuw += 1
+for v in st['vlaggen']:   # nakijken na een uur en na een dag, nooit eerder en nooit overschrijven
+    if v.get('koersUur') is None and NU >= v['t'] + UUR: v['koersUur'] = koers(v['gid'])
+    if v.get('koersDag') is None and NU >= v['t'] + DAG: v['koersDag'] = koers(v['gid'])
+st['vlaggen'] = st['vlaggen'][-500:]; st['gezien'] = st['gezien'][-2000:]
+st['pauze'] = sorted({v['symbool'] for v in st['vlaggen'] if NU < v['t'] + DAG})
+st['t'] = int(NU); st['fout'] = fout; st['bron'] = 'CoinDesk (RSS, gratis, geen sleutel); koers: CoinGecko (gratis, geen sleutel)'
+tmp = os.environ['NF'] + '.t'; json.dump(st, open(tmp, 'w')); os.replace(tmp, os.environ['NF'])
+print('Nieuwsrem: %d kop(pen) gelezen, %d nieuwe vlag(gen); kopen op pauze (papier): %s%s' % (len(koppen), nieuw, ', '.join(st['pauze']) or 'niets', ('; de bron gaf ' + fout) if fout else ''))
+PY
+}
+nieuwsrem_stand() {   # voor het standverslag: aan, de bron, wat op pauze staat, de laatste vijf vlaggen
+  NF="$NIEUWSREM_F" python3 -I - <<'PY' 2>/dev/null || printf 'nog niet gedraaid\n'
+import os, json, time
+st = json.load(open(os.environ['NF']))
+print('aan voor de papierhandel; %s; laatst %s%s' % (st.get('bron', ''), time.strftime('%d-%m %H:%M', time.localtime(st.get('t', 0))), ('; de bron gaf ' + st['fout']) if st.get('fout') else ''))
+print('kopen op pauze (papier, 24 uur na een vlag): %s; verkopen doet de rem nooit, een order bestaat niet' % (', '.join(st.get('pauze') or []) or 'niets'))
+for v in (st.get('vlaggen') or [])[-5:]:
+    f = lambda x: ('%.2f' % x) if isinstance(x, (int, float)) else '?'
+    print('%s %s %s: %s (koers %s, na een uur %s, na een dag %s)' % (time.strftime('%d-%m %H:%M', time.localtime(v['t'])), v['categorie'], v['symbool'], v['kop'][:90], f(v.get('koers')), f(v.get('koersUur')), f(v.get('koersDag'))))
+PY
+}
 # >>> CONTROLE (678, 15 nov, eigenaar: "het 4-telefoonbrein"): DE CONTROLE-TELEFOON. Een TWEEDE model uit een ANDERE familie dan het brein kijkt elk
 # antwoord van het brein na (JA/NEE + een zin, met de kennisbank erbij). Dezelfde machinerie als het brein, maar in een EIGEN map
 # ($REK_MAP/controle): eigen vaste telefoon (serienummer, veld in de console), eigen poorten (8095 op de telefoon, 18095 hier), eigen map op de
@@ -10196,6 +10278,7 @@ for x in n["lessen"]:
   [ -f "$REK_MAP/les-wacht" ] && printf '    er wacht een les (sinds %s)\n' "$(date -d "@$(stat -c %Y "$REK_MAP/les-wacht")" '+%d-%m %H:%M' 2>/dev/null)"
   printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
+  printf '\n## Nieuwsrem (papierhandel)\n'; nieuwsrem_stand | sed 's/^/    /'
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Proef naast het huidige brein (brein-probeer)\n'; sed 's/^/    /' "$BREIN_PROBEER_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Snelheidsproef van het brein (brein-snelheid)\n'; sed 's/^/    /' "$BREIN_SNELHEID_F" 2>/dev/null || printf '    nog niet gedaan\n'
@@ -11344,6 +11427,7 @@ case "${1:-status}" in
   verhuis-ronde-los) verhuis_ronde "${2:-vanzelf}" ;;   # 678 (20 nov): na een verhuizing de vijf stappen
   controle-proef-los) rm -rf "$REK_MAP/controleproef.lock"; mkdir "$REK_MAP/controleproef.lock" 2>/dev/null && printf '%s\n' "$$" >"$REK_MAP/controleproef.lock/pid"; controle_proef; rm -rf "$REK_MAP/controleproef.lock" ;;   # 678 (21 nov): de controle-proef, los van de console
   controle-proef-tik) controle_proef_tik >/dev/null 2>&1 || true ;;
+  nieuwsrem-tik) nieuwsrem_tik ;;   # 678 (21 nov): de nieuwsrem, elk uur (alleen papierhandel)
   verhuis-tik) verhuis_tik >/dev/null 2>&1 || true ;;                    # 678 (20 nov): de rij-code van Veronica zelf op de rektelefoons (zonder QR)
   rijcode-auto) rijcode_auto >/dev/null 2>&1 || true ;;
   jarvis-proef) jarvis_proef_zet ;;               # 678 (14 nov): de telefoon aan de USB-kabel wordt de proeftelefoon (krijgt als enige een nieuwe JARVIS)
