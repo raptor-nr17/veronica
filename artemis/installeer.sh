@@ -1586,6 +1586,10 @@ def lus():
                 threading.Thread(target=doe_args, args=(['controle-proef-tik'], 120), daemon=True).start()   # 678 (21 nov): de controle-proef, een keer per kandidatenlijst
             if RONDE % 60 == 30:
                 threading.Thread(target=doe_args, args=(['nieuwsrem-tik'], 120), daemon=True).start()   # 678 (21 nov): de nieuwsrem, elk uur
+            if RONDE % 30 == 12:
+                threading.Thread(target=doe_args, args=(['searxng-auto'], 900), daemon=True).start()   # 678 (21 nov): SearXNG zelf starten (eigenaar: ja)
+            if RONDE % 30 == 20:
+                threading.Thread(target=doe_args, args=(['brein-beheer'], 300), daemon=True).start()   # 678 (21 nov): het brein kiest de volgende stap (stap 1)
             if RONDE % 5 == 2:
                 threading.Thread(target=doe_args, args=(['rijcode-auto'], 300), daemon=True).start()   # 678 (20 nov): een rektelefoon met een andere rij-code krijgt die van Veronica (zonder QR)
             if RONDE % 10 == 4:
@@ -6789,7 +6793,28 @@ status() {
 # versoepeld (alleen ons eigen rek gebruikt hem), en gebonden aan 127.0.0.1 -- alleen deze computer, en via Tailscale de eigen
 # telefoons. NOOIT open op het internet. settings.yml komt in ~/.artemis-rek/searxng.
 SEARX_MAP="$REK_MAP/searxng"
+# 678 (21 nov, eigenaar: "ja, laat ARTEMIS SearXNG zelf starten op de Chromebook"). De lus kijkt eens per half uur: draait de container niet, dan
+# start ARTEMIS hem zelf (searxng). Geen Docker? Dan een keer installeren met sudo zonder wachtwoord (lukt dat niet: een regel in het logboek,
+# nooit een wachtwoord vragen). Hoogstens eens per zes uur een poging; alleen 127.0.0.1 (zie searxng). Docker zonder groepsrecht: via sudo -n.
+SEARX_POGING_F="$REK_MAP/searxng-poging"
+searx_dk() { if docker ps >/dev/null 2>&1; then docker "$@"; else sudo -n docker "$@"; fi; }
+searxng_auto() {
+  local nu t; nu="$(date +%s)"
+  if command -v docker >/dev/null 2>&1 && [ -n "$(searx_dk ps --filter name=^searxng$ --format '{{.Names}}' 2>/dev/null)" ]; then return 0; fi
+  t="$(head -1 "$SEARX_POGING_F" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t:-0})) -lt "${SEARX_REM_S:-21600}" ] && return 0
+  printf '%s\n' "$nu" >"$SEARX_POGING_F" 2>/dev/null || true
+  if ! command -v docker >/dev/null 2>&1; then
+    if sudo -n true 2>/dev/null; then
+      logregel "SearXNG: Docker staat er niet; ik installeer hem (sudo zonder wachtwoord)."
+      sudo -n apt-get install -y docker.io >/dev/null 2>&1 && sudo -n usermod -aG docker "$(id -un)" >/dev/null 2>&1 || true
+    fi
+    command -v docker >/dev/null 2>&1 || { logregel "SearXNG: Docker staat er niet en installeren zonder wachtwoord lukte niet. In de Linux-terminal: sudo apt-get install -y docker.io"; return 0; }
+  fi
+  if SEARX_DOCKER=searx_dk searxng >/dev/null 2>&1; then logregel "SearXNG: zelf gestart op http://127.0.0.1:8888 (alleen deze computer)."
+  else logregel "SearXNG: starten lukte niet (staat Docker aan?); over zes uur probeer ik het opnieuw."; fi
+}
 searxng() {
+  local dk="${SEARX_DOCKER:-docker}"
   command -v docker >/dev/null 2>&1 || { zeg "Docker staat er niet. In Linux: 'sudo apt-get install -y docker.io' en 'sudo usermod -aG docker \$USER' (daarna opnieuw inloggen)."; return 1; }
   mkdir -p "$SEARX_MAP"
   local geheim; geheim="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
@@ -6810,8 +6835,8 @@ search:
 YML
     chmod 600 "$SEARX_MAP/settings.yml"
   fi
-  docker rm -f searxng >/dev/null 2>&1 || true
-  docker run -d --name searxng --restart unless-stopped \
+  "$dk" rm -f searxng >/dev/null 2>&1 || true
+  "$dk" run -d --name searxng --restart unless-stopped \
     -p 127.0.0.1:8888:8080 \
     -v "$SEARX_MAP:/etc/searxng" \
     docker.io/searxng/searxng:latest >/dev/null \
@@ -8773,6 +8798,98 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
 # vraag VERSLEUTELD op de relay; hier leest ARTEMIS hem (elke minuut, alleen als het brein antwoordt), vraagt het brein en legt het antwoord
 # versleuteld terug. Sleutel en onderwerpen uit de code van de vaste downloadlink (veld APK-link). Het brein ANTWOORDT alleen: hier wordt niets
 # uitgevoerd wat in een vraag staat. Een vraag tegelijk (slot), elke vraag een keer (kanaal-gezien), geen inhoud in een logboek.
+# 678 (21 nov, eigenaar: "de lokale AI moet zo slim worden dat hij dit allemaal autonoom doet ... begin met het kleinste stuk dat het brein vandaag
+# al zelf kan"). DE BEHEERRONDE DOOR HET BREIN, STAP 1. Wat Claude Code en Cowork nu doen -- de stand lezen en de volgende stap kiezen -- doet het brein
+# hier zelf, zonder internet: de CODE zet de feiten op een rij (rij-code per rektelefoon, of JARVIS antwoordt, de laatste les), het brein kiest EEN
+# actie uit een vaste lijst (niets, rijcode-zet, jarvis-waak, les-opnieuw) met een reden, en de CODE voert hem alleen uit als hij overeenkomt met de
+# vaste regel (beheer_verwacht). Zijn ze het oneens, dan gebeurt er niets en staat het verschil in het verslag. Het percentage "eens" laat zien wanneer
+# het brein meer zelf mag. Elke actie hoogstens drie keer per dag; nooit tijdens een les; een besluit dat geld kost of een account vraagt staat niet in
+# de lijst (dat blijft bij de eigenaar). Elk half uur, vanzelf.
+BEHEER_F="$REK_MAP/beheer-brein.json"
+BEHEER_ACTIES="niets rijcode-zet jarvis-waak les-opnieuw"
+beheer_feiten() {   # de feiten als korte regels (alleen wat de code zeker weet; nooit een code of adres)
+  local f t u n
+  for f in "$REK_MAP"/rijcode-*.uit; do [ -s "$f" ] || continue; read -r t u n <"$f"
+    printf '%s: %s\n' "${n:-telefoon}" "$(case "$u" in goed) echo 'rij-code goed, JARVIS antwoordt' ;; stil) echo 'JARVIS antwoordt niet' ;; *) echo 'andere rij-code dan Veronica' ;; esac)"; done
+  LES="$BREIN_LES_F" python3 -I -c 'import json,os,time
+try:
+    j = json.load(open(os.environ["LES"])); n = (j.get("rondes") or {}).get("na") or {}
+    print("laatste les: lesrij %s, %s/%s goed, %d uur geleden" % (j.get("rij"), n.get("goed"), n.get("van"), (time.time() - int(j.get("t") or 0)) // 3600))
+except Exception: print("laatste les: onbekend")' 2>/dev/null
+}
+beheer_verwacht() {   # de vaste regel (in deze volgorde): $1 = de feiten -> een actie uit BEHEER_ACTIES
+  local fe="$1"
+  printf '%s' "$fe" | grep -q 'andere rij-code dan Veronica' && { printf 'rijcode-zet'; return; }
+  printf '%s' "$fe" | grep -q 'JARVIS antwoordt niet' && { printf 'jarvis-waak'; return; }
+  printf '%s' "$fe" | grep -Eq 'laatste les: lesrij [0-9]+, ([0-9]|10)/10 goed, ([6-9]|[1-9][0-9]+) uur geleden' && ! printf '%s' "$fe" | grep -q ', 10/10 goed' && { printf 'les-opnieuw'; return; }
+  printf 'niets'
+}
+brein_beheer_tik() {
+  les_loopt && return 0
+  slot_levend "$REK_MAP/brein.lock" && return 0
+  local fe verw keus actie reden uitv="nee"
+  fe="$(beheer_feiten)"; verw="$(beheer_verwacht "$fe")"
+  keus="$(FEITEN="$fe" ACTIES="$BEHEER_ACTIES" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" ANTW="${BEHEER_ANTWOORD:-}" python3 -I - <<'PY' 2>/dev/null
+import os, json, re, urllib.request
+acties = os.environ['ACTIES'].split()
+v = ('Je bent de BEHEERDER van een rek telefoons. Hieronder staan de feiten. Kies precies EEN actie uit deze lijst:\n'
+     '- rijcode-zet: als een telefoon een andere rij-code heeft dan Veronica (dit gaat voor alles);\n'
+     '- jarvis-waak: als JARVIS op een telefoon niet antwoordt;\n'
+     '- les-opnieuw: als de laatste les niet 10/10 was en minstens zes uur geleden is;\n'
+     '- niets: als alles in orde is.\n'
+     'Antwoord ALLEEN met JSON: {"actie": "...", "reden": "een korte zin"}.\n\nFeiten:\n' + os.environ['FEITEN'][:1500])
+t = os.environ.get('ANTW') or ''
+if not t:
+    lijf = json.dumps({'messages': [{'role': 'user', 'content': v}], 'max_tokens': 120, 'temperature': 0, 'stream': False, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
+    try:
+        r = urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=150)
+        t = re.sub(r'(?s)<think>.*?</think>', '', json.loads(r.read(500000))['choices'][0]['message'].get('content') or '')
+    except Exception: t = ''
+m = re.search(r'\{.*?\}', t, re.S); a, z = 'geen-antwoord', ''
+if m:
+    try:
+        j = json.loads(m.group(0)); a = str(j.get('actie') or '').strip().lower(); z = re.sub(r'\s+', ' ', str(j.get('reden') or ''))[:160]
+    except Exception: a = 'onleesbaar'
+if a not in acties and a not in ('geen-antwoord', 'onleesbaar'): a = 'buiten-de-lijst'
+print(a + '\t' + z)
+PY
+)"
+  actie="${keus%%	*}"; reden="${keus#*	}"; [ "$reden" = "$keus" ] && reden=""
+  [ -n "$actie" ] || actie="geen-antwoord"
+  if [ "$actie" = "$verw" ] && [ "$actie" != niets ]; then
+    local dag tel; dag="$(date +%Y%m%d)"; tel="$(grep -c "^$dag $actie\$" "$REK_MAP/beheer-uitgevoerd" 2>/dev/null)"
+    if [ "${tel:-0}" -lt 3 ]; then
+      printf '%s %s\n' "$dag" "$actie" >>"$REK_MAP/beheer-uitgevoerd"; uitv="ja"
+      logregel "Beheerder (het brein): $actie -- ${reden:-geen reden gegeven}. De vaste regel is het eens; ik voer het uit."
+      case "$actie" in
+        rijcode-zet) RIJCODE_KIJK_S=0 rijcode_zet >/dev/null 2>&1 || true ;;
+        jarvis-waak) jarvis_waak >/dev/null 2>&1 || true ;;
+        les-opnieuw) ( setsid "$0" brein-les "" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("rij") or 1)' "$BREIN_LES_F" 2>/dev/null || echo 1)" </dev/null >>"$REK_MAP/console-brein-les.log" 2>&1 & ) 2>/dev/null ;;
+      esac
+    else uitv="rem"; fi
+  elif [ "$actie" != "$verw" ]; then
+    logregel "Beheerder (het brein) koos $actie, de vaste regel zegt $verw; niets gedaan."
+  fi
+  ACTIE="$actie" VERW="$verw" REDEN="$reden" UITV="$uitv" F="$BEHEER_F" python3 -I - <<'PY' 2>/dev/null
+import os, json, time
+try: st = json.load(open(os.environ['F']))
+except Exception: st = {'rondes': 0, 'eens': 0, 'uitgevoerd': 0, 'laatste': []}
+st['rondes'] += 1; e = os.environ['ACTIE'] == os.environ['VERW']; st['eens'] += 1 if e else 0; st['uitgevoerd'] += 1 if os.environ['UITV'] == 'ja' else 0
+st['laatste'] = (st['laatste'] + [{'t': int(time.time()), 'brein': os.environ['ACTIE'], 'regel': os.environ['VERW'], 'reden': os.environ['REDEN'][:160], 'uitgevoerd': os.environ['UITV']}])[-10:]
+json.dump(st, open(os.environ['F'], 'w'))
+PY
+  printf '%s|%s|%s\n' "$actie" "$verw" "$uitv"
+}
+beheer_stand() {
+  F="$BEHEER_F" python3 -I - <<'PY' 2>/dev/null || printf 'nog niet gedraaid\n'
+import os, json, time
+st = json.load(open(os.environ['F']))
+r, e = st.get('rondes', 0), st.get('eens', 0)
+print('%d rondes; het brein was het %d keer eens met de vaste regel (%d%%); %d keer uitgevoerd' % (r, e, (100 * e // r) if r else 0, st.get('uitgevoerd', 0)))
+for x in st.get('laatste', [])[-5:]:
+    print('%s brein: %s, regel: %s, uitgevoerd: %s%s' % (time.strftime('%d-%m %H:%M', time.localtime(x['t'])), x['brein'], x['regel'], x['uitgevoerd'], (' -- ' + x['reden']) if x.get('reden') else ''))
+PY
+}
 # 678 (21 nov, eigenaar: "de nieuwsrem mag aan voor de papierhandel; kies zelf een gratis nieuwsbron zonder kosten of sleutel"). DE NIEUWSREM.
 # Elk uur de openbare RSS-feed van CoinDesk (gratis, geen sleutel); elke NIEUWE kop wordt ingedeeld met DEZELFDE signaalwoorden als
 # tools/veronica/nieuwsrem.js (hack, insolventie, verbod, delisting, neutraal; check_brein vergelijkt de twee lijsten). Noemt een vlag een munt,
@@ -10278,6 +10395,7 @@ for x in n["lessen"]:
   [ -f "$REK_MAP/les-wacht" ] && printf '    er wacht een les (sinds %s)\n' "$(date -d "@$(stat -c %Y "$REK_MAP/les-wacht")" '+%d-%m %H:%M' 2>/dev/null)"
   printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
+  printf '\n## Beheerder: het brein kiest de volgende stap (stap 1)\n'; beheer_stand | sed 's/^/    /'
   printf '\n## Nieuwsrem (papierhandel)\n'; nieuwsrem_stand | sed 's/^/    /'
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Proef naast het huidige brein (brein-probeer)\n'; sed 's/^/    /' "$BREIN_PROBEER_F" 2>/dev/null || printf '    nog niet gedaan\n'
@@ -11431,7 +11549,9 @@ case "${1:-status}" in
   verhuis-ronde-los) verhuis_ronde "${2:-vanzelf}" ;;   # 678 (20 nov): na een verhuizing de vijf stappen
   controle-proef-los) rm -rf "$REK_MAP/controleproef.lock"; mkdir "$REK_MAP/controleproef.lock" 2>/dev/null && printf '%s\n' "$$" >"$REK_MAP/controleproef.lock/pid"; controle_proef; rm -rf "$REK_MAP/controleproef.lock" ;;   # 678 (21 nov): de controle-proef, los van de console
   controle-proef-tik) controle_proef_tik >/dev/null 2>&1 || true ;;
-  nieuwsrem-tik) nieuwsrem_tik ;;   # 678 (21 nov): de nieuwsrem, elk uur (alleen papierhandel)
+  nieuwsrem-tik) nieuwsrem_tik ;;
+  searxng-auto) searxng_auto >/dev/null 2>&1 || true ;;
+  brein-beheer) brein_beheer_tik >/dev/null 2>&1 || true ;;   # 678 (21 nov): de beheerronde door het brein (stap 1)   # 678 (21 nov): SearXNG zelf starten als hij niet draait   # 678 (21 nov): de nieuwsrem, elk uur (alleen papierhandel)
   verhuis-tik) verhuis_tik >/dev/null 2>&1 || true ;;                    # 678 (20 nov): de rij-code van Veronica zelf op de rektelefoons (zonder QR)
   rijcode-auto) rijcode_auto >/dev/null 2>&1 || true ;;
   jarvis-proef) jarvis_proef_zet ;;               # 678 (14 nov): de telefoon aan de USB-kabel wordt de proeftelefoon (krijgt als enige een nieuwe JARVIS)
