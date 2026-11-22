@@ -6839,6 +6839,16 @@ SEARX_MAP="$REK_MAP/searxng"
 # nooit een wachtwoord vragen). Hoogstens eens per zes uur een poging; alleen 127.0.0.1 (zie searxng). Docker zonder groepsrecht: via sudo -n.
 SEARX_POGING_F="$REK_MAP/searxng-poging"
 searx_dk() { if docker ps >/dev/null 2>&1; then docker "$@"; else sudo -n docker "$@"; fi; }
+searxng_stand() {   # 678 (22 nov): een regel voor het verslag -- draait hij, en antwoordt hij (alleen /healthz, geen zoekvraag)
+  command -v docker >/dev/null 2>&1 || { printf 'draait niet: Docker staat er niet (zie de besluiten voor de eigenaar)\n'; return 0; }
+  if [ -n "$(searx_dk ps --filter name=^searxng$ --format '{{.Names}}' 2>/dev/null)" ]; then
+    if curl -fsS -m 5 "http://127.0.0.1:8888/healthz" >/dev/null 2>&1; then printf 'draait, en antwoordt op 127.0.0.1:8888 (alleen deze computer)\n'
+    else printf 'de container draait, maar antwoordt nog niet\n'; fi
+  else
+    local t; t="$(head -1 "$SEARX_POGING_F" 2>/dev/null | tr -cd '0-9')"
+    printf 'draait niet%s; ARTEMIS probeert het zelf (hoogstens eens per zes uur)\n' "$([ -n "$t" ] && printf ', laatste poging %s' "$(date -d "@$t" '+%d-%m %H:%M' 2>/dev/null)")"
+  fi
+}
 searxng_auto() {
   local nu t; nu="$(date +%s)"
   if command -v docker >/dev/null 2>&1 && [ -n "$(searx_dk ps --filter name=^searxng$ --format '{{.Names}}' 2>/dev/null)" ]; then return 0; fi
@@ -7992,6 +8002,12 @@ les_loopt() {
 # verdeler niet). Erger: "pkill -f <pad>" trof de eigen shell (dat pad staat in de opdrachtregel van "sh -c ...") en stopte zichzelf eerst. Nu:
 # starten met het VOLLEDIGE pad, en stoppen/zoeken op de WERKMAP van het proces (pidof + /proc/<pid>/cwd) -- geen pkill -f meer.
 brein_kill_cmd() { printf '%s' "for p in \$(pidof llama-server); do [ \"\$(readlink /proc/\$p/cwd)\" = $BREIN_MAP_TEL ] && kill \$p; done; true"; }
+brein_servers() {   # $1 serienummer -> "2759 MB, draait 01:02:03, map brein; ..." voor ELKE llama-server op de telefoon (alleen lezen)
+  "$ADB" -s "$1" shell "for p in \$(pidof llama-server); do echo \"\$(awk '/VmRSS/{print int(\$2/1024)}' /proc/\$p/status) \$(ps -o etime= -p \$p | tr -d ' ') \$(basename \$(readlink /proc/\$p/cwd))\"; done" 2>/dev/null | tr -d '\r' | awk 'NF>=2{printf "%s MB, draait %s, map %s; ", $1, $2, ($3 == "" ? "?" : $3)}'
+}
+brein_serverfout() {   # $1 serienummer -> hoogstens twee foutregels uit server.log (alleen regels met een foutwoord), elk hoogstens 160 tekens
+  "$ADB" -s "$1" shell "grep -iE 'error|failed|abort|out of memory|signal' $BREIN_MAP_TEL/server.log 2>/dev/null | tail -n 2" 2>/dev/null | tr -d '\r' | grep -iE 'error|failed|abort|out of memory|signal' | cut -c1-160
+}
 brein_pids_cmd() { printf '%s' "for p in \$(pidof llama-server); do [ \"\$(readlink /proc/\$p/cwd)\" = $BREIN_MAP_TEL ] && echo \$p; done; true"; }
 # 678 (17 nov, gezien in de console: Qwen3.5-2B "het model naar de telefoon zetten mislukte" naar de S10 over Tailscale). Een groot bestand over
 # een tunnel breekt soms af, en een half bestand met de echte naam werd daarna voor een model aangezien. Nu: naar <doel>.deel, de grootte
@@ -8824,6 +8840,11 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
     esac
     local np; np="$("$ADB" -s "$s" shell "$(brein_pids_cmd)" 2>/dev/null | tr -d '\r' | grep -c '[0-9]')"
     [ "${np:-0}" -gt 1 ] 2>/dev/null && zeg "  LET OP: er draaien $np servers tegelijk in deze map (de waakhond stopt ze en start er een)"
+    # 678 (22 nov): het brein viel weg (verbinding verbroken midden in de meting, 4,4 GB geheugen voor een model van 2,4 GB). Nu staat er ALLE
+    # llama-servers op de telefoon, met geheugen, looptijd en map (een korte looptijd = hij is net herstart; een andere map = een tweede server
+    # van een proef), en de laatste foutregels van server.log (alleen regels met een foutwoord: nooit de tekst van een vraag).
+    local ls fl; ls="$(brein_servers "$s")"; [ -n "$ls" ] && zeg "  llama-servers op de telefoon: $ls"
+    fl="$(brein_serverfout "$s")"; [ -n "$fl" ] && printf '%s\n' "$fl" | while IFS= read -r x; do zeg "  server.log: $x"; done
     case "$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)" in
       dotprod) zeg "  llama-server: met dotprod en fp16 (armv8.2)" ;;
       basis) zeg "  llama-server: de basisversie (armv8.0, zonder dotprod)" ;;
@@ -10550,6 +10571,7 @@ except Exception: pass
 print("\n".join("    %s %s" % (time.strftime("%d-%m %H:%M", time.localtime(v.get("t") or 0)), v.get("tekst", "")) for v in b.values()) or "    geen")' 2>/dev/null
   printf '\n## Beheerder: het brein kiest de volgende stap (stap 1)\n'; beheer_stand | sed 's/^/    /'
   printf '\n## Nieuwsrem (papierhandel)\n'; nieuwsrem_stand | sed 's/^/    /'
+  printf '\n## SearXNG (de eigen zoekmachine op deze computer)\n'; { searxng_stand 2>/dev/null || printf 'onbekend\n'; } | sed 's/^/    /'   # 678 (22 nov): ook als het goed gaat, niet alleen een logregel bij een fout
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Proef naast het huidige brein (brein-probeer)\n'; sed 's/^/    /' "$BREIN_PROBEER_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Snelheidsproef van het brein (brein-snelheid)\n'; sed 's/^/    /' "$BREIN_SNELHEID_F" 2>/dev/null || printf '    nog niet gedaan\n'
