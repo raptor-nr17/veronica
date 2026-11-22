@@ -995,6 +995,9 @@ def reken_vraag(t):
 # "<a> <ding> per <tijdseenheid>" en ergens anders een getal met HETZELFDE ding, dan is het antwoord dat getal gedeeld door het tempo.
 def tempo_som(vraag):
     t = str(vraag or '').lower().replace(',', '.')
+    # 678 (22 nov, lesrij 10 "samen"/"accu"/"denktijd": drie fout in 0 s): met DRIE of meer getallen is het geen simpele tempovraag meer
+    # ("A 5 en B 3 per seconde, samen 400"; "60 procent, 4 per uur, stopt bij 15") -- dan rekent deze regel het verkeerde uit. Alleen twee getallen.
+    if len(re.findall(r'\d+(?:\.\d+)?', t)) != 2: return None
     m = re.search(r'(\d+(?:\.\d+)?)\s+([a-zà-ÿ]+)\s+per\s+(seconde|minuut|uur|dag|second|minute|hour|sekunde|minute|stunde)\b', t)
     if not m: return None
     a, ding = m.group(1), m.group(2)[:5]
@@ -1016,6 +1019,12 @@ def klok_som(vraag, kennis):
     t = str(vraag or '')
     m = re.search(r'\b([01]?\d|2[0-3])[:.]([0-5]\d)\b', t)
     if not m or not re.search(r'(?i)\bhoe ?laat\b', t): return None
+    # 678 (22 nov, lesrij 10 "klok": "Om 22:40 begint een meting van 35 minuten. Hoe laat is hij klaar?" ging mis): staat de duur in de VRAAG
+    # zelf (precies een keer "N minuten"), dan telt de code die op; anders zoals voorheen uit de kennis.
+    eigen = re.findall(r'(\d{1,3})\s*minuten', t[m.end():] + ' ' + t[:m.start()])
+    if len(eigen) == 1 and not re.search(r'(?i)\b(terug|retour|heen en weer)\b', t):
+        tot = int(m.group(1)) * 60 + int(m.group(2)) + int(eigen[0])
+        return '%s:%s + %s minuten = %02d:%02d' % (m.group(1), m.group(2), eigen[0], (tot // 60) % 24, tot % 60)
     vw = set(w[:6] for w in re.findall(r'[a-zà-ÿ]{5,}', t.lower()))
     regels = str(kennis or '').splitlines()
     # 678 (19 nov, lesrij 6 "veerretour": "om 13:40 heen en meteen terug" werd 13:40 + 80 = 15:00): gaat de vraag over HEEN EN TERUG, dan eerst
@@ -1053,9 +1062,14 @@ def feiten_som(vraag, kennis):
     a, b = waarden
     if soort == 'verschil' and float(a.replace(',', '.')) < float(b.replace(',', '.')): a, b = b, a
     return verdeler_som('%s %s %s' % (a, '+' if soort == 'samen' else '-', b))
-def reken_hulp(vraag, vraag_fn, kennis=''):
+# 678 (22 nov, lesrij 10 "past"): een ja/nee- of keuzevraag is geen som -- de rekenhulp gaf "3400 - (2500 + 1024) = -124" en het "nee" ontbrak.
+KEUZE_RE = re.compile(r'(?i)\b(ja of nee|yes or no|ja oder nein|kies (precies )?(een|één)|noem alleen de|welke van de)\b')
+def meerstaps(vraag):   # drie of meer getallen in een rekenvraag: een probleem van meer stappen, daar helpt nadenken
+    return len(re.findall(r'(?<![A-Za-z])\d+(?:[.,]\d+)?', str(vraag or ''))) >= 3 and reken_vraag(vraag)
+def reken_hulp(vraag, vraag_fn, kennis='', denk=False):
     k = klok_som(vraag, kennis) or feiten_som(vraag, kennis)
     if k: return k
+    if KEUZE_RE.search(str(vraag or '')): return None
     # 678 (18 nov, lesrij 2 "som2" werd 45 - 38 = 7 zodra de kennis meeging): de kennis alleen als de vraag een CODE noemt (F3, W4) of zelf
     # minder dan twee getallen heeft; een rekenverhaal met al zijn getallen in de vraag krijgt de oude, kale opdracht.
     _n = len(re.findall(r'(?<![A-Za-z])\d+(?:[.,]\d+)?', str(vraag or '')))
@@ -1070,10 +1084,21 @@ def reken_hulp(vraag, vraag_fn, kennis=''):
         sysm += (' De getallen staan in de KENNIS hieronder, niet in de vraag: zoek de juiste regel (de juiste route, het juiste ding) en gebruik '
                  'precies die getallen. Voorbeeld: "Ik wandel W4 en fiets F1, hoeveel km samen?" met de kennis "W4 is 12,6 km" en "F1 is 28,4 km" -> 12,6 + 28,4.'
                  '\n\nKENNIS:\n' + str(kennis)[:2500])
-    r = vraag_fn({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': str(vraag)[:600]}], 'max_tokens': 40, 'stream': False,
-                  'temperature': 0, 'chat_template_kwargs': {'enable_thinking': False}})
+    # 678 (22 nov, lesrij 10: een probleem van MEER stappen kreeg zonder nadenken de verkeerde som -- en de meting "met nadenken" dacht hier
+    # nooit na, want de rekenhulp kwam voor de denkstand). Met denk=True denkt het brein eerst na en schrijft de som daarna; de LAATSTE regel
+    # met een rekenteken telt.
+    if denk:
+        r = vraag_fn({'messages': [{'role': 'system', 'content': sysm + ' Denk eerst stap voor stap na; zet de som pas helemaal aan het eind, alleen.'},
+                                   {'role': 'user', 'content': str(vraag)[:600]}], 'max_tokens': 1024, 'stream': False,
+                      'temperature': 0, 'chat_template_kwargs': {'enable_thinking': True}}, timeout=360)
+    else:
+        r = vraag_fn({'messages': [{'role': 'system', 'content': sysm}, {'role': 'user', 'content': str(vraag)[:600]}], 'max_tokens': 40, 'stream': False,
+                      'temperature': 0, 'chat_template_kwargs': {'enable_thinking': False}})
     try: t = re.sub(r'(?s)<think>.*?</think>', '', str(r['choices'][0]['message'].get('content') or '')).strip()
     except Exception: return None
+    if denk:
+        regels = [x for x in t.splitlines() if re.search(r'\d\s*[-+x*:/]\s*[\d(]', x)]
+        t = regels[-1] if regels else (t.splitlines() or [''])[-1]
     t = (t.splitlines() or [''])[0].strip().strip('`').split('=')[0].strip().rstrip('.')
     if not t or 'geen' in t.lower(): return None
     t = re.sub(r'[A-Za-zà-ÿ]{2,}', ' ', t).strip()   # 678 (17 nov): "400 woorden : 5" -- de woorden eruit (niet de x van keer), de som blijft
@@ -2488,7 +2513,10 @@ class H(BaseHTTPRequestHandler):
             if som:
                 self._cors_json(200, json.dumps({'tekst': som, 'tps': None, 'ms': 0, 'bron': 'verdeler', 'controle_id': None})); return
             les = d.get('les') is True   # 678: de lesmeting meet het ECHTE pad, maar zonder de controle-telefoon erbij en met een vaste temperatuur
-            t0r = time.time(); som = reken_hulp(laatste, brein_vraag, kv0)
+            # 678 (22 nov): de rekenhulp denkt mee bij een probleem van meer stappen (eigenaar: "slimmer redeneren, zelfstandig problemen oplossen");
+            # een les mag dat vastzetten (de meting met en zonder nadenken).
+            denk_rh = d['denk'] if (les and isinstance(d.get('denk'), bool)) else meerstaps(laatste)
+            t0r = time.time(); som = reken_hulp(laatste, brein_vraag, kv0, denk=denk_rh)
             if som:
                 self._cors_json(200, json.dumps({'tekst': som + ' (de som van het brein, uitgerekend door de code)', 'tps': None, 'ms': int((time.time() - t0r) * 1000),
                                                  'bron': 'rekenhulp', 'controle_id': None})); return
@@ -9507,7 +9535,7 @@ print('**Redeneren: lesrij 10 zonder en met nadenken** (%s; %s; de code kijkt na
 print('')
 print('| vraag | zonder nadenken | met nadenken |'); print('|---|---|---|')
 for x, y in zip(u['lessen'], a['lessen']):
-    f = lambda z: ('goed' if z['goed'] else 'fout' + (' (' + z['waarom'] + ')' if z.get('waarom') else '')) + ', %ds' % (z.get('s') or 0)
+    f = lambda z: ('goed' if z['goed'] else 'fout') + ', %ds: ' % (z.get('s') or 0) + (z.get('antwoord') or '-').replace('|', '/').replace('\n', ' ')[:70]
     print('| %s | %s | %s |' % (x['id'], f(x), f(y)))
 print('')
 print('Zonder nadenken **%d/%d** (gemiddeld %d s per vraag), met nadenken **%d/%d** (gemiddeld %d s per vraag).' % (u['goed'], u['van'], gem(u), a['goed'], a['van'], gem(a)))
@@ -9525,7 +9553,8 @@ except Exception: print("nee")' 2>/dev/null || printf 'nee'
 }
 redeneer_tik() {   # een keer per model (en daarna eens per week) vanzelf, alleen als er geen les loopt
   les_loopt && return 0
-  local sig m t; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null)"; sig="$(head -1 "$REK_MAP/brein-redeneer.sig" 2>/dev/null)"
+  # 678 (22 nov): de handtekening draagt ook de MEETVERSIE -- een nieuwe denk-aanpak (rekenhulp denkt mee, klok uit de vraag) meet meteen opnieuw
+  local sig m t; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null) meet2"; sig="$(head -1 "$REK_MAP/brein-redeneer.sig" 2>/dev/null)"
   t="$(sed -n 2p "$REK_MAP/brein-redeneer.sig" 2>/dev/null | tr -cd '0-9')"
   [ "$sig" = "$m" ] && [ $(( $(date +%s) - ${t:-0} )) -lt 604800 ] && return 0
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
