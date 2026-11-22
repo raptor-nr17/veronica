@@ -1463,6 +1463,9 @@
     S.telefoons = metHartKaarten(l.telefoons);
     await Opslag.schrijf('telefoons', S.telefoons);
     if (namen.length) logRegel(`Nieuw bij de baas: ${namen.join(', ')}.`);
+    // 22 nov (gevonden op de trage runner): kwam deze ronde EERDER dan volgNieuweTelefoons, dan stond de nieuwe telefoon al in de lijst en kreeg
+    // het koppelscherm nooit "Erbij" en geen nieuwe QR. Staat dat scherm open, dan zegt deze ronde het nu ook.
+    if (namen.length && !$('scherm-koppel').hidden) { zegKoppel(`Erbij: ${namen.join(', ')}. Scan de nieuwe QR met de volgende telefoon.`, false); toonNieuweTelefoonQr('koppel'); }
     tekenLive();
   }
 
