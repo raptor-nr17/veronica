@@ -1474,7 +1474,12 @@ def herstart_als_nieuwer():
     try: subprocess.Popen([AREK, 'console'], stdin=subprocess.DEVNULL, start_new_session=True)
     except Exception: pass
     os._exit(0)
-RONDE = 0
+# 678 (22 nov, gezien in de stand: de beheerronde draaide sinds 10:21 niet meer, de redeneer-meting nooit). De taken in de lus hangen aan
+# RONDE % 30 (of % 60). Na elke herstart van de console (bij elke nieuwe versie) begon RONDE weer bij 0: op een dag met vaak bijwerken haalde
+# hij ronde 20 of 27 dus nooit. Nu wordt de teller BEWAARD en gaat hij na een herstart verder waar hij was.
+RONDE_F = os.path.join(REK, 'console-ronde')
+try: RONDE = int(open(RONDE_F).read().strip() or 0)
+except Exception: RONDE = 0
 LAATST_OPRUIM = -999
 def vrij_mb():
     try:
@@ -1568,6 +1573,10 @@ def lus():
             if RONDE % 10 == 0:
                 doe('zelf-bijwerken-stil')
             RONDE += 1
+            try:
+                with open(RONDE_F + '.t', 'w') as fh: fh.write(str(RONDE))
+                os.replace(RONDE_F + '.t', RONDE_F)
+            except Exception: pass
             herstart_als_nieuwer()
             schijfwacht()
             doe('scan')
