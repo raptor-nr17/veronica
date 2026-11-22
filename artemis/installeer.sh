@@ -8973,16 +8973,20 @@ v = ('Je bent de BEHEERDER van een rek telefoons. Hieronder staan de feiten. Kie
      '- searxng-start: als SearXNG niet draait;\n'
      '- les-opnieuw: als de laatste les niet 10/10 was en minstens zes uur geleden is;\n'
      '- niets: als alles in orde is.\n'
-     'Antwoord ALLEEN met JSON: {"actie": "...", "reden": "een korte zin"}.\n\nFeiten:\n' + os.environ['FEITEN'][:1500])
+     'Antwoord ALLEEN met JSON: {"actie": "...", "reden": "een korte zin"}.\n\nFeiten:\n' + os.environ['FEITEN'][:1500]
+     + '\n\nVoorbeeld van een goed antwoord: {"actie": "niets", "reden": "alles is in orde"}\nJouw antwoord (alleen de JSON):')
 t = os.environ.get('ANTW') or ''
+fout = ''
 if not t:
     denk = os.environ.get('DENK') == 'aan'
     lijf = json.dumps({'messages': [{'role': 'user', 'content': v}], 'max_tokens': 1144 if denk else 120, 'temperature': 0, 'stream': False, 'chat_template_kwargs': {'enable_thinking': denk}}).encode()
     try:
         r = urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=360 if denk else 150)
         t = re.sub(r'(?s)<think>.*?</think>', '', json.loads(r.read(500000))['choices'][0]['message'].get('content') or '')
-    except Exception: t = ''
-m = re.search(r'\{.*?\}', t, re.S); a, z = 'geen-antwoord', ''
+        fout = ''
+    except Exception as e: t = ''; fout = type(e).__name__
+# 678 (22 nov): "geen antwoord" werd twee dingen tegelijk (een time-out en een antwoord zonder JSON). Nu staat de reden erbij.
+m = re.search(r'\{.*?\}', t, re.S); a, z = 'geen-antwoord', ('fout: ' + fout) if fout else ('geen JSON in: ' + re.sub(r'\s+', ' ', t)[:80] if t.strip() else 'leeg antwoord')
 if m:
     try:
         j = json.loads(m.group(0)); a = str(j.get('actie') or '').strip().lower(); z = re.sub(r'\s+', ' ', str(j.get('reden') or ''))[:160]
