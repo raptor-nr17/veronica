@@ -1589,7 +1589,7 @@ def lus():
             if RONDE % 30 == 12:
                 threading.Thread(target=doe_args, args=(['searxng-auto'], 900), daemon=True).start()   # 678 (21 nov): SearXNG zelf starten (eigenaar: ja)
             if RONDE % 30 == 20:
-                threading.Thread(target=doe_args, args=(['brein-beheer'], 300), daemon=True).start()
+                threading.Thread(target=doe_args, args=(['brein-beheer'], 420), daemon=True).start()
             if RONDE % 30 == 27:
                 threading.Thread(target=doe_args, args=(['redeneer-tik'], 5400), daemon=True).start()   # 678 (22 nov): redeneren meten (een keer per model, daarna per week)   # 678 (21 nov): het brein kiest de volgende stap (stap 1)
             if RONDE % 5 == 2:
@@ -8951,7 +8951,10 @@ brein_beheer_tik() {
   slot_levend "$REK_MAP/brein.lock" && return 0
   local fe verw keus actie reden uitv="nee"
   fe="$(beheer_feiten)"; verw="$(beheer_verwacht "$fe")"
-  keus="$(FEITEN="$fe" ACTIES="$BEHEER_ACTIES" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" ANTW="${BEHEER_ANTWOORD:-}" python3 -I - <<'PY' 2>/dev/null
+  # 678 (22 nov, eigenaar: "slimmer redeneren en problemen zelfstandig oplossen"): NADENKEN IN DE BEHEERRONDE -- maar alleen als de meting
+  # (lesrij 10, brein-redeneer) laat zien dat het brein MET nadenken beter scoort dan zonder. Gemeten, niet gegokt; tijd speelt hier geen rol.
+  local denk=uit; [ "$(redeneer_winst)" = ja ] && denk=aan
+  keus="$(DENK="$denk" FEITEN="$fe" ACTIES="$BEHEER_ACTIES" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" ANTW="${BEHEER_ANTWOORD:-}" python3 -I - <<'PY' 2>/dev/null
 import os, json, re, urllib.request
 acties = os.environ['ACTIES'].split()
 v = ('Je bent de BEHEERDER van een rek telefoons. Hieronder staan de feiten. Kies precies EEN actie uit deze lijst:\n'
@@ -8964,9 +8967,10 @@ v = ('Je bent de BEHEERDER van een rek telefoons. Hieronder staan de feiten. Kie
      'Antwoord ALLEEN met JSON: {"actie": "...", "reden": "een korte zin"}.\n\nFeiten:\n' + os.environ['FEITEN'][:1500])
 t = os.environ.get('ANTW') or ''
 if not t:
-    lijf = json.dumps({'messages': [{'role': 'user', 'content': v}], 'max_tokens': 120, 'temperature': 0, 'stream': False, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
+    denk = os.environ.get('DENK') == 'aan'
+    lijf = json.dumps({'messages': [{'role': 'user', 'content': v}], 'max_tokens': 1144 if denk else 120, 'temperature': 0, 'stream': False, 'chat_template_kwargs': {'enable_thinking': denk}}).encode()
     try:
-        r = urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=150)
+        r = urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=360 if denk else 150)
         t = re.sub(r'(?s)<think>.*?</think>', '', json.loads(r.read(500000))['choices'][0]['message'].get('content') or '')
     except Exception: t = ''
 m = re.search(r'\{.*?\}', t, re.S); a, z = 'geen-antwoord', ''
@@ -9498,6 +9502,13 @@ print('Nadenken maakt het brein hier %s.' % ('SLIMMER' if a['goed'] > u['goed'] 
 PY
   logregel "Redeneren gemeten: $(tail -1 "$REDENEER_F" 2>/dev/null)"
   tail -n 2 "$REDENEER_F" 2>/dev/null
+}
+redeneer_winst() {   # ja = de laatste meting zegt: met nadenken MEER goed dan zonder (anders nee; geen meting = nee)
+  UITF="$REK_MAP/brein-redeneer-uit.json" AANF="$REK_MAP/brein-redeneer-aan.json" python3 -I -c 'import json, os
+try:
+    u = json.load(open(os.environ["UITF"]))["rondes"]["na"]["goed"]; a = json.load(open(os.environ["AANF"]))["rondes"]["na"]["goed"]
+    print("ja" if a > u else "nee")
+except Exception: print("nee")' 2>/dev/null || printf 'nee'
 }
 redeneer_tik() {   # een keer per model (en daarna eens per week) vanzelf, alleen als er geen les loopt
   les_loopt && return 0
