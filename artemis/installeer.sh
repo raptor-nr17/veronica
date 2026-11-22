@@ -1972,7 +1972,16 @@ class H(BaseHTTPRequestHandler):
                 with open(os.path.join(REK, 'kort-verslag.json')) as fh: kv = json.loads(fh.read() or '{}')
             except Exception: kv = {}
             lijst = [{'sleutel': k, 'tekst': str(v.get('tekst', ''))[:300], 't': v.get('t')} for k, v in b.items() if isinstance(v, dict)]
-            self._cors_json(200, json.dumps({'besluiten': lijst, 'verslag': kv}))
+            # 678 (22 nov): de pauzelijst van de nieuwsrem (alleen papierhandel, alleen kopen) -- Veronica geeft hem door aan de telefoons
+            try:
+                with open(os.path.join(REK, 'nieuwsrem.json')) as fh: nr = json.loads(fh.read() or '{}')
+            except Exception: nr = {}
+            nu_s = time.time(); pz = {}
+            for v in (nr.get('vlaggen') or [])[-200:]:
+                if not isinstance(v, dict) or not re.fullmatch(r'[A-Z0-9]{1,12}', str(v.get('symbool', ''))): continue
+                tot = int(v.get('t') or 0) + 86400
+                if tot > nu_s and tot > pz.get(v['symbool'], {}).get('tot', 0) / 1000: pz[v['symbool']] = {'symbool': v['symbool'], 'categorie': str(v.get('categorie', ''))[:20], 'tot': tot * 1000}
+            self._cors_json(200, json.dumps({'besluiten': lijst, 'verslag': kv, 'nieuwsrem': {'pauze': sorted(pz.values(), key=lambda x: x['symbool'])}}))
         elif p.path == '/brein/controle':
             # 678 (16 nov): het oordeel van de controle-telefoon ophalen (alleen lezen; een onbekend id = niets)
             cid = (q.get('id', [''])[0]).strip()
