@@ -8012,7 +8012,8 @@ les_loopt() {
 # starten met het VOLLEDIGE pad, en stoppen/zoeken op de WERKMAP van het proces (pidof + /proc/<pid>/cwd) -- geen pkill -f meer.
 brein_kill_cmd() { printf '%s' "for p in \$(pidof llama-server); do [ \"\$(readlink /proc/\$p/cwd)\" = $BREIN_MAP_TEL ] && kill \$p; done; true"; }
 brein_servers() {   # $1 serienummer -> "2759 MB, draait 01:02:03, map brein; ..." voor ELKE llama-server op de telefoon (alleen lezen)
-  "$ADB" -s "$1" shell "for p in \$(pidof llama-server); do echo \"\$(awk '/VmRSS/{print int(\$2/1024)}' /proc/\$p/status) \$(ps -o etime= -p \$p | tr -d ' ') \$(basename \$(readlink /proc/\$p/cwd))\"; done" 2>/dev/null | tr -d '\r' | awk 'NF>=2{printf "%s MB, draait %s, map %s; ", $1, $2, ($3 == "" ? "?" : $3)}'
+  # 22 nov (gezien op de S10): daar was VmRSS niet te lezen en schoven de velden op. Nu elk veld apart, met "?" als het er niet is.
+  "$ADB" -s "$1" shell "for p in \$(pidof llama-server); do r=\$(awk '/VmRSS/{print int(\$2/1024)}' /proc/\$p/status 2>/dev/null); e=\$(ps -o etime= -p \$p 2>/dev/null | tr -d ' '); m=\$(basename \$(readlink /proc/\$p/cwd 2>/dev/null) 2>/dev/null); echo \"\${r:-?} \${e:-?} \${m:-?}\"; done" 2>/dev/null | tr -d '\r' | awk 'NF==3{printf "%s MB, draait %s, map %s; ", $1, $2, $3}'
 }
 brein_serverfout() {   # $1 serienummer -> hoogstens twee foutregels uit server.log (alleen regels met een foutwoord), elk hoogstens 160 tekens
   "$ADB" -s "$1" shell "grep -iE 'error|failed|abort|out of memory|signal' $BREIN_MAP_TEL/server.log 2>/dev/null | tail -n 2" 2>/dev/null | tr -d '\r' | grep -iE 'error|failed|abort|out of memory|signal' | cut -c1-160
