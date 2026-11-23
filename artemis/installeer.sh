@@ -569,7 +569,7 @@ LOPEND = {'meet-hervat', 'start', 'bijwerken', 'rek-op', 'kabel-koppel', 'klaarz
 # 678 (15 nov): wat de rekdokter van Veronica hier mag vragen (/rekdok, met de rij-code). Elke handeling is een bestaande opdracht die de F8
 # overslaat en alleen het JARVIS-pakket aanraakt; jarvis-terugval alleen op de proeftelefoon (zet de bewaarde vrijgegeven JARVIS terug).
 REKDOK_ACTIES = ('jarvis-waak', 'meld-status', 'motor-status', 'jarvis-terugval', 'rijcode-zet', 'verhuis-ronde', 'jarvis-aan-kabel')
-TOEGESTAAN.update({'rijcode-zet', 'verhuis-ronde', 'jarvis-aan-kabel'}); LOPEND.update({'rijcode-zet', 'verhuis-ronde', 'jarvis-aan-kabel'})   # 678 (20 nov): de rij-code van Veronica op de telefoons (duurt tot twee minuten: op de achtergrond)
+TOEGESTAAN.update({'rijcode-zet', 'verhuis-ronde', 'jarvis-aan-kabel', 'wifi-check', 'isolatie-test'}); LOPEND.update({'rijcode-zet', 'verhuis-ronde', 'jarvis-aan-kabel', 'wifi-check', 'isolatie-test'})   # 678 (20 nov): de rij-code van Veronica op de telefoons (duurt tot twee minuten: op de achtergrond)
 REKDOK_LOPEND = {}
 # 678 (15 nov): het brein -- de llama-server op de brein-telefoon, bereikbaar via een adb-doorsturing op deze computer (BREIN_POORT_LOK).
 # Valt de doorsturing weg (adb opnieuw verbonden), dan zet brein_vraag hem een keer opnieuw op naar het bewaarde serienummer.
@@ -1785,6 +1785,8 @@ def lus():
                 doe('lokaal-auto')   # 592: lokaal model AANzetten zodra er een lokale server verschijnt ("standaard AAN")
             if RONDE % 10 == 2:
                 doe('meet-hervat')   # 678: een onderbroken Snelheid-meten-lezer na een console-herstart weer oppakken
+            if RONDE % 5 == 1:
+                threading.Thread(target=doe_args, args=(['wifi-wachter-tik'], 290), daemon=True).start()   # 678 (23 nov): de wifi-wachter (check + herstel zonder wachtwoord, Tailscale), elke vijf minuten
             if RONDE % 5 == 4:
                 threading.Thread(target=doe_args, args=(['verhuis-tik'], 600), daemon=True).start()   # 678 (20 nov): een ander netwerk = de verhuisronde; Tailscale uit = weer aan
                 threading.Thread(target=doe_args, args=(['controle-proef-tik'], 120), daemon=True).start()   # 678 (21 nov): de controle-proef, een keer per kandidatenlijst
@@ -1830,7 +1832,7 @@ button:hover{{background:#35508f}}pre{{background:#0a0f1e;border:1px solid #233;
 <p><a id=veronicaBrein href="/veronica-open" target=_blank style="display:inline-block;font-size:20px;padding:14px 18px;border-radius:12px;background:#1f6f43;color:#fff;text-decoration:none;min-height:48px">&#129504; Open Veronica, gekoppeld aan het brein</a><br><span style="font-size:18px">Een klik: Veronica op deze computer typt daarna rechtstreeks naar de lokale AI. Geen code nodig.</span></p>
 <div class=rij>
 <button data-cmd=start>Start ARTEMIS</button><button data-cmd=stop>Stop</button><button data-cmd=status>Status</button>
-<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=rijcode-zet>Rij-code van Veronica op de telefoons (zonder QR)</button><button data-cmd=jarvis-aan-kabel>JARVIS weer aan via de kabel (van Uit naar Aan)</button><button data-cmd=verhuis-ronde>Na een verhuizing: alles nalopen (wifi, Tailscale, koppelen, rollen)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=brein-rol>Brein op de brein-telefoon (ook draadloos, veegt hem schoon)</button><button data-cmd=brein-kabel>Brein op de telefoon aan de USB-kabel (veegt hem schoon)</button><button data-cmd=brein-start>Brein starten (typen naar een telefoon)</button><button data-cmd=brein-status>Brein: status</button><button data-cmd=brein-les>Brein: les en meting (voor/na)</button><button data-cmd=brein-les2>Brein: lesrij 2 (moeilijker)</button><button data-cmd=brein-redeneer>Brein: redeneren meten (zonder en met nadenken)</button><button data-cmd=brein-les3>Brein: lesrij 3 (echte vragen)</button><button data-cmd=controle-status>Controle: status</button><button data-cmd=controle-stop>Controle stoppen</button><button data-cmd=verdeler-status>Verdeler: status</button><button data-cmd=verdeler-stop>Verdeler stoppen</button><button data-cmd=stand-tik>Standverslag nu</button><button data-cmd=brein-stop>Brein stoppen</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
+<button data-cmd=kabel-koppel>Koppel aan Veronica (via de kabel)</button><button data-cmd=rijcode-zet>Rij-code van Veronica op de telefoons (zonder QR)</button><button data-cmd=jarvis-aan-kabel>JARVIS weer aan via de kabel (van Uit naar Aan)</button><button data-cmd=verhuis-ronde>Na een verhuizing: alles nalopen (wifi, Tailscale, koppelen, rollen)</button><button data-cmd=wifi-check>Wifi-check per telefoon (+ isolatietest)</button><button data-cmd=isolatie-test>Isolatietest (zien de telefoons elkaar?)</button><button data-cmd=meld-status>Melden bij Veronica: controle</button><button data-cmd=motor-status>Motor en spraak: status</button><button data-cmd=duurtest-start>Duurtest start (24 u)</button><button data-cmd=duurtest-uitslag>Duurtest-uitslag</button><button data-cmd=duurtest-stop>Duurtest stop</button><button data-cmd=voortgang>Voortgang</button><button data-cmd=zelfronde>Zelfronde nu</button><button data-cmd=gemini-wissel>Gemini: uit/aan</button><button data-cmd=scan>Zoek telefoons</button><button data-cmd=beheerder>Beheerder: rek nakijken + herstellen</button><button data-cmd=jarvis-waak>JARVIS nakijken</button><button data-cmd=lokaal>Lokaal model</button><button data-cmd=lokaal-uit>Lokaal uit</button><button data-cmd=alleen-kijken>Alleen kijken: aan</button><button data-cmd=alleen-kijken-uit>Alleen kijken: uit</button><button data-cmd=cat-kijk>Cat: kijken</button><button data-cmd=cat-ruim>Cat: opruimen</button><button data-cmd=duraspeed-uit>DuraSpeed uit</button><button data-cmd=kennisboek-kijk>Kennisboek: kijken</button><button data-cmd=kennisboek-deel>Kennisboek: delen</button><button data-cmd=kennisboek-terug>Kennisboek: terugzetten</button><button data-cmd=hardware>Hardware per telefoon</button><button data-cmd=motor-meet>Snelheid meten (llama-bench)</button><button data-cmd=meetuitslag>Meetuitslag</button><button data-cmd=motor-zoek>F8 terugvinden</button><button data-cmd=f8-kabel>F8-adres via de kabel (alleen lezen)</button><button data-cmd=scherm-lees>Scherm als tekst lezen</button><button data-cmd=versies>JARVIS-versie per telefoon</button><button data-cmd=jarvis-proef>Proef: nieuwe JARVIS op de telefoon aan de USB-kabel</button><button data-cmd=jarvis-terugval>Terugval: proeftelefoon terug naar de vrijgegeven JARVIS</button><button data-cmd=jarvis-proef-uit>Proef stoppen</button><button data-cmd=spraak-proef>Proef: stem en oor aan op de proeftelefoon</button><button data-cmd=brein-rol>Brein op de brein-telefoon (ook draadloos, veegt hem schoon)</button><button data-cmd=brein-kabel>Brein op de telefoon aan de USB-kabel (veegt hem schoon)</button><button data-cmd=brein-start>Brein starten (typen naar een telefoon)</button><button data-cmd=brein-status>Brein: status</button><button data-cmd=brein-les>Brein: les en meting (voor/na)</button><button data-cmd=brein-les2>Brein: lesrij 2 (moeilijker)</button><button data-cmd=brein-redeneer>Brein: redeneren meten (zonder en met nadenken)</button><button data-cmd=brein-les3>Brein: lesrij 3 (echte vragen)</button><button data-cmd=controle-status>Controle: status</button><button data-cmd=controle-stop>Controle stoppen</button><button data-cmd=verdeler-status>Verdeler: status</button><button data-cmd=verdeler-stop>Verdeler stoppen</button><button data-cmd=stand-tik>Standverslag nu</button><button data-cmd=brein-stop>Brein stoppen</button><button data-cmd=spraak-test>Proef: stem en oor testen (zin heen en terug)</button><button data-cmd=spraak-proef-uit>Stem en oor uit op de proeftelefoon</button><button data-cmd=rek-zoek>Rektelefoons koppelen</button><button data-cmd=rek-op>Rek opbouwen</button><button data-cmd=rek-lijst>Relay-lijst lezen</button><button data-cmd=rek-diag>Relay: waarom leeg?</button><button data-cmd=rek-hotspot>Eigen rek-netwerk (hotspot, voor later)</button><button data-cmd=tailscale>Tailscale op deze Chromebook (inloggen)</button><button data-cmd=tailscale-telefoon>Tailscale op de telefoons (kabel)</button><button data-cmd=rek-tailscale>Rek via Tailscale (overal bereikbaar)</button><button data-cmd=wifi-hotspot-test>Wifi+hotspot tegelijk? (lezen)</button><button data-cmd=draadloos-auto>Draadloos maken</button><button data-cmd=kabel-koppel>Koppel via de kabel (blijft draadloos)</button><button data-cmd=klaarzetten>Telefoon klaarzetten (aan de kabel)</button><button data-cmd=vergeet>Vergeet overgeslagen</button><button data-cmd=bijwerken>Bijwerken</button><button data-cmd=opruimen>Ruim op</button><button data-cmd=log>Log</button></div>
 <p><a href="/wand" target=_blank><b>&#128241; Schermenwand</b></a> &mdash; de schermen van de rektelefoons draadloos naast elkaar, kijken en bedienen (nooit de F8, nooit bank-/kluis-apps).</p>
 <p><a href="/gezond" target=_blank><b>&#9989; Status in platte tekst</b></a> &mdash; console, ARTEMIS, de poort en de wand-telefoons in een keer leesbaar (geen ververste pagina). Open deze console altijd via <b>penguin.linux.test</b>, NIET via localhost.</p>
 <p>ARTEMIS zelf opent op de poort die <b>Status</b> noemt (onze gok is <a href="http://penguin.linux.test:{ap}" target=_blank>penguin.linux.test:{ap}</a>, maar de echte poort kan afwijken). Start duurt de eerste keer een paar minuten; druk daarna op Status.</p>
@@ -6708,7 +6710,7 @@ rek_hotspot() {   # rek-hotspot [basis-serial]: zet het eigen rek-netwerk op; ba
   [ -n "$basis" ] || { zeg "Geen toegestane rektelefoon om de hotspot-basis te zijn (nooit de F8). Koppel er eerst een."; return 1; }
   bnaam="$(toestel_naam "$basis")"
   printf '%s\n' "$(toestel_id "$basis")" > "$REK_BASIS_F" 2>/dev/null || true
-  if "$ADB" -s "$basis" shell cmd wifi start-softap "$ssid" wpa2 "$pw" >/dev/null 2>&1; then
+  if wifi_kan "$basis" start-softap && "$ADB" -s "$basis" shell cmd wifi start-softap "$ssid" wpa2 "$pw" >/dev/null 2>&1; then   # 678 (23 nov): alleen als het in zijn 'cmd wifi help' staat
     zeg "$bnaam is nu de hotspot-basis: netwerk \"$ssid\"."
   else
     zeg "$bnaam: de hotspot starten lukte niet via adb (cmd wifi start-softap -- niet elke Android-versie kan dit). Zet de hotspot één keer met de hand aan (naam \"$ssid\"; het wachtwoord staat in $REK_SSID_F); daarna verbinden de andere telefoons."
@@ -6718,7 +6720,7 @@ rek_hotspot() {   # rek-hotspot [basis-serial]: zet het eigen rek-netwerk op; ba
     is_f8 "$s" && continue
     id="$(toestel_id "$s")"; toegestaan "$id" || continue
     naam="$(toestel_naam "$s")"
-    if "$ADB" -s "$s" shell cmd wifi connect-network "$ssid" wpa2 "$pw" >/dev/null 2>&1; then
+    if wifi_kan "$s" connect-network && "$ADB" -s "$s" shell cmd wifi connect-network "$ssid" wpa2 "$pw" >/dev/null 2>&1; then
       zeg "$naam verbindt met het rek-netwerk \"$ssid\"."; n=$((n+1))
     else
       zeg "$naam: kon niet via adb met \"$ssid\" verbinden (cmd wifi connect-network -- niet elke Android-versie kan dit). Verbind hem één keer met de hand met \"$ssid\"."
@@ -7525,6 +7527,7 @@ wifi_doorgeven() {
   ssid="$(sed -n 's/^SSID=//p' "$conf" | head -1)"; ww="$(sed -n 's/^WW=//p' "$conf" | head -1)"
   [ -n "$ssid" ] || { zeg "  - de bewaarde wifi heeft geen SSID; plak hem opnieuw."; return 1; }
   if "$ADB" -s "$s" shell ip -o -4 addr show wlan0 2>/dev/null | grep -q 'inet '; then zeg "  - $naam heeft al wifi."; return 0; fi
+  wifi_kan "$s" connect-network || { zeg "  - $naam kent 'cmd wifi connect-network' niet (staat niet in zijn 'cmd wifi help'); zet het wifi eenmalig met de hand."; return 1; }
   if "$ADB" -s "$s" shell cmd wifi connect-network "$ssid" wpa2 "$ww" >/dev/null 2>&1; then zeg "  - wifi van deze plek doorgegeven aan $naam (SSID: $ssid; wachtwoord niet getoond)."; else zeg "  - wifi doorgeven lukte niet op $naam (cmd wifi niet beschikbaar of Android < 11?); zet het wifi eenmalig met de hand."; return 1; fi
   sleep 4
   if "$ADB" -s "$s" shell ip -o -4 addr show wlan0 2>/dev/null | grep -q 'inet '; then zeg "  - $naam is nu op het wifi."; else zeg "  - $naam is nog niet op het wifi (kan even duren; controleer SSID/wachtwoord)."; fi
@@ -7542,7 +7545,7 @@ wifi_hotspot_test() {
     toegestaan "$(toestel_id "$s")" || continue
     naam="$(toestel_naam "$s")"; [ -z "$naam" ] && continue
     zeg "== Wifi + hotspot tegelijk? (alleen lezen) op $naam =="
-    feat="$("$ADB" -s "$s" shell cmd wifi get-softap-supported-features 2>/dev/null | tr -d '\r' | tr '\n' ' ')"
+    feat=""; wifi_kan "$s" get-softap-supported-features && feat="$("$ADB" -s "$s" shell cmd wifi get-softap-supported-features 2>/dev/null | tr -d '\r' | tr '\n' ' ')"
     [ -n "$feat" ] && zeg "  - softap-features: $(printf '%s' "$feat" | sed 's/  */ /g' | cut -c1-240)"
     con="$("$ADB" -s "$s" shell dumpsys wifi 2>/dev/null | tr -d '\r' | grep -iE 'concurren|staapconcurrency|sta.?\+?.?ap|bridged' | head -4 | tr '\n' ' ')"
     [ -n "$con" ] && zeg "  - dumpsys-aanwijzingen: $(printf '%s' "$con" | sed 's/  */ /g' | cut -c1-240)"
@@ -11026,6 +11029,10 @@ for x in n["lessen"]:
     printf '    %s: %s (%s)\n' "${_rn:-?}" "$(case "$_ru" in goed) echo 'neemt de rij-code van Veronica aan' ;; stil) echo 'JARVIS antwoordde niet' ;; *) echo 'had een andere rij-code; de goede is via de brievenbus gestuurd' ;; esac)" "$(date -d "@${_rt:-0}" '+%d-%m %H:%M' 2>/dev/null)"; done
   [ -n "$_any" ] || printf '    nog niet nagekeken\n'
   printf '\n## JARVIS op de rol-telefoons\n    %s\n' "$(head -1 "$JARVIS_WEK_F" 2>/dev/null || echo 'nog niet nagekeken')"
+  # 678 (23 nov): de wifi-wachter, de wifi-check per telefoon en de isolatietest (alleen lezen; nooit een wachtwoord)
+  printf '\n## Wifi-wachter (elke vijf minuten)\n'; if [ -s "$WIFI_WACHT_F" ]; then sed 's/^/    /' "$WIFI_WACHT_F"; else printf '    nog niet gedraaid\n'; fi
+  local _wc; for _wc in "$WIFI_CHECK_MAP"/*.txt; do [ -s "$_wc" ] || continue; [ -z "${_wck:-}" ] && { printf '\n## Wifi per telefoon (laatste check)\n'; _wck=1; }; sed 's/^/    /' "$_wc"; done; unset _wck
+  [ -s "$ISOLATIE_F" ] && { printf '\n## Isolatietest (zien de telefoons elkaar op dit wifi?)\n'; sed 's/^/    /' "$ISOLATIE_F"; }
   [ -s "$VERHUIS_F" ] && { printf '\n## Laatste verhuisronde (wifi, Tailscale, koppelen, rollen)\n'; sed 's/^/    /' "$VERHUIS_F"; }
   # 678 (20 nov): per rektelefoon (niet het brein, nooit de F8) waarom JARVIS wel of niet luistert -- alleen lezen
   printf '\n## JARVIS per telefoon (diagnose)\n'
@@ -11442,6 +11449,7 @@ wifi_plek_zet() {
   [ -s "$conf" ] || { printf 'GEEN-CONF'; return 0; }
   ssid="$(sed -n 's/^SSID=//p' "$conf" | head -1)"; ww="$(sed -n 's/^WW=//p' "$conf" | head -1)"
   [ -n "$ssid" ] || { printf 'GEEN-CONF'; return 0; }
+  wifi_kan "$s" connect-network || { printf 'MISLUKT'; return 0; }   # 678 (23 nov): alleen een opdracht die in 'cmd wifi help' van deze telefoon staat
   timeout 20 "$ADB" -s "$s" shell svc wifi enable >/dev/null 2>&1 || true
   if [ -n "$ww" ]; then timeout 30 "$ADB" -s "$s" shell cmd wifi connect-network "$ssid" wpa2 "$ww" >/dev/null 2>&1 && { printf 'GEZET'; return 0; }
   else timeout 30 "$ADB" -s "$s" shell cmd wifi connect-network "$ssid" open >/dev/null 2>&1 && { printf 'GEZET'; return 0; }; fi
@@ -11570,6 +11578,360 @@ ts_telefoon_aan() {
   ip="$(tel_ts_ip "$s")"; [ -n "$ip" ] && { printf 'AAN %s' "$ip"; return 0; }
   printf 'NIET'
 }
+# >>> WIFI-WACHTER (678, 23 nov, eigenaar: "na een verhuizing wil ik zelf niets meer met de hand doen")
+# Zeven stukken, in de volgorde van de eigenaar:
+#  1) wifi_check: per telefoon via adb -- Android-versie, wifi aan/uit, opgeslagen netwerken, zichtbare netwerken en de REDEN als Android een
+#     opgeslagen netwerk heeft uitgeschakeld (uit dumpsys wifi, alleen gelezen);
+#  2) wifi_help: 'cmd wifi help' per telefoon bewaard (per model en Android-build) en als bijlage naar de repo; wifi_kan/wifi_cmd gebruiken
+#     ALLEEN opdrachten die daarin staan -- staat een opdracht er niet in, dan doen we hem niet;
+#  3) wifi_herstel: ZONDER wachtwoord -- wifi uit en weer aan (op de telefoon zelf losgekoppeld, zodat het ook lukt als adb over dat wifi loopt)
+#     en scannen-altijd-beschikbaar aan; dat haalt de wachttijd na fouten (tot 18 uur) weg. Pas als dat niet hielp: het wifi van deze plek;
+#  4) captive_portal_mode 0 en captive_portal_detection_enabled 0 (JARVIS doet dat bij elke start; ARTEMIS zet het via adb en kijkt het na);
+#  5) wifi_wachter_tik: elke vijf minuten 1 en 3, en een melding welke telefoon niet terugkomt (alleen bij een verandering);
+#  6) Tailscale als altijd-aan-VPN met 'blokkeren zonder VPN' UIT, en Tailscale herstarten als een telefoon er niet in staat;
+#  7) isolatie_test: zien de telefoons elkaar op dit wifi (gastnetwerken isoleren vaak)?
+# NOOIT de F8, alleen telefoons van de lijst. Nooit een wachtwoord in een log of verslag. Opgeslagen netwerken staan met naam in het verslag (eigen
+# netwerken); van ZICHTBARE netwerken alleen het aantal en of de eigen netwerken erbij zitten -- de namen van andermans netwerken niet.
+WIFI_HELP_MAP="$REK_MAP/wifi-help"
+WIFI_CHECK_MAP="$REK_MAP/wifi-check"
+WIFI_WACHT_F="$REK_MAP/wifi-wachter.txt"
+WIFI_WACHT_ST="$REK_MAP/wifi-wachter.st"
+WIFI_GEZIEN_F="$REK_MAP/wifi-gezien"
+ISOLATIE_F="$REK_MAP/isolatie.txt"
+tel_bestandsnaam() { toestel_naam "$1" | tr -cd 'A-Za-z0-9._-' | cut -c1-40; }
+# 2) 'cmd wifi help' van deze telefoon (een keer per model + Android-build); echoot het pad, of faalt als de telefoon geen cmd wifi kent
+wifi_help() {
+  local s="$1" fp m f rel
+  fp="$(timeout 10 "$ADB" -s "$s" shell getprop ro.build.fingerprint 2>/dev/null | tr -d '\r')"
+  m="$(tel_bestandsnaam "$s")"; m="${m:-telefoon}"
+  f="$WIFI_HELP_MAP/$m-$(printf '%s' "${fp:-onbekend}" | sha256sum | cut -c1-8).txt"
+  [ -s "$f" ] && { printf '%s' "$f"; return 0; }
+  mkdir -p "$WIFI_HELP_MAP" 2>/dev/null || return 1
+  timeout 20 "$ADB" -s "$s" shell cmd wifi help 2>/dev/null | tr -d '\r' >"$f.t" 2>/dev/null
+  # een echte help-tekst noemt minstens een opdracht met een uitleg eronder; "Can't find service" of leeg = geen cmd wifi op deze telefoon
+  if [ "$(grep -cE '^ {2}[a-z][a-z0-9-]+' "$f.t" 2>/dev/null)" -ge 3 ] && ! grep -qi "can't find service" "$f.t"; then
+    rel="$(timeout 10 "$ADB" -s "$s" shell getprop ro.build.version.release 2>/dev/null | tr -cd '0-9.')"
+    { printf '# cmd wifi help -- %s, Android %s (build %s)\n# bewaard door ARTEMIS op %s; ARTEMIS gebruikt ALLEEN opdrachten die hieronder staan.\n\n' "$m" "${rel:-?}" "$(printf '%s' "${fp:-onbekend}" | sha256sum | cut -c1-8)" "$(date '+%d-%m-%Y')"; cat "$f.t"; } >"$f"
+    rm -f "$f.t"; printf '%s\n' "$m-android${rel:-onbekend}" >"$f.naam"
+    printf '%s' "$f"; return 0
+  fi
+  rm -f "$f.t"; return 1
+}
+wifi_kan() {   # $1 serie, $2 opdracht -> 0 als die opdracht in 'cmd wifi help' van deze telefoon staat
+  local f; f="$(wifi_help "$1")" || return 1
+  grep -qE "^ {2}$2( |$)" "$f"
+}
+wifi_cmd() {   # $1 serie, $2 opdracht, rest = argumenten -> cmd wifi ... ALLEEN als de opdracht in de help staat (anders 2, en niets gedaan)
+  local s="$1"; shift
+  wifi_kan "$s" "$1" || return 2
+  timeout 30 "$ADB" -s "$s" shell cmd wifi "$@"
+}
+# 2) de help-teksten als bijlage naar de repo (via de relay; de workflow schrijft ze in docs/wifi-help/). Hoogstens eens per 20 uur per bestand:
+# de relay bewaart een dag, en zo staat er altijd een complete versie klaar voor de volgende stand-run.
+wifi_help_stuur() {
+  local f naam nu t
+  for f in "$WIFI_HELP_MAP"/*.txt; do [ -s "$f" ] || continue
+    naam="$(head -1 "$f.naam" 2>/dev/null | tr -cd 'A-Za-z0-9._-')"; [ -n "$naam" ] || continue
+    nu="$(date +%s)"; t="$(head -1 "$f.gestuurd" 2>/dev/null | tr -cd '0-9')"; t="${t:-0}"
+    [ $((nu - t)) -lt 72000 ] && continue
+    [ "$(bijlage_stuur "docs/wifi-help/$naam.txt" "$f")" = OK ] && printf '%s\n' "$nu" >"$f.gestuurd"
+  done
+}
+# een tekstbestand als bijlage op de relay: in stukken (elk gecomprimeerd en versleuteld, zoals de stand), met de sha256 van het geheel.
+# Alleen een pad onder docs/wifi-help/ (de workflow neemt ook niets anders aan). -> OK | NEE
+bijlage_stuur() {
+  local pad="$1" f="$2" link code base
+  printf '%s' "$pad" | grep -qE '^docs/wifi-help/[A-Za-z0-9._-]{1,80}\.txt$' || { printf 'NEE'; return 0; }
+  link="$(head -1 "$REK_MAP/apk-link" 2>/dev/null | tr -d '\r\n ')"
+  code="$(printf '%s' "$link" | sed -n 's#^https://[a-z0-9.-]*/jarvis-app/\([a-z2-9]\{10\}\)$#\1#p')"
+  base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$code" ] || { printf 'NEE'; return 0; }
+  case "$base" in https://*.workers.dev|https://*.workers.dev/) : ;; *) printf 'NEE'; return 0 ;; esac
+  rek_zorg_crypto >/dev/null 2>&1 || true
+  CODE="$code" BASE="$base" PAD="$pad" BESTAND="$f" "$(rek_py)" -I - <<'PY' 2>/dev/null || printf 'NEE'
+import os, json, hashlib, time, zlib, urllib.request
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+code = os.environ['CODE']; base = os.environ['BASE'].rstrip('/')
+h = lambda s: hashlib.sha256(s.encode()).hexdigest()
+key = hashlib.sha256(('lokale-ai-sleutel:' + code).encode()).digest()
+tekst = open(os.environ['BESTAND'], encoding='utf-8', errors='replace').read()[:200000]
+sha = hashlib.sha256(tekst.encode()).hexdigest()
+STUK = 6000
+stukken = [tekst[i:i + STUK] for i in range(0, len(tekst), STUK)] or ['']
+topic = 'lb' + h('lokale-ai-bijlage:' + code)[:30]
+op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+for i, st in enumerate(stukken):
+    uit = {'v': 1, 'soort': 'bijlage', 'pad': os.environ['PAD'], 'sha': sha, 'deel': i + 1, 'van': len(stukken), 'stuk': st, 't': int(time.time() * 1000)}
+    iv = os.urandom(12); ct = AESGCM(key).encrypt(iv, zlib.compress(json.dumps(uit).encode(), 9), None)
+    lijf = json.dumps({'topic': topic, 'message': json.dumps({'iv': iv.hex(), 'data': ct.hex(), 'z': 1})}).encode()
+    op.open(urllib.request.Request(base + '/', data=lijf, headers={'Content-Type': 'application/json', 'User-Agent': 'artemis'}), timeout=20).read()
+print('OK')
+PY
+}
+# 1) DE WIFI-CHECK. Schrijft $WIFI_CHECK_MAP/<sl>.txt (leesbare regels voor het verslag) en echoot de stand: OK | GEEN-INTERNET | GEEN-WIFI | WIFI-UIT.
+# Licht: eerst wat altijd nodig is; dumpsys wifi (groot) alleen gefilterd op de telefoon zelf, en alleen als hij NIET goed op het wifi zit of
+# met "vol" (de knop, en eens per uur).
+wifi_check() {
+  local s="$1" vol="${2:-}" sl d st m rel sdk aan stat lijst scan uitz cp1 cp2 sa w
+  sl="$(tel_sl "$s")"; d="$(mktemp -d)"; mkdir -p "$WIFI_CHECK_MAP" 2>/dev/null
+  m="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"
+  rel="$(timeout 10 "$ADB" -s "$s" shell getprop ro.build.version.release 2>/dev/null | tr -cd '0-9.')"
+  sdk="$(timeout 10 "$ADB" -s "$s" shell getprop ro.build.version.sdk 2>/dev/null | tr -cd '0-9')"
+  aan="$(timeout 10 "$ADB" -s "$s" shell settings get global wifi_on 2>/dev/null | tr -d '\r\n ')"
+  wifi_cmd "$s" status >"$d/status" 2>/dev/null || true
+  w="$(tel_wifi_stand "$s")"
+  st=OK; case "$w" in geen-wifi) st=GEEN-WIFI ;; geen-internet) st=GEEN-INTERNET ;; esac
+  if grep -qi 'wifi is disabled' "$d/status" 2>/dev/null || { [ ! -s "$d/status" ] && [ "$aan" = 0 ]; }; then st=WIFI-UIT; fi
+  wifi_cmd "$s" list-networks >"$d/lijst" 2>/dev/null || true
+  if [ "$st" != OK ] || [ -n "$vol" ]; then
+    wifi_cmd "$s" list-scan-results >"$d/scan" 2>/dev/null || true
+    timeout 25 "$ADB" -s "$s" shell "dumpsys wifi | grep -E 'ID: [0-9]+ SSID: |NetworkSelectionStatus|DisableReason|NETWORK_SELECTION_DISABLED_'" >"$d/uitz" 2>/dev/null || true
+  fi
+  cp1="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_mode 2>/dev/null | tr -d '\r\n ')"
+  cp2="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_detection_enabled 2>/dev/null | tr -d '\r\n ')"
+  sa="$(timeout 10 "$ADB" -s "$s" shell settings get global wifi_scan_always_enabled 2>/dev/null | tr -d '\r\n ')"
+  NAAM="$m" REL="$rel" SDK="$sdk" AAN="$aan" ST="$st" CP1="$cp1" CP2="$cp2" SA="$sa" D="$d" PLEK="$(sed -n 's/^SSID=//p' "$REK_MAP/wifi.conf" 2>/dev/null | head -1)" \
+    python3 -I - >"$WIFI_CHECK_MAP/$sl.txt.t" 2>/dev/null <<'PY'
+import os, re
+E = os.environ; D = E['D']
+def lees(n):
+    try: return open(os.path.join(D, n), encoding='utf-8', errors='replace').read().replace('\r', '')
+    except Exception: return ''
+REDEN = {'AUTHENTICATION_FAILURE': 'aanmelden mislukt (wachtwoord?)', 'BY_WRONG_PASSWORD': 'wachtwoord fout', 'ASSOCIATION_REJECTION': 'de router weigerde de aanmelding',
+         'DHCP_FAILURE': 'kreeg geen adres (DHCP)', 'NO_INTERNET_TEMPORARY': 'geen internet gezien (tijdelijk uitgezet)', 'NO_INTERNET_PERMANENT': 'geen internet gezien (blijvend uitgezet)',
+         'AUTHENTICATION_NO_CREDENTIALS': 'geen wachtwoord bewaard', 'BY_WIFI_MANAGER': 'door Android uitgezet', 'NETWORK_NOT_FOUND': 'niet in de buurt',
+         'CONSECUTIVE_FAILURES': 'te vaak mislukt achter elkaar', 'TRANSITION_DISABLE_INDICATION': 'de router vraagt een andere beveiliging',
+         'AUTHENTICATION_NO_SUBSCRIPTION': 'geen abonnement', 'AUTHENTICATION_PRIVATE_EAP_ERROR': 'aanmeldfout (EAP)'}
+def reden(tok):
+    k = re.sub(r'^(NETWORK_SELECTION_)?DISABLED_', '', tok)
+    return '%s (%s)' % (REDEN.get(k, k.lower().replace('_', ' ')), tok)
+st = lees('status'); plek = E.get('PLEK', '')
+toon = lambda n: (n + ' (het wifi van deze plek)') if plek and n == plek else n
+uit = ['%s: Android %s (SDK %s)' % (E.get('NAAM') or 'telefoon', E.get('REL') or '?', E.get('SDK') or '?')]
+aan = 'aan' if (re.search(r'(?i)wifi is enabled', st) or (not st and E.get('AAN') == '1')) else ('uit' if (re.search(r'(?i)wifi is disabled', st) or E.get('AAN') == '0') else 'onbekend')
+m = re.search(r'(?i)connected to "([^"]*)"', st)
+stand = {'OK': 'verbonden, met internet', 'GEEN-INTERNET': 'verbonden, maar ZONDER internet', 'GEEN-WIFI': 'niet verbonden', 'WIFI-UIT': 'wifi staat UIT'}.get(E['ST'], E['ST'])
+uit.append('  wifi %s; %s%s' % (aan, stand, (' met ' + toon(m.group(1))) if m else ''))
+opgeslagen = []
+for r in lees('lijst').split('\n'):
+    mm = re.match(r'^\s*(\d+)\s+(.+?)\s{2,}(\S+)\s*$', r)
+    if mm: opgeslagen.append(mm.group(2).strip())
+uitz = {}; huidig = None
+for r in lees('uitz').split('\n'):
+    mm = re.search(r'ID: \d+ SSID: "([^"]*)"', r)
+    if mm: huidig = mm.group(1); uitz.setdefault(huidig, {'status': '', 'reden': '', 'eerder': []}); continue
+    if huidig is None: continue
+    ms = re.search(r'NETWORK_SELECTION_(ENABLED|TEMPORARY_DISABLED|PERMANENTLY_DISABLED)\b', r)
+    if 'NetworkSelectionStatus' in r and ms: uitz[huidig]['status'] = ms.group(1)
+    mr = re.search(r'((?:NETWORK_SELECTION_)?DISABLED_[A-Z_]+)', r)
+    if mr and 'DisableReason' in r: uitz[huidig]['reden'] = mr.group(1)
+    elif mr and 'counter' in r.lower(): uitz[huidig]['eerder'].append(mr.group(1))
+zicht = {}; nzicht = 0
+for r in lees('scan').split('\n'):
+    mm = re.match(r'^\s*([0-9a-fA-F:]{17})\s+(\d+)\s+(-?\d+)\S*\s+\S+\s+(.*?)\s*(\[.*)?$', r)
+    if not mm: continue
+    nzicht += 1; n = mm.group(4).strip(); rs = int(mm.group(3))
+    if n and (n not in zicht or rs > zicht[n]): zicht[n] = rs
+if opgeslagen:
+    uit.append('  opgeslagen netwerken (%d):' % len(opgeslagen))
+    for n in opgeslagen[:8]:
+        u = uitz.get(n, {}); x = toon(n)
+        if lees('scan'): x += ', zichtbaar (%d dBm)' % zicht[n] if n in zicht else ', NIET zichtbaar'
+        if u.get('status') in ('TEMPORARY_DISABLED', 'PERMANENTLY_DISABLED'):
+            x += '; UITGESCHAKELD door Android (%s)%s' % ('tijdelijk' if u['status'].startswith('TEMP') else 'blijvend', (': ' + reden(u['reden'])) if u.get('reden') else '')
+        elif u.get('eerder'): x += '; eerder mislukt: ' + ', '.join(sorted(set(reden(t) for t in u['eerder'])))
+        uit.append('    - ' + x)
+else:
+    uit.append('  opgeslagen netwerken: %s' % ('geen' if lees('lijst') else 'niet te lezen (cmd wifi list-networks staat niet in de help, of gaf niets)'))
+if lees('scan'): uit.append('  zichtbare netwerken: %d (namen van andermans netwerken staan hier met opzet niet)' % nzicht)
+if plek and plek not in opgeslagen: uit.append('  het wifi van deze plek is op deze telefoon NIET opgeslagen')
+cp = (E.get('CP1') or '?', E.get('CP2') or '?')
+uit.append('  gastnetwerk-controle: captive_portal_mode %s, captive_portal_detection_enabled %s%s' % (cp[0], cp[1], '' if cp == ('0', '0') else ' (moet 0 en 0 zijn)'))
+uit.append('  scannen altijd beschikbaar: %s' % {'1': 'aan', '0': 'UIT'}.get(E.get('SA', ''), 'onbekend'))
+print('\n'.join(uit))
+PY
+  mv -f "$WIFI_CHECK_MAP/$sl.txt.t" "$WIFI_CHECK_MAP/$sl.txt" 2>/dev/null || true
+  rm -rf "$d"
+  printf '%s' "$st"
+}
+# 4) (ARTEMIS-kant) het gastnetwerk niet meer als "geen internet" laten afwijzen; alleen als het nog niet 0 is. -> ZET of niets
+wifi_gast_instel() {
+  local s="$1" v gezet=""
+  is_f8 "$s" && return 0; toegestaan "$(toestel_id "$s")" || return 0
+  v="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_mode 2>/dev/null | tr -d '\r\n ')"
+  [ "$v" = 0 ] || { timeout 10 "$ADB" -s "$s" shell settings put global captive_portal_mode 0 >/dev/null 2>&1 && gezet=1; }
+  v="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_detection_enabled 2>/dev/null | tr -d '\r\n ')"
+  [ "$v" = 0 ] || { timeout 10 "$ADB" -s "$s" shell settings put global captive_portal_detection_enabled 0 >/dev/null 2>&1 && gezet=1; }
+  [ -n "$gezet" ] && printf 'ZET'
+}
+# 3) HERSTEL ZONDER WACHTWOORD. Scannen-altijd-beschikbaar aan, en het wifi uit en weer aan -- dat haalt de wachttijd weg die Android na fouten
+# zet (tot 18 uur). Het uit-en-aan gebeurt OP DE TELEFOON ZELF (nohup), zodat het ook afloopt als adb over juist dat wifi liep. -> een korte zin
+wifi_herstel() {   # $1 serie, $2 "zacht" = alleen de instellingen, NIET uit en aan
+  local s="$1" uit="" aan=""
+  is_f8 "$s" && return 0; toegestaan "$(toestel_id "$s")" || return 0
+  if wifi_kan "$s" set-scan-always-available; then wifi_cmd "$s" set-scan-always-available enabled >/dev/null 2>&1 && uit="scannen altijd aan"; fi
+  [ "$(wifi_gast_instel "$s")" = ZET ] && uit="${uit:+$uit, }gastnetwerk-controle uit"
+  [ "${2:-}" = zacht ] && { printf '%s' "${uit:-niets te zetten}"; return 0; }
+  if wifi_kan "$s" set-wifi-enabled; then aan="cmd wifi set-wifi-enabled disabled; sleep 3; cmd wifi set-wifi-enabled enabled"
+  else aan="svc wifi disable; sleep 3; svc wifi enable"; fi
+  wifi_kan "$s" start-scan && aan="$aan; sleep 4; cmd wifi start-scan"
+  timeout 15 "$ADB" -s "$s" shell "nohup sh -c '$aan' >/dev/null 2>&1 &" >/dev/null 2>&1 || true
+  uit="${uit:+$uit, }wifi uit en weer aan"
+  printf '%s' "$uit"
+}
+# 6) Tailscale als altijd-aan-VPN met 'blokkeren zonder VPN' UIT (een keer per dag per telefoon). Android leest de altijd-aan-instelling soms pas
+# bij de volgende start; dat staat er eerlijk bij. -> een korte zin als er iets veranderde
+ts_altijd_aan() {
+  local s="$1" sl f dag app ld zin=""
+  is_f8 "$s" && return 0; toegestaan "$(toestel_id "$s")" || return 0
+  sl="$(tel_sl "$s")"; f="$REK_MAP/ts-altijd-$sl"; dag="$(date +%Y%m%d)"
+  [ "$(head -1 "$f" 2>/dev/null)" = "$dag" ] && return 0
+  timeout 15 "$ADB" -s "$s" shell pm path com.tailscale.ipn >/dev/null 2>&1 || return 0
+  app="$(timeout 10 "$ADB" -s "$s" shell settings get secure always_on_vpn_app 2>/dev/null | tr -d '\r\n ')"
+  ld="$(timeout 10 "$ADB" -s "$s" shell settings get secure always_on_vpn_lockdown 2>/dev/null | tr -d '\r\n ')"
+  [ "$ld" = 0 ] || { timeout 10 "$ADB" -s "$s" shell settings put secure always_on_vpn_lockdown 0 >/dev/null 2>&1 && zin="blokkeren zonder VPN uit"; }
+  [ "$app" = com.tailscale.ipn ] || { timeout 10 "$ADB" -s "$s" shell settings put secure always_on_vpn_app com.tailscale.ipn >/dev/null 2>&1 && zin="${zin:+$zin, }Tailscale als altijd-aan-VPN (Android neemt dat soms pas na de volgende start over)"; }
+  printf '%s\n' "$dag" >"$f" 2>/dev/null || true
+  printf '%s' "$zin"
+}
+# 6) Tailscale herstarten als de telefoon er niet in staat (geen 100.x): eerst het gewone aanzetten; lukt dat niet, dan de Tailscale-app stoppen
+# en opnieuw starten. Alleen het Tailscale-pakket (nooit JARVIS), nooit de F8, hoogstens eens per half uur per telefoon. -> AL | AAN | NIET | WACHT
+ts_herstart() {
+  local s="$1" r sl f nu t
+  is_f8 "$s" && { printf 'NIET'; return 0; }
+  r="$(ts_telefoon_aan "$s")"
+  case "$r" in AL*|AAN*|GEEN-APP) printf '%s' "${r%% *}"; return 0 ;; WACHT) printf 'WACHT'; return 0 ;; esac
+  sl="$(tel_sl "$s")"; f="$REK_MAP/ts-herstart-$sl"; nu="$(date +%s)"; t="$(head -1 "$f" 2>/dev/null | tr -cd '0-9')"; t="${t:-0}"
+  [ $((nu - t)) -lt "${TS_HERSTART_REM_S:-1800}" ] && { printf 'NIET'; return 0; }
+  printf '%s\n' "$nu" >"$f" 2>/dev/null || true
+  timeout 15 "$ADB" -s "$s" shell am force-stop com.tailscale.ipn >/dev/null 2>&1 || true
+  sleep 2
+  r="$(ts_telefoon_aan "$s" nu)"
+  case "$r" in AL*|AAN*) printf 'AAN'; logregel "Wifi-wachter: Tailscale stond niet aan op $(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-'); ik heb de Tailscale-app opnieuw gestart (${r#* })." >/dev/null ;; *) printf 'NIET' ;; esac
+}
+# 7) DE ISOLATIETEST: zien de rektelefoons elkaar op dit wifi? Per paar: een ping van telefoon A naar het wifi-adres van telefoon B, en van deze
+# computer naar elk wifi-adres (ping en JARVIS op 8080). Alleen lezen. Uitkomst: open / deels / geisoleerd. Gastnetwerken isoleren vaak; dan
+# lopen de telefoons onderling alleen via Tailscale en de relay -- zo is het rek ook gebouwd.
+isolatie_test() {
+  local s ip lijst="" a b ipa ipb paren=0 goed=0 vanhier=0 vanhiergoed=0 regels="" naam
+  for s in $(verbonden); do is_f8 "$s" && continue; toegestaan "$(toestel_id "$s")" || continue
+    ip="$(timeout 10 "$ADB" -s "$s" shell ip -o -4 addr show wlan0 2>/dev/null | tr -d '\r' | grep -oE 'inet [0-9.]+' | head -1 | cut -d' ' -f2)"
+    [ -n "$ip" ] || continue
+    case " $lijst " in *"|$ip "*) continue ;; esac
+    lijst="$lijst $s|$ip"
+  done
+  for a in $lijst; do ipa="${a#*|}"; naam="$(toestel_naam "${a%%|*}" | tr -cd 'A-Za-z0-9 ._-')"
+    vanhier=$((vanhier + 1))
+    if ping -c 1 -W 2 "$ipa" >/dev/null 2>&1 || curl -s -m 3 -o /dev/null "http://$ipa:8080/jarvis/status" 2>/dev/null; then vanhiergoed=$((vanhiergoed + 1)); regels="$regels  deze computer -> $naam: bereikbaar
+"; else regels="$regels  deze computer -> $naam: NIET bereikbaar
+"; fi
+    for b in $lijst; do [ "$a" = "$b" ] && continue; ipb="${b#*|}"; paren=$((paren + 1))
+      if timeout 10 "$ADB" -s "${a%%|*}" shell ping -c 1 -W 2 "$ipb" 2>/dev/null | grep -q ' 0% packet loss'; then goed=$((goed + 1)); regels="$regels  $naam -> $(toestel_naam "${b%%|*}" | tr -cd 'A-Za-z0-9 ._-'): bereikbaar
+"; else regels="$regels  $naam -> $(toestel_naam "${b%%|*}" | tr -cd 'A-Za-z0-9 ._-'): NIET bereikbaar
+"; fi
+    done
+  done
+  local oordeel
+  if [ $((paren + vanhier)) -eq 0 ]; then oordeel="niet te testen: geen rektelefoon met een wifi-adres in beeld"
+  elif [ $((goed + vanhiergoed)) -eq 0 ]; then oordeel="GEISOLEERD: de telefoons zien elkaar niet op dit wifi (gastnetwerk); onderling werkt het rek via Tailscale en de relay"
+  elif [ "$goed" -eq "$paren" ] && [ "$vanhiergoed" -eq "$vanhier" ]; then oordeel="open: de telefoons zien elkaar en deze computer op dit wifi"
+  else oordeel="deels: $goed van $paren telefoonparen en $vanhiergoed van $vanhier vanaf deze computer"; fi
+  { printf '%s %s\n' "$(date '+%d-%m %H:%M')" "$oordeel"; printf '%s' "$regels"; } >"$ISOLATIE_F" 2>/dev/null || true
+  printf '%s' "$oordeel"
+}
+# 5) DE WACHTER: elke vijf minuten, stil. Per rektelefoon in adb: de check (1); niet goed = herstel (3), wachten, opnieuw kijken; nog steeds niet =
+# het wifi van deze plek (als dat in de console staat). Tailscale (6) en de gastnetwerk-instellingen (4) gaan mee. Met terugval: hoe vaker een
+# telefoon niet terugkomt, hoe langer de pauze tot het volgende herstel (5, 10, 20, 40, 60 min). Een melding alleen als de lijst verandert.
+wifi_wachter_tik() {
+  command -v "$ADB" >/dev/null 2>&1 || return 0
+  slot_levend "$REK_MAP/verhuis.lock" && return 0
+  slot_levend "$REK_MAP/wifi-wachter.lock" && return 0
+  rm -rf "$REK_MAP/wifi-wachter.lock"; mkdir "$REK_MAP/wifi-wachter.lock" 2>/dev/null || return 0; printf '%s\n' "$$" >"$REK_MAP/wifi-wachter.lock/pid"
+  local s sl naam st st2 nu n t rem vol regels="" weg="" terug="" ts zin uitbeeld="" id gezien_nu=" " r
+  nu="$(date +%s)"
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; toegestaan "$id" || continue
+    case "$gezien_nu" in *" $id "*) continue ;; esac; gezien_nu="$gezien_nu$id "
+    sl="$(tel_sl "$s")"; naam="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"; naam="${naam:-een telefoon}"
+    { awk -v k="$sl" '$1!=k' "$WIFI_GEZIEN_F" 2>/dev/null; printf '%s %s %s\n' "$sl" "$nu" "$naam"; } >"$WIFI_GEZIEN_F.t" && mv -f "$WIFI_GEZIEN_F.t" "$WIFI_GEZIEN_F"
+    wifi_help "$s" >/dev/null 2>&1 || true
+    vol=""; t="$(stat -c %Y "$WIFI_CHECK_MAP/$sl.txt" 2>/dev/null || echo 0)"; [ $((nu - t)) -ge 3600 ] && vol=1
+    st="$(wifi_check "$s" "$vol")"
+    wifi_gast_instel "$s" >/dev/null 2>&1 || true
+    zin="$(ts_altijd_aan "$s")"; [ -n "$zin" ] && logregel "Wifi-wachter, $naam: $zin."
+    if [ "$st" = OK ]; then
+      read -r _ n _ <<<"$(awk -v k="$sl" '$1==k' "$WIFI_WACHT_ST" 2>/dev/null)"
+      [ "${n:-0}" -gt 0 ] && terug="$terug $naam"
+      awk -v k="$sl" '$1!=k' "$WIFI_WACHT_ST" >"$WIFI_WACHT_ST.t" 2>/dev/null; mv -f "$WIFI_WACHT_ST.t" "$WIFI_WACHT_ST" 2>/dev/null
+      regels="$regels  $naam: wifi met internet
+"
+    else
+      read -r _ n t <<<"$(awk -v k="$sl" '$1==k' "$WIFI_WACHT_ST" 2>/dev/null)"; n="${n:-0}"; t="${t:-0}"
+      rem=300; [ "$n" -ge 1 ] && rem=$((300 * (1 << (n > 4 ? 4 : n)))); [ "$rem" -gt 3600 ] && rem=3600
+      if [ $((nu - t)) -ge "$rem" ]; then
+        # ZACHT als het wifi er wel is maar Android "geen internet" zegt terwijl Tailscale WEL werkt (dan is er internet; vaak de inlogpagina-
+        # controle van een gastnetwerk), en altijd zacht op de brein-telefoon tijdens een les: dan geen uit-en-aan dat de les zou breken.
+        local zacht=""
+        { [ "$st" = GEEN-INTERNET ] && [ -n "$(tel_ts_ip "$s")" ]; } && zacht=zacht
+        { is_brein_tel "$s" && les_loopt; } && zacht=zacht
+        r="$(wifi_herstel "$s" "$zacht")"
+        sleep "${WIFI_HERSTEL_WACHT_S:-20}"
+        st2="$(wifi_check "$s" 1)"
+        if [ "$st2" != OK ] && [ -s "$REK_MAP/wifi.conf" ]; then [ "$(wifi_plek_zet "$s")" = GEZET ] && { sleep "${WIFI_WACHT_S:-8}"; st2="$(wifi_check "$s")"; r="$r, het wifi van deze plek gezet"; }; fi
+        if [ "$st2" = OK ]; then
+          logregel "Wifi-wachter: $naam was van het wifi ($(printf '%s' "$st" | tr 'A-Z' 'a-z')); weer terug na: $r."
+          awk -v k="$sl" '$1!=k' "$WIFI_WACHT_ST" >"$WIFI_WACHT_ST.t" 2>/dev/null; mv -f "$WIFI_WACHT_ST.t" "$WIFI_WACHT_ST" 2>/dev/null
+          terug="$terug $naam"; regels="$regels  $naam: was van het wifi, weer terug ($r)
+"
+        else
+          n=$((n + 1)); { awk -v k="$sl" '$1!=k' "$WIFI_WACHT_ST" 2>/dev/null; printf '%s %s %s\n' "$sl" "$n" "$nu"; } >"$WIFI_WACHT_ST.t" && mv -f "$WIFI_WACHT_ST.t" "$WIFI_WACHT_ST"
+          weg="$weg $naam"; regels="$regels  $naam: komt NIET terug op het wifi ($(printf '%s' "$st2" | tr 'A-Z' 'a-z'); poging $n: $r)
+"
+        fi
+      else
+        weg="$weg $naam"; regels="$regels  $naam: nog niet terug ($(printf '%s' "$st" | tr 'A-Z' 'a-z')); volgende poging over $(( (rem - (nu - t)) / 60 + 1 )) min
+"
+      fi
+    fi
+    ts="$(ts_herstart "$s")"; [ "$ts" = NIET ] && regels="$regels  $naam: staat niet in Tailscale (ook na een herstart van de app)
+"
+  done
+  # wie op de lijst staat maar helemaal niet in beeld is (laatst gezien binnen twee weken)
+  while read -r sl t naam; do [ -n "$sl" ] || continue
+    [ $((nu - ${t:-0})) -gt 1209600 ] && continue
+    [ $((nu - ${t:-0})) -lt 600 ] && continue
+    uitbeeld="$uitbeeld $naam"; regels="$regels  $naam: NIET in beeld (geen kabel, geen wifi-adb, geen Tailscale) sinds $(date -d "@$t" '+%d-%m %H:%M' 2>/dev/null)
+"
+  done <"$WIFI_GEZIEN_F" 2>/dev/null
+  # de isolatietest bij een ander netwerk, en verder eens per zes uur
+  local sig it; sig="$(head -1 "$NET_SIG_F" 2>/dev/null)"; it="$(head -1 "$ISOLATIE_F.sig" 2>/dev/null | tr -cd '0-9')"; it="${it:-0}"
+  if [ "$sig" != "$(sed -n 2p "$ISOLATIE_F.sig" 2>/dev/null)" ] || [ $((nu - it)) -ge 21600 ]; then
+    isolatie_test >/dev/null 2>&1 || true; printf '%s\n%s\n' "$nu" "$sig" >"$ISOLATIE_F.sig"
+  fi
+  wifi_help_stuur >/dev/null 2>&1 || true
+  { printf '%s Wifi-wachter: %s\n' "$(date '+%d-%m %H:%M')" "$([ -z "$weg$uitbeeld" ] && echo 'alle rektelefoons in beeld zitten op het wifi.' || echo "niet terug op het wifi:${weg:- geen}; niet in beeld:${uitbeeld:- geen}.")"; printf '%s' "$regels"; } >"$WIFI_WACHT_F" 2>/dev/null || true
+  # een melding alleen als de lijst van wie weg is verandert (en een regel als er iemand terugkwam)
+  local msig; msig="$(printf '%s|%s' "$weg" "$uitbeeld" | sha256sum | cut -c1-16)"
+  if [ "$msig" != "$(head -1 "$WIFI_WACHT_F.meld" 2>/dev/null)" ]; then
+    printf '%s\n' "$msig" >"$WIFI_WACHT_F.meld"
+    if [ -n "$weg$uitbeeld" ]; then relay_meld "Wifi-wachter: niet terug op het wifi:${weg:- geen}; niet in beeld:${uitbeeld:- geen}. Ik blijf het elke vijf minuten proberen." >/dev/null 2>&1 || true
+    elif [ -n "$terug" ]; then relay_meld "Wifi-wachter: weer op het wifi:$terug. Alle rektelefoons in beeld zitten op het wifi." >/dev/null 2>&1 || true; fi
+  fi
+  rm -rf "$REK_MAP/wifi-wachter.lock"
+}
+# de knop: de volledige check van alle telefoons in beeld (alleen lezen) + de isolatietest
+wifi_check_alles() {
+  command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
+  local s n=0
+  for s in $(verbonden); do is_f8 "$s" && { zeg "F8 overgeslagen (nooit aanraken)."; continue; }; toegestaan "$(toestel_id "$s")" || continue
+    wifi_help "$s" >/dev/null 2>&1 || zeg "$(toestel_naam "$s"): kent geen 'cmd wifi' (Android 10 of ouder?); alleen de basis-check."
+    wifi_check "$s" 1 >/dev/null; cat "$WIFI_CHECK_MAP/$(tel_sl "$s").txt" 2>/dev/null; n=$((n + 1)); done
+  [ "$n" -gt 0 ] || zeg "Geen rektelefoon in beeld (nooit de F8)."
+  zeg "Isolatietest: $(isolatie_test)"
+  wifi_help_stuur >/dev/null 2>&1 || true
+}
+# <<< WIFI-WACHTER
 # verhuis_ronde [waarom]: de vijf stappen, met een regel per telefoon. Een tegelijk (slot).
 verhuis_ronde() {
   command -v "$ADB" >/dev/null 2>&1 || { zeg "adb ontbreekt."; return 0; }
@@ -11589,6 +11951,9 @@ verhuis_ronde() {
     # 678 (22 nov, eigenaar: "kijk of je de telefoons zelf op het gastnetwerk krijgt"): geen wifi, of wifi ZONDER internet, en de wifi van deze plek
     # staat in de console? Dan zet ARTEMIS hem er zelf op (cmd wifi connect-network, ook over Tailscale-adb) en kijkt opnieuw. Het wachtwoord komt
     # nooit in een log of verslag. Zonder bewaarde wifi: in het verslag staat dat SSID + wachtwoord een keer in de console moeten.
+    # 678 (23 nov, wifi-wachter): EERST het herstel zonder wachtwoord (scannen altijd aan, gastnetwerk-controle uit, wifi uit en weer aan);
+    # pas als dat niet hielp het wifi van deze plek.
+    case "$w" in geen-wifi|geen-internet) wifi_herstel "$s" >/dev/null 2>&1; sleep "${WIFI_HERSTEL_WACHT_S:-20}"; w="$(tel_wifi_stand "$s")"; [ "$w" = ok ] && op_wifi="$op_wifi $naam" ;; esac
     case "$w" in geen-wifi|geen-internet) [ "$(wifi_plek_zet "$s")" = GEZET ] && { sleep "${WIFI_WACHT_S:-8}"; w="$(tel_wifi_stand "$s")"; [ "$w" = ok ] && op_wifi="$op_wifi $naam"; } ;; esac
     case "$w" in geen-wifi) gw="$gw $naam" ;; geen-internet) gi="$gi $naam" ;; esac
     [ "$(ts_lockdown_los "$s")" = LOS ] && { logregel "Verhuisronde: op $naam stond 'verbindingen zonder VPN blokkeren' aan; dat legde JARVIS stil (EPERM). Uitgezet."; los="$los $naam"; }
@@ -11608,7 +11973,7 @@ verhuis_ronde() {
   local kort="Verhuisronde ($waarom): $n rektelefoon(s) nagelopen."
   [ -n "$nietaan" ] && kort="$kort Tailscale ging niet vanzelf aan op:$nietaan (open daar een keer de Tailscale-app)."
   [ -n "$geenapp" ] && kort="$kort Geen Tailscale-app op:$geenapp."
-  [ -n "$op_wifi" ] && kort="$kort Zelf op het wifi van deze plek gezet:$op_wifi."
+  [ -n "$op_wifi" ] && kort="$kort Zelf weer op het wifi gezet:$op_wifi."
   if [ -s "$REK_MAP/wifi.conf" ]; then
     [ -n "$gw" ] && kort="$kort Niet op het wifi:$gw (zelf proberen lukte niet: klopt de wifi van deze plek in de console?)."
   else
@@ -12247,7 +12612,10 @@ case "${1:-status}" in
   nieuwsrem-tik) nieuwsrem_tik ;;
   searxng-auto) searxng_auto >/dev/null 2>&1 || true ;;
   brein-beheer) brein_beheer_tik >/dev/null 2>&1 || true ;;   # 678 (21 nov): de beheerronde door het brein (stap 1)   # 678 (21 nov): SearXNG zelf starten als hij niet draait   # 678 (21 nov): de nieuwsrem, elk uur (alleen papierhandel)
-  verhuis-tik) verhuis_tik >/dev/null 2>&1 || true ;;                    # 678 (20 nov): de rij-code van Veronica zelf op de rektelefoons (zonder QR)
+  verhuis-tik) verhuis_tik >/dev/null 2>&1 || true ;;
+  wifi-wachter-tik) wifi_wachter_tik >/dev/null 2>&1 || true ;;   # 678 (23 nov): de wifi-wachter, elke vijf minuten
+  wifi-check) wifi_check_alles ;;                                  # 678 (23 nov): de knop -- de wifi-check van alle telefoons + de isolatietest
+  isolatie-test) zeg "Isolatietest: $(isolatie_test)"; cat "$ISOLATIE_F" 2>/dev/null ;;
   rijcode-auto) rijcode_auto >/dev/null 2>&1 || true ;;
   jarvis-proef) jarvis_proef_zet ;;               # 678 (14 nov): de telefoon aan de USB-kabel wordt de proeftelefoon (krijgt als enige een nieuwe JARVIS)
   jarvis-proef-uit) jarvis_proef_uit ;;
