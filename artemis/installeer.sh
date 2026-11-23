@@ -9432,14 +9432,23 @@ controle_modellen() {   # een andere familie dan het brein; klein genoeg voor ee
     # 678 (16 nov, onderzoek deel 2 punt 4): bij een Qwen3-brein is Qwen3.5-2B (een nieuwere generatie) de keurmeester; draait het brein zelf al
     # Qwen3.5, dan blijft het Gemma -- de keurmeester hoort uit een ANDERE familie te komen dan het brein, anders maakt hij dezelfde fouten.
     *qwen3.5*) printf '%s' 'ggml-org/gemma-4-E2B-it-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M;unsloth/gemma-3-1b-it-GGUF Q4_K_M' ;;
-    *) printf '%s' 'unsloth/Qwen3.5-2B-GGUF Q4_0;ggml-org/gemma-4-E2B-it-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M;unsloth/gemma-3-1b-it-GGUF Q4_K_M' ;;
+    # 678 (23 nov): NIET meer Qwen3.5-2B vooraan bij een Qwen-brein. Dat stamde van 16 nov, van voor de regel van 21 nov ("de controle uit een
+    # ANDERE familie"); bij een herstart van de controle-telefoon koos ARTEMIS daardoor weer een Qwen. Nu: het model dat de controle al draaide
+    # (Llama 3.2 3B) eerst, dan Gemma 3 4B en Granite -- alleen bestanden die echt bestaan (model-meten.yml run 12).
+    *) printf '%s' 'bartowski/Llama-3.2-3B-Instruct-GGUF Q4_K_M;ggml-org/gemma-3-4b-it-GGUF Q4_K_M;ibm-granite/granite-3.3-2b-instruct-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M' ;;
   esac
+}
+controle_modellen_ander() {   # 678 (23 nov): controle_modellen, ZONDER wat uit dezelfde familie komt als het brein (een vangnet op elke lijst)
+  local bfam paar uit="" IFS_OUD="$IFS"; bfam="$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")"
+  IFS=';'; set -- $(controle_modellen); IFS="$IFS_OUD"
+  for paar in "$@"; do [ -n "$paar" ] || continue; [ -n "$bfam" ] && [ "$(familie_van "$paar")" = "$bfam" ] && continue; uit="$uit$paar;"; done
+  printf '%s' "${uit%;}"
 }
 als_controle() {   # draai een brein-functie als de controle-rol (in een subshell: de echte brein-instellingen blijven onaangeroerd)
   (
     mkdir -p "$CONTROLE_MAP" 2>/dev/null; chmod 700 "$CONTROLE_MAP" 2>/dev/null || true
     [ -e "$REK_MAP/rek-token.conf" ] && ln -sf "$REK_MAP/rek-token.conf" "$CONTROLE_MAP/rek-token.conf"
-    BREIN_MODELLEN="${CONTROLE_PROBEER:-$(controle_modellen)}"   # 678 (21 nov): de controle-proef zet hier EEN kandidaat
+    BREIN_MODELLEN="${CONTROLE_PROBEER:-$(controle_modellen_ander)}"   # 678 (21 nov): de controle-proef zet hier EEN kandidaat; 23 nov: nooit de familie van het brein
     REK_MAP_BASIS="$REK_MAP"
     REK_MAP="$CONTROLE_MAP"
     BREIN_POORT_TEL=8095; BREIN_POORT_LOK="$CONTROLE_POORT_LOK"; BREIN_MAP_TEL="/data/local/tmp/controle"; BREIN_CONTEXT=2048
@@ -9465,7 +9474,11 @@ controle_rol() {   # de controle-telefoon starten (zijn serienummer staat in con
 # Gekozen: de hoogste score uit een ANDERE familie dan het brein; bij gelijke stand de snelste. Is die meer dan een punt slechter dan het huidige
 # model, dan blijft het huidige en staat waarom in het verslag. Een keer per kandidatenlijst, vanzelf, los van de console (een herstart van de
 # console wacht erop, net als bij de verhuisronde). Nooit de F8, nooit de brein-telefoon, nooit tijdens een les.
-CONTROLE_KANDIDATEN="${CONTROLE_KANDIDATEN:-ggml-org/gemma-4-E2B-it-GGUF Q4_K_M;bartowski/Llama-3.2-3B-Instruct-GGUF Q4_K_M;ibm-granite/granite-3.3-2b-instruct-GGUF Q4_K_M;ggml-org/gemma-3-1b-it-GGUF Q4_K_M}"
+# 678 (23 nov): de kandidaten van ronde 2 startten ALLEMAAL niet. Voor Gemma 4 E2B is de reden nu GEMETEN (model-meten.yml run 12): ggml-org heeft
+# daar GEEN Q4_K_M (alleen Q4_0, Q8_0 en BF16), dus ARTEMIS vond niets en meldde "past niet". unsloth heeft hem wel (3106 MB). Nieuwe lijst, alleen
+# bestanden die bestaan: Gemma 3 4B (2489 MB, goed bekend bij llama.cpp) eerst, dan Gemma 4 E2B (kan een nieuwere llama.cpp vragen), Phi-4-mini en
+# Granite 3.3 2B. Llama 3.2 3B niet: dat is het huidige model en wordt toch al gemeten.
+CONTROLE_KANDIDATEN="${CONTROLE_KANDIDATEN:-ggml-org/gemma-3-4b-it-GGUF Q4_K_M;unsloth/gemma-4-E2B-it-GGUF Q4_K_M;unsloth/Phi-4-mini-instruct-GGUF Q4_K_M;ibm-granite/granite-3.3-2b-instruct-GGUF Q4_K_M}"
 CONTROLE_PROEF_F="$REK_MAP/controle-proef.txt"
 familie_van() {   # modelnaam of repo -> qwen / gemma / llama / granite / ... (alleen voor de familie-regel)
   printf '%s' "$1" | tr 'A-Z' 'a-z' | grep -oE 'qwen|gemma|llama|granite|lfm|smollm|phi|mistral' | head -1
@@ -9579,6 +9592,10 @@ controle_proef_tik() {   # de console-lus: een keer per kandidatenlijst, los van
   local sig; sig="$(printf '%s|%s|ronde2' "$CONTROLE_KANDIDATEN" "$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")" | sha256sum | cut -c1-16)"
   [ "$(head -1 "$REK_MAP/controle-proef.sig" 2>/dev/null)" = "$sig" ] && return 0
   [ -s "$CONTROLE_MAP/brein-vast" ] || return 0
+  # 678 (23 nov, eigenaar: eerst de modelproef, dan de vaste toets): NIET terwijl een proef het brein vasthoudt, en pas als de vaste toets van het
+  # huidige brein gemeten is -- anders wisselt de controle van model terwijl de toets loopt (de toets gaat langs het echte pad, met de controle).
+  local bp; bp="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$bp" ] && kill -0 "$bp" 2>/dev/null && return 0
+  [ "$(head -1 "$REK_MAP/brein-toets.sig" 2>/dev/null)" = "$(head -1 "$REK_MAP/brein-model" 2>/dev/null) toets1 $(brein_extra)" ] || return 0
   # 678 (23 nov): na een ONGELDIGE meting pas na zes uur opnieuw (niet elke vijf minuten de controle-telefoon omgooien)
   local op; op="$(head -1 "$REK_MAP/controle-proef.opnieuw" 2>/dev/null | tr -cd '0-9')"; [ -n "$op" ] && [ $(( $(date +%s) - op )) -lt 21600 ] && return 0
   les_loopt && return 0
@@ -9678,7 +9695,8 @@ bibliothecaris_waak() { bibliothecaris_kies >/dev/null 2>&1 || return 0; als_bib
 # 678 (16 nov, onderzoek deel 2 punt 4): EEN KEER OPNIEUW KIEZEN. Een rol kiest zijn model alleen bij het starten; de waakhond herstart met het model
 # dat er al was. Is de modellijst van een rol veranderd (ROL_MODELKEUS_VERSIE), dan start ARTEMIS die rol EEN keer opnieuw zodat hij uit de
 # nieuwe lijst kiest. Niet tijdens een les; de keuze staat daarna in de status en de vaste meting van die rol.
-ROL_MODELKEUS_VERSIE=3   # 678 (17 nov): 3 = een keer opnieuw kiezen, nu het overzetten hervat (de S10 draaide nog gemma-3-1b i.p.v. de keurmeester)
+ROL_MODELKEUS_VERSIE=4   # 678 (17 nov): 3 = een keer opnieuw kiezen, nu het overzetten hervat (de S10 draaide nog gemma-3-1b i.p.v. de keurmeester)
+# 678 (23 nov): 4 = een keer opnieuw kiezen met de controle-lijst ZONDER de familie van het brein (na een herstart koos de S10 weer Qwen3.5-2B)
 rol_modelkeus() {   # $1 rol-opdracht, $2 map van de rol -> 0 = opnieuw gestart (op de achtergrond)
   [ "$(head -1 "$2/modelkeus.v" 2>/dev/null)" = "$ROL_MODELKEUS_VERSIE" ] && return 1
   [ -s "$2/brein-vast" ] || return 1
@@ -9832,6 +9850,7 @@ PY
 }
 toets_tik() {   # een keer per model en toetsversie (en daarna eens per week) vanzelf, alleen als er geen les loopt
   les_loopt && return 0
+  slot_levend "$REK_MAP/controleproef.lock" && return 0   # 678 (23 nov): niet terwijl de controle van model wisselt
   # 678 (23 nov): NIET terwijl de modelproef (of een andere proef) het brein vasthoudt -- om 08:59 liepen ze door elkaar: de modelproef kreeg
   # "er loopt al een les" en schreef toets 0/40, en deze meting draaide terwijl het brein van model wisselde.
   local p; p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
@@ -10662,6 +10681,19 @@ brein_tel_zet() {   # $1 serienummer, $2 lokaal pad, $3 naam op de telefoon -> 0
   [ "$vrij" -gt $((groot / 1024 + 300000)) ] || return 3   # te weinig ruimte op de telefoon
   adb_push_heel "$s" "$pad" "$BREIN_MAP_TEL/$naam"
 }
+# 678 (23 nov): de modelproef liet ELKE kandidaat op de telefoon staan tot het eind; bij vier modellen van ~2,4 GB was de opslag vol en kreeg
+# Qwen3.5-4B-MTP "te weinig ruimte" (en de vooruitrader daarna ook). Nu: voor een kandidaat erop gaat, eerst de modellen weg die NIET meer
+# nodig zijn. Blijven altijd staan: het oude brein (de terugval), de beste tot nu toe, en wat hierna nodig is. Alleen .gguf-bestanden in de
+# eigen map van het brein; de llama-server en alles van andere rollen blijft. -> het aantal weggehaalde bestanden
+brein_tel_ruim() {   # $1 serienummer, rest = bestandsnamen die moeten blijven
+  local s="$1" f n=0 houd; shift; houd=" $* "
+  for f in $("$ADB" -s "$s" shell "ls $BREIN_MAP_TEL" 2>/dev/null | tr -d '\r'); do
+    case "$f" in *.gguf) : ;; *) continue ;; esac
+    case "$houd" in *" $f "*) continue ;; esac
+    "$ADB" -s "$s" shell "rm -f $BREIN_MAP_TEL/$f" >/dev/null 2>&1 && n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
 brein_modelproef() {
   les_loopt && return 0
   [ -f "$REK_MAP/les-wacht" ] && return 0   # 678 (17 nov): er wacht een les; die gaat voor
@@ -10704,13 +10736,21 @@ brein_modelproef() {
     else
       pad="$(brein_model_haal "$repo" "$naam" "$sha" 0 "$lokaal" 2>/dev/null)" || { logregel "Modelproef: $lokaal is nog niet binnen; de volgende keer verder."; brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0; }
       brein_tel_zet "$s" "$pad" "$lokaal"; k=$?
-      [ "$k" = 3 ] && { printf '%s | %s | te weinig ruimte op de telefoon\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; continue; }
+      if [ "$k" = 3 ]; then   # 678 (23 nov): eerst wat niet meer nodig is van de telefoon, dan nog een keer
+        local weg; weg="$(brein_tel_ruim "$s" "$oud_m" "$best_m" "$lokaal" "$(case "$mx" in *"-md "*) echo Qwen3-0.6B-Q4_0.gguf ;; esac)")"
+        [ "${weg:-0}" -gt 0 ] && { logregel "Modelproef: $weg oude kandidaat/kandidaten van de telefoon gehaald om ruimte te maken voor $lokaal."; brein_tel_zet "$s" "$pad" "$lokaal"; k=$?; }
+      fi
+      [ "$k" = 3 ] && { printf '%s | %s | te weinig ruimte op de telefoon (ook na het opruimen)\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; continue; }
       [ "$k" = 0 ] || { printf '%s | %s | kwam niet op de telefoon\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; continue; }
     fi
     case "$mx" in *"-md "*)
       set -- $BREIN_VOORUITRADER; drep="$1"; dnaam="$2"; dsha="$3"
       dpad="$(brein_model_haal "$drep" "$dnaam" "$dsha" 0 2>/dev/null)" || { logregel "Modelproef: de vooruitrader is nog niet binnen; de volgende keer verder."; brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0; }
-      brein_tel_zet "$s" "$dpad" "$dnaam" || { printf '%s | %s + vooruitrader | kwam niet op de telefoon\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; continue; } ;;
+      brein_tel_zet "$s" "$dpad" "$dnaam"; k=$?
+      if [ "$k" = 3 ]; then   # 678 (23 nov): de vooruitrader kreeg dezelfde volle opslag; eerst opruimen, dan nog een keer
+        [ "$(brein_tel_ruim "$s" "$oud_m" "$best_m" "$lokaal" "$dnaam")" -gt 0 ] 2>/dev/null && { brein_tel_zet "$s" "$dpad" "$dnaam"; k=$?; }
+      fi
+      [ "$k" = 0 ] || { printf '%s | %s + vooruitrader | %s\n' "$(date '+%d-%m %H:%M')" "$lokaal" "$([ "$k" = 3 ] && echo 'te weinig ruimte op de telefoon (ook na het opruimen)' || echo 'kwam niet op de telefoon')" >>"$MODELPROEF_LOG_F"; continue; } ;;
     esac
     if ! BREIN_MODEL_PROEF="$mx" brein_herstart_met "$s" "$lokaal"; then
       printf '%s | %s%s | startte niet (te weinig geheugen?)\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" >>"$MODELPROEF_LOG_F"; continue
@@ -10731,7 +10771,7 @@ $BREIN_MODELPROEF_KANDIDATEN
 EOF_KAND
   printf '%s\n' "$best_m" >"$REK_MAP/brein-model"; printf '%s\n' "$best_mx" >"$REK_MAP/brein-model-extra"
   brein_herstart_met "$s" "$best_m" || logregel "Modelproef: het gekozen brein startte niet; de waakhond probeert het opnieuw."
-  brein_stand klaar "Het brein draait op $(toestel_naam "$s") (gekozen door de modelproef)." "$s" "$best_m" ""
+  brein_stand klaar "Het brein draait op $(toestel_naam "$s" | grep . || echo 'de brein-telefoon') (gekozen door de modelproef)." "$s" "$best_m" ""
   # kandidaten die het niet werden weer van de telefoon (het oude brein blijft staan als terugval)
   while IFS= read -r regel <&3; do
     set -- $regel; lokaal="$4"; [ "$1" = huidig ] && continue
@@ -11739,6 +11779,9 @@ wifi_check() {
     wifi_cmd "$s" list-scan-results >"$d/scan" 2>/dev/null || true
     timeout 25 "$ADB" -s "$s" shell "dumpsys wifi | grep -E 'ID: [0-9]+ SSID: |NetworkSelectionStatus|DisableReason|NETWORK_SELECTION_DISABLED_'" >"$d/uitz" 2>/dev/null || true
   fi
+  # 678 (23 nov, punt 8, het veilige deel): welke hotspot-functies de telefoon zelf noemt -- ALLEEN LEZEN, en alleen als de opdracht in zijn help
+  # staat. Er wordt geen hotspot aangezet; de echte proef (wifi en hotspot tegelijk) komt pas na de toets en de controle-proef.
+  [ -n "$vol" ] && { wifi_cmd "$s" get-softap-supported-features >"$d/softap" 2>/dev/null || true; wifi_kan "$s" start-softap && echo ja >"$d/softap-start"; }
   cp1="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_mode 2>/dev/null | tr -d '\r\n ')"
   cp2="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_detection_enabled 2>/dev/null | tr -d '\r\n ')"
   sa="$(timeout 10 "$ADB" -s "$s" shell settings get global wifi_scan_always_enabled 2>/dev/null | tr -d '\r\n ')"
@@ -11806,6 +11849,12 @@ else:
     uit.append('  opgeslagen netwerken: %s' % ('geen' if lees('lijst') else 'niet te lezen (cmd wifi list-networks staat niet in de help, of gaf niets)'))
 if lees('scan'): uit.append('  zichtbare netwerken: %d (namen van andermans netwerken staan hier met opzet niet)' % nzicht)
 if plek and plek not in opgeslagen: uit.append('  het wifi van deze plek is op deze telefoon NIET opgeslagen')
+sf = lees('softap'); kan_start = bool(lees('softap-start'))
+if sf.strip() or kan_start:
+    f = set(re.findall(r'wifi_softap_[a-z0-9_]+', sf))
+    tegelijk = 'ja' if 'wifi_softap_bridged_ap_with_sta_supported' in f else ('nee' if f else 'onbekend')
+    uit.append('  hotspot: wifi en hotspot tegelijk (volgens de telefoon zelf): %s%s; hotspot via adb starten kan: %s' % (
+        tegelijk, (' (' + ', '.join(sorted(x.replace('wifi_softap_', '').replace('_supported', '') for x in f)) + ')') if f else '', 'ja' if kan_start else 'nee'))
 cp = (E.get('CP1') or '?', E.get('CP2') or '?')
 uit.append('  gastnetwerk-controle: captive_portal_mode %s, captive_portal_detection_enabled %s%s' % (cp[0], cp[1], '' if cp == ('0', '0') else
     (" -- Android WEIGERDE het zetten via adb (op sommige merken moet daarvoor 'USB-foutopsporing (beveiligingsinstellingen)' aan in de ontwikkelaarsopties)" if E.get('CPWEG') else ' (moet 0 en 0 zijn)')))
