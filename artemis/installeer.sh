@@ -11455,11 +11455,19 @@ wifi_plek_zet() {
   else timeout 30 "$ADB" -s "$s" shell cmd wifi connect-network "$ssid" open >/dev/null 2>&1 && { printf 'GEZET'; return 0; }; fi
   printf 'MISLUKT'
 }
-tel_wifi_stand() {   # $1 serienummer -> "ok" | "geen-internet" | "geen-wifi"
-  local d; d="$(timeout 12 "$ADB" -s "$1" shell dumpsys connectivity 2>/dev/null | tr -d '\r')"
-  printf '%s' "$d" | grep -E 'NetworkAgentInfo|Transports:' | grep -q 'WIFI' || { printf 'geen-wifi'; return 0; }
-  printf '%s' "$d" | grep -E 'WIFI' | grep -q 'VALIDATED' && { printf 'ok'; return 0; }
-  printf 'geen-internet'
+tel_wifi_stand() {   # $1 serienummer -> "ok" | "geen-internet" | "geen-wifi" | "onbekend" (verbonden, maar internet niet te meten)
+  # 678 (23 nov, de eerste ronde van de wifi-wachter): de HELE dumpsys connectivity over wifi-adb liep tegen de tijdslimiet aan en kwam half
+  # binnen; dan leek een telefoon die gewoon op het wifi zat "geen wifi" te hebben (twee rektelefoons). Nu filtert de telefoon ZELF, en zegt cmd wifi
+  # status dat hij verbonden is terwijl de rest niets opleverde, dan is het "onbekend" -- nooit "geen wifi".
+  local d st
+  d="$(timeout 25 "$ADB" -s "$1" shell "dumpsys connectivity | grep -E 'NetworkAgentInfo|Transports:' | grep WIFI | head -4" 2>/dev/null | tr -d '\r')"
+  if printf '%s' "$d" | grep -q 'WIFI'; then
+    printf '%s' "$d" | grep -q 'VALIDATED' && { printf 'ok'; return 0; }
+    printf 'geen-internet'; return 0
+  fi
+  st="$(wifi_cmd "$1" status 2>/dev/null | tr -d '\r')"
+  if printf '%s' "$st" | grep -qi 'connected to "' && ! printf '%s' "$st" | grep -qi 'not connected'; then printf 'onbekend'; return 0; fi
+  printf 'geen-wifi'
 }
 # 678 (20 nov): staat "verbindingen zonder VPN blokkeren" (lockdown) aan, dan zet ARTEMIS het uit. Echo LOS als hij het uitzette.
 ts_lockdown_los() {
@@ -11680,7 +11688,7 @@ wifi_check() {
   aan="$(timeout 10 "$ADB" -s "$s" shell settings get global wifi_on 2>/dev/null | tr -d '\r\n ')"
   wifi_cmd "$s" status >"$d/status" 2>/dev/null || true
   w="$(tel_wifi_stand "$s")"
-  st=OK; case "$w" in geen-wifi) st=GEEN-WIFI ;; geen-internet) st=GEEN-INTERNET ;; esac
+  st=OK; case "$w" in geen-wifi) st=GEEN-WIFI ;; geen-internet) st=GEEN-INTERNET ;; onbekend) st=VERBONDEN ;; esac
   if grep -qi 'wifi is disabled' "$d/status" 2>/dev/null || { [ ! -s "$d/status" ] && [ "$aan" = 0 ]; }; then st=WIFI-UIT; fi
   wifi_cmd "$s" list-networks >"$d/lijst" 2>/dev/null || true
   if [ "$st" != OK ] || [ -n "$vol" ]; then
@@ -11690,7 +11698,7 @@ wifi_check() {
   cp1="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_mode 2>/dev/null | tr -d '\r\n ')"
   cp2="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_detection_enabled 2>/dev/null | tr -d '\r\n ')"
   sa="$(timeout 10 "$ADB" -s "$s" shell settings get global wifi_scan_always_enabled 2>/dev/null | tr -d '\r\n ')"
-  NAAM="$m" REL="$rel" SDK="$sdk" AAN="$aan" ST="$st" CP1="$cp1" CP2="$cp2" SA="$sa" D="$d" PLEK="$(sed -n 's/^SSID=//p' "$REK_MAP/wifi.conf" 2>/dev/null | head -1)" \
+  NAAM="$m" REL="$rel" SDK="$sdk" AAN="$aan" ST="$st" CP1="$cp1" CP2="$cp2" SA="$sa" D="$d" CPWEG="$([ -e "$WIFI_CHECK_MAP/$sl.cp-geweigerd" ] && echo 1)" PLEK="$(sed -n 's/^SSID=//p' "$REK_MAP/wifi.conf" 2>/dev/null | head -1)" \
     python3 -I - >"$WIFI_CHECK_MAP/$sl.txt.t" 2>/dev/null <<'PY'
 import os, re
 E = os.environ; D = E['D']
@@ -11706,16 +11714,20 @@ def reden(tok):
     k = re.sub(r'^(NETWORK_SELECTION_)?DISABLED_', '', tok)
     return '%s (%s)' % (REDEN.get(k, k.lower().replace('_', ' ')), tok)
 st = lees('status'); plek = E.get('PLEK', '')
-toon = lambda n: (n + ' (het wifi van deze plek)') if plek and n == plek else n
+# 678 (23 nov): GEEN netwerknamen in het verslag (dat gaat naar de repo): een naam kan een gezinsnaam, een plaats of een kliniek dragen. Alleen de
+# eerste twee tekens en de lengte; het wifi van deze plek heet gewoon zo.
+def toon(n):
+    if plek and n == plek: return 'het wifi van deze plek'
+    return '"%s..." (%d tekens)' % (n[:2], len(n)) if n else '(verborgen netwerk)'
 uit = ['%s: Android %s (SDK %s)' % (E.get('NAAM') or 'telefoon', E.get('REL') or '?', E.get('SDK') or '?')]
 aan = 'aan' if (re.search(r'(?i)wifi is enabled', st) or (not st and E.get('AAN') == '1')) else ('uit' if (re.search(r'(?i)wifi is disabled', st) or E.get('AAN') == '0') else 'onbekend')
 m = re.search(r'(?i)connected to "([^"]*)"', st)
-stand = {'OK': 'verbonden, met internet', 'GEEN-INTERNET': 'verbonden, maar ZONDER internet', 'GEEN-WIFI': 'niet verbonden', 'WIFI-UIT': 'wifi staat UIT'}.get(E['ST'], E['ST'])
+stand = {'OK': 'verbonden, met internet', 'GEEN-INTERNET': 'verbonden, maar ZONDER internet', 'VERBONDEN': 'verbonden (internet niet te meten)', 'GEEN-WIFI': 'niet verbonden', 'WIFI-UIT': 'wifi staat UIT'}.get(E['ST'], E['ST'])
 uit.append('  wifi %s; %s%s' % (aan, stand, (' met ' + toon(m.group(1))) if m else ''))
 opgeslagen = []
 for r in lees('lijst').split('\n'):
     mm = re.match(r'^\s*(\d+)\s+(.+?)\s{2,}(\S+)\s*$', r)
-    if mm: opgeslagen.append(mm.group(2).strip())
+    if mm and mm.group(2).strip() not in opgeslagen: opgeslagen.append(mm.group(2).strip())
 uitz = {}; huidig = None
 for r in lees('uitz').split('\n'):
     mm = re.search(r'ID: \d+ SSID: "([^"]*)"', r)
@@ -11733,8 +11745,13 @@ for r in lees('scan').split('\n'):
     nzicht += 1; n = mm.group(4).strip(); rs = int(mm.group(3))
     if n and (n not in zicht or rs > zicht[n]): zicht[n] = rs
 if opgeslagen:
-    uit.append('  opgeslagen netwerken (%d):' % len(opgeslagen))
-    for n in opgeslagen[:8]:
+    nu_op = m.group(1) if m else ''
+    # eerst het netwerk waarop hij zit, dan wat in de buurt is of door Android is uitgezet; de rest alleen als aantal
+    bel = [n for n in opgeslagen if n == nu_op or n in zicht or n == plek or uitz.get(n, {}).get('status', '').endswith('DISABLED')]
+    bel.sort(key=lambda n: (n != nu_op, n not in zicht))
+    rest = len(opgeslagen) - len(bel)
+    uit.append('  opgeslagen netwerken: %d%s' % (len(opgeslagen), (' (hieronder alleen wat in de buurt is of uitgezet; %d andere niet in de buurt)' % rest) if rest else ''))
+    for n in bel[:8]:
         u = uitz.get(n, {}); x = toon(n)
         if lees('scan'): x += ', zichtbaar (%d dBm)' % zicht[n] if n in zicht else ', NIET zichtbaar'
         if u.get('status') in ('TEMPORARY_DISABLED', 'PERMANENTLY_DISABLED'):
@@ -11746,7 +11763,8 @@ else:
 if lees('scan'): uit.append('  zichtbare netwerken: %d (namen van andermans netwerken staan hier met opzet niet)' % nzicht)
 if plek and plek not in opgeslagen: uit.append('  het wifi van deze plek is op deze telefoon NIET opgeslagen')
 cp = (E.get('CP1') or '?', E.get('CP2') or '?')
-uit.append('  gastnetwerk-controle: captive_portal_mode %s, captive_portal_detection_enabled %s%s' % (cp[0], cp[1], '' if cp == ('0', '0') else ' (moet 0 en 0 zijn)'))
+uit.append('  gastnetwerk-controle: captive_portal_mode %s, captive_portal_detection_enabled %s%s' % (cp[0], cp[1], '' if cp == ('0', '0') else
+    (" -- Android WEIGERDE het zetten via adb (op sommige merken moet daarvoor 'USB-foutopsporing (beveiligingsinstellingen)' aan in de ontwikkelaarsopties)" if E.get('CPWEG') else ' (moet 0 en 0 zijn)')))
 uit.append('  scannen altijd beschikbaar: %s' % {'1': 'aan', '0': 'UIT'}.get(E.get('SA', ''), 'onbekend'))
 print('\n'.join(uit))
 PY
@@ -11762,7 +11780,13 @@ wifi_gast_instel() {
   [ "$v" = 0 ] || { timeout 10 "$ADB" -s "$s" shell settings put global captive_portal_mode 0 >/dev/null 2>&1 && gezet=1; }
   v="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_detection_enabled 2>/dev/null | tr -d '\r\n ')"
   [ "$v" = 0 ] || { timeout 10 "$ADB" -s "$s" shell settings put global captive_portal_detection_enabled 0 >/dev/null 2>&1 && gezet=1; }
-  [ -n "$gezet" ] && printf 'ZET'
+  # 678 (23 nov): NALEZEN. Op sommige telefoons geeft het zetten geen fout terwijl er niets verandert (eerste ronde: "null" bleef "null").
+  local sl; sl="$(tel_sl "$s")"; mkdir -p "$WIFI_CHECK_MAP" 2>/dev/null
+  if [ -n "$gezet" ]; then
+    if [ "$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_mode 2>/dev/null | tr -d '\r\n ')" = 0 ] && [ "$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_detection_enabled 2>/dev/null | tr -d '\r\n ')" = 0 ]; then
+      rm -f "$WIFI_CHECK_MAP/$sl.cp-geweigerd"; printf 'ZET'
+    else : >"$WIFI_CHECK_MAP/$sl.cp-geweigerd"; printf 'GEWEIGERD'; fi
+  fi
 }
 # 3) HERSTEL ZONDER WACHTWOORD. Scannen-altijd-beschikbaar aan, en het wifi uit en weer aan -- dat haalt de wachttijd weg die Android na fouten
 # zet (tot 18 uur). Het uit-en-aan gebeurt OP DE TELEFOON ZELF (nohup), zodat het ook afloopt als adb over juist dat wifi liep. -> een korte zin
@@ -11826,8 +11850,12 @@ isolatie_test() {
 "; else regels="$regels  deze computer -> $naam: NIET bereikbaar
 "; fi
     for b in $lijst; do [ "$a" = "$b" ] && continue; ipb="${b#*|}"; paren=$((paren + 1))
-      if timeout 10 "$ADB" -s "${a%%|*}" shell ping -c 1 -W 2 "$ipb" 2>/dev/null | grep -q ' 0% packet loss'; then goed=$((goed + 1)); regels="$regels  $naam -> $(toestel_naam "${b%%|*}" | tr -cd 'A-Za-z0-9 ._-'): bereikbaar
-"; else regels="$regels  $naam -> $(toestel_naam "${b%%|*}" | tr -cd 'A-Za-z0-9 ._-'): NIET bereikbaar
+      # 678 (23 nov): geeft ping geen uitslag (geen "packet loss" in de uitvoer: ping mag niet in de shell van die telefoon), dan is het
+      # ONBEKEND en telt het paar niet mee -- in de eerste ronde telde de brein-telefoon zo als "ziet niemand".
+      local pu; pu="$(timeout 10 "$ADB" -s "${a%%|*}" shell ping -c 1 -W 2 "$ipb" 2>&1 | tr -d '\r')"
+      if printf '%s' "$pu" | grep -q ' 0% packet loss'; then goed=$((goed + 1)); regels="$regels  $naam -> $(toestel_naam "${b%%|*}" | tr -cd 'A-Za-z0-9 ._-'): bereikbaar
+"; elif printf '%s' "$pu" | grep -q 'packet loss'; then regels="$regels  $naam -> $(toestel_naam "${b%%|*}" | tr -cd 'A-Za-z0-9 ._-'): NIET bereikbaar
+"; else paren=$((paren - 1)); regels="$regels  $naam -> $(toestel_naam "${b%%|*}" | tr -cd 'A-Za-z0-9 ._-'): onbekend (ping werkt niet in de shell van deze telefoon)
 "; fi
     done
   done
@@ -11838,6 +11866,10 @@ isolatie_test() {
   else oordeel="deels: $goed van $paren telefoonparen en $vanhiergoed van $vanhier vanaf deze computer"; fi
   { printf '%s %s\n' "$(date '+%d-%m %H:%M')" "$oordeel"; printf '%s' "$regels"; } >"$ISOLATIE_F" 2>/dev/null || true
   printf '%s' "$oordeel"
+}
+is_brein_vast() {   # $1 adb-adres -> 0 als dit de vaste brein-telefoon is (alleen lezen: geen bruggen, geen zoektocht -- anders dan is_brein_tel)
+  local tid; tid="$(head -1 "$REK_MAP/brein-tid" 2>/dev/null | tr -d '\r\n ')"; [ -n "$tid" ] || tid="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$tid" ] && [ "$(toestel_id "$1")" = "$tid" ]
 }
 # 5) DE WACHTER: elke vijf minuten, stil. Per rektelefoon in adb: de check (1); niet goed = herstel (3), wachten, opnieuw kijken; nog steeds niet =
 # het wifi van deze plek (als dat in de console staat). Tailscale (6) en de gastnetwerk-instellingen (4) gaan mee. Met terugval: hoe vaker een
@@ -11857,14 +11889,14 @@ wifi_wachter_tik() {
     { awk -v k="$sl" '$1!=k' "$WIFI_GEZIEN_F" 2>/dev/null; printf '%s %s %s\n' "$sl" "$nu" "$naam"; } >"$WIFI_GEZIEN_F.t" && mv -f "$WIFI_GEZIEN_F.t" "$WIFI_GEZIEN_F"
     wifi_help "$s" >/dev/null 2>&1 || true
     vol=""; t="$(stat -c %Y "$WIFI_CHECK_MAP/$sl.txt" 2>/dev/null || echo 0)"; [ $((nu - t)) -ge 3600 ] && vol=1
-    st="$(wifi_check "$s" "$vol")"
     wifi_gast_instel "$s" >/dev/null 2>&1 || true
+    st="$(wifi_check "$s" "$vol")"
     zin="$(ts_altijd_aan "$s")"; [ -n "$zin" ] && logregel "Wifi-wachter, $naam: $zin."
-    if [ "$st" = OK ]; then
+    if [ "$st" = OK ] || [ "$st" = VERBONDEN ]; then
       read -r _ n _ <<<"$(awk -v k="$sl" '$1==k' "$WIFI_WACHT_ST" 2>/dev/null)"
       [ "${n:-0}" -gt 0 ] && terug="$terug $naam"
       awk -v k="$sl" '$1!=k' "$WIFI_WACHT_ST" >"$WIFI_WACHT_ST.t" 2>/dev/null; mv -f "$WIFI_WACHT_ST.t" "$WIFI_WACHT_ST" 2>/dev/null
-      regels="$regels  $naam: wifi met internet
+      regels="$regels  $naam: wifi $([ "$st" = OK ] && echo 'met internet' || echo 'verbonden (internet niet te meten)')
 "
     else
       read -r _ n t <<<"$(awk -v k="$sl" '$1==k' "$WIFI_WACHT_ST" 2>/dev/null)"; n="${n:-0}"; t="${t:-0}"
@@ -11874,12 +11906,12 @@ wifi_wachter_tik() {
         # controle van een gastnetwerk), en altijd zacht op de brein-telefoon tijdens een les: dan geen uit-en-aan dat de les zou breken.
         local zacht=""
         { [ "$st" = GEEN-INTERNET ] && [ -n "$(tel_ts_ip "$s")" ]; } && zacht=zacht
-        { is_brein_tel "$s" && les_loopt; } && zacht=zacht
+        { is_brein_vast "$s" && les_loopt; } && zacht=zacht
         r="$(wifi_herstel "$s" "$zacht")"
         sleep "${WIFI_HERSTEL_WACHT_S:-20}"
         st2="$(wifi_check "$s" 1)"
         if [ "$st2" != OK ] && [ -s "$REK_MAP/wifi.conf" ]; then [ "$(wifi_plek_zet "$s")" = GEZET ] && { sleep "${WIFI_WACHT_S:-8}"; st2="$(wifi_check "$s")"; r="$r, het wifi van deze plek gezet"; }; fi
-        if [ "$st2" = OK ]; then
+        if [ "$st2" = OK ] || [ "$st2" = VERBONDEN ]; then
           logregel "Wifi-wachter: $naam was van het wifi ($(printf '%s' "$st" | tr 'A-Z' 'a-z')); weer terug na: $r."
           awk -v k="$sl" '$1!=k' "$WIFI_WACHT_ST" >"$WIFI_WACHT_ST.t" 2>/dev/null; mv -f "$WIFI_WACHT_ST.t" "$WIFI_WACHT_ST" 2>/dev/null
           terug="$terug $naam"; regels="$regels  $naam: was van het wifi, weer terug ($r)
@@ -11959,7 +11991,7 @@ verhuis_ronde() {
     [ "$(ts_lockdown_los "$s")" = LOS ] && { logregel "Verhuisronde: op $naam stond 'verbindingen zonder VPN blokkeren' aan; dat legde JARVIS stil (EPERM). Uitgezet."; los="$los $naam"; }
     ts="$(ts_telefoon_aan "$s" nu)"
     case "$ts" in NIET) nietaan="$nietaan $naam" ;; GEEN-APP) geenapp="$geenapp $naam" ;; esac
-    regels="$regels  $naam: wifi $(case "$w" in ok) echo 'met internet' ;; geen-internet) echo 'ZONDER internet' ;; *) echo 'NIET verbonden' ;; esac); Tailscale $(case "$ts" in AL*) echo "stond aan (${ts#AL })" ;; AAN*) echo "aangezet (${ts#AAN })" ;; GEEN-APP) echo 'staat er niet op' ;; *) echo 'ging niet aan' ;; esac)
+    regels="$regels  $naam: wifi $(case "$w" in ok) echo 'met internet' ;; geen-internet) echo 'ZONDER internet' ;; onbekend) echo 'verbonden (internet niet te meten)' ;; *) echo 'NIET verbonden' ;; esac); Tailscale $(case "$ts" in AL*) echo "stond aan (${ts#AL })" ;; AAN*) echo "aangezet (${ts#AAN })" ;; GEEN-APP) echo 'staat er niet op' ;; *) echo 'ging niet aan' ;; esac)
 "
     case "$ts" in AAN*) logregel "Verhuisronde: Tailscale stond uit op $naam; ik heb hem weer aangezet (${ts#AAN })." ;; NIET) logregel "Verhuisronde: Tailscale ging niet vanzelf aan op $naam." ;; esac
     { printf '%s Verhuisronde (%s) loopt nog...\n' "$(date '+%d-%m %H:%M')" "$waarom"; printf '%s' "$regels"; } >"$VERHUIS_F" 2>/dev/null || true   # tussenstand: wat al gedaan is gaat nooit verloren
