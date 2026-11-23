@@ -1755,6 +1755,8 @@ def lus():
                 threading.Thread(target=doe_args, args=(['brein-meet'], 1500), daemon=True).start()   # 678 (17 nov): de vaste snelheidsmeting, los van het verslag
             if RONDE % 10 == 5:
                 threading.Thread(target=doe_args, args=(['stem-adb-vanzelf'], 5400), daemon=True).start()   # 678 (17 nov): het stemmodel via de kabel, als JARVIS het zelf niet binnenkrijgt
+            if RONDE % 15 == 8:
+                threading.Thread(target=doe_args, args=(['brein-tweetegelijk'], 3600), daemon=True).start()   # 678 (23 nov): twee vragen tegelijk meten (eens per opstelling, na de modelproef)
             if RONDE % 15 == 13:
                 threading.Thread(target=doe_args, args=(['brein-modelproef'], 21600), daemon=True).start()   # 678 (16 nov): de modelproef (eens per kandidatenlijst; downloads gaan door waar ze stopten)
             if RONDE % 30 == 11:
@@ -1764,7 +1766,7 @@ def lus():
             threading.Thread(target=doe_args, args=(['les-hervat-tik'], 60), daemon=True).start()   # 678 (20 nov): een onderbroken les (slaap, of geen antwoorden) opnieuw
             threading.Thread(target=doe_args, args=(['kanaal-tik'], 330), daemon=True).start()   # 678 (15 nov): een vraag van Claude Code aan het brein? (eigen draad: een antwoord kan minuten duren; een slot voorkomt dubbel)
             if RONDE % 15 == 9:
-                threading.Thread(target=doe, args=('zelfronde',), daemon=True).start()   # 678 (14 nov): de rondes van Cowork, nu zelf; op een eigen draad (adb/relay kosten even)
+                threading.Thread(target=doe_args, args=(['zelfronde'], 900), daemon=True).start()   # 678 (14 nov): de rondes van Cowork, nu zelf; op een eigen draad. 23 nov: doe() brak hem na 120 s af (vier telefoons via Tailscale duren langer), en dan zei Veronica "staat de console stil?"
             if RONDE % 10 == 0:
                 doe('zelf-bijwerken-stil')
             RONDE += 1
@@ -8185,7 +8187,9 @@ rek_rol_van() {   # $1 serienummer -> "rol|klaar|model|toestel" (leeg als het to
     m="$(printf '%s' "$st" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p' | sed 's/\.gguf$//' | tr -cd 'A-Za-z0-9._-' | cut -c1-60)"
     tid="$(printf '%s' "$st" | sed -n 's/.*"toestel":"\([a-z0-9]*\)".*/\1/p' | cut -c1-32)"
     k=false
-    if printf '%s' "$st" | grep -q '"stand":"klaar"' && curl -fsS -m 2 "http://127.0.0.1:$poort/health" 2>/dev/null | grep -q '"ok"'; then k=true; fi
+    # 678 (23 nov): -m 6 (was 2). Via Tailscale haalde de controle en de verdeler de 2 s niet, terwijl het verslag (3 s) "antwoordt: ja" zei;
+    # Veronica toonde dan "het model start nog" bij een rol die gewoon werkte.
+    if printf '%s' "$st" | grep -q '"stand":"klaar"' && curl -fsS -m 6 "http://127.0.0.1:$poort/health" 2>/dev/null | grep -q '"ok"'; then k=true; fi
     printf '%s|%s|%s|%s' "$rol" "$k" "$m" "$tid"; return 0
   done
 }
@@ -10594,6 +10598,72 @@ print(regel)
 PY
   rm -rf "$REK_MAP/brein-meet.lock"
 }
+# 678 (23 nov, eigenaar: "ja", op het voorstel het brein TWEE VRAGEN TEGELIJK te laten beantwoorden). EERST METEN, dan pas iets omzetten.
+# Een telefoon schrijft traag door het GEHEUGEN (elk woord leest het hele model), niet door de rekenkracht; twee vragen in een beurt delen die
+# leesronde. Of dat hier echt sneller is, en of het geheugen het houdt, staat nergens -- dus: een keer per opstelling (model + vlaggen + server),
+# NA de modelproef, het brein kort opnieuw met -np 2 en dubbele context (elk vak houdt zo de volle context), dezelfde vaste vraag als de
+# snelheidsmeting eerst alleen en dan twee tegelijk, en het vrije geheugen erbij. Daarna ALTIJD het brein terug zoals het was. Er wordt hier
+# NIETS omgezet: de uitslag staat in het verslag; de toets twee vragen tegelijk laten stellen is de volgende stap, alleen als dit wint.
+TWEE_F="$REK_MAP/tweetegelijk.txt"
+brein_tweetegelijk() {
+  les_loopt && return 0
+  [ -f "$REK_MAP/les-wacht" ] && return 0
+  [ -s "$REK_MAP/modelproef.sig" ] || return 0   # eerst de modelproef (die kiest het model waar dit over gaat)
+  slot_levend "$REK_MAP/controleproef.lock" && return 0
+  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  local s model bouw ctx basis sig vrij regel
+  s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
+  model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  bouw="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
+  sig="$model|${bouw:-basis}|$(brein_extra)|twee1"
+  [ "$(head -1 "$TWEE_F.sig" 2>/dev/null)" = "$sig" ] && return 0
+  brein_slot_neem || return 0
+  ctx="$(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9')"; ctx="${ctx:-$BREIN_CONTEXT}"
+  basis="$(head -1 "$REK_MAP/brein-extra" 2>/dev/null | tr -cd 'A-Za-z0-9_+ .=-')"
+  logregel "Twee tegelijk: meting begint ($model); het brein is een paar minuten weg."
+  if BREIN_PROEF="$basis -np 2 -c $((ctx * 2))" brein_herstart_met "$s" "$model"; then
+    vrij="$(mem_vrij_kb "$s" | tr -cd '0-9')"
+    regel="$(KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" MODEL="$model" VRIJ="${vrij:-}" python3 -I - <<'PY2' 2>/dev/null
+import os, json, time, threading, urllib.request
+op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try: kennis = open(os.environ['KENNIS']).read()[:4500]
+except Exception: kennis = 'Je bent het brein van een rek oude telefoons.'
+def een(uit=None, i=0):
+    lijf = json.dumps({'messages': [{'role': 'system', 'content': kennis}, {'role': 'user', 'content': 'Leg in vijf korte zinnen uit wat het rek doet.'}],
+                       'max_tokens': 96, 'ignore_eos': True, 'temperature': 0, 'stream': False, 'cache_prompt': True, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
+    r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=900)
+    t = json.loads(r.read(4000000).decode('utf-8', 'replace')).get('timings') or {}
+    if uit is not None: uit[i] = t
+    return t
+def samen():
+    uit = [None, None]; th = [threading.Thread(target=een, args=(uit, i)) for i in (0, 1)]
+    t0 = time.time(); [x.start() for x in th]; [x.join() for x in th]; muur = time.time() - t0
+    if not all(uit): raise RuntimeError('geen antwoord')
+    schrijf = max((x.get('predicted_ms') or 0) for x in uit) / 1000
+    return sum((x.get('predicted_n') or 0) for x in uit) / schrijf if schrijf > 0 else 0, muur
+nu = time.strftime('%d-%m %H:%M'); vrij = os.environ.get('VRIJ') or ''
+try:
+    een(); alleen = sorted((een().get('predicted_per_second') or 0) for _ in range(2))[-1]   # warm, dan de beste van twee
+    samen(); tw, muur = samen()   # de eerste ronde vult beide vakken; de tweede telt
+    winst = (tw / alleen - 1) * 100 if alleen > 0 else 0
+    vrij_mb = int(vrij) // 1024 if vrij.isdigit() else None
+    oordeel = ('de moeite waard (minstens 30% meer samen en genoeg geheugen over); de volgende stap is de toets twee vragen tegelijk laten stellen'
+               if winst >= 30 and (vrij_mb is None or vrij_mb >= 300) else 'NIET de moeite waard: ' + ('te weinig winst' if winst < 30 else 'te weinig geheugen over'))
+    print('%s | %s | een vraag: %.2f tok/s | twee tegelijk: samen %.2f tok/s (%.2f per vraag), %d s voor beide | winst %+.0f%% | vrij geheugen met twee vakken: %s | %s' % (
+        nu, os.environ['MODEL'], alleen, tw, tw / 2, muur, winst, ('%d MB' % vrij_mb) if vrij_mb is not None else '?', oordeel))
+except Exception as e:
+    print('%s | %s | meting mislukt (%s)' % (nu, os.environ['MODEL'], type(e).__name__))
+PY2
+)"
+  else
+    regel="$(date '+%d-%m %H:%M') | $model | startte niet met twee vakken (te weinig geheugen?) -- NIET de moeite waard"
+  fi
+  brein_herstart_met "$s" "$model" >/dev/null 2>&1 || logregel "Twee tegelijk: het brein startte niet meteen terug; de waakhond probeert het opnieuw."
+  [ -n "$regel" ] && printf '%s\n' "$regel" >>"$TWEE_F"
+  case "$regel" in *mislukt*) : ;; *) printf '%s\n' "$sig" >"$TWEE_F.sig" ;; esac
+  rm -rf "$REK_MAP/brein.lock"
+  logregel "Twee tegelijk: $(printf '%s' "$regel" | cut -d'|' -f3-)"
+}
 # 678 (16 nov, onderzoek stap 4 en 5): DE PROEFBANK. Een voor een, steeds meten: eerst de huidige opstelling, dan flash attention met de
 # KV-cache in q8_0 (minder geheugen per token, minder lezen), dan daarbovenop het model vasthouden in het werkgeheugen (--load-mode mmap+mlock:
 # Android mag de modelpagina's dan niet wegzetten). Na elke herstart de vaste meting; een kandidaat blijft alleen als hij minstens 3% sneller
@@ -10702,6 +10772,34 @@ brein_tel_ruim() {   # $1 serienummer, rest = bestandsnamen die moeten blijven
   done
   printf '%s' "$n"
 }
+# 678 (23 nov, eigenaar: "ik wil dat de lokale AI sneller wordt gebouwd"). DE TOETS NIET TWEE KEER. De vaste toets (40 vragen) kost op het brein
+# een tot twee uur per model; dat is bijna de hele duur van de modelproef. Is DIT model met DEZE vlaggen in de laatste 24 uur al getoetst en
+# kwam die toets rond -- in de modelproef zelf of in de vaste toets (toets_tik) -- dan wordt die score hergebruikt. De SNELHEID wordt altijd
+# opnieuw gemeten (dat kost minuten). Een toets die niet rond kwam ("niet rond gekomen", of geen getal) telt nooit.
+modelproef_score_eerder() {   # $1 bestandsnaam van het model, $2 de model-vlaggen -> de score (0-40) of niets
+  LOG="$MODELPROEF_LOG_F" GESCH="$TOETS_GESCH" M="$1" MX="$2" EXTRA="$(BREIN_MODEL_PROEF="$2" brein_extra)" python3 -I - <<'PY2' 2>/dev/null
+import os, re, json, time
+m, mx, nu = os.environ['M'], os.environ['MX'].strip(), time.time()
+beste = None
+def jong(t): return 0 <= nu - t <= 86400
+try:
+    for r in open(os.environ['LOG']):
+        d = re.match(r'^(\d\d)-(\d\d) (\d\d):(\d\d) \| (.+?)( \(nu\))? \| schrijven [\d.]+ tok/s \| toets (\d+)/40\b', r)
+        if not d or d.group(5) != (m + (' ' + mx if mx else '')): continue
+        jaar = time.localtime(nu).tm_year
+        t = time.mktime((jaar, int(d.group(2)), int(d.group(1)), int(d.group(3)), int(d.group(4)), 0, 0, 0, -1))
+        if t > nu + 300: t = time.mktime((jaar - 1, int(d.group(2)), int(d.group(1)), int(d.group(3)), int(d.group(4)), 0, 0, 0, -1))
+        if jong(t): beste = int(d.group(7))
+except Exception: pass
+try:
+    for r in open(os.environ['GESCH']):
+        if not r.strip(): continue
+        x = json.loads(r)
+        if x.get('rond') and (x.get('model') or '') + '.gguf' == m and (x.get('extra') or '') == os.environ['EXTRA'] and jong(float(x.get('t') or 0)): beste = int(x['goed'])
+except Exception: pass
+if beste is not None and 0 <= beste <= 40: print(beste)
+PY2
+}
 brein_modelproef() {
   les_loopt && return 0
   [ -f "$REK_MAP/les-wacht" ] && return 0   # 678 (17 nov): er wacht een les; die gaat voor
@@ -10716,7 +10814,8 @@ brein_modelproef() {
   logregel "Modelproef: begint (nu $oud_m); elke kandidaat wordt gemeten op snelheid en met beide lesrijen."
   # het huidige brein
   tps="$(BREIN_MODEL_PROEF="$oud_mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
-  score="$(brein_snelle_les)"
+  local eerder=""; score="$(modelproef_score_eerder "$oud_m" "$oud_mx")"
+  if [ -n "$score" ]; then eerder=" (toets van de laatste 24 uur, niet opnieuw)"; logregel "Modelproef: $oud_m is vandaag al getoetst ($score/40); die score telt, de toets niet nog eens."; else score="$(brein_snelle_les)"; fi
   if [ "$score" = '?' ]; then   # 678 (23 nov): de toets van het huidige brein liep niet (een andere les?): niets vergelijken, later opnieuw
     logregel "Modelproef: de vaste toets van het huidige brein kwam niet rond; de modelproef begint later opnieuw."
     rm -rf "$REK_MAP/brein.lock"; return 0
@@ -10725,7 +10824,7 @@ brein_modelproef() {
     logregel "Modelproef: de meting van het huidige brein gaf niets (0 tok/s); de modelproef wacht tot meten weer werkt."
     rm -rf "$REK_MAP/brein.lock"; return 0
   fi
-  printf '%s | %s%s (nu) | schrijven %s tok/s | toets %s/40\n' "$(date '+%d-%m %H:%M')" "$oud_m" "${oud_mx:+ $oud_mx}" "$tps" "$score" >>"$MODELPROEF_LOG_F"
+  printf '%s | %s%s (nu) | schrijven %s tok/s | toets %s/40%s\n' "$(date '+%d-%m %H:%M')" "$oud_m" "${oud_mx:+ $oud_mx}" "$tps" "$score" "$eerder" >>"$MODELPROEF_LOG_F"
   best_m="$oud_m"; best_mx="$oud_mx"; best_tps="$tps"; best_score="$score"; basis_tps="$tps"
   grens="$(awk "BEGIN{g = $basis_tps * 0.8; print (g < 3 ? g : 3)}")"
   # 678 (18 nov): via fd 3 -- adb shell (in brein_tel_zet, brein_herstart_met en de meting) las de rest van de kandidatenlijst van stdin op, en
@@ -10765,12 +10864,13 @@ brein_modelproef() {
     fi
     brein_stand klaar "Modelproef: $lokaal" "$s" "$lokaal" ""   # zodat de kennisbank en de les de juiste naam noemen
     tps="$(BREIN_MODEL_NU="$lokaal" BREIN_MODEL_PROEF="$mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
-    score="$(brein_snelle_les)"
+    eerder=""; score="$(modelproef_score_eerder "$lokaal" "$mx")"
+    if [ -n "$score" ]; then eerder=" (toets van de laatste 24 uur, niet opnieuw)"; else score="$(brein_snelle_les)"; fi
     if [ "$score" = '?' ]; then   # 678 (23 nov): toets niet rond = deze kandidaat NIET beoordelen (en het oude brein terug)
       printf '%s | %s%s | schrijven %s tok/s | toets niet rond gekomen; later opnieuw\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" "$tps" >>"$MODELPROEF_LOG_F"
       brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0
     fi
-    printf '%s | %s%s | schrijven %s tok/s | toets %s/40\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" "$tps" "$score" >>"$MODELPROEF_LOG_F"
+    printf '%s | %s%s | schrijven %s tok/s | toets %s/40%s\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" "$tps" "$score" "$eerder" >>"$MODELPROEF_LOG_F"
     if awk "BEGIN{exit !($tps >= $grens && ($score > $best_score || ($score == $best_score && $tps > $best_tps)))}"; then
       best_m="$lokaal"; best_mx="$mx"; best_tps="$tps"; best_score="$score"
     fi
@@ -11096,12 +11196,31 @@ for x in n["lessen"]:
   [ -s "$BREIN_MEET_F" ] || printf '    nog geen meting\n'
   printf '\n## Modelproef (welk brein: snelheid en lesscore)\n'; tail -n 6 "$MODELPROEF_LOG_F" 2>/dev/null | sed 's/^/    /' || true
   [ -s "$MODELPROEF_LOG_F" ] || printf '    nog niet gedaan\n'
+  printf '\n## Twee vragen tegelijk (meting, nog niets omgezet)\n'; tail -n 3 "$TWEE_F" 2>/dev/null | sed 's/^/    /'; [ -s "$TWEE_F" ] || printf '    nog niet gemeten (na de modelproef)\n'
   # 678 (23 nov): de toets en de controle-proef staan VOORAAN -- het verslag wordt bij de relay van onderen ingekort, en om 14:44 viel de
   # vaste toets er zo af terwijl dat juist de uitslag is waar op gewacht wordt.
   # 678 (23 nov): in het verslag de kop en alleen de FOUTE vragen (hoogstens tien) -- de hele tabel van veertig rijen duwde de rest van het
   # verslag over de grens van de relay. De volledige tabel blijft in het bestand op deze computer.
   printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; if [ -s "$TOETS_F" ]; then { sed -n '1,/^| vraag /p' "$TOETS_F" | grep -v '^| vraag '; grep '^| .* | fout' "$TOETS_F" | head -n 10 | sed 's/^/fout: /'; n="$(grep -c '^| .* | fout' "$TOETS_F")"; [ "${n:-0}" -gt 10 ] && echo "(en nog $((n - 10)) fout)"; } | sed 's/^/    /'; else printf '    nog niet gemeten\n'; fi
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
+  # 678 (23 nov): de sloten ook VOORAAN -- om 16:18 en 17:35 viel juist dit deel er bij de relay af, terwijl het zegt waarom een proef wacht
+  # 678 (17 nov): WAT HOUDT WAT VAST -- zo is van buiten te zien waarom een les of een proef niet begint
+  printf '\n## Sloten en wachtrij\n'
+  local sl sp
+  for sl in brein.lock brein-meet.lock brein-les.lock controle/brein.lock verdeler/brein.lock; do
+    [ -d "$REK_MAP/$sl" ] || continue
+    sp="$(head -1 "$REK_MAP/$sl/pid" 2>/dev/null | tr -cd '0-9')"
+    printf '    %s: sinds %s, %s\n' "$sl" "$(date -d "@$(stat -c %Y "$REK_MAP/$sl")" '+%d-%m %H:%M' 2>/dev/null)" \
+      "$( [ -n "$sp" ] && { kill -0 "$sp" 2>/dev/null && echo "proces $sp leeft ($(tr '\0' ' ' </proc/$sp/cmdline 2>/dev/null | sed 's#.*/##' | cut -c1-40))" || echo "proces $sp is weg (verweesd)"; } || echo 'zonder procesnummer')"
+  done
+  [ -s "$LES_HERVAT_F" ] && printf '    een onderbroken les begint opnieuw zodra het brein antwoordt (lesrij %s, klaargezet %s)\n' "$(cut -d' ' -f2 "$LES_HERVAT_F" 2>/dev/null | tr -cd '0-9')" "$(date -d "@$(stat -c %Y "$LES_HERVAT_F")" '+%d-%m %H:%M' 2>/dev/null)"
+  if [ -s "$SLAAP_LOG_F" ]; then   # 678 (20 nov): wanneer de computer sliep -- dan stond het hele rek stil
+    printf '    de computer sliep laatst: '
+    tail -n 3 "$SLAAP_LOG_F" | while read -r _st _sd; do _st="$(printf '%s' "$_st" | tr -cd '0-9')"; _sd="$(printf '%s' "$_sd" | tr -cd '0-9')"; [ -n "$_st" ] && [ -n "$_sd" ] && printf '%s tot %s (%s min); ' "$(date -d "@$((_st - _sd))" '+%d-%m %H:%M' 2>/dev/null)" "$(date -d "@$_st" '+%d-%m %H:%M' 2>/dev/null)" "$((_sd / 60))"; done
+    printf 'daarna ging het rek vanzelf verder\n'
+  fi
+  [ -f "$REK_MAP/les-wacht" ] && printf '    er wacht een les (sinds %s)\n' "$(date -d "@$(stat -c %Y "$REK_MAP/les-wacht")" '+%d-%m %H:%M' 2>/dev/null)"
+  printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Brein\n'; BREIN_ALLEEN_KIJKEN=1 brein_status 2>/dev/null | sed 's/^/    /'
   printf '\n## Controle\n'
   if [ -s "$CONTROLE_MAP/brein-vast" ]; then BREIN_ALLEEN_KIJKEN=1 als_controle brein_status 2>/dev/null | sed 's/^/    /'; else printf '    nog geen controle-telefoon gekozen\n'; fi
@@ -11132,28 +11251,6 @@ for x in n["lessen"]:
   local _wc; for _wc in "$WIFI_CHECK_MAP"/*.txt; do [ -s "$_wc" ] || continue; grep -q '^telefoon: Android ? (SDK ?)' "$_wc" && continue; [ -z "${_wck:-}" ] && { printf '\n## Wifi per telefoon (laatste check)\n'; _wck=1; }; sed 's/^/    /' "$_wc"; done; unset _wck
   [ -s "$ISOLATIE_F" ] && { printf '\n## Isolatietest (zien de telefoons elkaar op dit wifi?)\n'; sed 's/^/    /' "$ISOLATIE_F"; }
   [ -s "$VERHUIS_F" ] && { printf '\n## Laatste verhuisronde (wifi, Tailscale, koppelen, rollen)\n'; sed 's/^/    /' "$VERHUIS_F"; }
-  # 678 (20 nov): per rektelefoon (niet het brein, nooit de F8) waarom JARVIS wel of niet luistert -- alleen lezen
-  printf '\n## JARVIS per telefoon (diagnose)\n'
-  local _dt
-  for _dt in $(verbonden); do is_f8 "$_dt" && continue; toegestaan "$(toestel_id "$_dt")" || continue; is_brein_tel "$_dt" && continue
-    printf '    %s: %s\n' "$(toestel_naam "$_dt" | tr -cd 'A-Za-z0-9 ._-')" "$(jarvis_diag "$_dt")"; done
-  # 678 (17 nov): WAT HOUDT WAT VAST -- zo is van buiten te zien waarom een les of een proef niet begint
-  printf '\n## Sloten en wachtrij\n'
-  local sl sp
-  for sl in brein.lock brein-meet.lock brein-les.lock controle/brein.lock verdeler/brein.lock; do
-    [ -d "$REK_MAP/$sl" ] || continue
-    sp="$(head -1 "$REK_MAP/$sl/pid" 2>/dev/null | tr -cd '0-9')"
-    printf '    %s: sinds %s, %s\n' "$sl" "$(date -d "@$(stat -c %Y "$REK_MAP/$sl")" '+%d-%m %H:%M' 2>/dev/null)" \
-      "$( [ -n "$sp" ] && { kill -0 "$sp" 2>/dev/null && echo "proces $sp leeft ($(tr '\0' ' ' </proc/$sp/cmdline 2>/dev/null | sed 's#.*/##' | cut -c1-40))" || echo "proces $sp is weg (verweesd)"; } || echo 'zonder procesnummer')"
-  done
-  [ -s "$LES_HERVAT_F" ] && printf '    een onderbroken les begint opnieuw zodra het brein antwoordt (lesrij %s, klaargezet %s)\n' "$(cut -d' ' -f2 "$LES_HERVAT_F" 2>/dev/null | tr -cd '0-9')" "$(date -d "@$(stat -c %Y "$LES_HERVAT_F")" '+%d-%m %H:%M' 2>/dev/null)"
-  if [ -s "$SLAAP_LOG_F" ]; then   # 678 (20 nov): wanneer de computer sliep -- dan stond het hele rek stil
-    printf '    de computer sliep laatst: '
-    tail -n 3 "$SLAAP_LOG_F" | while read -r _st _sd; do _st="$(printf '%s' "$_st" | tr -cd '0-9')"; _sd="$(printf '%s' "$_sd" | tr -cd '0-9')"; [ -n "$_st" ] && [ -n "$_sd" ] && printf '%s tot %s (%s min); ' "$(date -d "@$((_st - _sd))" '+%d-%m %H:%M' 2>/dev/null)" "$(date -d "@$_st" '+%d-%m %H:%M' 2>/dev/null)" "$((_sd / 60))"; done
-    printf 'daarna ging het rek vanzelf verder\n'
-  fi
-  [ -f "$REK_MAP/les-wacht" ] && printf '    er wacht een les (sinds %s)\n' "$(date -d "@$(stat -c %Y "$REK_MAP/les-wacht")" '+%d-%m %H:%M' 2>/dev/null)"
-  printf '    laatst opgepakte vraag of les via het kanaal: %s\n' "$(tail -1 "$KANAAL_GEZIEN_F" 2>/dev/null || echo 'geen')"
   printf '\n## Android-rem op de rektelefoons\n    %s\n' "$(head -1 "$REM_UIT_F" 2>/dev/null || echo 'nog niet nagekeken')"
   printf '\n## Besluiten voor de eigenaar (ARTEMIS kan hier niet verder zonder een mens)\n'
   F="$BESLUIT_F" python3 -I -c 'import json,os,time
@@ -11182,6 +11279,12 @@ print("    %d in het dagboek, %d nog open, %d opgelost door een les." % (len(l),
   [ -s "$STEM_ADB_F" ] && printf '    stem via de kabel: %s\n' "$(head -1 "$STEM_ADB_F")"
   [ -s "$PROEF_SPRAAK_NA" ] && printf '    de volgende spraaktest (vanzelf, na een nieuwe JARVIS): om %s\n' "$(date -d "@$(tr -dc 0-9 < "$PROEF_SPRAAK_NA")" '+%H:%M' 2>/dev/null)"
   printf '\n## Zelfronde\n'; sed 's/^/    /' "$ZR_TXT_F" 2>/dev/null | head -20
+  # 678 (23 nov): de diagnose per telefoon is lang en het minst dringend: achteraan, net voor de Log (die gaat er bij de relay als eerste af)
+  # 678 (20 nov): per rektelefoon (niet het brein, nooit de F8) waarom JARVIS wel of niet luistert -- alleen lezen
+  printf '\n## JARVIS per telefoon (diagnose)\n'
+  local _dt
+  for _dt in $(verbonden); do is_f8 "$_dt" && continue; toegestaan "$(toestel_id "$_dt")" || continue; is_brein_tel "$_dt" && continue
+    printf '    %s: %s\n' "$(toestel_naam "$_dt" | tr -cd 'A-Za-z0-9 ._-')" "$(jarvis_diag "$_dt")"; done
   printf '\n## Log (laatste regels)\n'
   tail -n 40 "$LOG" 2>/dev/null | grep -E '^[0-9]{2}:[0-9]{2}:[0-9]{2} ' | grep -viE 'token|sleutel|wachtwoord|password|code=|authkey|https?://' | tail -n 15 | sed 's/^/    /'
 }
@@ -11980,6 +12083,27 @@ is_brein_vast() {   # $1 adb-adres -> 0 als dit de vaste brein-telefoon is (alle
 # 5) DE WACHTER: elke vijf minuten, stil. Per rektelefoon in adb: de check (1); niet goed = herstel (3), wachten, opnieuw kijken; nog steeds niet =
 # het wifi van deze plek (als dat in de console staat). Tailscale (6) en de gastnetwerk-instellingen (4) gaan mee. Met terugval: hoe vaker een
 # telefoon niet terugkomt, hoe langer de pauze tot het volgende herstel (5, 10, 20, 40, 60 min). Een melding alleen als de lijst verandert.
+# 678 (23 nov, eigenaar: een rektelefoon viel uit door gebrek aan stroom). DE ACCU-WACHT: de wifi-wachter zag alleen ACHTERAF "niet in beeld".
+# Nu leest hij elke vijf minuten ook dumpsys battery (alleen lezen) en meldt EEN keer per keer dat het gebeurt: accu onder ACCU_LAAG (20%)
+# en hij laadt niet (geen AC, USB, draadloos of dock). Laadt hij weer of zit hij boven 30%, dan mag een volgende melding. Het laatste
+# niveau wordt bewaard, zodat "niet in beeld" kan zeggen dat de accu leeg was. Een telefoon die niet laadt kan het rek niet zelf oplossen.
+ACCU_LAAG="${ACCU_LAAG:-20}"; ACCU_F="$REK_MAP/accu-laatst.txt"
+accu_wacht() {   # $1 adb-adres, $2 korte sleutel, $3 naam -> echoot een regel voor het verslag als de accu laag is en hij niet laadt
+  local s="$1" sl="$2" naam="$3" bat lvl laadt=nee nu
+  bat="$(timeout 10 "$ADB" -s "$s" shell dumpsys battery 2>/dev/null | tr -d '\r')"
+  lvl="$(printf '%s\n' "$bat" | grep -m1 -oE 'level: *[0-9]+' | grep -oE '[0-9]+')"; [ -n "$lvl" ] || return 0
+  printf '%s\n' "$bat" | grep -qiE '^ *(AC|USB|Wireless|Dock) powered: *true' && laadt=ja
+  nu="$(date +%s)"
+  { awk -v k="$sl" '$1!=k' "$ACCU_F" 2>/dev/null; printf '%s %s %s %s\n' "$sl" "$nu" "$lvl" "$laadt"; } >"$ACCU_F.t" && mv -f "$ACCU_F.t" "$ACCU_F"
+  if [ "$laadt" = nee ] && [ "$lvl" -lt "$ACCU_LAAG" ]; then
+    if [ ! -e "$REK_MAP/accu-laag-$sl" ]; then
+      : >"$REK_MAP/accu-laag-$sl"
+      logregel "Accu-wacht: $naam heeft nog $lvl% en laadt niet."
+      relay_meld "Accu-wacht: $naam heeft nog $lvl% en laadt NIET. Kijk de stekker of de lader na, anders valt hij straks uit." >/dev/null 2>&1 || true
+    fi
+    printf '  %s: accu %s%% en hij laadt NIET -- stekker of lader nakijken\n' "$naam" "$lvl"
+  elif [ "$laadt" = ja ] || [ "$lvl" -ge 30 ]; then rm -f "$REK_MAP/accu-laag-$sl"; fi
+}
 wifi_wachter_tik() {
   command -v "$ADB" >/dev/null 2>&1 || return 0
   slot_levend "$REK_MAP/verhuis.lock" && return 0
@@ -11997,6 +12121,8 @@ wifi_wachter_tik() {
     vol=""; t="$(stat -c %Y "$WIFI_CHECK_MAP/$sl.txt" 2>/dev/null || echo 0)"; [ $((nu - t)) -ge 3600 ] && vol=1
     wifi_gast_instel "$s" >/dev/null 2>&1 || true
     st="$(wifi_check "$s" "$vol")"
+    zin="$(accu_wacht "$s" "$sl" "$naam")"; [ -n "$zin" ] && regels="$regels$zin
+"
     zin="$(ts_altijd_aan "$s")"; [ -n "$zin" ] && logregel "Wifi-wachter, $naam: $zin."
     if [ "$st" = OK ] || [ "$st" = VERBONDEN ]; then
       read -r _ n _ <<<"$(awk -v k="$sl" '$1==k' "$WIFI_WACHT_ST" 2>/dev/null)"
@@ -12039,7 +12165,8 @@ wifi_wachter_tik() {
   while read -r sl t naam; do [ -n "$sl" ] || continue
     [ $((nu - ${t:-0})) -gt 1209600 ] && continue
     [ $((nu - ${t:-0})) -lt 600 ] && continue
-    uitbeeld="$uitbeeld $naam"; regels="$regels  $naam: NIET in beeld (geen kabel, geen wifi-adb, geen Tailscale) sinds $(date -d "@$t" '+%d-%m %H:%M' 2>/dev/null)
+    local _al; _al="$(awk -v k="$sl" '$1==k && $4=="nee" && $3+0 < 30 {print $3}' "$ACCU_F" 2>/dev/null)"
+    uitbeeld="$uitbeeld $naam"; regels="$regels  $naam: NIET in beeld (geen kabel, geen wifi-adb, geen Tailscale) sinds $(date -d "@$t" '+%d-%m %H:%M' 2>/dev/null)${_al:+; laatst gezien met $_al% accu en niet aan de lader -- waarschijnlijk is hij leeg}
 "
   done <"$WIFI_GEZIEN_F" 2>/dev/null
   # de isolatietest bij een ander netwerk, en verder eens per zes uur
@@ -12801,6 +12928,7 @@ case "${1:-status}" in
   rem-uit) rek_rem_uit ;;
   brein-meet) brein_meet ;;                         # 678 (17 nov): de vaste snelheidsmeting (eigen taak, niet meer binnen het verslag)
   brein-proefbank) brein_proefbank ;;
+  brein-tweetegelijk) brein_tweetegelijk ;;      # 678 (23 nov): meten of het brein twee vragen tegelijk sneller doet (alleen meten)
   brein-modelproef) brein_modelproef ;;             # 678 (16 nov): onderzoek stap 3/6, deel 2 punt 3 -- andere breinen gemeten (snelheid + beide lesrijen)               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
   versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
   stand-na-update) sleep 60; brein_waak; als_controle brein_waak; sleep 120; stand_tik --nu ;;   # 678: na een nieuwe versie: rollen nalopen, dan het verslag                 # 678 (15 nov): de lokale AI leren: kennisbank op de Cat + lesrij voor/na, nagekeken door code                          # 678 (15 nov): het brein op de telefoon met de rol brein, ook draadloos (Tailscale/wifi-adb)                      # 678 (15 nov): het brein op de rektelefoon aan de USB-kabel (vast), dan starten

@@ -53,7 +53,8 @@
     const naam = t.naam || t.id || 'een telefoon';
 
     // 1. Helemaal stil EN niet direct bereikbaar: eerst de bekende, zelf-oplosbare oorzaken; pas als die er niet zijn, een mensregel.
-    if (!t.versHart && !t.direct) {
+    // 678 (23 nov): ziet ARTEMIS hem via adb (t.artemis), dan is hij niet stil -- ook als JARVIS zich niet meldt
+    if (!t.versHart && !t.direct && !t.artemis) {
       if (t.adres && mobielAdres(t.adres)) uit.push({ code: 'mobiel-adres', ernst: 'auto', fix: 'postbus-herkoppelen' in FIXES ? 'postbus-herkoppelen' : 'postbus-opnieuw' });
       else if (c.wifiGewisseld) uit.push({ code: 'wifi-gewisseld', ernst: 'auto', fix: 'herstelzoek' });
       else if (t.postbusOk === false) uit.push({ code: 'postbus-stuk', ernst: 'auto', fix: 'postbus-opnieuw' });

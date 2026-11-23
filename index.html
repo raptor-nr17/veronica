@@ -129,6 +129,19 @@
   .tOverzicht { font-size: 18px; font-weight: 600; margin-top: 4px; }
   .tVerbinding { margin-top: 4px; padding: 4px 8px; border-radius: 8px; border-left: 6px solid; }
   .tVerbinding.v-groen { border-color: #15803D; }
+  /* 678 (23 nov): DE STAND van een telefoon, groot en in een kleur, met een zin eronder -- het eerste wat je op een kaart leest */
+  .tStand { margin: 8px 0 6px; padding: 8px 10px; border-radius: 10px; border-left: 8px solid var(--lijn); background: rgba(127,127,127,.08); }
+  .tStand .tStandLabel { display: block; font-weight: 800; font-size: 22px; }
+  .tStand .tStandZin { display: block; margin-top: 2px; }
+  .tStand.k-groen { border-left-color: #15803D; } .tStand.k-groen .tStandLabel { color: #15803D; }
+  .tStand.k-oranje { border-left-color: #C2410C; } .tStand.k-oranje .tStandLabel { color: #C2410C; }
+  .tStand.k-rood { border-left-color: #B91C1C; } .tStand.k-rood .tStandLabel { color: #B91C1C; }
+  .tStand.k-grijs { border-left-color: #6B7280; }
+  .tFeiten { opacity: .9; }
+  .rekKop { font-size: 22px; font-weight: 700; margin: 4px 0 10px; }
+  #rekExtra { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); margin-top: 12px; }
+  #rekExtra:empty { display: none; }
+  .rekNakijken { margin-top: 14px; }
   .tVerbinding.v-oranje { border-color: #C2410C; }
   .tWeg { margin-top: 4px; font-size: 1em; }
   #trapBlok textarea { width: 100%; min-height: 96px; }
@@ -334,15 +347,25 @@
   <section id="scherm-live">
     <!-- 662: de verbindingsdokter -- ÉÉN regel: de dokter lost bekende verbindingsproblemen zelf op; hier staat alleen iets als jij echt
          iets moet doen (welke telefoon, welke knop). Leeg = alles loopt. -->
-    <p id="dokterRegel" class="groteMelding" role="status" aria-live="polite" hidden></p>
+    <!-- 678 (23 nov, eigenaar: "ja" op het nieuwe overzicht): EEN regel over het rek en EEN kaart per telefoon, met EEN stand (werkt, start op,
+         accu laag, weg, rust) uit EEN bron van waarheid (rekoverzicht.js). Wat vroeger als losse regels boven de kaarten stond -- de dokter,
+         de ARTEMIS-rijen, de zelfronde, wie meedoet -- staat nu onder "Nakijken" onderaan, zodat er nooit twee antwoorden boven elkaar staan. -->
+    <p id="rekKop" class="rekKop" role="status" aria-live="polite" hidden></p>
     <p id="leeg">Nog geen telefoons. Tik op Meer en dan op Koppelen.</p>
     <p id="priveBezig" class="groteMelding" hidden>Privé-klus bezig</p>
-    <!-- 636: de beheerder-ronde op het hoofdscherm -- wie doet mee en wie pauzeert even en waarom (assemble is de gewone stand) -->
-    <p id="beheerrondeZin" class="tBron" hidden></p>
-    <!-- 678 punt 22: welke rektelefoons ARTEMIS ziet (aanwezig, ook alleen via Tailscale/adb) en of ze in het pantser zitten -->
-    <div id="rekAanwezig" role="status" aria-live="polite" hidden></div>
-    <div id="zelfronde" role="status" aria-live="polite" hidden></div>
     <div id="tegels"></div>
+    <!-- telefoons die alleen ARTEMIS ziet (een rol op het rek, maar JARVIS meldt zich niet bij Veronica): ook een kaart -->
+    <div id="rekExtra"></div>
+    <details id="rekNakijken" class="rekNakijken">
+      <summary>Nakijken: wat ARTEMIS, de zelfronde en de dokter zien</summary>
+      <!-- 662: de verbindingsdokter -- welke telefoon iets van jou vraagt (tik/kabel) -->
+      <p id="dokterRegel" class="groteMelding" role="status" aria-live="polite" hidden></p>
+      <!-- 636: de beheerder-ronde -- wie doet mee en wie pauzeert even en waarom -->
+      <p id="beheerrondeZin" class="tBron" hidden></p>
+      <!-- 678 punt 22: welke rektelefoons ARTEMIS ziet, met de knoppen voor een eigen naam en "ligt op de cooler" -->
+      <div id="rekAanwezig" role="status" aria-live="polite" hidden></div>
+      <div id="zelfronde" role="status" aria-live="polite" hidden></div>
+    </details>
     <div id="stekkerNieuw"></div>
     <div id="nieuwKoppelBlok" class="zsPaneel" hidden>
       <h2>Nieuwe telefoon</h2>
@@ -940,6 +963,7 @@
 <script src="pijndagboek.js"></script>
 <script src="briefschoon.js"></script>
 <script src="rekaanwezig.js"></script>
+<script src="rekoverzicht.js"></script>
 <script src="zelfronde.js"></script>
 <script src="stemrek.js"></script>
 <script src="rekdokter.js"></script>
