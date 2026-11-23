@@ -10594,10 +10594,13 @@ brein_proefbank() {
 #   - Qwen3.5-4B in Q4_0 (maart 2026, slimmer; hybride met Gated DeltaNet -- eerst meten of het op de A78 snel genoeg is);
 #   - Qwen3.5-4B-MTP in Q4_0 met --spec-type draft-mtp (de ingebouwde vooruitraad-laag);
 #   - het huidige Qwen3-4B met Qwen3-0.6B als vooruitrader (-md): alleen houden als het echt sneller is.
+#   - 678 (22 nov, punt 14): Qwen3-4B in IQ4_NL (2381 MB, model-meten.yml run 11) tegen Q4_0: IQ4_NL heeft ook een ARM-repack en is
+#     bij gelijke grootte vaak nauwkeuriger. Door deze regel verandert de handtekening en loopt de modelproef een keer opnieuw, met de vaste toets.
 # DE SLIMSTE DIE SNEL GENOEG IS WINT: de hoogste lesscore onder de kandidaten die minstens 80% van de huidige snelheid halen (of 3 tok/s);
 # gelijke score = de snelste. Het huidige brein doet zelf ook mee, dus "niets beters" = alles blijft zoals het was. Een download die nog niet
 # klaar is = stoppen en de volgende keer verder. Kandidaten die het niet werden gaan weer van de telefoon. Eens per kandidatenlijst.
 BREIN_MODELPROEF_KANDIDATEN='unsloth/Qwen3-4B-GGUF Qwen3-4B-Q4_0.gguf 92f4a83cdfe691b216a949f915e47f35f0ed85b833aa03490c719160ac5cdf7a Qwen3-4B-Q4_0.gguf -
+unsloth/Qwen3-4B-GGUF Qwen3-4B-IQ4_NL.gguf 51fa8380d1c9a7dd47876dbed6c963fffeceec54a0065feeb6a8f3c113e1a562 Qwen3-4B-IQ4_NL.gguf -
 unsloth/Qwen3.5-4B-GGUF Qwen3.5-4B-Q4_0.gguf 298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb Qwen3.5-4B-Q4_0.gguf -
 unsloth/Qwen3.5-4B-MTP-GGUF Qwen3.5-4B-Q4_0.gguf 14e6ef39302330c63c2c1a1ab548c7f6f1b7e36b3150ca8b42cab7193b0c3669 Qwen3.5-4B-MTP-Q4_0.gguf --spec-type draft-mtp
 huidig - - - -md Qwen3-0.6B-Q4_0.gguf'
