@@ -11088,6 +11088,10 @@ for x in n["lessen"]:
   [ -s "$BREIN_MEET_F" ] || printf '    nog geen meting\n'
   printf '\n## Modelproef (welk brein: snelheid en lesscore)\n'; tail -n 6 "$MODELPROEF_LOG_F" 2>/dev/null | sed 's/^/    /' || true
   [ -s "$MODELPROEF_LOG_F" ] || printf '    nog niet gedaan\n'
+  # 678 (23 nov): de toets en de controle-proef staan VOORAAN -- het verslag wordt bij de relay van onderen ingekort, en om 14:44 viel de
+  # vaste toets er zo af terwijl dat juist de uitslag is waar op gewacht wordt.
+  printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; sed 's/^/    /' "$TOETS_F" 2>/dev/null || printf '    nog niet gemeten\n'
+  printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Brein\n'; BREIN_ALLEEN_KIJKEN=1 brein_status 2>/dev/null | sed 's/^/    /'
   printf '\n## Controle\n'
   if [ -s "$CONTROLE_MAP/brein-vast" ]; then BREIN_ALLEEN_KIJKEN=1 als_controle brein_status 2>/dev/null | sed 's/^/    /'; else printf '    nog geen controle-telefoon gekozen\n'; fi
@@ -11115,7 +11119,7 @@ for x in n["lessen"]:
   printf '\n## JARVIS op de rol-telefoons\n    %s\n' "$(head -1 "$JARVIS_WEK_F" 2>/dev/null || echo 'nog niet nagekeken')"
   # 678 (23 nov): de wifi-wachter, de wifi-check per telefoon en de isolatietest (alleen lezen; nooit een wachtwoord)
   printf '\n## Wifi-wachter (elke vijf minuten)\n'; if [ -s "$WIFI_WACHT_F" ]; then sed 's/^/    /' "$WIFI_WACHT_F"; else printf '    nog niet gedraaid\n'; fi
-  local _wc; for _wc in "$WIFI_CHECK_MAP"/*.txt; do [ -s "$_wc" ] || continue; [ -z "${_wck:-}" ] && { printf '\n## Wifi per telefoon (laatste check)\n'; _wck=1; }; sed 's/^/    /' "$_wc"; done; unset _wck
+  local _wc; for _wc in "$WIFI_CHECK_MAP"/*.txt; do [ -s "$_wc" ] || continue; grep -q '^telefoon: Android ? (SDK ?)' "$_wc" && continue; [ -z "${_wck:-}" ] && { printf '\n## Wifi per telefoon (laatste check)\n'; _wck=1; }; sed 's/^/    /' "$_wc"; done; unset _wck
   [ -s "$ISOLATIE_F" ] && { printf '\n## Isolatietest (zien de telefoons elkaar op dit wifi?)\n'; sed 's/^/    /' "$ISOLATIE_F"; }
   [ -s "$VERHUIS_F" ] && { printf '\n## Laatste verhuisronde (wifi, Tailscale, koppelen, rollen)\n'; sed 's/^/    /' "$VERHUIS_F"; }
   # 678 (20 nov): per rektelefoon (niet het brein, nooit de F8) waarom JARVIS wel of niet luistert -- alleen lezen
@@ -11150,9 +11154,7 @@ print("\n".join("    %s %s" % (time.strftime("%d-%m %H:%M", time.localtime(v.get
   printf '\n## Beheerder: het brein kiest de volgende stap (stap 1)\n'; beheer_stand | sed 's/^/    /'
   printf '\n## Nieuwsrem (papierhandel)\n'; nieuwsrem_stand | sed 's/^/    /'
   printf '\n## Redeneren (lesrij 10, zonder en met nadenken)\n'; sed 's/^/    /' "$REDENEER_F" 2>/dev/null || printf '    nog niet gemeten\n'
-  printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; sed 's/^/    /' "$TOETS_F" 2>/dev/null || printf '    nog niet gemeten\n'
   printf '\n## SearXNG (de eigen zoekmachine op deze computer)\n'; { searxng_stand 2>/dev/null || printf 'onbekend\n'; } | sed 's/^/    /'   # 678 (22 nov): ook als het goed gaat, niet alleen een logregel bij een fout
-  printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Proef naast het huidige brein (brein-probeer)\n'; sed 's/^/    /' "$BREIN_PROBEER_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Snelheidsproef van het brein (brein-snelheid)\n'; sed 's/^/    /' "$BREIN_SNELHEID_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Rollen-les (controle en verdeler apart)\n'; sed 's/^/    /' "$ROLLEN_LES_F" 2>/dev/null || printf '    nog niet gedaan\n'
@@ -11861,7 +11863,8 @@ uit.append('  gastnetwerk-controle: captive_portal_mode %s, captive_portal_detec
 uit.append('  scannen altijd beschikbaar: %s' % {'1': 'aan', '0': 'UIT'}.get(E.get('SA', ''), 'onbekend'))
 print('\n'.join(uit))
 PY
-  mv -f "$WIFI_CHECK_MAP/$sl.txt.t" "$WIFI_CHECK_MAP/$sl.txt" 2>/dev/null || true
+  # 678 (23 nov): een telefoon die niets terugzei (geen Android-versie) laat het oude verslag staan in plaats van een leeg "telefoon: Android ?".
+  if [ -n "$sdk" ]; then mv -f "$WIFI_CHECK_MAP/$sl.txt.t" "$WIFI_CHECK_MAP/$sl.txt" 2>/dev/null || true; else rm -f "$WIFI_CHECK_MAP/$sl.txt.t"; fi
   rm -rf "$d"
   printf '%s' "$st"
 }
