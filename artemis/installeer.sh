@@ -9822,6 +9822,14 @@ brein_toets() {
   rm -f "$uit"
   LES_GEHEUGEN=1 LES_ALLEEN_NA=1 LES_UIT="$uit" brein_les "" 11 >/dev/null 2>&1
   [ -s "$uit" ] || { zeg "Toets: de meting is niet rond gekomen (het brein antwoordde niet)."; return 0; }
+  # 678 (23 nov): EEN TOETS DIE NIET ROND KWAM IS GEEN UITSLAG EN NOOIT DE NULMETING. Om 09:05 kreeg 35 van de 40 vragen geen antwoord (de
+  # modelproef wisselde tegelijk van model); die 5/40 stond daarna als "de nulmeting" in het verslag en zou elke latere meting van dat model
+  # vergelijken met een kapotte. Nu: alleen een regel dat hij niet rond kwam, niets in de geschiedenis, en de tik begint hem opnieuw.
+  if ! toets_rond "$uit"; then
+    printf '**De vaste toets kwam niet rond** (%s; %s): bij meer dan een kwart van de vragen antwoordde het brein niet. Hij wordt opnieuw gedaan; dit telt niet als uitslag en niet als nulmeting.\n' "$(date '+%d-%m %H:%M')" "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)" >"$TOETS_F"
+    logregel "Toets kwam niet rond (het brein antwoordde bij meer dan een kwart niet); hij wordt opnieuw gedaan."
+    head -n 1 "$TOETS_F"; return 0
+  fi
   UITF="$uit" GESCH="$TOETS_GESCH" EXTRA="$(brein_extra)" python3 -I - <<'PY' >"$TOETS_F.t" 2>/dev/null && mv -f "$TOETS_F.t" "$TOETS_F"
 import os, json, time
 j = json.load(open(os.environ['UITF'])); n = j['rondes']['na']; g = j.get('geheugen') or {}
@@ -9829,10 +9837,10 @@ groepen = {}
 for x in n['lessen']:
     a = groepen.setdefault(x.get('groep') or '?', [0, 0]); a[1] += 1; a[0] += 1 if x['goed'] else 0
 regel = {'t': j.get('t'), 'model': j.get('model'), 'goed': n['goed'], 'van': n['van'], 'groepen': groepen, 'extra': os.environ.get('EXTRA') or '',
-         'sec': round(sum(x.get('s') or 0 for x in n['lessen'])), 'geheugen': g}
+         'sec': round(sum(x.get('s') or 0 for x in n['lessen'])), 'geheugen': g, 'rond': True}
 try: oud = [json.loads(x) for x in open(os.environ['GESCH']) if x.strip()]
 except Exception: oud = []
-nul = next((x for x in oud if x.get('model') == regel['model']), None)
+nul = next((x for x in oud if x.get('model') == regel['model'] and x.get('rond')), None)   # 678 (23 nov): alleen een toets die rond kwam
 with open(os.environ['GESCH'], 'a') as fh: fh.write(json.dumps(regel, ensure_ascii=False) + '\n')
 mb = lambda d: ('%s MB (vrij %s MB)' % (d.get('rss', '?'), d.get('vrij', '?'))) if isinstance(d, dict) else 'niet te lezen'
 print('**De vaste toets: %d/%d goed** (%s; %s; %d s; de code kijkt na)' % (n['goed'], n['van'], time.strftime('%d-%m %H:%M'), j.get('model') or '?', regel['sec']))
@@ -11090,7 +11098,9 @@ for x in n["lessen"]:
   [ -s "$MODELPROEF_LOG_F" ] || printf '    nog niet gedaan\n'
   # 678 (23 nov): de toets en de controle-proef staan VOORAAN -- het verslag wordt bij de relay van onderen ingekort, en om 14:44 viel de
   # vaste toets er zo af terwijl dat juist de uitslag is waar op gewacht wordt.
-  printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; sed 's/^/    /' "$TOETS_F" 2>/dev/null || printf '    nog niet gemeten\n'
+  # 678 (23 nov): in het verslag de kop en alleen de FOUTE vragen (hoogstens tien) -- de hele tabel van veertig rijen duwde de rest van het
+  # verslag over de grens van de relay. De volledige tabel blijft in het bestand op deze computer.
+  printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; if [ -s "$TOETS_F" ]; then { sed -n '1,/^| vraag /p' "$TOETS_F" | grep -v '^| vraag '; grep '^| .* | fout' "$TOETS_F" | head -n 10 | sed 's/^/fout: /'; n="$(grep -c '^| .* | fout' "$TOETS_F")"; [ "${n:-0}" -gt 10 ] && echo "(en nog $((n - 10)) fout)"; } | sed 's/^/    /'; else printf '    nog niet gemeten\n'; fi
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
   printf '\n## Brein\n'; BREIN_ALLEEN_KIJKEN=1 brein_status 2>/dev/null | sed 's/^/    /'
   printf '\n## Controle\n'
