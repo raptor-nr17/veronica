@@ -497,6 +497,19 @@
         <p class="klein">De schermen van de rektelefoons staan in de schermenwand van het rek (ARTEMIS). Het vak hieronder is voor een telefoon die je met een eigen kabel rechtstreeks aan deze computer hangt. De dagelijkse telefoon kijk je alleen; bank- en kluis-apps bestuur ik nooit.</p>
         <iframe id="priveRekWandFrame" title="Live schermen van het rek" hidden style="width:100%;height:0;border:0"></iframe>
       </div>
+      <!-- 678 (23 nov, eigenaar): DE SURFTELEFOON. De telefoon van de verdeler surft; jij ziet zijn scherm in een eigen venster op deze
+           computer (scrcpy), zodat de laptop zelf niets laadt. De lokale AI maakt van je wens een paar zoektermen; elke wens en elke term gaat
+           eerst door de vaste bewaker (nooit minderjarigen, nooit echte personen), en ARTEMIS kijkt nog een keer. Niets wordt bewaard. -->
+      <div id="surfVak" class="hoekVak">
+        <p class="hoekVakWoord">🌐 Surftelefoon</p>
+        <p class="klein">De telefoon van de verdeler surft; zijn scherm staat in een eigen venster op deze computer. De beelden laadt de telefoon, niet de laptop. Zolang hij aan staat pauzeert de verdeler.</p>
+        <button type="button" id="surfAan">Surftelefoon aan</button>
+        <button type="button" id="surfUit">Surftelefoon uit</button>
+        <label for="surfWens">Wat wil je zien?</label>
+        <input id="surfWens" autocomplete="off" spellcheck="false" maxlength="200">
+        <button type="button" id="surfZoek">Zoek op de surftelefoon</button>
+        <p id="surfZin" class="klein" aria-live="polite"></p>
+      </div>
       <div id="priveRekZoek" class="hoekVak algemeen">
         <p class="hoekVakWoord">🔎 Gezamenlijke zoekbalk</p>
         <button type="button" id="priveRekAiHelpt" aria-pressed="false">AI helpt: UIT</button>
@@ -964,6 +977,7 @@
 <script src="briefschoon.js"></script>
 <script src="rekaanwezig.js"></script>
 <script src="rekoverzicht.js"></script>
+<script src="prive-bewaker.js"></script>
 <script src="zelfronde.js"></script>
 <script src="stemrek.js"></script>
 <script src="rekdokter.js"></script>

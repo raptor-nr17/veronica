@@ -2646,6 +2646,37 @@ class H(BaseHTTPRequestHandler):
             if d.get('rol') == 'verdeler':
                 self._cors_json(200, json.dumps({'soort': verdeler_soort(vr), 'model': verdeler_model(), 'ms': int((time.time() - t0) * 1000)})); return
             self._cors_json(400, json.dumps({'fout': 'onbekende rol'})); return
+        if p.path == '/surf':
+            # 678 (23 nov): DE SURFTELEFOON vanuit de privé-hoek: {code|sleutel, actie: aan|uit|zoek, termen: [..]}. Zelfde sleutels als /brein/chat.
+            # Elke term gaat EERST door de vaste zeef (surf_zeef in artemis-rek); geen term komt in een logboek of in het antwoord terug.
+            ln = int(self.headers.get('Content-Length', 0) or 0)
+            try: d = json.loads(self.rfile.read(min(ln, 20000)).decode('utf-8', 'replace') if ln else '{}')
+            except Exception: d = {}
+            c = str(d.get('code') or ''); sl = str(d.get('sleutel') or '')
+            try:
+                with open(os.path.join(REK, 'rek-token.conf')) as fh: tok = fh.read().strip()
+            except Exception:
+                tok = ''
+            try:
+                with open(os.path.join(REK, 'brein-sleutel')) as fh: bsl = fh.read().strip()
+            except Exception:
+                bsl = ''
+            goed = (tok and c and hmac.compare_digest(c.encode(), tok.encode())) or (bsl and sl and hmac.compare_digest(sl.encode(), bsl.encode()))
+            if not goed:
+                self._cors_json(403, json.dumps({'fout': 'Niet gekoppeld: klik in de ARTEMIS-console op "Open Veronica, gekoppeld aan het brein".'})); return
+            actie = str(d.get('actie') or '')
+            if actie in ('aan', 'uit'):
+                t = doe_args(['surf-' + actie], 600)
+                self._cors_json(200, json.dumps({'ok': True, 'zin': t.strip().splitlines()[-1][:300] if t.strip() else ''})); return
+            if actie == 'zoek':
+                termen = [str(x)[:200] for x in (d.get('termen') or []) if isinstance(x, str) and x.strip()][:3]
+                uit = []
+                for term in termen:
+                    r = doe_args(['surf-zoek', term], 60)
+                    laatste = r.strip().splitlines()[-1].strip() if r.strip() else ''
+                    uit.append('geopend' if laatste == 'GEOPEND' else ('geweigerd' if laatste == 'GEWEIGERD' else 'mislukt'))
+                self._cors_json(200, json.dumps({'ok': True, 'uitslag': uit})); return
+            self._cors_json(400, json.dumps({'fout': 'Onbekende actie.'})); return
         if p.path == '/brein/chat':
             # 678 (15 nov): TYPEN NAAR HET BREIN. Veronica stuurt {code, messages, max_tokens}; alleen met de rij-code. ARTEMIS stuurt het door
             # naar de llama-server op de brein-telefoon (via de adb-doorsturing, 127.0.0.1) en geeft {tekst, tps, ms} terug -- tps is GEMETEN
@@ -9655,7 +9686,7 @@ verdeler_rol() {
   zeg "Verdeler: $v krijgt een klein, snel model (deelt vragen in en beantwoordt korte); hij wordt NIET schoongeveegd."
   als_verdeler brein_rol
 }
-verdeler_waak() { verdeler_kies >/dev/null 2>&1 || return 0; rol_modelkeus verdeler-rol "$VERDELER_MAP" && return 0; als_verdeler brein_waak; }
+verdeler_waak() { [ -f "$REK_MAP/surf-aan" ] && return 0; verdeler_kies >/dev/null 2>&1 || return 0; rol_modelkeus verdeler-rol "$VERDELER_MAP" && return 0; als_verdeler brein_waak; }
 # 678 (17 nov, eigenaar stap 5): DE BIBLIOTHECARIS op de Cat. Een klein meertalig EMBEDDINGmodel (EmbeddingGemma-300M Q8_0, 333 MB; terugval
 # nomic-embed-text-v2-moe Q4_0, 324 MB -- namen en sha256 gemeten op een runner) met llama-server --embedding. De console vraagt hem per vraag om
 # de kennisregels op BETEKENIS te kiezen (kennis_op_betekenis). Zelfde machinerie als de verdeler: eigen map, poort 8097/18097, nooit
@@ -11785,6 +11816,74 @@ ts_telefoon_aan() {
   ip="$(tel_ts_ip "$s")"; [ -n "$ip" ] && { printf 'AAN %s' "$ip"; return 0; }
   printf 'NIET'
 }
+# >>> SURFTELEFOON
+# 678 (23 nov, eigenaar: "een beeldscherm van een van de rektelefoons, die draait op een eigen telefoon zodat mijn laptop niet vies of traag
+# wordt, met de lokale AI erbij die de zoekopdrachten regelt, en meerdere zoekmachines voor foto's tegelijk"). Keuzes van de eigenaar: de
+# telefoon van de VERDELER wordt de surftelefoon (hij weet dat daar bank-apps op staan en kiest dat bewust), het beeld VLOEIEND in een eigen
+# venster (scrcpy, via Tailscale-adb), en EEN raster op de telefoon (de eigen SearXNG, die meerdere fotozoekmachines tegelijk vraagt).
+#  - surf-aan: de verdeler pauzeert (de waakhond start hem niet zolang surf-aan er staat), SearXNG van deze computer wordt via adb reverse
+#    op de telefoon bereikbaar als 127.0.0.1:8888, en scrcpy toont het scherm. De BEELDEN laadt de telefoon zelf (image_proxy staat uit).
+#  - surf-zoek <term>: EERST deze harde zeef (dezelfde eerste regel als de vaste bewaker van de privé-kamer: nooit iets met minderjarigen; geen
+#    model kan hem uitzetten), dan opent de telefoon de fotoresultaten van SearXNG. Veronica laat elke wens en elke zoekterm daarvoor al door de
+#    vaste bewaker gaan; dit is het tweede slot op dezelfde deur.
+#  - surf-uit: scrcpy dicht, de reverse weg, de verdeler komt vanzelf terug.
+# HARDE REGELS: nooit de F8; alleen een telefoon van de lijst; GEEN zoekterm in een logboek, verslag of de relay (alleen "een zoekopdracht");
+# niets bewaard op deze computer.
+SURF_AAN_F="$REK_MAP/surf-aan"; SURF_PID_F="$REK_MAP/surf-scrcpy.pid"
+surf_tel() {   # -> het adb-adres van de surftelefoon (de vaste verdeler), of niets
+  local tid s; tid="$(head -1 "$VERDELER_MAP/brein-vast" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$tid" ] || return 0
+  s="$(brein_adb "$tid")"; [ -n "$s" ] || return 0
+  is_f8 "$s" && return 0
+  toegestaan "$(toestel_id "$s")" || return 0
+  printf '%s' "$s"
+}
+surf_zeef() {   # $1 zoekterm -> 0 = mag, 1 = NOOIT (minderjarigen, ook verkapt). Gewone code, geen model; geen uitzonderingen.
+  printf '%s' "$1" | python3 -I -c '
+import sys, re, unicodedata
+ruw = unicodedata.normalize("NFKD", sys.stdin.read()).encode("ascii", "ignore").decode().lower()
+r0 = re.sub(r"[^a-z0-9 ]+", " ", ruw)                                   # zoals getypt (voor een leeftijd in cijfers)
+w = re.sub(r"[^a-z0-9 ]+", " ", ruw.translate(str.maketrans("013457@$", "oieastas")))   # cijfers als letters ("t33n", "k1nd")
+nooit = r"\b(kind|kinderen|kindje|kids?|child|children|kleuter|peuter|baby|babys|tiener|tieners|puber|pubers|minderjarig\w*|meisje|meisjes|jongetje|jongetjes|schoolmeisje|schooljongen|scholier\w*|leerling\w*|teen|teens|teenager\w*|preteen|underage|minor|minors|loli\w*|shota\w*|jailbait|jugendlich\w*|madchen|kinder|schoolgirl\w*|schoolboy\w*|young|jong|jonge|petite girl)\b"
+if re.search(nooit, w) or re.search(nooit, r0): sys.exit(1)
+if re.search(r"\b([1-9]|1[0-7])\s*(jaar|jarige|jr|yo|y o|years?|yrs?)\b", r0): sys.exit(1)
+if not r0.strip(): sys.exit(1)
+sys.exit(0)'
+}
+surf_aan() {
+  local s; s="$(surf_tel)"
+  [ -n "$s" ] || { zeg "Surftelefoon: de telefoon van de verdeler is nu niet in beeld (kabel, wifi of Tailscale)."; return 1; }
+  : >"$SURF_AAN_F"
+  als_verdeler brein_stop >/dev/null 2>&1 || true
+  "$ADB" -s "$s" reverse tcp:8888 tcp:8888 >/dev/null 2>&1 || zeg "Surftelefoon: de eigen zoekmachine kon niet naar de telefoon worden doorgestuurd."
+  if ! command -v scrcpy >/dev/null 2>&1; then
+    sudo -n apt-get install -y scrcpy >/dev/null 2>&1 || { besluit_zet "surf-scrcpy" "Voor het scherm van de surftelefoon is scrcpy nodig, en installeren vraagt een wachtwoord. Een regel in de Linux-terminal: sudo apt-get install -y scrcpy"; zeg "Surftelefoon: scrcpy staat er niet en kon niet zonder wachtwoord worden geinstalleerd."; return 1; }
+    besluit_weg "surf-scrcpy" 2>/dev/null || true
+  fi
+  if [ -s "$SURF_PID_F" ] && kill -0 "$(head -1 "$SURF_PID_F")" 2>/dev/null; then zeg "Surftelefoon: het venster staat al open."; return 0; fi
+  ( export DISPLAY="${DISPLAY:-:0}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+    setsid nohup scrcpy -s "$s" --window-title "Surftelefoon" --no-audio --max-size 1600 --stay-awake >/dev/null 2>&1 &
+    printf '%s\n' "$!" >"$SURF_PID_F" )
+  logregel "Surftelefoon: aan (de verdeler pauzeert; het scherm staat in een eigen venster)."
+  zeg "Surftelefoon aan: het scherm staat in een eigen venster op deze computer. De verdeler pauzeert zolang."
+}
+surf_uit() {
+  local s p; s="$(surf_tel)"; p="$(head -1 "$SURF_PID_F" 2>/dev/null | tr -cd '0-9')"
+  [ -n "$p" ] && kill "$p" 2>/dev/null; rm -f "$SURF_PID_F"
+  [ -n "$s" ] && "$ADB" -s "$s" reverse --remove tcp:8888 >/dev/null 2>&1
+  rm -f "$SURF_AAN_F"
+  logregel "Surftelefoon: uit (de verdeler start vanzelf weer)."
+  zeg "Surftelefoon uit. De verdeler start vanzelf weer."
+}
+surf_zoek() {   # $1 zoekterm. Komt NOOIT in een logboek.
+  local s q; [ -f "$SURF_AAN_F" ] || { zeg "Surftelefoon staat uit."; return 1; }
+  s="$(surf_tel)"; [ -n "$s" ] || { zeg "Surftelefoon: niet in beeld."; return 1; }
+  surf_zeef "$1" || { logregel "Surftelefoon: een zoekopdracht geweigerd door de vaste zeef."; zeg "GEWEIGERD"; return 1; }
+  q="$(printf '%s' "$1" | head -c 200 | python3 -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read()))')"
+  "$ADB" -s "$s" shell am start -a android.intent.action.VIEW -d "'http://127.0.0.1:8888/search?q=$q&categories=images&safesearch=0'" >/dev/null 2>&1 \
+    && { logregel "Surftelefoon: een zoekopdracht geopend."; zeg "GEOPEND"; } || { zeg "Surftelefoon: openen lukte niet."; return 1; }
+}
+# <<< SURFTELEFOON
 # >>> WIFI-WACHTER (678, 23 nov, eigenaar: "na een verhuizing wil ik zelf niets meer met de hand doen")
 # Zeven stukken, in de volgorde van de eigenaar:
 #  1) wifi_check: per telefoon via adb -- Android-versie, wifi aan/uit, opgeslagen netwerken, zichtbare netwerken en de REDEN als Android een
@@ -12928,6 +13027,9 @@ case "${1:-status}" in
   rem-uit) rek_rem_uit ;;
   brein-meet) brein_meet ;;                         # 678 (17 nov): de vaste snelheidsmeting (eigen taak, niet meer binnen het verslag)
   brein-proefbank) brein_proefbank ;;
+  surf-aan) surf_aan ;;                          # 678 (23 nov): de surftelefoon (verdeler pauzeert, scherm in een eigen venster)
+  surf-uit) surf_uit ;;
+  surf-zoek) surf_zoek "${2:-}" ;;                # de term komt nooit in een logboek
   brein-tweetegelijk) brein_tweetegelijk ;;      # 678 (23 nov): meten of het brein twee vragen tegelijk sneller doet (alleen meten)
   brein-modelproef) brein_modelproef ;;             # 678 (16 nov): onderzoek stap 3/6, deel 2 punt 3 -- andere breinen gemeten (snelheid + beide lesrijen)               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
   versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
