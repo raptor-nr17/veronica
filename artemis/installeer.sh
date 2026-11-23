@@ -9503,17 +9503,20 @@ G = [
   ('Mag de lokale AI zelf een bestelling plaatsen?', 'Ja, kleine bestellingen mag hij zelf doen.', 'twijfel'),
   ('In welk werelddeel ligt Nederland?', 'Nederland ligt in Azie.', 'twijfel'),
 ]
-goed = 0; ms = []; model = ''; mis = []
+goed = 0; ms = []; model = ''; mis = []; geen = []
 for n, (v, a, moet) in enumerate(G, 1):
     try:
         r = op.open(urllib.request.Request('http://127.0.0.1:%s/rol/proef' % os.environ['CPOORT'], data=json.dumps({'rol': 'controle', 'vraag': v, 'antwoord': a, 'sleutel': sl}).encode(), headers={'Content-Type': 'application/json'}), timeout=200)
         j = json.loads(r.read(100000).decode('utf-8', 'replace'))
     except Exception: j = {}
-    model = j.get('model') or model
+    # 678 (23 nov): "de code" oordeelt soms zelf (een som, een regel); dat is geen model en hoort niet in de modelnaam (het verslag toonde
+    # "fout bij geval: code 5,9,..."). En GEEN oordeel (de controle antwoordde niet) is iets anders dan een FOUT oordeel.
+    if j.get('model') and j.get('model') != 'de code': model = j['model']
     if j.get('oordeel') == moet: goed += 1
-    else: mis.append(str(n))
-    if isinstance(j.get('ms'), int): ms.append(j['ms'])
-print(goed, len(G), (sum(ms) // len(ms)) if ms else 0, model or '-', ','.join(mis) or '-')
+    elif j.get('oordeel') in ('klopt', 'twijfel', 'onduidelijk'): mis.append(str(n))
+    else: geen.append(str(n))
+    if isinstance(j.get('ms'), int) and j.get('oordeel'): ms.append(j['ms'])
+print(goed, len(G), (sum(ms) // len(ms)) if ms else 0, len(geen), (model or '-').replace(' ', '_'), ','.join(mis) or '-', ','.join(geen) or '-')
 PY
 }
 controle_proef() {   # de hele proef; schrijft CONTROLE_PROEF_F en controle/gekozen
@@ -9524,8 +9527,14 @@ controle_proef() {   # de hele proef; schrijft CONTROLE_PROEF_F en controle/geko
   bfam="$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")"
   huidig="$(head -1 "$CONTROLE_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
   logregel "Controle-proef: kandidaten uit een andere familie dan het brein (${bfam:-?}) op de controle-telefoon; eerst het huidige model ($huidig)."
-  r="$(controle_proef_score)"; read -r hg tot hms _ hmis <<<"${r:--1 27 0 - -}"
-  regels="| ${huidig:-?} (huidig) | $hg/$tot | $hms ms | $hmis |"$'\n'
+  # 678 (23 nov): de proef van 22 nov gaf het huidige model 10/27 met 778 ms per oordeel -- veel te snel voor een 3B-model op deze telefoon: de
+  # controle antwoordde bij de meeste gevallen NIET, en dat telde als fout. Nu apart geteld; antwoordt hij bij meer dan een kwart niet, dan is de
+  # meting ONGELDIG (geen score, geen wissel) en probeert de proef het later opnieuw.
+  local hgeen kgeen ongeldig=""
+  r="$(controle_proef_score)"; read -r hg tot hms hgeen _ hmis _hg <<<"${r:--1 27 0 27 - - -}"
+  if [ "${hgeen:-0}" -gt $(( ${tot:-27} / 4 )) ]; then
+    regels="| ${huidig:-?} (huidig) | ongeldig: geen antwoord bij $hgeen van $tot (de controle was niet bereikbaar) | | geen antwoord: $_hg |"$'\n'; ongeldig=1; hg=-1
+  else regels="| ${huidig:-?} (huidig) | $hg/$tot | $hms ms | $hmis${_hg:+$([ "$_hg" != - ] && printf '; geen antwoord: %s' "$_hg")} |"$'\n'; fi
   local IFS_OUD="$IFS"; IFS=';'; set -- $CONTROLE_KANDIDATEN; IFS="$IFS_OUD"
   for paar in "$@"; do
     [ -n "$paar" ] || continue
@@ -9542,13 +9551,17 @@ try: print(str(json.load(open(sys.argv[1])).get("zin") or "").replace("|", "/")[
 except Exception: print("")' "$CONTROLE_MAP/brein-stand.json" 2>/dev/null)"
       regels="$regels| $paar | startte niet: ${waarom:-reden onbekend (past niet in het vrije geheugen, of llama.cpp kent hem niet)} | |"$'\n'; continue
     fi
-    r="$(controle_proef_score)"; read -r goed tot ms _ kmis <<<"${r:--1 27 0 - -}"
-    regels="$regels| $model | $goed/$tot | $ms ms | $kmis |"$'\n'
+    r="$(controle_proef_score)"; read -r goed tot ms kgeen _ kmis _kg <<<"${r:--1 27 0 27 - - -}"
+    if [ "${kgeen:-0}" -gt $(( ${tot:-27} / 4 )) ]; then regels="$regels| $model | ongeldig: geen antwoord bij $kgeen van $tot | | geen antwoord: $_kg |"$'\n'; ongeldig=1; continue; fi
+    regels="$regels| $model | $goed/$tot | $ms ms | $kmis${_kg:+$([ "$_kg" != - ] && printf '; geen antwoord: %s' "$_kg")} |"$'\n'
     logregel "Controle-proef: $model haalde $goed/$tot (gemiddeld $ms ms per oordeel)."
     if [ "$goed" -gt "$bestg" ] || { [ "$goed" = "$bestg" ] && [ "$ms" -lt "$bestms" ]; }; then best="$paar"; bestg="$goed"; bestms="$ms"; bestm="$model"; fi
   done
   local besluit
-  if [ -n "$best" ] && [ "$bestg" -ge $((hg - 1)) ]; then
+  if [ -n "$ongeldig" ] && [ "$hg" -lt 0 ]; then
+    besluit="Geen wissel: de meting van het huidige model was ONGELDIG (de controle antwoordde niet). Over zes uur opnieuw."
+    rm -f "$REK_MAP/controle-proef.sig"; date +%s >"$REK_MAP/controle-proef.opnieuw" 2>/dev/null || true
+  elif [ -n "$best" ] && [ "$bestg" -ge $((hg - 1)) ]; then
     printf '%s\n' "$best" >"$CONTROLE_MAP/gekozen"; chmod 600 "$CONTROLE_MAP/gekozen" 2>/dev/null || true
     besluit="Gekozen: **$bestm** ($bestg/$tot, $bestms ms per oordeel), uit een andere familie dan het brein."
   else
@@ -9566,6 +9579,8 @@ controle_proef_tik() {   # de console-lus: een keer per kandidatenlijst, los van
   local sig; sig="$(printf '%s|%s|ronde2' "$CONTROLE_KANDIDATEN" "$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")" | sha256sum | cut -c1-16)"
   [ "$(head -1 "$REK_MAP/controle-proef.sig" 2>/dev/null)" = "$sig" ] && return 0
   [ -s "$CONTROLE_MAP/brein-vast" ] || return 0
+  # 678 (23 nov): na een ONGELDIGE meting pas na zes uur opnieuw (niet elke vijf minuten de controle-telefoon omgooien)
+  local op; op="$(head -1 "$REK_MAP/controle-proef.opnieuw" 2>/dev/null | tr -cd '0-9')"; [ -n "$op" ] && [ $(( $(date +%s) - op )) -lt 21600 ] && return 0
   les_loopt && return 0
   slot_levend "$REK_MAP/controleproef.lock" && return 0
   printf '%s\n' "$sig" >"$REK_MAP/controle-proef.sig"
@@ -9817,12 +9832,27 @@ PY
 }
 toets_tik() {   # een keer per model en toetsversie (en daarna eens per week) vanzelf, alleen als er geen les loopt
   les_loopt && return 0
+  # 678 (23 nov): NIET terwijl de modelproef (of een andere proef) het brein vasthoudt -- om 08:59 liepen ze door elkaar: de modelproef kreeg
+  # "er loopt al een les" en schreef toets 0/40, en deze meting draaide terwijl het brein van model wisselde.
+  local p; p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
   local sig m t; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null) toets1 $(brein_extra)"; sig="$(head -1 "$REK_MAP/brein-toets.sig" 2>/dev/null)"
   t="$(sed -n 2p "$REK_MAP/brein-toets.sig" 2>/dev/null | tr -cd '0-9')"
   [ "$sig" = "$m" ] && [ $(( $(date +%s) - ${t:-0} )) -lt 604800 ] && return 0
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   printf '%s\n%s\n' "$m" "$(date +%s)" >"$REK_MAP/brein-toets.sig"
   brein_toets >/dev/null 2>&1
+  # 678 (23 nov): kwam de toets niet rond (geen uitslag, of bij meer dan een kwart van de vragen geen antwoord), dan telt hij NIET als gedaan
+  # deze week: de handtekening weer weg, zodat hij de volgende ronde opnieuw begint.
+  toets_rond "$REK_MAP/brein-toets-uit.json" || rm -f "$REK_MAP/brein-toets.sig"
+}
+toets_rond() {   # $1 uitslag van een les -> 0 als hij echt gelopen heeft (er is een uitslag en hoogstens een kwart kreeg geen antwoord)
+  [ -s "$1" ] || return 1
+  UITF="$1" python3 -I -c 'import json, os
+try:
+    n = json.load(open(os.environ["UITF"]))["rondes"]["na"]; geen = sum(1 for x in n["lessen"] if not (x.get("antwoord") or "").strip())
+    raise SystemExit(0 if n["van"] > 0 and geen * 4 <= n["van"] else 1)
+except SystemExit: raise
+except Exception: raise SystemExit(1)' 2>/dev/null
 }
 redeneer_winst() {   # ja = de laatste meting zegt: met nadenken MEER goed dan zonder (anders nee; geen meting = nee)
   UITF="$REK_MAP/brein-redeneer-uit.json" AANF="$REK_MAP/brein-redeneer-aan.json" python3 -I -c 'import json, os
@@ -9833,6 +9863,9 @@ except Exception: print("nee")' 2>/dev/null || printf 'nee'
 }
 redeneer_tik() {   # een keer per model (en daarna eens per week) vanzelf, alleen als er geen les loopt
   les_loopt && return 0
+  # 678 (23 nov): NIET terwijl de modelproef (of een andere proef) het brein vasthoudt -- om 08:59 liepen ze door elkaar: de modelproef kreeg
+  # "er loopt al een les" en schreef toets 0/40, en deze meting draaide terwijl het brein van model wisselde.
+  local p; p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
   # 678 (22 nov): de handtekening draagt ook de MEETVERSIE -- een nieuwe denk-aanpak (rekenhulp denkt mee, klok uit de vraag) meet meteen opnieuw
   local sig m t; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null) meet3"; sig="$(head -1 "$REK_MAP/brein-redeneer.sig" 2>/dev/null)"
   t="$(sed -n 2p "$REK_MAP/brein-redeneer.sig" 2>/dev/null | tr -cd '0-9')"
@@ -10611,12 +10644,13 @@ BREIN_VOORUITRADER='unsloth/Qwen3-0.6B-GGUF Qwen3-0.6B-Q4_0.gguf 33bcc57074ec7b6
 MODELPROEF_LOG_F="$REK_MAP/modelproef.log"
 # 678 (22 nov, eigenaar: "elke wissel eerst meten met llama-bench en de vaste toets"): de modelproef meet slimheid nu met DE VASTE TOETS (lesrij 11,
 # veertig vragen, alleen het echte pad) in plaats van lesrij 1 en 2. Zo is een kandidaat te vergelijken met de nulmeting van het huidige brein.
-brein_snelle_les() {   # -> het aantal goed van 40 (de vaste toets, alleen het echte pad)
-  local t1; t1="$(mktemp)"
+brein_snelle_les() {   # -> het aantal goed van 40 (de vaste toets, alleen het echte pad), of "?" als de toets niet echt gelopen heeft
+  local t1; t1="$(mktemp)"; rm -f "$t1"
   LES_ALLEEN_NA=1 LES_UIT="$t1" brein_les "" 11 >/dev/null 2>&1
-  python3 -I -c 'import json, sys
-try: print(int(json.load(open(sys.argv[1]))["rondes"]["na"]["goed"]))
-except Exception: print(0)' "$t1" 2>/dev/null || echo 0
+  # 678 (23 nov): "toets 0/40" binnen dezelfde minuut was GEEN score maar een les die niet begon (er liep al een). Dat is nu "?", en dan stopt
+  # de modelproef netjes in plaats van een model op 0 te zetten.
+  if toets_rond "$t1"; then python3 -I -c 'import json, sys; print(int(json.load(open(sys.argv[1]))["rondes"]["na"]["goed"]))' "$t1" 2>/dev/null || echo '?'
+  else echo '?'; fi
   rm -f "$t1"
 }
 brein_tel_zet() {   # $1 serienummer, $2 lokaal pad, $3 naam op de telefoon -> 0 = staat er (compleet)
@@ -10635,7 +10669,7 @@ brein_modelproef() {
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s sig oud_m oud_mx regel repo naam sha lokaal mx pad dpad r tps score best_m best_mx best_tps best_score basis_tps grens drep dnaam dsha k mem
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
-  sig="$(printf '%s|v2' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"   # 678 (17 nov): v2 = na de meetslot-fix (de ronde van 11:33-12:09 mat 0 tok/s)
+  sig="$(printf '%s|v3' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"   # 678 (17 nov): v2 = na de meetslot-fix; v3 (23 nov) = na de toets-botsing (08:59: toets 0/40 zonder te meten)
   [ "$(head -1 "$REK_MAP/modelproef.sig" 2>/dev/null)" = "$sig" ] && return 0
   brein_slot_neem || return 0
   oud_m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; oud_mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
@@ -10643,6 +10677,10 @@ brein_modelproef() {
   # het huidige brein
   tps="$(BREIN_MODEL_PROEF="$oud_mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
   score="$(brein_snelle_les)"
+  if [ "$score" = '?' ]; then   # 678 (23 nov): de toets van het huidige brein liep niet (een andere les?): niets vergelijken, later opnieuw
+    logregel "Modelproef: de vaste toets van het huidige brein kwam niet rond; de modelproef begint later opnieuw."
+    rm -rf "$REK_MAP/brein.lock"; return 0
+  fi
   if ! awk "BEGIN{exit !($tps > 0)}" 2>/dev/null; then   # 678 (17 nov): zonder meting van het huidige brein valt er niets te vergelijken
     logregel "Modelproef: de meting van het huidige brein gaf niets (0 tok/s); de modelproef wacht tot meten weer werkt."
     rm -rf "$REK_MAP/brein.lock"; return 0
@@ -10660,6 +10698,8 @@ brein_modelproef() {
       brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0
     fi
     set -- $regel; repo="$1"; naam="$2"; sha="$3"; lokaal="$4"; shift 4; mx="$*"; [ "$mx" = - ] && mx=""
+    # 678 (23 nov): een kandidaat die PRECIES het huidige brein is (zelfde bestand, zelfde vlaggen) is al gemeten -- niet nog eens
+    [ "$repo" != huidig ] && [ "$lokaal" = "$oud_m" ] && [ "$mx" = "$oud_mx" ] && continue
     if [ "$repo" = huidig ]; then lokaal="$oud_m"
     else
       pad="$(brein_model_haal "$repo" "$naam" "$sha" 0 "$lokaal" 2>/dev/null)" || { logregel "Modelproef: $lokaal is nog niet binnen; de volgende keer verder."; brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0; }
@@ -10678,6 +10718,10 @@ brein_modelproef() {
     brein_stand klaar "Modelproef: $lokaal" "$s" "$lokaal" ""   # zodat de kennisbank en de les de juiste naam noemen
     tps="$(BREIN_MODEL_NU="$lokaal" BREIN_MODEL_PROEF="$mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
     score="$(brein_snelle_les)"
+    if [ "$score" = '?' ]; then   # 678 (23 nov): toets niet rond = deze kandidaat NIET beoordelen (en het oude brein terug)
+      printf '%s | %s%s | schrijven %s tok/s | toets niet rond gekomen; later opnieuw\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" "$tps" >>"$MODELPROEF_LOG_F"
+      brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0
+    fi
     printf '%s | %s%s | schrijven %s tok/s | toets %s/40\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" "$tps" "$score" >>"$MODELPROEF_LOG_F"
     if awk "BEGIN{exit !($tps >= $grens && ($score > $best_score || ($score == $best_score && $tps > $best_tps)))}"; then
       best_m="$lokaal"; best_mx="$mx"; best_tps="$tps"; best_score="$score"
@@ -11777,10 +11821,10 @@ wifi_gast_instel() {
   local s="$1" v gezet=""
   is_f8 "$s" && return 0; toegestaan "$(toestel_id "$s")" || return 0
   v="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_mode 2>/dev/null | tr -d '\r\n ')"
-  [ "$v" = 0 ] || { timeout 10 "$ADB" -s "$s" shell settings put global captive_portal_mode 0 >/dev/null 2>&1 && gezet=1; }
+  [ "$v" = 0 ] || { gezet=1; timeout 10 "$ADB" -s "$s" shell settings put global captive_portal_mode 0 >/dev/null 2>&1; }
   v="$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_detection_enabled 2>/dev/null | tr -d '\r\n ')"
-  [ "$v" = 0 ] || { timeout 10 "$ADB" -s "$s" shell settings put global captive_portal_detection_enabled 0 >/dev/null 2>&1 && gezet=1; }
-  # 678 (23 nov): NALEZEN. Op sommige telefoons geeft het zetten geen fout terwijl er niets verandert (eerste ronde: "null" bleef "null").
+  [ "$v" = 0 ] || { gezet=1; timeout 10 "$ADB" -s "$s" shell settings put global captive_portal_detection_enabled 0 >/dev/null 2>&1; }
+  # 678 (23 nov): NALEZEN, na ELKE poging (ook als het zetten zelf een fout gaf). Op sommige telefoons verandert er niets ("null" bleef "null").
   local sl; sl="$(tel_sl "$s")"; mkdir -p "$WIFI_CHECK_MAP" 2>/dev/null
   if [ -n "$gezet" ]; then
     if [ "$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_mode 2>/dev/null | tr -d '\r\n ')" = 0 ] && [ "$(timeout 10 "$ADB" -s "$s" shell settings get global captive_portal_detection_enabled 2>/dev/null | tr -d '\r\n ')" = 0 ]; then
