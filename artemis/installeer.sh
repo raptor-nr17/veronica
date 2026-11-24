@@ -5548,6 +5548,40 @@ cat_kijk() {
 # authenticator-app (we raken hun app-mappen sowieso niet aan -- pm trim-caches gaat via Android, en de rm-paden hieronder staan
 # vast op wegwerp-locaties en -extensies). De SD-kaart-AI-opslag (modellen, kennisboek) blijft staan -- die ruimen we juist NIET op.
 # Geeft het aantal vrijgemaakte MB terug op stdout (voor de automatische beheerder), en logt wat er gebeurde.
+# 678 (24 nov): de adb-kladmap opruimen ZONDER de modellen van een rol die hier draait. Weg: losse bestanden bovenin /data/local/tmp
+# (apk-restjes, meetbestanden, het meetmodel) en de map van een rol waarvan deze telefoon NIET (meer) de vaste telefoon is. Blijft: de map
+# van elke rol die deze telefoon nu heeft. Alleen deze vier namen; nooit iets anders dan /data/local/tmp.
+REK_ROLMAPPEN_TEL="brein controle verdeler bibliothecaris"
+rek_rol_pin() {   # $1 rol -> het serienummer van de vaste telefoon van die rol (of niets)
+  case "$1" in
+    brein) head -1 "$REK_MAP/brein-vast" 2>/dev/null ;;
+    controle) head -1 "$REK_MAP/controle/brein-vast" 2>/dev/null ;;
+    verdeler) head -1 "$REK_MAP/verdeler/brein-vast" 2>/dev/null ;;
+    bibliothecaris) head -1 "$REK_MAP/bibliothecaris/brein-vast" 2>/dev/null ;;
+  esac | tr -d '\r\n '
+}
+rek_tmp_ruim() {   # $1 adb-serienummer, $2 toestel-id -> zegt welke rolmappen weg zijn
+  local s="$1" id="$2" r weg=""
+  [ -n "$s" ] && [ -n "$id" ] || return 1
+  is_f8 "$s" && return 1
+  "$ADB" -s "$s" shell "find /data/local/tmp -maxdepth 1 -type f -delete 2>/dev/null" >/dev/null 2>&1 || true
+  case "$id" in adb:*) return 0 ;; esac   # geen echt serienummer gelezen: dan weet ik niet welke rol hier draait -- geen rolmap aanraken
+  for r in $REK_ROLMAPPEN_TEL; do
+    [ "$(rek_rol_pin "$r")" = "$id" ] && continue
+    "$ADB" -s "$s" shell "[ -d /data/local/tmp/$r ] && rm -rf /data/local/tmp/$r && echo weg" 2>/dev/null | tr -d '\r' | grep -q weg && weg="$weg $r"
+  done
+  printf '%s' "${weg# }"
+}
+# 678 (24 nov): EEN regel opslag per rektelefoon voor het verslag -- vrij op /data, de rolmappen in /data/local/tmp en Download. Alleen lezen.
+rek_opslag_regel() {   # $1 adb-serienummer
+  local s="$1" uit
+  uit="$("$ADB" -s "$s" shell "df -k /data 2>/dev/null | awk 'NR==2{print \"vrij \" \$4}'; for d in /data/local/tmp/* /sdcard/Download; do [ -e \"\$d\" ] && du -sk \"\$d\" 2>/dev/null; done" 2>/dev/null | tr -d '\r')"
+  printf '%s' "$uit" | awk '
+    function mb(k) { return k >= 1048576 ? sprintf("%.1f GB", k / 1048576) : sprintf("%d MB", k / 1024) }
+    $1 == "vrij" { vrij = mb($2); next }
+    NF >= 2 { n = $2; sub(/.*\//, "", n); if (n == "Download") dl = mb($1); else if ($1 >= 10240) m = m (m ? ", " : "") n " " mb($1) }
+    END { printf "%s vrij op /data%s%s", (vrij ? vrij : "?"), (m ? "; in de kladmap: " m : "; kladmap leeg"), (dl ? "; Download " dl : "") }'
+}
 rek_ruim_veilig() {
   local s="$1"; [ -n "$s" ] || return 1
   is_f8 "$s" && return 1                               # NOOIT de F8
@@ -5556,8 +5590,10 @@ rek_ruim_veilig() {
   voor="$("$ADB" -s "$s" shell "df -k /data 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null | tr -d '\r')"
   # (1) app-caches: Android wist zoveel als nodig. GEEN gebruikersgegevens, GEEN foto's, GEEN app-data.
   "$ADB" -s "$s" shell pm trim-caches 999999999999 >/dev/null 2>&1 || true
-  # (2) adb-kladmap: /data/local/tmp is adb's eigen werkplek (push/pull-restjes). Veilig leeg te maken; nooit app-data.
-  "$ADB" -s "$s" shell "rm -rf /data/local/tmp/* 2>/dev/null" >/dev/null 2>&1 || true
+  # (2) adb-kladmap: alleen de LOSSE restjes en de rolmappen van rollen die deze telefoon NIET meer heeft (rek_tmp_ruim).
+  #     678 (24 nov): hier werd de HELE kladmap leeggemaakt -- dat wiste ook het DRAAIENDE brein (model + llama-server) zodra een telefoon
+  #     onder de grens zakte, en daarna zette ARTEMIS 2,4 GB opnieuw neer. Zo bleef de opslag van het brein rondjes draaien.
+  rek_tmp_ruim "$s" "$id" >/dev/null 2>&1 || true
   # (3) oude JARVIS-apk's in Download: houd de NIEUWSTE, gooi oudere kopieën weg (jarvis.apk, 'jarvis (1).apk', jarvis-<versie>.apk).
   #     Alleen de bestandsnaam 'jarvis*.apk' in /sdcard/Download -- nooit een andere apk, nooit buiten Download.
   "$ADB" -s "$s" shell "ls -t /sdcard/Download/jarvis*.apk 2>/dev/null | tail -n +2 | while IFS= read -r f; do rm -f \"\$f\"; done" >/dev/null 2>&1 || true
@@ -9354,8 +9390,13 @@ def code_zin(c):
 t = os.environ.get('ANTW') or ''
 if not t:
     v = ('Schrijf EEN korte alinea (hoogstens drie zinnen) in het Nederlands over de stand van een rek telefoons. Gebruik voor ELK getal een plekhouder '
-         'tussen accolades en schrijf NOOIT zelf een getal. Plekhouders: {telefoons}, {rijcodeGoed}, {jarvisStil}, {lesRij}, {lesGoed}, {lesVan}, '
-         '{beheerRondes}, {beheerEens}, {pauze}, {besluiten}. Ter informatie (niet zelf overnemen): ' + json.dumps(c) + '\nGeef alleen de alinea.')
+         'tussen accolades en schrijf NOOIT zelf een getal. Een plekhouder is een GETAL, geen ding: zet er altijd het woord achter waar het '
+         'over gaat. Plekhouders: {telefoons} = aantal rektelefoons; {rijcodeGoed} = aantal dat de rij-code aanneemt; {jarvisStil} = aantal waar '
+         'JARVIS niet antwoordt; {lesRij} = nummer van de laatste lesrij; {lesGoed} en {lesVan} = goede vragen van het totaal in die les; '
+         '{beheerRondes} = aantal beheerrondes; {beheerEens} = hoe vaak het brein dezelfde stap koos als de vaste regel; {pauze} = aantal munten '
+         'op pauze; {besluiten} = aantal besluiten dat op de eigenaar wacht. Voorbeeld van de vorm: "{rijcodeGoed} van de {telefoons} '
+         'rektelefoons nemen de rij-code aan. De laatste les haalde {lesGoed} van de {lesVan}." '
+         'Ter informatie (niet zelf overnemen): ' + json.dumps(c) + '\nGeef alleen de alinea.')
     lijf = json.dumps({'messages': [{'role': 'user', 'content': v}], 'max_tokens': 160, 'temperature': 0.2, 'stream': False, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
     try:
         r = urllib.request.build_opener(urllib.request.ProxyHandler({})).open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=150)
@@ -11247,6 +11288,11 @@ for x in n["lessen"]:
   # verslag over de grens van de relay. De volledige tabel blijft in het bestand op deze computer.
   printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; if [ -s "$TOETS_F" ]; then { sed -n '1,/^| vraag /p' "$TOETS_F" | grep -v '^| vraag '; grep '^| .* | fout' "$TOETS_F" | head -n 10 | sed 's/^/fout: /'; n="$(grep -c '^| .* | fout' "$TOETS_F")"; [ "${n:-0}" -gt 10 ] && echo "(en nog $((n - 10)) fout)"; } | sed 's/^/    /'; else printf '    nog niet gemeten\n'; fi
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
+  # 678 (24 nov): de opslag per rektelefoon VOORAAN -- de modelproef en de controle-proef liepen vast op "te weinig ruimte"
+  printf '\n## Opslag per rektelefoon (alleen lezen)\n'
+  local _os _oi _oz=" "; for _os in $(verbonden); do is_f8 "$_os" && continue; _oi="$(toestel_id "$_os")"; case "$_oz" in *" $_oi "*) continue ;; esac; _oz="$_oz$_oi "
+    printf '    %s: %s\n' "$(toestel_naam "$_os")" "$(rek_opslag_regel "$_os")"; done
+  [ "$_oz" = " " ] && printf '    geen rektelefoon in beeld\n'
   # 678 (23 nov): de sloten ook VOORAAN -- om 16:18 en 17:35 viel juist dit deel er bij de relay af, terwijl het zegt waarom een proef wacht
   # 678 (17 nov): WAT HOUDT WAT VAST -- zo is van buiten te zien waarom een les of een proef niet begint
   printf '\n## Sloten en wachtrij\n'
