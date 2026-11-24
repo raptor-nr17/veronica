@@ -8244,7 +8244,7 @@ rek_aanwezig() {
     mld="$(meld_van "$jid")"; case "$mld" in ja*) mld_json=true ;; nee) mld_json=false ;; *) mld_json=null ;; esac
     rr="$(rek_rol_van "$ser")"; IFS='|' read -r rol rk rm rt <<<"$rr"
     [ -n "$jid" ] || jid="$rt"
-    printf '{"model":%s,"via":%s,"sleutel":%s,"temp":%s,"toestel":%s,"jarvis":%s,"meldt":%s,"rol":%s,"rolKlaar":%s,"rolModel":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")" "$tmp" "$([ -n "$jid" ] && json_s "$jid" || echo null)" "$([ -n "$jver" ] && json_s "$jver" || echo null)" "$mld_json" "$([ -n "$rol" ] && json_s "$rol" || echo null)" "$([ "$rk" = true ] && echo true || echo false)" "$([ -n "$rm" ] && json_s "$rm" || echo null)"
+    printf '{"model":%s,"via":%s,"sleutel":%s,"temp":%s,"toestel":%s,"jarvis":%s,"meldt":%s,"rol":%s,"rolKlaar":%s,"rolModel":%s,"surf":%s}' "$(json_s "$naam")" "$(json_s "$via")" "$(json_s "$sl")" "$tmp" "$([ -n "$jid" ] && json_s "$jid" || echo null)" "$([ -n "$jver" ] && json_s "$jver" || echo null)" "$mld_json" "$([ -n "$rol" ] && json_s "$rol" || echo null)" "$([ "$rk" = true ] && echo true || echo false)" "$([ -n "$rm" ] && json_s "$rm" || echo null)" "$([ "$rol" = verdeler ] && [ -f "$REK_MAP/surf-aan" ] && echo true || echo false)"
   done
   printf ']\n'
 }
@@ -10597,6 +10597,9 @@ brein_meet() {   # [label] -> een regel in brein-meet.log
   bouw="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
   model="${BREIN_MODEL_NU:-$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')}"
   sig="$model|$kern|${bouw:-}|$(brein_extra)"; nu="$(date +%s)"
+  # 678 (24 nov): de GEPLANDE meting nooit terwijl een proef (modelproef, proefbank, twee tegelijk) het brein vasthoudt: dan pakte hij het
+  # meetslot en kreeg de modelproef voor Q4_0 "schrijven 0 tok/s" (23 nov 20:05) -- en een kandidaat met 0 tok/s verliest altijd, oneerlijk.
+  [ "${1:-}" != --nu ] && slot_levend "$REK_MAP/brein.lock" && return 0
   if [ "${1:-}" != --nu ] && [ "$(sed -n 1p "$REK_MAP/brein-meet.sig" 2>/dev/null)" = "$sig" ]; then
     t0="$(sed -n 2p "$REK_MAP/brein-meet.sig" 2>/dev/null | tr -cd '0-9')"; [ $((nu - ${t0:-0})) -lt 21600 ] && return 0
   fi
@@ -10895,6 +10898,16 @@ brein_modelproef() {
     fi
     brein_stand klaar "Modelproef: $lokaal" "$s" "$lokaal" ""   # zodat de kennisbank en de les de juiste naam noemen
     tps="$(BREIN_MODEL_NU="$lokaal" BREIN_MODEL_PROEF="$mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
+    # 678 (24 nov): GEEN SNELHEID = NIET BEOORDELEN. Q4_0 kreeg op 23 nov "0 tok/s" (de meting mislukte) en verloor daardoor oneerlijk. Eerst
+    # een minuut later nog een keer; lukt het dan nog niet, dan telt deze kandidaat niet en gaat de proef later verder (zoals "toets niet rond").
+    if ! awk "BEGIN{exit !($tps > 0)}" 2>/dev/null; then
+      sleep "${MODELPROEF_HERMEET_S:-60}"
+      tps="$(BREIN_MODEL_NU="$lokaal" BREIN_MODEL_PROEF="$mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
+    fi
+    if ! awk "BEGIN{exit !($tps > 0)}" 2>/dev/null; then
+      printf '%s | %s%s | snelheid niet gemeten (de meting gaf niets); later opnieuw\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" >>"$MODELPROEF_LOG_F"
+      brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0
+    fi
     eerder=""; score="$(modelproef_score_eerder "$lokaal" "$mx")"
     if [ -n "$score" ]; then eerder=" (toets van de laatste 24 uur, niet opnieuw)"; else score="$(brein_snelle_les)"; fi
     if [ "$score" = '?' ]; then   # 678 (23 nov): toets niet rond = deze kandidaat NIET beoordelen (en het oude brein terug)

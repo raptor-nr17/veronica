@@ -3267,7 +3267,7 @@
     const motor = hv && hv.motor && typeof hv.motor === 'object' ? hv.motor : {};
     const tps = hv && hv.gids && hv.gids.laatst && hv.gids.laatst.tps > 0 ? hv.gids.laatst.tps : (motor.tps > 0 ? motor.tps : (t && typeof S.snelheid[t.adres] === 'number' ? S.snelheid[t.adres] : null));
     return {
-      naam: t && t.naam, rol: a ? a.rol : null, rolKlaar: !!(a && a.rolKlaar), rolModel: a ? a.rolModel : null, artemis: artemisZiet(id),
+      naam: t && t.naam, rol: a ? a.rol : null, rolKlaar: !!(a && a.rolKlaar), rolModel: a ? a.rolModel : null, artemis: artemisZiet(id), surf: !!(a && a.surf),
       direct, hartVers, accu: hartVers && typeof hv.accu === 'number' ? hv.accu : null, laadt: !!(hartVers && hv.laadt), temp: hartVers && typeof hv.temp === 'number' ? hv.temp : (a ? a.temp : null),
       motor: hartVers ? { aan: !!motor.aan, klaar: !!motor.klaar, fase: motor.fase, pct: typeof motor.pct === 'number' ? motor.pct : (typeof motor.procent === 'number' ? motor.procent : null), model: motor.model || '' } : {},
       tps: hartVers ? tps : null, werk: hartVers ? (hv.werk || '') : '', dagelijks: !!(hv && hv.dagelijks), pauze: !!(hartVers && hv.pauze),
@@ -3312,7 +3312,7 @@
         if (r.toestel && S.telefoons.some((t) => t.id === r.toestel)) continue;   // die heeft al een kaart
         if (!r.rol && !r.toestel) continue;   // een toestel zonder rol en zonder JARVIS: alleen onder Nakijken
         const ruw = (RekAanw.lijst || []).find((x) => x.sleutel === r.sleutel) || {};
-        const x = { naam: r.naam, rol: ruw.rol || null, rolKlaar: !!ruw.rolKlaar, rolModel: ruw.rolModel || null, artemis: artemisZiet(ruw.toestel) || ({ kabel: 'via de kabel', wifi: 'via wifi (adb)', tailscale: 'via Tailscale (adb)' }[ruw.via] || 'via adb'),
+        const x = { naam: r.naam, rol: ruw.rol || null, rolKlaar: !!ruw.rolKlaar, rolModel: ruw.rolModel || null, surf: !!ruw.surf, artemis: artemisZiet(ruw.toestel) || ({ kabel: 'via de kabel', wifi: 'via wifi (adb)', tailscale: 'via Tailscale (adb)' }[ruw.via] || 'via adb'),
           direct: false, hartVers: false, temp: typeof ruw.temp === 'number' ? ruw.temp : null };
         const sb = standBlok(x); standen.push({ stand: sb.stand });
         const tegel = el('section', 'tegel rekAlleenArtemis');

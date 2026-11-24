@@ -7,7 +7,7 @@
 //   start op  -- hij is in beeld, maar het model is er nog niet (laadt, of ARTEMIS zet het nog klaar)
 //   accu laag -- onder 20% en niet aan de lader, of hij wacht zelf op de accu
 //   weg       -- geen antwoord over het wifi, geen verse hartslag, en ARTEMIS ziet hem ook niet
-//   rust      -- de dagelijkse telefoon, of JARVIS staat uit (een keuze, geen fout)
+//   rust      -- de dagelijkse telefoon, JARVIS staat uit, of de surfstand (een keuze, geen fout)
 // Welke bron waarvoor geldt staat vast: IN BEELD = een van de drie wegen; DE ROL en of die klaar is = ARTEMIS (die draait de modellen); ACCU,
 // WARMTE en DE EIGEN MOTOR = de hartslag van de telefoon zelf. Zo kan dezelfde vraag nooit twee antwoorden krijgen.
 // PUUR rekenen: geen netwerk, geen opslag, geen DOM. Geen merk, persoon of plaats in dit bestand (het gaat mee naar de openbare site).
@@ -42,6 +42,7 @@
     }
     if (o.pauze) return uit('rust', 'JARVIS staat uit (met de Uit-knop). Zet hem op de telefoon weer aan als hij mee moet doen.');
     if (o.dagelijks) return uit('rust', 'De dagelijkse telefoon: die rust en doet niet mee met het rek.');
+    if (o.surf) return uit('rust', 'Surftelefoon: de verdeler pauzeert zolang je surft. Zet de surfstand uit en hij start vanzelf weer.');
     if (accu !== null && accu < ACCU_LAAG && !o.laadt) return uit('accu-laag', `Accu ${accu}% en hij laadt niet. Leg hem aan de lader, anders valt hij straks uit.`);
     const rolKlaar = !!(o.rol && o.rolKlaar);
     if (rolKlaar) return uit('werkt', `Werkt als ${ROL[o.rol] || o.rol}${model ? ` (${model})` : ''}.`);

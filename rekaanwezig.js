@@ -47,7 +47,7 @@
       // zegt klaar en de server antwoordt), en het model. Op het rek draait ARTEMIS de modellen; JARVIS hoeft daarvoor niet te antwoorden.
       const rol = ROLLEN[x.rol] ? x.rol : null;
       const rolModel = rol ? (schoon(x.rolModel, 60) || null) : null;
-      gezien.add(sleutel); uit.push({ model: model, via: via, sleutel: sleutel, temp: temp, toestel: toestel, jarvis: jarvis, meldt: meldt, rol: rol, rolKlaar: rol ? x.rolKlaar === true : false, rolModel: rolModel });
+      gezien.add(sleutel); uit.push({ model: model, via: via, sleutel: sleutel, temp: temp, toestel: toestel, jarvis: jarvis, meldt: meldt, rol: rol, rolKlaar: rol ? x.rolKlaar === true : false, rolModel: rolModel, surf: x.surf === true });   // 678 (23 nov): de surfstand (de verdeler pauzeert)
       if (uit.length >= MAX) break;
     }
     return uit;
