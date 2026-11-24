@@ -25,7 +25,8 @@
   const komma = (v) => String(Math.round(v * 10) / 10).replace('.', ',');
 
   // stand(x): x = { naam, rol, rolKlaar, rolModel, artemis (een korte zin "via Tailscale (adb)" of ''), direct, hartVers, accu, laadt,
-  //   motor: { aan, klaar, fase, pct, model }, tps, werk (de laatste zin van JARVIS zelf), dagelijks, pauze, laatsteAccu, laatsteLaadt }
+  //   motor: { aan, klaar, fase, pct, model }, tps, werk (de laatste zin van JARVIS zelf), dagelijks, pauze, laatsteAccu, laatsteLaadt,
+  //   poolKlaar (antwoordt rechtstreeks met een geladen model: dezelfde vraag als de pantser-regel) }
   // -> { stand, label, kleur, zin }
   function stand(x) {
     const o = x || {};
@@ -46,6 +47,7 @@
     if (accu !== null && accu < ACCU_LAAG && !o.laadt) return uit('accu-laag', `Accu ${accu}% en hij laadt niet. Leg hem aan de lader, anders valt hij straks uit.`);
     const rolKlaar = !!(o.rol && o.rolKlaar);
     if (rolKlaar) return uit('werkt', `Werkt als ${ROL[o.rol] || o.rol}${model ? ` (${model})` : ''}.`);
+    if (o.poolKlaar && !motor.klaar) return uit('werkt', `Werkt: antwoordt rechtstreeks met een geladen model${model ? ` (${model})` : ''}${tps !== null && tps > 0 ? `, ±${komma(tps)} tokens per seconde` : ''}.`);
     if (motor.klaar) return uit('werkt', `Werkt: de eigen motor is klaar${model ? ` (${model})` : ''}${tps !== null && tps > 0 ? `, ±${komma(tps)} tokens per seconde` : ''}.`);
     const werk = String(o.werk || '');
     const grens = /accu onder (\d+)/i.exec(werk);
@@ -74,9 +76,13 @@
     const accu = getal(o.accu); const temp = getal(o.temp); const tps = getal(o.tps);
     if (accu !== null) d.push(`accu ${accu}%${o.laadt ? ' (laadt)' : ''}`);
     if (temp !== null) d.push(`${komma(temp)} °C`);
-    const model = String(o.rolModel || (o.motor && o.motor.model) || '').replace(/\.gguf$/i, '');
-    if (model) d.push(model);
-    if (tps !== null && tps > 0) d.push(`±${komma(tps)} tokens/s`);
+    // 678 (24 nov, schermafbeelding 18:03: "Start op" en toch een model en 5,7 tokens/s): model en snelheid alleen als hij ECHT werkt --
+    // anders zijn het oude meldingen van een motor die nu niet draait.
+    if (stand(o).stand === 'werkt') {
+      const model = String(o.rolModel || (o.motor && o.motor.model) || '').replace(/\.gguf$/i, '');
+      if (model) d.push(model);
+      if (tps !== null && tps > 0) d.push(`±${komma(tps)} tokens/s`);
+    }
     const w = waar(o); if (w) d.push(w);
     return d.join(' · ');
   }

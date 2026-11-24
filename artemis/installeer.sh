@@ -1812,6 +1812,8 @@ def lus():
                 doe('duurtest-tik')   # 678: de duurtest (alleen als hij aan staat; anders meteen klaar)
             if RONDE % 5 == 3:
                 doe('voortgang-controle')   # 678 (12 nov): kijkt of er langer dan 30 minuten niets gepusht is (stil; melding hoogstens eens per uur)
+            if RONDE % 15 == 6:
+                doe('opslag-leeg-tik')   # 678 (24 nov): eenmalig per telefoon, alleen brein en controle, tot en met 27 nov
             if RONDE % 180 == 45:
                 doe('beheerder-opslag')   # 609: de lokale beheerder -- elke ~3 uur de opslag van de rektelefoons bewaken + veilig opruimen (nooit de F8)
             if RONDE % 30 == 17:
@@ -5581,6 +5583,49 @@ rek_opslag_regel() {   # $1 adb-serienummer
     $1 == "vrij" { vrij = mb($2); next }
     NF >= 2 { n = $2; sub(/.*\//, "", n); if (n == "Download") dl = mb($1); else if ($1 >= 10240) m = m (m ? ", " : "") n " " mb($1) }
     END { printf "%s vrij op /data%s%s", (vrij ? vrij : "?"), (m ? "; in de kladmap: " m : "; kladmap leeg"), (dl ? "; Download " dl : "") }'
+}
+# 678 (24 nov, eigenaar: "je mag deze twee helemaal schoon vegen, daar zitten geen privé dingen van mij op ... haal alles weg wat het rek
+# niet nodig heeft (apps, losse bestanden, oude modellen), geen fabrieksreset"). DE OPSLAG LEEG op de telefoon van het BREIN en die van de CONTROLE.
+# De apps doet brein_schoonvegen al (15 nov); dit is het deel dat RUIMTE kost en dat daar bewust bleef staan:
+#  (1) alles bovenin de gedeelde opslag (/sdcard) -- foto's, video's, Download, documenten, losse modellen -- BEHALVE Android/ (de gegevens van
+#      JARVIS en Tailscale) en de kennisboek-map; (2) de rolmappen van rollen die deze telefoon niet heeft en de losse restjes (rek_tmp_ruim);
+#  (3) in de EIGEN rolmap elk model behalve het model dat die rol nu draait; (4) de caches.
+# EENMALIG per telefoon (een merkbestand), alleen binnen het venster van de toestemming (tot en met OPSLAG_LEEG_TOT), nooit de F8, nooit een
+# telefoon die niet op de lijst staat, en nooit terwijl een proef of les het brein vasthoudt. Geen fabrieksreset, geen gevoelige app.
+OPSLAG_LEEG_TOT="${OPSLAG_LEEG_TOT:-20261127}"
+rek_opslag_leeg() {   # $1 adb-serienummer, $2 rol (brein|controle) -> zegt wat er weg is
+  local s="$1" rol="$2" id map model voor na weg
+  [ -n "$s" ] || return 1
+  is_f8 "$s" && return 1
+  id="$(toestel_id "$s")"; case "$id" in adb:*|'') return 1 ;; esac
+  toegestaan "$id" || return 1
+  [ "$(rek_rol_pin "$rol")" = "$id" ] || return 1
+  case "$rol" in brein) map="$REK_MAP" ;; controle) map="$REK_MAP/controle" ;; *) return 1 ;; esac
+  model="$(head -1 "$map/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  voor="$("$ADB" -s "$s" shell "df -k /data 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null | tr -d '\r')"
+  "$ADB" -s "$s" shell 'for f in /sdcard/* /sdcard/.[!.]*; do case "${f##*/}" in Android|veronica-kennisboek|"*"|".[!.]*") ;; *) rm -rf "$f" ;; esac; done 2>/dev/null' >/dev/null 2>&1 || true
+  weg="$(rek_tmp_ruim "$s" "$id")"
+  [ -n "$model" ] && "$ADB" -s "$s" shell "for f in /data/local/tmp/$rol/*.gguf; do [ \"\${f##*/}\" = '$model' ] || rm -f \"\$f\"; done 2>/dev/null" >/dev/null 2>&1 || true
+  "$ADB" -s "$s" shell pm trim-caches 999G >/dev/null 2>&1 || true
+  na="$("$ADB" -s "$s" shell "df -k /data 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null | tr -d '\r')"
+  printf '%s: opslag leeg (%s); vrij op /data %s MB -> %s MB%s' "$(toestel_naam "$s")" "$rol" "$(( ${voor:-0} / 1024 ))" "$(( ${na:-0} / 1024 ))" "${weg:+; oude rolmappen weg: $weg}"
+}
+opslag_leeg_tik() {
+  command -v "$ADB" >/dev/null 2>&1 || return 0
+  [ "$(date +%Y%m%d)" -le "$OPSLAG_LEEG_TOT" ] || return 0
+  if [ -d "$REK_MAP/brein.lock" ] || les_loopt 2>/dev/null; then return 0; fi
+  local s id rol m r
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; case "$id" in adb:*|'') continue ;; esac
+    for rol in brein controle; do
+      [ "$(rek_rol_pin "$rol")" = "$id" ] || continue
+      m="$REK_MAP/opslag-leeg-$id.klaar"; [ -f "$m" ] && continue
+      r="$(rek_opslag_leeg "$s" "$rol")" || continue
+      printf '%s %s\n' "$(date '+%d-%m %H:%M')" "$r" >>"$REK_MAP/opslag-leeg.log"; : >"$m"
+      logregel "[Veronica] $r"
+    done
+  done
 }
 rek_ruim_veilig() {
   local s="$1"; [ -n "$s" ] || return 1
@@ -11287,6 +11332,7 @@ for x in n["lessen"]:
   printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; if [ -s "$TOETS_F" ]; then { sed -n '1,/^| vraag /p' "$TOETS_F" | grep -v '^| vraag '; grep '^| .* | fout' "$TOETS_F" | head -n 10 | sed 's/^/fout: /'; n="$(grep -c '^| .* | fout' "$TOETS_F")"; [ "${n:-0}" -gt 10 ] && echo "(en nog $((n - 10)) fout)"; } | sed 's/^/    /'; else printf '    nog niet gemeten\n'; fi
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
   # 678 (24 nov): de opslag per rektelefoon VOORAAN -- de modelproef en de controle-proef liepen vast op "te weinig ruimte"
+  [ -s "$REK_MAP/opslag-leeg.log" ] && { printf '\n## Opslag leeggemaakt (eenmalig, toestemming eigenaar)\n'; tail -n 4 "$REK_MAP/opslag-leeg.log" | sed 's/^/    /'; }
   printf '\n## Opslag per rektelefoon (alleen lezen)\n'
   local _os _oi _oz=" "; for _os in $(verbonden); do is_f8 "$_os" && continue; _oi="$(toestel_id "$_os")"; case "$_oz" in *" $_oi "*) continue ;; esac; _oz="$_oz$_oi "
     printf '    %s: %s\n' "$(toestel_naam "$_os")" "$(rek_opslag_regel "$_os")"; done
@@ -13018,6 +13064,7 @@ case "${1:-status}" in
   kennisboek-terug) kennisboek_terug ;;      # 165: de lokale spiegel terugzetten naar de Cat
   kennis-zet) brein_kennis_zet ;;            # 678 (18 nov, punt 7): de kennisbank (met de extra kennis van het kanaal) opnieuw op de Cat
   kennisboek-kopie) kennisboek_kopie ;;      # 165: een versleutelde nachtkopie (idempotent per dag)
+  opslag-leeg-tik) opslag_leeg_tik ;;   # 678 (24 nov): eenmalig de opslag van brein- en controle-telefoon leeg (toestemming eigenaar)
   beheerder-opslag) beheerder_opslag ;;      # 609: de lokale beheerder -- vanzelf de opslag van de rektelefoons bewaken + veilig opruimen
   beheerder) beheerder_ronde ;;              # 675: de lokale beheerder -- weggevallen rektelefoon zelf draadloos terughalen, anders de eigenaar via Veronica (kabel/tik)
   hardware) hardware ;;                      # 594: RAM/chip/opslag per rektelefoon -- kan een oude telefoon de F8 vervangen?

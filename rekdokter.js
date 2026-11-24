@@ -186,7 +186,8 @@
   function regel(problemen, aantal) {
     const p = (Array.isArray(problemen) ? problemen : []).filter((x) => x.ernst >= 2);
     if (!aantal) return '';
-    if (!p.length) return `Rekdokter: ${aantal === 1 ? 'de telefoon is' : `alle ${aantal} telefoons zijn`} in orde.`;
+    // 678 (24 nov): de dokter kijkt alleen naar telefoons met een hartslag; zeg dat, anders lijkt het rek kleiner dan het is ("alle 2" naast "6")
+    if (!p.length) return `Rekdokter: geen problemen bij ${aantal === 1 ? 'de telefoon die' : `de ${aantal} telefoons die`} een hartslag ${aantal === 1 ? 'stuurt' : 'sturen'}.`;
     return `Rekdokter: ${p.length === 1 ? 'een punt vraagt' : `${p.length} punten vragen`} aandacht (${p.slice(0, 2).map((x) => x.naam).filter((v, i, l) => l.indexOf(v) === i).join(', ')}). Typ "wat is er mis met het rek?".`;
   }
 
