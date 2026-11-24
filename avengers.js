@@ -12,8 +12,8 @@
 //  - Een modus heeft effect 'geen' (alleen rekenen/zoeken) of 'voorstel' (de AI stelt voor, de eigenaar keurt). Een modus die iets in
 //    de echte wereld doet (versturen, kopen, publiceren, instellingen van anderen) bestaat niet en wordt door registreer() geweigerd.
 //  - De knop zet NOOIT een telefoon aan die met de Uit-knop is stilgezet, maakt NOOIT een beheerder werker, laat NOOIT vanzelf een
-//    nieuwe telefoon toe (dat blijft "Laat toe" van een mens) en doet niets met de zandbak of de dagelijkse telefoon (behalve het
-//    gast-brein zoals gastbrein.js zegt).
+//    nieuwe telefoon toe (dat blijft "Laat toe" van een mens) en doet niets met de zandbak of de dagelijkse telefoon (ook niet als
+//    gast-brein: die doet alleen mee als de eigenaar zelf met het lokale model praat).
 //  - Geen merknaam en geen naam van een persoon in dit bestand (het staat in Veronica).
 (function (wortel, fabriek) {
   if (typeof module === 'object' && module.exports) module.exports = fabriek();
@@ -43,7 +43,7 @@
     return modus;
   }
   registreer({ id: 'rekenkracht', titel: 'Rekenkracht delen', effect: 'geen', rollen: ['werker', 'beheerder', 'gast'],
-    uitleg: 'De telefoons rekenen samen aan de opdrachten in de wachtrij (Pantser aan). Het zware werk gaat naar het gast-brein als dat mag.',
+    uitleg: 'De telefoons rekenen samen aan de opdrachten in de wachtrij (Pantser aan). De dagelijkse telefoon rekent hier niet mee.',
     fenna: 'de telefoons rekenen samen aan opdrachten' });
   registreer({ id: 'zoekmachines', titel: 'Privé-hoek: elke telefoon een eigen zoekmachine', effect: 'geen', rollen: ['werker', 'beheerder', 'bewaker'],
     uitleg: 'Elke telefoon zoekt zijn eigen deel van je vraag. De schermenwand zet de beelden van de telefoons draadloos (via ARTEMIS) naast elkaar.',
@@ -75,10 +75,9 @@
     if (vers) Object.assign(x, h);
     if (x.pauze) return uit('JARVIS staat uit op de telefoon zelf (de Uit-knop). Aanzetten doe je daar, of met "Noodstop opheffen" bij die telefoon op Live; deze knop doet dat nooit vanzelf.');
     if (x.zandbak) return uit('zandbak (veilig browsen): doet nooit mee');
-    if (x.gast && typeof x.gast === 'object') {
-      if (x.gast.mag === true) return { id: l.id || null, naam, mee: true, rol: 'gast', reden: 'gast-brein: rekent mee aan het zware werk', stappen: [] };
-      return uit(`gast-brein, rust nu: ${(gastZinnen && gastZinnen[x.gast.reden]) || 'onbekend'}`);
-    }
+    // 678 (24 nov, eigenaar): de dagelijkse telefoon (het gast-brein) doet alleen mee als de eigenaar ZELF met het lokale model praat --
+    // nooit aan werk dat vanzelf loopt. Assemble is zulk werk: het gast-brein staat er dus altijd buiten, ook als het zou mogen.
+    if (x.gast && typeof x.gast === 'object') return uit('gast-brein: doet alleen mee als je zelf met het lokale model praat');
     if (x.dagelijks) return uit('dagelijkse telefoon: rust (niet in het rek)');
     if (x.sparen) return uit('Sparen staat aan op die telefoon (alleen daar uit te zetten)');
     const oud = x.versie && versieGetal(x.versie) < versieGetal('1.9.64') ? ` Oude JARVIS (${x.versie}): werkt zichzelf bij aan de lader.` : '';

@@ -3485,24 +3485,11 @@
   async function lokaalZet() {
     const r = $('artemisLokaalRegel'); if (!r) return null;
     if (!artemisGebruikt()) { r.textContent = ''; return null; }
-    const g = gastBreinAdres();
-    // 678 (20 nov): de oude zin over het gast-brein (met de naam van een app die het rek niet meer gebruikt) is weg: het lokale model IS het brein
-    // van het rek, via ARTEMIS. Wat er nu draait staat hier; een gast-brein dat zich meldt wordt nog steeds doorgegeven.
-    if (!g) { r.textContent = BreinV.antwoordt ? `Lokaal model: het brein draait op ${BreinV.telefoon || 'de brein-telefoon'}${BreinV.model ? ` (${BreinV.model.replace(/\.gguf$/, '')})` : ''}, via ARTEMIS.` : 'Lokaal model: het brein van het rek antwoordt nu niet. ARTEMIS probeert het vanzelf opnieuw te starten.'; return null; }
-    const base = 'http://' + g.ip + ':' + OLLITE_POORT + '/v1';
-    const url = ARTEMIS_ADRES + 'lokaal-zet';
-    const ab = new AbortController(); const klok = setTimeout(() => ab.abort(), 8000);
-    try {
-      const resp = await fetch(url, Object.assign({ method: 'POST', cache: 'no-store', signal: ab.signal,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'base=' + encodeURIComponent(base) }, K.lnaOpties(url)));
-      const tekst = (await resp.text()).trim();
-      r.textContent = resp.ok ? `Lokaal model doorgegeven aan ARTEMIS: ${g.naam} via ${base} (poort 8000). ${tekst}`
-        : `De console nam het adres niet aan (${resp.status}): ${tekst}`;
-      return resp.ok;
-    } catch (e) {
-      r.textContent = 'Lokaal model: de console was niet te bereiken om het telefoon-adres door te geven.';
-      return false;
-    } finally { clearTimeout(klok); }
+    // 678 (24 nov, eigenaar): "de F8 alleen erbij als ik zelf met het lokale model wil praten". ARTEMIS denkt VANZELF (planner, beheer),
+    // dus het gast-brein (de F8) wordt hier NOOIT meer als denkmodel doorgegeven -- ook niet als het zich meldt. ARTEMIS denkt met het
+    // brein van het rek. Praten met de F8 gaat via het hoofdveld (de trap), alleen als jij iets vraagt.
+    r.textContent = BreinV.antwoordt ? `Lokaal model: het brein draait op ${BreinV.telefoon || 'de brein-telefoon'}${BreinV.model ? ` (${BreinV.model.replace(/\.gguf$/, '')})` : ''}, via ARTEMIS.` : 'Lokaal model: het brein van het rek antwoordt nu niet. ARTEMIS probeert het vanzelf opnieuw te starten.';
+    return null;
   }
   // 623c: het relay-ONDERWERP (jv+30, dat Veronica met de code van de rij al kent) EN het relay-ADRES in EEN POST aan de ARTEMIS-
   // console geven, zodat de eigenaar NIETS hoeft te plakken. Zonder het onderwerp kan ARTEMIS de relay-lijst niet lezen (de topic
@@ -6869,7 +6856,7 @@
     for (const id of ['alleenLokaalKnop', 'alleenLokaalHoekKnop']) $(id).addEventListener('click', () => zetAlleenLokaal(!AlleenL.aan));   // 550
     if (AlleenL.aan && S.bureau) zetBureau(false);
     tekenAlleenLokaal();
-    $('meetFennaKnop').addEventListener('click', () => { meetFennaNu().catch(() => {}); });
+    $('meetFennaKnop').addEventListener('click', () => { meetFennaNu({ metF8: true }).catch(() => {}); });
     $('kluisKnop').addEventListener('click', () => { kluisHalen({ handmatig: true }).catch(() => {}); });   // 551
     tekenKluis().catch(() => {});
     $('meetFennaStop').addEventListener('click', () => { SlimV.stop = true; });
@@ -7267,9 +7254,10 @@
     const model = t.gast ? t.model : (modelNaamVan(meet(t.adres)) || (h.motor && h.motor.model) || '');
     return Sl.meting({ dag: new Date(nu()).toISOString().slice(0, 10), t: nu(), telefoon: t.naam, model, versie, nakijker: nakijker ? nakijker.naam : '', score: Sl.score(uitslagen) });
   }
-  async function meetFennaNu() {
+  async function meetFennaNu(opties) {
     if (SlimV.bezig || !window.Slimheid) return [];
-    const { eigen, gast } = slimTelefoons();
+    // 678 (24 nov, eigenaar): de F8 (gast-brein) alleen als de eigenaar ZELF meet (de knop); de nachtelijke meting gaat vanzelf en dus zonder F8.
+    const sl = slimTelefoons(); const eigen = sl.eigen; const gast = opties && opties.metF8 === true ? sl.gast : null;
     const stand = $('slimStand');
     if (!eigen.length && !gast) { stand.textContent = 'Geen telefoon met een model die over het wifi antwoordt. Meten gaat alleen rechtstreeks (niet via de brievenbus).'; return []; }
     SlimV.bezig = true; SlimV.stop = false;

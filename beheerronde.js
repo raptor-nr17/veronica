@@ -10,7 +10,7 @@
 //  - Een telefoon gaat alleen TIJDELIJK op pauze bij een echte reden: boven 42 °C of accu leeg / van de lader. Dat doet de
 //    telefoon ZELF (sparen.js/het vangnet); de beheerder dwingt dat niet af met een roep (er bestaat geen roep om sparen te
 //    zetten -- bewust, §481). De beheerder zorgt alleen dat een GEZONDE telefoon zijn motor AAN heeft (roep motor-aan).
-//  - De F8 doet mee bij assemble ALS hij thuis op het wifi is, volgens zijn gast-brein-regels (accu > 30%, pauze boven 38 °C,
+//  - De F8 doet NOOIT mee aan de ronde (24 nov: alleen als de eigenaar zelf met het lokale model praat); vroeger: thuis, volgens zijn gast-brein-regels (accu > 30%, pauze boven 38 °C,
 //    nooit baas, NOOIT via adb/ARTEMIS bestuurd). Valt hij weg, dan gaat het rek door zonder hem.
 //  - Altijd zichtbaar in Veronica WIE meedoet / gepauzeerd is en WAAROM. De NOODSTOP van de eigenaar wint ALTIJD (de aanroeper
 //    slaat de ronde over als de noodstop aan staat). Nooit bank-/kluis-apps; de F8 nooit via adb.
@@ -49,6 +49,7 @@
   const vers = (h, nu) => { const t = getal(h && h.t); return t === null || (nu - t) <= VERS_MS; };
 
   // Een telefoon: is het de F8 (gast-brein)? Dan gelden de gast-brein-regels. Anders een gewone rektelefoon.
+  const F8_ALLEEN_EIGENAAR = 'de F8 doet alleen mee als je zelf met het lokale model praat';
   function isF8(h, f8Id) { return !!(f8Id && h && String(h.id) === String(f8Id)); }
 
   // Mag deze telefoon NU meedoen, en zo niet, waarom? -> { mee: bool, waarom: '' }
@@ -56,13 +57,9 @@
   function doetMee(h, f8Id, f8Thuis) {
     const temp = getal(h && h.temp);
     const accu = getal(h && h.accu);
-    if (isF8(h, f8Id)) {
-      if (h && h.rol === 'baas') return { mee: false, waarom: 'de F8 is nu de baas en wordt niet ingezet' };
-      if (!f8Thuis) return { mee: false, waarom: 'de F8 is niet thuis op het wifi' };
-      if (temp !== null && temp > F8_TEMP_MAX) return { mee: false, waarom: `te warm (${Math.round(temp)} °C)` };
-      if (accu !== null && accu < F8_ACCU_MIN && !aanLader(h)) return { mee: false, waarom: `accu te laag (${Math.round(accu)}%)` };
-      return { mee: true, waarom: 'gast-brein, thuis' };
-    }
+    // 678 (24 nov, eigenaar): "de F8 alleen erbij als ik zelf met het lokale model wil praten; de vier rektelefoons kunnen zelfstandig
+    // op internet zonder de F8". De beheerronde is werk dat VANZELF loopt: de F8 doet daar dus nooit meer mee, thuis of niet.
+    if (isF8(h, f8Id)) return { mee: false, waarom: F8_ALLEEN_EIGENAAR };
     // Een gewone rektelefoon: altijd mee, behalve bij een echte reden (hitte of accu leeg/van de lader).
     if (temp !== null && temp > REK_TEMP_MAX) return { mee: false, waarom: `te warm (${Math.round(temp)} °C)` };
     if (accu !== null && accu < REK_ACCU_MIN && !aanLader(h)) return { mee: false, waarom: `accu leeg (${Math.round(accu)}%) en van de lader` };

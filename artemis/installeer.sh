@@ -6857,10 +6857,8 @@ lokaal() {
   vondst="$(lokaal_vind)"
   if [ -z "$vondst" ]; then
     zeg "Geen lokale OpenAI-server gevonden (geprobeerd: 8000/11434/8080 op elke rektelefoon$([ -s "$REK_MAP/rek-token.conf" ] && echo ', en de eigen motor op 8081 met je rij-code' || echo '; de eigen motor op 8081 vraagt de rij-code: zet die in het veld \"Rij-code\" hieronder')). Staat de eigen motor aan (Veronica: Motor aan)?"
-    zeg "Twee wegen:"
-    zeg "  1) Start OlliteRT op een rektelefoon (Start Server + een multimodaal Gemma, bv. E4B) en druk opnieuw op 'Lokaal model'."
-    zeg "  2) Of de F8 thuis als gast-brein (OlliteRT, >30% accu, niet in gebruik): zet met de hand in $REK_MAP/lokaal-model.conf:"
-    zeg "       BASE_URL=http://<F8-ip>:8000/v1 | MODEL=<modelnaam> | TOKEN=local   (elk op een eigen regel, = i.p.v. |)"
+    # 678 (24 nov, eigenaar): de F8 alleen als de eigenaar zelf met het lokale model praat -- ARTEMIS denkt vanzelf, dus geen F8-advies meer.
+    zeg "Start OlliteRT of de eigen motor op een rektelefoon en druk opnieuw op 'Lokaal model'. (De dagelijkse telefoon doet hier niet mee.)"
     zeg "ARTEMIS blijft zolang op Gemini (terugval)."
     return 1
   fi
