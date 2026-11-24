@@ -9184,7 +9184,7 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
   nu=""; [ -n "$s" ] && nu="$(mem_vrij_kb "$s")"
   zeg "${BREIN_LABEL:-Brein}: $(printf '%s\n' "$st" | sed -n 4p)"
   zeg "  telefoon: $(printf '%s\n' "$st" | sed -n 1p)$([ -s "$BREIN_VAST_F" ] && echo " ($(head -1 "$BREIN_VAST_F"), vast gekozen)")"
-  zeg "  route: $([ -n "$s" ] && brein_route "$s" || echo 'geen -- de brein-telefoon is nu niet bereikbaar via adb (niet aan de kabel, niet draadloos)')"
+  zeg "  route: $([ -n "$s" ] && brein_route "$s" || echo 'geen -- de brein-telefoon is nu niet bereikbaar via adb (niet aan de kabel, niet draadloos). Hangt hij toch aan de kabel? Na een herstart van Linux geeft ChromeOS een USB-apparaat niet vanzelf door: Instellingen > Over ChromeOS > Ontwikkelaars > Linux-ontwikkelomgeving > USB-apparaten beheren, zet de telefoon aan (of steek de kabel opnieuw in en kies Verbinden met Linux).')"
   if [ -z "$s" ]; then
     zeg "  waarom niet bereikbaar (laatste poging, stap voor stap):"
     # 678 (17 nov): in het VERSLAG zonder de regels per telefoon van "Rek via Tailscale" (die vulden het verslag tot het werd afgekapt
@@ -10925,7 +10925,7 @@ brein_modelproef() {
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s sig oud_m oud_mx regel repo naam sha lokaal mx pad dpad r tps score best_m best_mx best_tps best_score basis_tps grens drep dnaam dsha k mem
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
-  sig="$(printf '%s|v3' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"   # 678 (17 nov): v2 = na de meetslot-fix; v3 (23 nov) = na de toets-botsing (08:59: toets 0/40 zonder te meten)
+  sig="$(printf '%s|v4' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"   # 678 (17 nov): v2 = na de meetslot-fix; v3 (23 nov) = na de toets-botsing (08:59: toets 0/40 zonder te meten); v4 (24 nov) = na de opruimer-fix (drie kandidaten kregen "te weinig ruimte" terwijl de oude opruimer de modellen wiste; nu 60 GB vrij)
   [ "$(head -1 "$REK_MAP/modelproef.sig" 2>/dev/null)" = "$sig" ] && return 0
   brein_slot_neem || return 0
   oud_m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; oud_mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
