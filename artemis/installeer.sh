@@ -9662,7 +9662,7 @@ controle_proef() {   # de hele proef; schrijft CONTROLE_PROEF_F en controle/geko
   # 678 (23 nov): de proef van 22 nov gaf het huidige model 10/27 met 778 ms per oordeel -- veel te snel voor een 3B-model op deze telefoon: de
   # controle antwoordde bij de meeste gevallen NIET, en dat telde als fout. Nu apart geteld; antwoordt hij bij meer dan een kwart niet, dan is de
   # meting ONGELDIG (geen score, geen wissel) en probeert de proef het later opnieuw.
-  local hgeen kgeen ongeldig=""
+  local hgeen kgeen ongeldig="" onderbroken=""
   r="$(controle_proef_score)"; read -r hg tot hms hgeen _ hmis _hg <<<"${r:--1 27 0 27 - - -}"
   if [ "${hgeen:-0}" -gt $(( ${tot:-27} / 4 )) ]; then
     regels="| ${huidig:-?} (huidig) | ongeldig: geen antwoord bij $hgeen van $tot (de controle was niet bereikbaar) | | geen antwoord: $_hg |"$'\n'; ongeldig=1; hg=-1
@@ -9672,7 +9672,7 @@ controle_proef() {   # de hele proef; schrijft CONTROLE_PROEF_F en controle/geko
     [ -n "$paar" ] || continue
     kfam="$(familie_van "$paar")"
     if [ -n "$bfam" ] && [ "$kfam" = "$bfam" ]; then regels="$regels| $paar | zelfde familie als het brein; overgeslagen | |"$'\n'; continue; fi
-    les_loopt && { regels="$regels| $paar | niet gemeten: er begon een les | |"$'\n'; continue; }
+    les_loopt && { regels="$regels| $paar | niet gemeten: er begon een les | |"$'\n'; onderbroken=1; continue; }
     logregel "Controle-proef: $paar starten op de controle-telefoon."
     CONTROLE_PROBEER="$paar" als_controle brein_start_kern >/dev/null 2>&1
     model="$(head -1 "$CONTROLE_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
@@ -9700,6 +9700,13 @@ except Exception: print("")' "$CONTROLE_MAP/brein-stand.json" 2>/dev/null)"
     rm -f "$CONTROLE_MAP/gekozen"
     besluit="Geen wissel: $( [ -n "$best" ] && echo "de beste andere familie ($bestm, $bestg/$tot) is meer dan een punt slechter dan het huidige model ($hg/$tot)" || echo "geen kandidaat uit een andere familie startte")."
   fi
+  # 678/95 (24 nov): kandidaten die een les onderbrak zijn NIET gemeten -- dan is de proef niet af. De handtekening gaat weg en na twee uur
+  # meet de proef opnieuw (de wachttijd van zes uur na een ongeldige meting, vier uur eerder ingegaan). Zo bleven op 24 nov drie kandidaten
+  # voorgoed op "niet gemeten" staan.
+  if [ -n "$onderbroken" ]; then
+    besluit="$besluit Niet alle kandidaten zijn gemeten (er begon een les); over twee uur opnieuw."
+    rm -f "$REK_MAP/controle-proef.sig"; echo $(( $(date +%s) - 14400 )) >"$REK_MAP/controle-proef.opnieuw" 2>/dev/null || true
+  fi
   als_controle brein_start_kern >/dev/null 2>&1   # de controle weer op het gekozen (of het oude) model
   { printf '**Controle-proef** (%s; %s vaste gevallen via /rol/proef, de code kijkt na; het brein: %s)\n\n' "$(date '+%d-%m %H:%M')" "${tot:-27}" "${bfam:-?}"
     printf '| model | goed | tijd per oordeel | fout bij geval |\n|---|---|---|---|\n%s\n%s\n' "$regels" "$besluit"; } >"$CONTROLE_PROEF_F"
@@ -9708,7 +9715,8 @@ except Exception: print("")' "$CONTROLE_MAP/brein-stand.json" 2>/dev/null)"
 }
 controle_proef_tik() {   # de console-lus: een keer per kandidatenlijst, los van de console (hoogstens twee uur)
   # 678 (21 nov): ronde 2 = de scherpere gevallen (de eerste ronde gaf iedereen 12/14); een nieuwe ronde = dit getal ophogen
-  local sig; sig="$(printf '%s|%s|ronde2' "$CONTROLE_KANDIDATEN" "$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")" | sha256sum | cut -c1-16)"
+  # 678/95 (24 nov): ronde 3 = nog een keer na het leegmaken van de opslag (drie kandidaten werden door een les niet gemeten)
+  local sig; sig="$(printf '%s|%s|ronde3' "$CONTROLE_KANDIDATEN" "$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")" | sha256sum | cut -c1-16)"
   [ "$(head -1 "$REK_MAP/controle-proef.sig" 2>/dev/null)" = "$sig" ] && return 0
   [ -s "$CONTROLE_MAP/brein-vast" ] || return 0
   # 678 (23 nov, eigenaar: eerst de modelproef, dan de vaste toets): NIET terwijl een proef het brein vasthoudt, en pas als de vaste toets van het
