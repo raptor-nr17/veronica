@@ -8361,6 +8361,10 @@ brein_extra() {
   # 678 (onderzoek stap 6): de vlaggen die bij het MODEL horen (bv. --spec-type draft-mtp, of -md <vooruitrader>) staan apart, zodat de
   # proefbank (die de basisvlaggen wisselt) ze nooit weghaalt.
   if [ -n "${BREIN_MODEL_PROEF+x}" ]; then m="$BREIN_MODEL_PROEF"; else m="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"; fi
+  # 678/97 (25 nov): MTP NOOIT MET MLOCK. Op 23 nov mat de modelproef MTP nog (4,54 tok/s); sinds de proefbank op 24 nov --load-mode
+  # mmap+mlock koos, antwoordde de MTP-server bij elke meting niet meer (URLError, 00:08 en 01:08). mlock lukt op deze telefoons toch niet
+  # ("failed to mlock ... Out of memory"), dus voor de andere modellen kost het niets; bij MTP (met zijn extra draft-kop) haalt het de server neer.
+  case " $m " in *" --spec-type draft-mtp "*) b="$(printf '%s' "$b" | sed 's/--load-mode mmap+mlock//')" ;; esac
   printf '%s %s' "$b" "$m" | tr -cd 'A-Za-z0-9_+ .=-' | sed 's/^ *//; s/ *$//; s/  */ /g'
 }
 # 678 (16 nov, eigenaar: "zoek de traagheid in iets anders: geheugen, -np, draden, of iets dat tegelijk rekent"): DE GROTE KERNEN. llama-server
@@ -10880,8 +10884,16 @@ brein_tel_zet() {   # $1 serienummer, $2 lokaal pad, $3 naam op de telefoon -> 0
   local s="$1" pad="$2" naam="$3" groot vrij
   groot="$(stat -c %s "$pad" 2>/dev/null)"; [ -n "$groot" ] || return 1
   [ "$("$ADB" -s "$s" shell "stat -c %s $BREIN_MAP_TEL/$naam 2>/dev/null" 2>/dev/null | tr -d '\r ')" = "$groot" ] && return 0
-  vrij="$("$ADB" -s "$s" shell "df -k $BREIN_MAP_TEL" 2>/dev/null | tr -d '\r' | awk 'NR==2 {print $4}')"
-  case "$vrij" in ''|*[!0-9]*) vrij=0 ;; esac
+  # 678/98 (25 nov): de vooruitrader kreeg om 06:02 "te weinig ruimte" op een telefoon met 86 GB vrij. Een df die niets gaf (een haperende
+  # adb-verbinding) telde als NUL vrij. Nu: niet te lezen = nog een keer na vijf seconden, en daarna "niet te lezen" (4) -- nooit "vol". Wat er
+  # vrij was en wat er nodig is staat in BREIN_TEL_VRIJ, zodat het verslag het getal noemt.
+  local i
+  for i in 1 2; do
+    vrij="$("$ADB" -s "$s" shell "df -k $BREIN_MAP_TEL" 2>/dev/null | tr -d '\r' | awk 'NR==2 {print $4}')"
+    case "$vrij" in ''|*[!0-9]*) vrij=""; [ "$i" = 1 ] && sleep "${BREIN_TEL_DF_WACHT_S:-5}" ;; *) break ;; esac
+  done
+  [ -n "$vrij" ] || { BREIN_TEL_VRIJ="vrije ruimte niet te lezen"; return 4; }
+  BREIN_TEL_VRIJ="$((vrij / 1024)) MB vrij, $((groot / 1048576 + 293)) MB nodig"
   [ "$vrij" -gt $((groot / 1024 + 300000)) ] || return 3   # te weinig ruimte op de telefoon
   adb_push_heel "$s" "$pad" "$BREIN_MAP_TEL/$naam"
 }
@@ -10933,7 +10945,7 @@ brein_modelproef() {
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s sig oud_m oud_mx regel repo naam sha lokaal mx pad dpad r tps score best_m best_mx best_tps best_score basis_tps grens drep dnaam dsha k mem
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
-  sig="$(printf '%s|v4' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"   # 678 (17 nov): v2 = na de meetslot-fix; v3 (23 nov) = na de toets-botsing (08:59: toets 0/40 zonder te meten); v4 (24 nov) = na de opruimer-fix (drie kandidaten kregen "te weinig ruimte" terwijl de oude opruimer de modellen wiste; nu 60 GB vrij)
+  sig="$(printf '%s|v5' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"   # 678/97 (25 nov): v5 = MTP zonder mlock, met een schone telling van mislukte metingen; 678 (17 nov): v2 = na de meetslot-fix; v3 (23 nov) = na de toets-botsing (08:59: toets 0/40 zonder te meten); v4 (24 nov) = na de opruimer-fix (drie kandidaten kregen "te weinig ruimte" terwijl de oude opruimer de modellen wiste; nu 60 GB vrij)
   [ "$(head -1 "$REK_MAP/modelproef.sig" 2>/dev/null)" = "$sig" ] && return 0
   brein_slot_neem || return 0
   oud_m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"; oud_mx="$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)"
@@ -10978,7 +10990,8 @@ brein_modelproef() {
         local weg; weg="$(brein_tel_ruim "$s" "$oud_m" "$best_m" "$lokaal" "$(case "$mx" in *"-md "*) echo Qwen3-0.6B-Q4_0.gguf ;; esac)")"
         [ "${weg:-0}" -gt 0 ] && { logregel "Modelproef: $weg oude kandidaat/kandidaten van de telefoon gehaald om ruimte te maken voor $lokaal."; brein_tel_zet "$s" "$pad" "$lokaal"; k=$?; }
       fi
-      [ "$k" = 3 ] && { printf '%s | %s | te weinig ruimte op de telefoon (ook na het opruimen)\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; continue; }
+      [ "$k" = 3 ] && { printf '%s | %s | te weinig ruimte op de telefoon (ook na het opruimen; %s)\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${BREIN_TEL_VRIJ:-?}" >>"$MODELPROEF_LOG_F"; continue; }
+      [ "$k" = 4 ] && { printf '%s | %s | de vrije ruimte op de telefoon was niet te lezen; later opnieuw\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0; }
       [ "$k" = 0 ] || { printf '%s | %s | kwam niet op de telefoon\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; continue; }
     fi
     case "$mx" in *"-md "*)
@@ -10988,7 +11001,8 @@ brein_modelproef() {
       if [ "$k" = 3 ]; then   # 678 (23 nov): de vooruitrader kreeg dezelfde volle opslag; eerst opruimen, dan nog een keer
         [ "$(brein_tel_ruim "$s" "$oud_m" "$best_m" "$lokaal" "$dnaam")" -gt 0 ] 2>/dev/null && { brein_tel_zet "$s" "$dpad" "$dnaam"; k=$?; }
       fi
-      [ "$k" = 0 ] || { printf '%s | %s + vooruitrader | %s\n' "$(date '+%d-%m %H:%M')" "$lokaal" "$([ "$k" = 3 ] && echo 'te weinig ruimte op de telefoon (ook na het opruimen)' || echo 'kwam niet op de telefoon')" >>"$MODELPROEF_LOG_F"; continue; } ;;
+      [ "$k" = 4 ] && { printf '%s | %s + vooruitrader | de vrije ruimte op de telefoon was niet te lezen; later opnieuw\n' "$(date '+%d-%m %H:%M')" "$lokaal" >>"$MODELPROEF_LOG_F"; brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0; }
+      [ "$k" = 0 ] || { printf '%s | %s + vooruitrader | %s\n' "$(date '+%d-%m %H:%M')" "$lokaal" "$([ "$k" = 3 ] && echo "te weinig ruimte op de telefoon (ook na het opruimen; ${BREIN_TEL_VRIJ:-?})" || echo 'kwam niet op de telefoon')" >>"$MODELPROEF_LOG_F"; continue; } ;;
     esac
     if ! BREIN_MODEL_PROEF="$mx" brein_herstart_met "$s" "$lokaal"; then
       printf '%s | %s%s | startte niet (te weinig geheugen?)\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" >>"$MODELPROEF_LOG_F"; continue
