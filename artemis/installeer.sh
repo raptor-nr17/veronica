@@ -10965,6 +10965,11 @@ brein_modelproef() {
     set -- $regel; repo="$1"; naam="$2"; sha="$3"; lokaal="$4"; shift 4; mx="$*"; [ "$mx" = - ] && mx=""
     # 678 (23 nov): een kandidaat die PRECIES het huidige brein is (zelfde bestand, zelfde vlaggen) is al gemeten -- niet nog eens
     [ "$repo" != huidig ] && [ "$lokaal" = "$oud_m" ] && [ "$mx" = "$oud_mx" ] && continue
+    # 678/96 (24 nov): een kandidaat waarvan de snelheid TWEE proeven achter elkaar niet te meten was (MTP om 00:08) houdt de proef niet langer
+    # tegen: anders begon hij elke ronde opnieuw, mat hij alles nog eens en strandde hij weer op dezelfde kandidaat -- zonder ooit te kiezen.
+    if [ "$(grep -cxF "$sig|$lokaal|$mx" "$REK_MAP/modelproef-mis" 2>/dev/null)" -ge 2 ]; then
+      printf '%s | %s%s | overgeslagen: de snelheid was twee keer niet te meten\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" >>"$MODELPROEF_LOG_F"; continue
+    fi
     if [ "$repo" = huidig ]; then lokaal="$oud_m"
     else
       pad="$(brein_model_haal "$repo" "$naam" "$sha" 0 "$lokaal" 2>/dev/null)" || { logregel "Modelproef: $lokaal is nog niet binnen; de volgende keer verder."; brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0; }
@@ -10997,6 +11002,10 @@ brein_modelproef() {
       tps="$(BREIN_MODEL_NU="$lokaal" BREIN_MODEL_PROEF="$mx" brein_meet --nu 2>/dev/null | tail -1 | sed -n 's/.*schrijven \([0-9.]*\) tok.*/\1/p')"; tps="${tps:-0}"
     fi
     if ! awk "BEGIN{exit !($tps > 0)}" 2>/dev/null; then
+      printf '%s|%s|%s\n' "$sig" "$lokaal" "$mx" >>"$REK_MAP/modelproef-mis"
+      if [ "$(grep -cxF "$sig|$lokaal|$mx" "$REK_MAP/modelproef-mis" 2>/dev/null)" -ge 2 ]; then
+        printf '%s | %s%s | snelheid ook de tweede keer niet te meten; overgeslagen\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" >>"$MODELPROEF_LOG_F"; continue
+      fi
       printf '%s | %s%s | snelheid niet gemeten (de meting gaf niets); later opnieuw\n' "$(date '+%d-%m %H:%M')" "$lokaal" "${mx:+ $mx}" >>"$MODELPROEF_LOG_F"
       brein_herstart_met "$s" "$oud_m" >/dev/null 2>&1; rm -rf "$REK_MAP/brein.lock"; return 0
     fi
