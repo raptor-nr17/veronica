@@ -9952,7 +9952,8 @@ brein_toets() {
   zeg "Toets: veertig vaste vragen over het echte pad, met het geheugen van het brein erbij (een tot twee uur)."
   rm -f "$uit"
   LES_GEHEUGEN=1 LES_ALLEEN_NA=1 LES_UIT="$uit" brein_les "" 11 >/dev/null 2>&1
-  [ -s "$uit" ] || { zeg "Toets: de meting is niet rond gekomen (het brein antwoordde niet)."; return 0; }
+  # 678/99 (25 nov): ook een toets ZONDER uitslag hoort in het verslag -- op 25 nov stond er zes uur lang niets, en was niet te zien of hij liep.
+  [ -s "$uit" ] || { zeg "Toets: de meting is niet rond gekomen (het brein antwoordde niet)."; printf '**De vaste toets kwam niet rond** (%s; %s): er kwam geen uitslag (het brein antwoordde niet, of de les begon niet). Hij wordt opnieuw gedaan.\n' "$(date '+%d-%m %H:%M')" "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)" >"$TOETS_F"; return 0; }
   # 678 (23 nov): EEN TOETS DIE NIET ROND KWAM IS GEEN UITSLAG EN NOOIT DE NULMETING. Om 09:05 kreeg 35 van de 40 vragen geen antwoord (de
   # modelproef wisselde tegelijk van model); die 5/40 stond daarna als "de nulmeting" in het verslag en zou elke latere meting van dat model
   # vergelijken met een kapotte. Nu: alleen een regel dat hij niet rond kwam, niets in de geschiedenis, en de tik begint hem opnieuw.
@@ -9996,6 +9997,16 @@ toets_tik() {   # een keer per model en toetsversie (en daarna eens per week) va
   local sig m t; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null) toets1 $(brein_extra)"; sig="$(head -1 "$REK_MAP/brein-toets.sig" 2>/dev/null)"
   t="$(sed -n 2p "$REK_MAP/brein-toets.sig" 2>/dev/null | tr -cd '0-9')"
   [ "$sig" = "$m" ] && [ $(( $(date +%s) - ${t:-0} )) -lt 604800 ] && return 0
+  # 678/99 (25 nov): DEZE TOETS NIET TWEE KEER. De modelproef toetst elk model met dezelfde veertig vragen (lesrij 11, het echte pad). Heeft hij
+  # het huidige brein met deze vlaggen in de laatste 24 uur getoetst, dan telt die score -- anders wachtte de controle-proef (die op deze
+  # handtekening wacht) nog uren op een toets die al gedaan was.
+  local eerder; eerder="$(modelproef_score_eerder "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)" "$(head -1 "$REK_MAP/brein-model-extra" 2>/dev/null)")"
+  if [ -n "$eerder" ]; then
+    printf '%s\n%s\n' "$m" "$(date +%s)" >"$REK_MAP/brein-toets.sig"
+    printf '**De vaste toets: %s/40 goed** (%s; %s; uit de modelproef van de laatste 24 uur, niet nog eens gedaan; per groep staat in die proef)\n' "$eerder" "$(date '+%d-%m %H:%M')" "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)" >"$TOETS_F"
+    logregel "Toets: $(head -1 "$REK_MAP/brein-model" 2>/dev/null) haalde in de modelproef al $eerder/40; die telt, niet nog eens."
+    return 0
+  fi
   curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   printf '%s\n%s\n' "$m" "$(date +%s)" >"$REK_MAP/brein-toets.sig"
   brein_toets >/dev/null 2>&1
