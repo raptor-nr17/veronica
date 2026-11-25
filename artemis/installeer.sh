@@ -2678,6 +2678,19 @@ class H(BaseHTTPRequestHandler):
                     laatste = r.strip().splitlines()[-1].strip() if r.strip() else ''
                     uit.append('geopend' if laatste == 'GEOPEND' else ('geweigerd' if laatste == 'GEWEIGERD' else 'mislukt'))
                 self._cors_json(200, json.dumps({'ok': True, 'uitslag': uit})); return
+            if actie == 'zoek-alle':
+                # 678/100: EEN term, op elke telefoon die op de wand mag; per telefoon {naam, uitslag, reden}. De term komt niet terug.
+                termen = [str(x)[:200] for x in (d.get('termen') or []) if isinstance(x, str) and x.strip()][:1]
+                if not termen: self._cors_json(400, json.dumps({'fout': 'Geen zoekterm.'})); return
+                r = doe_args(['surf-zoek-alle', termen[0]], 300)
+                if r.strip().splitlines() and r.strip().splitlines()[-1].strip() == 'GEWEIGERD':
+                    self._cors_json(200, json.dumps({'ok': True, 'geweigerd': True, 'telefoons': []})); return
+                tels = []
+                for regel in r.splitlines():
+                    delen = regel.split('\t')
+                    if len(delen) == 3 and delen[1] in ('geopend', 'overgeslagen', 'mislukt'):
+                        tels.append({'naam': delen[0][:60], 'uitslag': delen[1], 'reden': delen[2][:200]})
+                self._cors_json(200, json.dumps({'ok': True, 'telefoons': tels})); return
             self._cors_json(400, json.dumps({'fout': 'Onbekende actie.'})); return
         if p.path == '/brein/chat':
             # 678 (15 nov): TYPEN NAAR HET BREIN. Veronica stuurt {code, messages, max_tokens}; alleen met de rij-code. ARTEMIS stuurt het door
@@ -12028,6 +12041,40 @@ surf_zoek() {   # $1 zoekterm. Komt NOOIT in een logboek.
   "$ADB" -s "$s" shell am start -a android.intent.action.VIEW -d "'http://127.0.0.1:8888/search?q=$q&categories=images&safesearch=0'" >/dev/null 2>&1 \
     && { logregel "Surftelefoon: een zoekopdracht geopend."; zeg "GEOPEND"; } || { zeg "Surftelefoon: openen lukte niet."; return 1; }
 }
+# 678/100 (25 nov, eigenaar: "ik verwacht dat de zoekopdracht de browser van de telefoon gebruikt, en nog liever op iedere beschikbare telefoon
+# tegelijk: alle telefoonschermen naast elkaar"). surf-zoek-alle <term>: dezelfde zeef als surf-zoek, en dan opent ELKE telefoon die op de
+# schermenwand mag (wand_gate: nooit de F8, alleen de lijst, geen gevoelige of persoonlijke app op de voorgrond) de fotoresultaten in zijn EIGEN
+# browser -- elke telefoon een andere pagina, zodat ze samen meer laten zien. Draait de eigen SearXNG op deze computer, dan via adb reverse
+# (127.0.0.1:8888 op de telefoon); anders de afbeeldingenpagina van een gewone zoekmachine, die de telefoon zelf laadt (zoals een mens die
+# typt -- geen scraping). De brein-telefoon doet niet mee zolang er een les of proef loopt (dan heeft het brein het geheugen nodig). Een regel
+# per telefoon: naam<TAB>uitslag<TAB>reden. De ZOEKTERM komt in geen enkel logboek; de modellen van de rollen blijven draaien.
+surf_zoek_alle() {   # $1 zoekterm
+  local term="${1:-}" q s naam reden n=0 url eigen=""
+  surf_zeef "$term" || { logregel "Surf op alle telefoons: een zoekopdracht geweigerd door de vaste zeef."; zeg "GEWEIGERD"; return 1; }
+  q="$(printf '%s' "$term" | head -c 200 | python3 -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read()))')"
+  curl -fsS -m 3 "http://127.0.0.1:8888/healthz" >/dev/null 2>&1 && eigen=1
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    toegestaan "$(toestel_id "$s")" || continue
+    naam="$(toestel_naam "$s")"; naam="${naam:-onbekend}"
+    if ! reden="$(wand_gate "$s")"; then printf '%s\toverslagen\t%s\n' "$naam" "$reden"; continue; fi
+    if is_brein_tel "$s" && { les_loopt 2>/dev/null || slot_levend "$REK_MAP/brein.lock" 2>/dev/null; }; then
+      printf '%s\toverslagen\t%s\n' "$naam" "het brein heeft een les of proef; die telefoon heeft zijn geheugen nodig"; continue
+    fi
+    n=$((n + 1))
+    if [ -n "$eigen" ] && "$ADB" -s "$s" reverse tcp:8888 tcp:8888 >/dev/null 2>&1; then
+      url="http://127.0.0.1:8888/search?q=$q&categories=images&safesearch=0&pageno=$n"
+    else
+      url="https://duckduckgo.com/?q=$q&iax=images&ia=images"
+    fi
+    if timeout 20 "$ADB" -s "$s" shell am start -a android.intent.action.VIEW -d "'$url'" >/dev/null 2>&1; then
+      printf '%s\tgeopend\t%s\n' "$naam" "$([ -n "$eigen" ] && echo "eigen zoekmachine, pagina $n" || echo 'afbeeldingenpagina in de browser van de telefoon')"
+    else
+      printf '%s\tmislukt\t%s\n' "$naam" 'de browser ging niet open (telefoon vergrendeld of adb kwijt)'
+    fi
+  done
+  logregel "Surf op alle telefoons: een zoekopdracht verdeeld over $n telefoon(s)."
+}
 # <<< SURFTELEFOON
 # >>> WIFI-WACHTER (678, 23 nov, eigenaar: "na een verhuizing wil ik zelf niets meer met de hand doen")
 # Zeven stukken, in de volgorde van de eigenaar:
@@ -13175,7 +13222,8 @@ case "${1:-status}" in
   brein-proefbank) brein_proefbank ;;
   surf-aan) surf_aan ;;                          # 678 (23 nov): de surftelefoon (verdeler pauzeert, scherm in een eigen venster)
   surf-uit) surf_uit ;;
-  surf-zoek) surf_zoek "${2:-}" ;;                # de term komt nooit in een logboek
+  surf-zoek) surf_zoek "${2:-}" ;;
+  surf-zoek-alle) surf_zoek_alle "${2:-}" ;;            # 678/100: de zoekopdracht in de browser van elke telefoon die op de wand mag                # de term komt nooit in een logboek
   brein-tweetegelijk) brein_tweetegelijk ;;      # 678 (23 nov): meten of het brein twee vragen tegelijk sneller doet (alleen meten)
   brein-modelproef) brein_modelproef ;;             # 678 (16 nov): onderzoek stap 3/6, deel 2 punt 3 -- andere breinen gemeten (snelheid + beide lesrijen)               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
   versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)

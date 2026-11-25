@@ -6072,6 +6072,7 @@
     if (naam === 'prive') { priveRekTeken(); PriveRekV.tik = PriveRekV.tik || setInterval(() => { if (!$('scherm-prive').hidden) priveRekTeken(); }, 5000); }   // 659: de rektelefoons op het tabblad zelf, uit de hartslag
     // 1.9.6: op Koppelen staat de QR voor een nieuwe telefoon er meteen (geen extra tik).
     if (naam === 'wachtrij') { tekenTakenverdeling(true); tekenZoekwand('gewoon'); }
+    if (naam !== 'prive') surfSchermenStop();   // 678/100: de live schermen van de telefoons gaan dicht en leeg zodra je de hoek verlaat
     if (naam !== 'prive' && ZoekwandV.prive) { ZoekwandV.prive.wis(); if ($('zwPriveTegels')) $('zwPriveTegels').replaceChildren(); }   // 555: de privé-wand gaat leeg zodra je de hoek verlaat
     if (naam === 'prive') tekenZoekwand('prive');
     if (naam === 'koppel') tekenKoppelStand();
@@ -6306,6 +6307,89 @@
     const d = await surfPost({ actie: aan ? 'aan' : 'uit' });
     if ($('surfZin')) $('surfZin').textContent = d.fout ? `Lukte niet: ${d.fout}` : (d.zin || (aan ? 'Surftelefoon aan.' : 'Surftelefoon uit.'));
     return !d.fout;
+  }
+  // ---- 678/100 (25 nov, eigenaar: "zoek naar bikini fotos" gaf 0 resultaten; "ik verwacht dat de zoekopdracht de browser van de telefoon
+  // gebruikt, en nog liever op iedere beschikbare telefoon tegelijk: alle telefoonschermen naast elkaar") ----
+  // Een vraag om FOTO'S in de gezamenlijke zoekbalk gaat niet naar de tekstbronnen (Wikipedia, Marginalia hebben geen beelden) maar naar de
+  // browser van ELKE telefoon die op de schermenwand mag (ARTEMIS: nooit de F8, alleen de lijst, geen gevoelige of persoonlijke app op de
+  // voorgrond). Eerst de vaste bewaker hier, dan de zeef van ARTEMIS. De live schermen komen naast elkaar in dit vak, als schermfoto's van de
+  // schermenwand van ARTEMIS op deze computer: alleen in het geheugen (een blob-adres), nooit bewaard, nooit in een logboek, en weg zodra je de
+  // hoek verlaat. Niets van dit alles gaat over de relay of de postbus.
+  const FOTO_WOORDEN = /\b(foto'?s?|fotootjes?|plaatjes?|afbeeldingen?|beelden|images?|pics?|pictures?|photos?|bilder|wallpapers?)\b/i;
+  function fotoWens(vraag) {
+    const v = String(vraag || '').trim();
+    if (!FOTO_WOORDEN.test(v)) return null;
+    const term = v.replace(/^\s*(zoek|zoeken|toon|laat\s+zien|geef|vind)\s+(naar|me|mij|eens)?\s*/i, '').replace(new RegExp(FOTO_WOORDEN.source, 'ig'), ' ')
+      .replace(/\b(van|met|een|wat|op)\s*$/i, '').replace(/\s+/g, ' ').trim().replace(/^(van|met|over)\s+/i, '');
+    return term || v;
+  }
+  const SurfSchermV = { tegels: new Map(), tik: null, tot: 0 };
+  function surfSchermenStop() {
+    if (SurfSchermV.tik) clearTimeout(SurfSchermV.tik); SurfSchermV.tik = null;
+    for (const t of SurfSchermV.tegels.values()) if (t.url) URL.revokeObjectURL(t.url);
+    SurfSchermV.tegels.clear();
+    const w = $('surfSchermen'); if (w) w.replaceChildren();
+  }
+  async function surfSchermFoto(serial) {
+    const url = `${ARTEMIS_ADRES}wand-foto?serial=${encodeURIComponent(serial)}`;
+    const ab = new AbortController(); const klok = setTimeout(() => ab.abort(), 8000);
+    try {
+      const r = await fetch(url, Object.assign({ cache: 'no-store', signal: ab.signal }, K.lnaOpties(url)));
+      if (!r.ok) return { reden: String(await r.text()).replace(/^GEWEIGERD\s*/, '').slice(0, 160) || 'geen beeld' };
+      return { blob: await r.blob() };
+    } catch (e) { return { reden: 'geen beeld (ARTEMIS antwoordde niet)' }; } finally { clearTimeout(klok); }
+  }
+  async function surfSchermenRonde() {
+    SurfSchermV.tik = null;
+    const wand = $('surfSchermen');
+    if (!wand || $('scherm-prive').hidden || Date.now() > SurfSchermV.tot) { surfSchermenStop(); return; }
+    let lijst = [];
+    try { const url = `${ARTEMIS_ADRES}wand-lijst`; const r = await fetch(url, Object.assign({ cache: 'no-store' }, K.lnaOpties(url))); lijst = r.ok ? await r.json() : []; } catch (e) { lijst = []; }
+    if (!Array.isArray(lijst)) lijst = [];
+    for (const t of lijst) {
+      if (!t || !t.serial) continue;
+      let tg = SurfSchermV.tegels.get(t.serial);
+      if (!tg) {
+        const fig = el('figure', 'surfScherm'); const img = document.createElement('img'); img.alt = `Live scherm van ${t.naam || 'een telefoon'}`;
+        const cap = el('figcaption', 'klein', t.naam || 'telefoon'); fig.appendChild(img); fig.appendChild(cap); wand.appendChild(fig);
+        tg = { fig, img, cap, url: null }; SurfSchermV.tegels.set(t.serial, tg);
+      }
+      const f = t.reden ? { reden: t.reden } : await surfSchermFoto(t.serial);
+      if ($('scherm-prive').hidden) { surfSchermenStop(); return; }
+      if (f.blob) { const u = URL.createObjectURL(f.blob); if (tg.url) URL.revokeObjectURL(tg.url); tg.url = u; tg.img.src = u; tg.img.hidden = false; tg.cap.textContent = t.naam || 'telefoon'; }
+      else { if (tg.url) URL.revokeObjectURL(tg.url); tg.url = null; tg.img.removeAttribute('src'); tg.img.hidden = true; tg.cap.textContent = `${t.naam || 'telefoon'}: ${f.reden}`; }
+    }
+    SurfSchermV.tik = setTimeout(surfSchermenRonde, 1500);
+  }
+  function surfSchermenStart(minuten) {
+    SurfSchermV.tot = Date.now() + (minuten || 15) * 60000;
+    if (!SurfSchermV.tik) SurfSchermV.tik = setTimeout(surfSchermenRonde, 0);
+  }
+  async function surfAlle(vraag, term) {
+    const stand = $('priveRekZoekStand'); const uit = $('priveRekZoekUitslag');
+    const B = window.PriveBewaker;
+    if (!B) { stand.textContent = 'De bewaker is niet geladen; ik zoek niets.'; return; }
+    for (const x of [vraag, term]) { const b = B.beoordeel(x, 'foto'); if (!b.toegestaan) { stand.textContent = `Dat zoek ik niet. ${b.reden || ''}`.trim(); return; } }
+    if (SurfV.bezig) { stand.textContent = 'Er loopt al een zoekopdracht.'; return; }
+    SurfV.bezig = true;
+    try {
+      stand.textContent = 'Een vraag om foto\'s: die zoeken de telefoons in hun eigen browser. Bezig...';
+      const d = await surfPost({ actie: 'zoek-alle', termen: [term] });
+      uit.replaceChildren();
+      if (d.fout) { stand.textContent = `Lukte niet: ${d.fout}`; return; }
+      if (d.geweigerd) { stand.textContent = 'ARTEMIS weigerde deze zoekopdracht (de vaste zeef).'; return; }
+      const tels = Array.isArray(d.telefoons) ? d.telefoons : [];
+      const open = tels.filter((t) => t.uitslag === 'geopend');
+      for (const t of tels) {
+        const woord = t.uitslag === 'geopend' ? 'zoekt in zijn eigen browser' : (t.uitslag === 'overgeslagen' ? 'deed niet mee' : 'lukte niet');
+        uit.appendChild(el('div', 'zoekRes', `${t.naam}: ${woord}${t.reden ? ` (${t.reden})` : ''}`));
+      }
+      stand.textContent = open.length
+        ? `Gezocht op ${open.length} ${open.length === 1 ? 'telefoon' : 'telefoons'} tegelijk; hun schermen staan hieronder naast elkaar.${tels.length > open.length ? ` ${tels.length - open.length} deed${tels.length - open.length === 1 ? '' : 'en'} niet mee.` : ''}`
+        : (tels.length ? 'Geen telefoon kon de zoekopdracht openen; per telefoon staat hieronder waarom.' : 'Er staat nu geen rektelefoon op de schermenwand (kabel, wifi of Tailscale).');
+      if (!$('surfSchermen')) { const w = el('div', 'surfSchermen'); w.id = 'surfSchermen'; w.setAttribute('role', 'region'); w.setAttribute('aria-label', 'Live schermen van de telefoons'); uit.after(w); }
+      if (open.length) surfSchermenStart(15);
+    } finally { SurfV.bezig = false; }
   }
   function priveBreinLaag() {
     if (typeof PriveBrein === 'undefined') return null;
@@ -8544,6 +8628,8 @@
     const stand = $('priveRekZoekStand'); const uit = $('priveRekZoekUitslag');
     if (!vraag) { stand.textContent = 'Typ eerst een zoekvraag.'; return; }
     if (volLokaal()) { stand.textContent = 'Vol lokaal staat aan: zoeken op internet doe ik nu niet.'; return; }
+    const foto = fotoWens(vraag);   // 678/100: foto's = de browser van elke telefoon, met de schermen naast elkaar
+    if (foto) { await surfAlle(vraag, foto); return; }
     const tels = stapelTelefoons();
     if (!tels.length) { stand.textContent = 'Geen telefoon in de hoek bereikbaar om te zoeken. Alleen de telefoons zoeken; Veronica haalt zelf niets van internet.'; return; }
     // AI helpt aan = de AI kiest de bronnen (de vier vaste, geen DDG); uit = de per-telefoon gekozen zoekbronnen, anders alles.
@@ -8728,7 +8814,7 @@
     el2.textContent = stand.regel || '';
   }
 
-  window.__veronica = { zichtbareTelefoons, rekStandenNu, SurfV, surfZoek, surfSchakel, surfTermen, surfPost, tekenRekOverzicht, rekInvoer, artemisRij, artemisZiet, BesluitV, RemV, nieuwsremDoorgeven, besluitenKijk, tekenBesluiten, SearxAutoV, searxVanzelf, hoekSearx, hoekSearxToon, DagRapV, dagrapportTik, dagrapportTelefoons, nlDagUur, Bijwerk, bijwerkTik, herlaadAlsRustig, StroomV, draai, priveBreinLaag, priveBreinTelefoons, priveMotor, priveRekSchermen, controleVolg, controleRegel, breinSleutel, breinKoppelUitAdres, leesVoor, voorleesZet, BreinV, breinHoudtMotorUit, rekVanzelfHart, breinTik, breinVraag, breinHoofd, breinToestel, RekDokV, rekDokArtemis, rekDokFeiten, rekDokterDoe, rekDokActie, rekDokTik, tekenRekDok, rekRollenVanzelf, OorRekV, oorRekTik, oorRekKlaar, oorRekVersta, CascadeV, cascadeVraag, cascadeLog, HoekWand, hoekWandMount, hoekWandStop, RekAanw, tekenRekAanwezig, artemisRekKijk, rekTegelsBijwerken, Proef, priveRekTeken, priveRekZoek, PriveRekV, dokterStand, verbindingsdokterTik, DokterV, verbindingsmetingTik, verbindingsmetingZin, verbindingsmetingSamenvatting, MetingV, Slimmeet: (typeof window !== 'undefined' ? window.Slimmeet : null), zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, vraagStatusTik, vraagStatusReden, HoofdVraag: HoofdV, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, artemisMeldStroom, ArtemisV, zetRelayAdres, PloegV, ploegStroom, ploegGeef, ploegKeur, tekenPloeg, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, naarMono16k, SttM, luisterModelLaden, luisterModelZin, transcribeerLokaal, statusNu, antwoordTik, handenvrijTik, zetHandenvrij, Hv, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, thuisOffline, ThuisV, NetStand, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
+  window.__veronica = { fotoWens, surfAlle, SurfSchermV, surfSchermenStop, zichtbareTelefoons, rekStandenNu, SurfV, surfZoek, surfSchakel, surfTermen, surfPost, tekenRekOverzicht, rekInvoer, artemisRij, artemisZiet, BesluitV, RemV, nieuwsremDoorgeven, besluitenKijk, tekenBesluiten, SearxAutoV, searxVanzelf, hoekSearx, hoekSearxToon, DagRapV, dagrapportTik, dagrapportTelefoons, nlDagUur, Bijwerk, bijwerkTik, herlaadAlsRustig, StroomV, draai, priveBreinLaag, priveBreinTelefoons, priveMotor, priveRekSchermen, controleVolg, controleRegel, breinSleutel, breinKoppelUitAdres, leesVoor, voorleesZet, BreinV, breinHoudtMotorUit, rekVanzelfHart, breinTik, breinVraag, breinHoofd, breinToestel, RekDokV, rekDokArtemis, rekDokFeiten, rekDokterDoe, rekDokActie, rekDokTik, tekenRekDok, rekRollenVanzelf, OorRekV, oorRekTik, oorRekKlaar, oorRekVersta, CascadeV, cascadeVraag, cascadeLog, HoekWand, hoekWandMount, hoekWandStop, RekAanw, tekenRekAanwezig, artemisRekKijk, rekTegelsBijwerken, Proef, priveRekTeken, priveRekZoek, PriveRekV, dokterStand, verbindingsdokterTik, DokterV, verbindingsmetingTik, verbindingsmetingZin, verbindingsmetingSamenvatting, MetingV, Slimmeet: (typeof window !== 'undefined' ? window.Slimmeet : null), zelftestKnoppen, zelftestKnoppenTekst, artemisKijk, lokaalZet, relayZet, gastBreinAdres, searxKijk, searxBasis, tekenRekKnop, tekenVorm, vormStand, HoekV, tekenHoek, hoekAllesUit, hoekZoek, hoekVolgHash, SpookV, spokenTik, volgZoekronde, directGezien, vanzelfTik, vereenvoudigTegel, HoofdV, meld, statusZin, tekenStatusRegel, lokaalStand, zetLokaalStand, tekenLokaalKeus, vraagDoe, vraagStatusTik, vraagStatusReden, HoofdVraag: HoofdV, startStop, ZoekwandV, zoekwandStap, tekenZoekwand, bijwerkNuVoor, TrapV, trapDoe, trapTelefoons, trapKaartjesTeken, tekenTrap, KluisV, kluisHalen, kluisNachtTik, kluisSleutel, tekenKluis, AlleenL, zetAlleenLokaal, tekenAlleenLokaal, alleenLokaalZin, SlimV, slimVraag, slimTelefoons, meetFennaNu, slimMetingen, tekenSlim, AvV, avOpen, avAssemble, avKies, avTik, avStop, avVoorschouw, avLeden, tekenAvengers, LnaV, lnaLees, lnaVraag, tekenLna, lnaGeweigerd, LangV, fennaLangLaad, fennaLangSchrijf, langStand, FennaV, fennaSpreek, fennaTel, fennaMeting, fennaLuister, tekenFennaMeting, GeheugenV, geheugenNu, kiesGeheugen, geheugenNachtTik, stemproefLaad, SP, kaartenUitHarten, NieuwHartV, onderzoekDoe, OnderzoekV, kernVanWifi, kernVanBrief, stemTik, stemTelefoon, PrivePostV, priveRijLaag, PriveMotorSleutel, PriveUiNu: () => PriveUi, GZ, gezondRegel, meetStekker, kiesStekkerNieuweRol, postbusVraag, postbusVraagKan, PostbusV, postbusDraai, postbusKan, postbusBasis, MeetV, meetuurVraag, wekMetLader, kiesHand, RelayV, roepViaRelay, geefRelay, relayStroom, artemisMeldStroom, ArtemisV, zetRelayAdres, PloegV, ploegStroom, ploegGeef, ploegKeur, tekenPloeg, lijnenPerId, regelExtra, vraagJa, vraagTekst, WensV, betekenisModelLaden, maakWerkerViaHart, BetekenisM, priveBetekenisLaag, kaartjeTerug, noodstopOpheffen, rekVanzelfHart, hotspotDownloadTik, HotspotV, NtfyRemV, RekV, rekVanzelf, rekWerkerMaken, rekAan, OM, neemOntmoetOver, ontmoetLevend, doorgeefNaarId, roepViaPostbus, legRijBrief, NtfyGeefV, geefNtfy, MotorHerstelV, motorHerstelNodig, herstelMotor, roepNaarId, VastV, plakMail, tekenVast, geefPostbusViaBrievenbus, InstV, openInstel, stuurInstel, instelUitPaneel, HB, hartslagRegel, roepViaBrievenbus, hartslagVoorAdres, HartAdresV, pasHartenToe, meterStand, KastV, kastTik, kaartjeDagTik, KaartjeL, kaartjeGegevens, kaartjeVerboden, tekenKaartje, Zandbak, maakZandbak, zandbakKlaar, tekenNieuwKoppel, stuurNieuwKoppel, NkV, vraagZelftest, plakVersCode, neemPostbusVers, geefVersAdres, toonVersQr, SamenV, tekenSamenwerken, stuurVoorstelOordeel, motorKandidaten, motorAlleAan, VolL, zetVolLokaal, tekenVolLokaal, volLokaal, NaleesV, tekenNalees, stuurNaleesOordeel, NtfyV, tekenNtfy, ntfyEersteProef, neemNachtlogOver, tekenNachtlog, LB, ledenStroom, ledenRegel, tekenVerslag, tekenVerbruik, zoekBlokStart, zoekGeheugenNu: () => zoekGeheugen, zoekTelefoons, zoekBriefTelefoons, zoekBriefStuur, StapelV, zoekStapelDoe, stapelTelefoons, tekenZoekUitslag, HZ, herstelZoek, verwerkGevonden, VQ, herstelQr, zetStilSinds: (t) => { stilSinds = t; }, NulS, startNulmeting, nulmetingUitslag: (adres) => (S.nulmeting[adres] || {}).uitslag || null, motorVanuitVeronica, poolStaat, poolStaten, pantserStand, meetSnelheid, zetBureau, brugTaak, magScherm, alleSchermen, schermWissel, schermTik, S_scherm: () => S.scherm, Kluis, UpdV, neemUpdateSleutelOver, tekenUpdatePlek, Spr, spreek, luister, verwerkSpraak, transcribeer, naarWav, naarMono16k, SttM, luisterModelLaden, luisterModelZin, transcribeerLokaal, statusNu, antwoordTik, handenvrijTik, zetHandenvrij, Hv, tekenSpraak, Wand, zetWand, wandTik, roepOp, waarschuw, NtS, rondvragen, kernNu, meetKern, vraagWakker, wisselKarakter, S, K, meetRonde, werkTik, thuisOffline, ThuisV, NetStand, zetPantser, vervang, vergeetTelefoon, noodstop, voegTakenToe, koppelMetQrTekst, bewaarLijst, Opslag, tekenLive, testTelefoon, tekenTakenverdeling, takenTelefoons, leesTakenKeuzes };
   Object.defineProperty(window.__veronica, 'PriveUi', { get: () => PriveUi });   // 466: voor de test
   start();
 }());
