@@ -9736,7 +9736,8 @@ except Exception: print("")' "$CONTROLE_MAP/brein-stand.json" 2>/dev/null)"
 controle_proef_tik() {   # de console-lus: een keer per kandidatenlijst, los van de console (hoogstens twee uur)
   # 678 (21 nov): ronde 2 = de scherpere gevallen (de eerste ronde gaf iedereen 12/14); een nieuwe ronde = dit getal ophogen
   # 678/95 (24 nov): ronde 3 = nog een keer na het leegmaken van de opslag (drie kandidaten werden door een les niet gemeten)
-  local sig; sig="$(printf '%s|%s|ronde3' "$CONTROLE_KANDIDATEN" "$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")" | sha256sum | cut -c1-16)"
+  # 678/101 (26 nov): ronde 4 = de handtekening van ronde 3 was door de oude code al bij de START gezet van een proef die nooit afkwam
+  local sig; sig="$(printf '%s|%s|ronde4' "$CONTROLE_KANDIDATEN" "$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")" | sha256sum | cut -c1-16)"
   [ "$(head -1 "$REK_MAP/controle-proef.sig" 2>/dev/null)" = "$sig" ] && return 0
   [ -s "$CONTROLE_MAP/brein-vast" ] || return 0
   # 678 (23 nov, eigenaar: eerst de modelproef, dan de vaste toets): NIET terwijl een proef het brein vasthoudt, en pas als de vaste toets van het
