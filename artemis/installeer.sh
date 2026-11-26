@@ -9727,6 +9727,9 @@ except Exception: print("")' "$CONTROLE_MAP/brein-stand.json" 2>/dev/null)"
   als_controle brein_start_kern >/dev/null 2>&1   # de controle weer op het gekozen (of het oude) model
   { printf '**Controle-proef** (%s; %s vaste gevallen via /rol/proef, de code kijkt na; het brein: %s)\n\n' "$(date '+%d-%m %H:%M')" "${tot:-27}" "${bfam:-?}"
     printf '| model | goed | tijd per oordeel | fout bij geval |\n|---|---|---|---|\n%s\n%s\n' "$regels" "$besluit"; } >"$CONTROLE_PROEF_F"
+  # 678/101: pas hier, na een afgemaakte proef, de handtekening -- behalve als de proef hierboven zelf zei dat hij opnieuw moet
+  if [ -n "${CONTROLE_PROEF_SIG:-}" ] && [ -z "$onderbroken" ] && ! { [ -n "$ongeldig" ] && [ "$hg" -lt 0 ]; }; then printf '%s\n' "$CONTROLE_PROEF_SIG" >"$REK_MAP/controle-proef.sig"; fi
+  rm -f "$REK_MAP/controle-proef.start"
   logregel "Controle-proef klaar. $besluit"
   relay_meld "Controle-proef klaar. $besluit" >/dev/null 2>&1 || true
 }
@@ -9744,8 +9747,15 @@ controle_proef_tik() {   # de console-lus: een keer per kandidatenlijst, los van
   local op; op="$(head -1 "$REK_MAP/controle-proef.opnieuw" 2>/dev/null | tr -cd '0-9')"; [ -n "$op" ] && [ $(( $(date +%s) - op )) -lt 21600 ] && return 0
   les_loopt && return 0
   slot_levend "$REK_MAP/controleproef.lock" && return 0
-  printf '%s\n' "$sig" >"$REK_MAP/controle-proef.sig"
-  if [ -n "${CONTROLE_PROEF_TEST:-}" ]; then controle_proef >/dev/null 2>&1; return 0; fi
+  # 678/101 (26 nov): DE HANDTEKENING PAS NA EEN AFGEMAAKTE PROEF. Hij werd bij de START gezet; liep de proef daarna tegen zijn tijdslimiet
+  # van twee uur aan (vier modellen downloaden en meten), dan schreef hij niets weg en begon hij nooit meer opnieuw -- op 25 nov stond er
+  # veertien uur lang de uitslag van 24 nov. Nu: bij de start alleen een startmerk (sig + tijd); de handtekening zet controle_proef zelf aan
+  # het eind. Een afgebroken proef mag na het verlopen van zijn tijd (2 uur) en een uur rust opnieuw.
+  local st; st="$(sed -n 2p "$REK_MAP/controle-proef.start" 2>/dev/null | tr -cd '0-9')"
+  if [ "$(head -1 "$REK_MAP/controle-proef.start" 2>/dev/null)" = "$sig" ] && [ -n "$st" ] && [ $(( $(date +%s) - st )) -lt 10800 ]; then return 0; fi
+  printf '%s\n%s\n' "$sig" "$(date +%s)" >"$REK_MAP/controle-proef.start"
+  if [ -n "${CONTROLE_PROEF_TEST:-}" ]; then CONTROLE_PROEF_SIG="$sig" controle_proef >/dev/null 2>&1; return 0; fi
+  export CONTROLE_PROEF_SIG="$sig"
   ( setsid timeout 7200 "$0" controle-proef-los </dev/null >>"$REK_MAP/console-controle-proef.log" 2>&1 & ) 2>/dev/null
 }
 # 678 (16 nov, eigenaar: "de verdeler met een klein model"): DE VERDELER. Een klein, snel model (Qwen3-0.6B) op de telefoon die de rollen in
@@ -11386,6 +11396,7 @@ for x in n["lessen"]:
   # verslag over de grens van de relay. De volledige tabel blijft in het bestand op deze computer.
   printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; if [ -s "$TOETS_F" ]; then { sed -n '1,/^| vraag /p' "$TOETS_F" | grep -v '^| vraag '; grep '^| .* | fout' "$TOETS_F" | head -n 10 | sed 's/^/fout: /'; n="$(grep -c '^| .* | fout' "$TOETS_F")"; [ "${n:-0}" -gt 10 ] && echo "(en nog $((n - 10)) fout)"; } | sed 's/^/    /'; else printf '    nog niet gemeten\n'; fi
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
+  { local cps; cps="$(sed -n 2p "$REK_MAP/controle-proef.start" 2>/dev/null | tr -cd '0-9')"; [ -n "$cps" ] && printf '    (een nieuwe controle-proef is begonnen om %s; de tabel hierboven is de vorige uitslag)\n' "$(date -d "@$cps" '+%d-%m %H:%M' 2>/dev/null)"; }
   # 678 (24 nov): de opslag per rektelefoon VOORAAN -- de modelproef en de controle-proef liepen vast op "te weinig ruimte"
   [ -s "$REK_MAP/opslag-leeg.log" ] && { printf '\n## Opslag leeggemaakt (eenmalig, toestemming eigenaar)\n'; tail -n 4 "$REK_MAP/opslag-leeg.log" | sed 's/^/    /'; }
   printf '\n## Opslag per rektelefoon (alleen lezen)\n'
