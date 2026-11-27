@@ -1524,34 +1524,6 @@ def brein_vraag(lijf, timeout=180):
             if poging == 0 and brein_forward(): continue
             return None
     return None
-# 678/102b (27 nov, eigenaar: "de F8 is nu ook het brein van de lokale AI, met de voorwaarden"): DE F8 ALS BREIN. Zolang de F8-poort
-# (f8-poort.json, de waakhond, hoogstens drie minuten oud) ja zegt EN een modelpoort kent, gaat een vraag EERST naar het model van de F8 --
-# over het eigen wifi, met de rij-code als sleutel, nooit adb. Geen antwoord binnen de tijd = gewoon het brein op het rek (de terugval).
-def f8_doel():
-    try:
-        with open(os.path.join(REK, 'f8-poort.json')) as fh: d = json.loads(fh.read() or '{}')
-    except Exception:
-        return None
-    if d.get('mag') is not True or (time.time() * 1000 - int(d.get('t') or 0)) > 180000: return None
-    a = d.get('adres'); po = d.get('poort')
-    if not (isinstance(a, str) and re.match(r'^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\.[\d.]+$', a)) or po not in (8000, 8081): return None
-    return a, po
-def f8_vraag(msgs, mt, temperatuur, timeout=120):
-    doel = f8_doel()
-    if not doel: return None
-    try:
-        with open(os.path.join(REK, 'rek-token.conf')) as fh: tok = fh.read().strip()
-    except Exception:
-        tok = ''
-    lijf = json.dumps({'messages': msgs, 'max_tokens': mt, 'temperature': temperatuur, 'stream': False}).encode()
-    try:
-        req = urllib.request.Request('http://%s:%d/v1/chat/completions' % doel, data=lijf, headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok})
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as r:
-            j = json.loads(r.read(4000000).decode('utf-8', 'replace'))
-        if not brein_tekst(j['choices'][0]['message']).strip(): return None
-        return j
-    except Exception:
-        return None
 # 678 (17 nov, eigenaar: "de vier telefoons moeten echt samen een brein vormen, en blijven werken als er een wegvalt"): DE INVALLER. Het brein
 # lag op 16/17 nov dertien uur stil terwijl de controle en de verdeler gewoon draaiden -- en Veronica kreeg al die tijd "het brein
 # antwoordt niet". Nu: antwoordt het brein niet, of is het BEZIG met een andere vraag (llama-server doet er een tegelijk, -np 1), dan valt
@@ -2822,13 +2794,9 @@ class H(BaseHTTPRequestHandler):
                                                      'bron': bron_i, 'model': model_i, 'invaller': waarom, 'controle_id': None})); return
                 if waarom == 'weg':
                     self._cors_json(503, json.dumps({'fout': 'Het brein antwoordt niet, en de controle en de verdeler ook niet. ARTEMIS probeert het brein vanzelf opnieuw te starten.'})); return
-            via_f8 = False
-            if not les:   # 678/102b: EERST de F8 als hij mag (de poort); een les meet altijd het brein op het rek zelf
-                r = f8_vraag(msgs, mt + (denk_budget(diep) if denk else 0), 0.6 if denk else 0.7)
-                via_f8 = r is not None
             with BREIN_BEZIG_SLOT: BREIN_BEZIG[0] += 1
             try:
-              if denk and r is None:   # 678 (17 nov): eerst nadenken, met een tijdslimiet; leeg of te laat = alsnog direct
+              if denk:   # 678 (17 nov): eerst nadenken, met een tijdslimiet; leeg of te laat = alsnog direct
                 # 678 (22 nov, eigenaar, punt 8): EEN DENKGRENS van 256 tot 512 tokens (denk_budget). Was het denken op voor er een antwoord
                 # stond, dan antwoordt het brein ZONDER nadenken, met zijn eigen aantekeningen tot dan toe erbij (denk_vervolg) -- het denkwerk
                 # gaat niet verloren en het blijft binnen de grens.
@@ -2934,13 +2902,13 @@ class H(BaseHTTPRequestHandler):
                 if kc and kc.get('oordeel') == 'twijfel':
                     v = brein_verbeter(vraag_tekst, tekst, kc.get('zin') or '', brein_kennis_voor(vraag_tekst))
                     if v: tekst = v; kc = dict(kc, verbeterd=True)
-            if isinstance(tps, (int, float)) and not via_f8:   # 678/102b: het tempo van de F8 is niet dat van het brein op het rek
+            if isinstance(tps, (int, float)):
                 try:
                     with open(os.path.join(REK, 'brein-tps'), 'w') as fh: fh.write('%.2f %d\n' % (tps, int(time.time())))
                 except Exception: pass
             self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid,
                                              'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd')),
-                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'herhaling': herh, 'herkans': herkans, 'bron': ('internet via ' + zoek_via) if zoek_via else ('de F8 (het brein)' if via_f8 else None), 'f8': via_f8, 'zoek': (ZOEK_DIAG[0] or None) if not prive else None, 'prive': prive}))   # _bronnen staat er alleen in als het kanaal erom vroeg
+                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'herhaling': herh, 'herkans': herkans, 'bron': ('internet via ' + zoek_via) if zoek_via else None, 'zoek': (ZOEK_DIAG[0] or None) if not prive else None, 'prive': prive}))   # _bronnen staat er alleen in als het kanaal erom vroeg
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
@@ -11481,7 +11449,7 @@ for x in n["lessen"]:
   # 678 (23 nov): in het verslag de kop en alleen de FOUTE vragen (hoogstens tien) -- de hele tabel van veertig rijen duwde de rest van het
   # verslag over de grens van de relay. De volledige tabel blijft in het bestand op deze computer.
   printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; if [ -s "$TOETS_F" ]; then { sed -n '1,/^| vraag /p' "$TOETS_F" | grep -v '^| vraag '; grep '^| .* | fout' "$TOETS_F" | head -n 10 | sed 's/^/fout: /'; n="$(grep -c '^| .* | fout' "$TOETS_F")"; [ "${n:-0}" -gt 10 ] && echo "(en nog $((n - 10)) fout)"; } | sed 's/^/    /'; else printf '    nog niet gemeten\n'; fi
-  printf '\n## F8 in het rek (alleen aan de lader, bij het rek, koeler dan 37 °C; boven 38 °C eruit)\n'; { [ -s "$F8_POORT_F" ] && sed -n 's/.*"mag": \(true\|false\), "reden": "\([^"]*\)".*/    \1: \2/p' "$F8_POORT_F" | sed 's/^    true:/    doet mee:/; s/^    false:/    doet niet mee:/'; } || printf '    nog niet gekeken\n'
+  printf '\n## F8 in het rek (de poort staat standaard dicht; aan alleen op verzoek van de eigenaar)\n'; { [ -s "$F8_POORT_F" ] && sed -n 's/.*"mag": \(true\|false\), "reden": "\([^"]*\)".*/    \1: \2/p' "$F8_POORT_F" | sed 's/^    true:/    doet mee:/; s/^    false:/    doet niet mee:/'; } || printf '    nog niet gekeken\n'
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
   { local cps; cps="$(sed -n 2p "$REK_MAP/controle-proef.start" 2>/dev/null | tr -cd '0-9')"; [ -n "$cps" ] && printf '    (een nieuwe controle-proef is begonnen om %s; de tabel hierboven is de vorige uitslag)\n' "$(date -d "@$cps" '+%d-%m %H:%M' 2>/dev/null)"; }
   # 678 (24 nov): de opslag per rektelefoon VOORAAN -- de modelproef en de controle-proef liepen vast op "te weinig ruimte"
@@ -12180,8 +12148,24 @@ surf_zoek_alle() {   # $1 zoekterm
 # f8-poort.json. Veronica leest dat op /f8.json en laat de F8 alleen meedoen als ARTEMIS EN haar eigen regel (f8poort.js) ja zeggen.
 # Bij elke omslag een regel in het logboek en een melding (zonder adres of inhoud).
 F8_POORT_F="$REK_MAP/f8-poort.json"
+# 678/103 (27 nov, eigenaar: "laat de F8 er toch buiten -- het ging goed zonder, en het systeem leunt te veel op de F8"): DE POORT STAAT
+# STANDAARD DICHT. Alleen met het schakelbestand f8-poort-aan (gezet met 'artemis-rek f8-poort aan', en alleen als de eigenaar dat zelf
+# vraagt) kijkt de waakhond weer; anders schrijft hij elke ronde "dicht" en leest hij niets van de relay. De F8 blijft het pantser.
+F8_POORT_AAN_F="$REK_MAP/f8-poort-aan"
+f8_poort_schakel() {   # $1 aan|uit
+  case "${1:-}" in
+    aan) : >"$F8_POORT_AAN_F"; logregel "F8-poort: aangezet (de F8 mag weer meedoen onder de voorwaarden)."; zeg "De F8-poort staat aan." ;;
+    uit) rm -f "$F8_POORT_AAN_F"; logregel "F8-poort: dichtgezet."; zeg "De F8-poort staat dicht." ;;
+    *) zeg "Gebruik: f8-poort aan|uit"; return 1 ;;
+  esac
+}
 f8_poort_tik() {
   local vorig="0" uit oud nieuw
+  if [ ! -f "$F8_POORT_AAN_F" ]; then
+    grep -q '"mag": true' "$F8_POORT_F" 2>/dev/null && { logregel "F8: uit het rek gehaald (de F8-poort staat dicht)."; relay_meld "De F8 is uit het rek gehaald: de F8-poort staat dicht." >/dev/null 2>&1 || true; }
+    printf '{"mag": false, "reden": "de F8 staat buiten het rek (keuze van de eigenaar); hij blijft alleen het pantser", "t": %s}\n' "$(( $(date +%s) * 1000 ))" >"$F8_POORT_F"
+    return 0
+  fi
   grep -q '"mag": true' "$F8_POORT_F" 2>/dev/null && vorig="1"
   uit="$(REK_F8=1 REK_F8_VORIG="$vorig" rek_lijst_rauw 2>/dev/null | tail -1)"
   case "$uit" in '{'*) : ;; *) uit='{"mag": false, "reden": "de relay gaf geen hartslagen (geen onderwerp of geen verbinding)", "t": 0}' ;; esac
@@ -13342,6 +13326,7 @@ case "${1:-status}" in
   surf-uit) surf_uit ;;
   surf-zoek) surf_zoek "${2:-}" ;;
   surf-zoek-alle) surf_zoek_alle "${2:-}" ;;
+  f8-poort) f8_poort_schakel "${2:-}" ;;          # 678/103: de F8-poort aan of dicht (dicht is de standaard)
   f8-poort-tik) f8_poort_tik ;;                    # 678/102: de F8 alleen aan de lader, bij het rek en koel genoeg            # 678/100: de zoekopdracht in de browser van elke telefoon die op de wand mag                # de term komt nooit in een logboek
   brein-tweetegelijk) brein_tweetegelijk ;;      # 678 (23 nov): meten of het brein twee vragen tegelijk sneller doet (alleen meten)
   brein-modelproef) brein_modelproef ;;             # 678 (16 nov): onderzoek stap 3/6, deel 2 punt 3 -- andere breinen gemeten (snelheid + beide lesrijen)               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
