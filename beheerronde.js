@@ -54,12 +54,15 @@
 
   // Mag deze telefoon NU meedoen, en zo niet, waarom? -> { mee: bool, waarom: '' }
   // f8Thuis: is de F8 op het eigen wifi (thuis)? Alleen dan mag de F8 mee.
-  function doetMee(h, f8Id, f8Thuis) {
+  // 678/102 (27 nov, eigenaar): de F8 doet WEL mee als de F8-poort ja zegt (aan de lader, bij het rek, koel genoeg -- ARTEMIS en f8poort.js
+  // allebei). f8Mag is dat oordeel; zonder (undefined/false) blijft hij eruit, zoals sinds 24 nov.
+  const F8_POORT_JA = 'aan de lader, bij het rek en koel genoeg (de F8-poort)';
+  function doetMee(h, f8Id, f8Thuis, f8Mag) {
     const temp = getal(h && h.temp);
     const accu = getal(h && h.accu);
     // 678 (24 nov, eigenaar): "de F8 alleen erbij als ik zelf met het lokale model wil praten; de vier rektelefoons kunnen zelfstandig
     // op internet zonder de F8". De beheerronde is werk dat VANZELF loopt: de F8 doet daar dus nooit meer mee, thuis of niet.
-    if (isF8(h, f8Id)) return { mee: false, waarom: F8_ALLEEN_EIGENAAR };
+    if (isF8(h, f8Id)) return f8Mag === true ? { mee: true, waarom: F8_POORT_JA } : { mee: false, waarom: F8_ALLEEN_EIGENAAR };
     // Een gewone rektelefoon: altijd mee, behalve bij een echte reden (hitte of accu leeg/van de lader).
     if (temp !== null && temp > REK_TEMP_MAX) return { mee: false, waarom: `te warm (${Math.round(temp)} °C)` };
     if (accu !== null && accu < REK_ACCU_MIN && !aanLader(h)) return { mee: false, waarom: `accu leeg (${Math.round(accu)}%) en van de lader` };
@@ -102,7 +105,7 @@
     const gepauzeerd = [];
     const zinnen = [];
     for (const h of harten) {
-      const d = doetMee(h, x.f8Id, x.f8Thuis === true);
+      const d = doetMee(h, x.f8Id, x.f8Thuis === true, x.f8Mag === true);
       if (d.mee) {
         mee.push({ id: h.id, naam: h.naam || 'Een telefoon', waarom: d.waarom });
         // Assemble = gewone stand: een gezonde telefoon die meedoet hoort zijn motor aan te hebben (pantser). Een zetje mag

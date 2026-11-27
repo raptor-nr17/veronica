@@ -1761,6 +1761,7 @@ def lus():
                 threading.Thread(target=doe_args, args=(['brein-modelproef'], 21600), daemon=True).start()   # 678 (16 nov): de modelproef (eens per kandidatenlijst; downloads gaan door waar ze stopten)
             if RONDE % 30 == 11:
                 threading.Thread(target=doe_args, args=(['rem-uit'], 300), daemon=True).start()   # 678 (16 nov): de Android-rem uit (een keer per telefoon)   # 678 (16 nov): een nieuwe proef-JARVIS en de spraaktest, zonder knop
+            threading.Thread(target=doe_args, args=(['f8-poort-tik'], 50), daemon=True).start()   # 678/102: elke ronde (elke minuut) de F8-poort
             if RONDE % 5 == 3:
                 threading.Thread(target=doe_args, args=(['stand-tik'], 900), daemon=True).start()   # 678 (16 nov): het standverslag (alleen bij verandering of na een uur)
             threading.Thread(target=doe_args, args=(['les-hervat-tik'], 60), daemon=True).start()   # 678 (20 nov): een onderbroken les (slaap, of geen antwoorden) opnieuw
@@ -2179,6 +2180,12 @@ class H(BaseHTTPRequestHandler):
             # 678 punt 22: alleen LEZEN -- welke rektelefoons ARTEMIS nu ziet (kabel/wifi/Tailscale), voor de lijst in Veronica.
             t = doe_args(['rek-aanwezig'], 45)
             self._cors_json(200, t if t.startswith('[') else '[]')
+        elif p.path == '/f8.json':
+            # 678/102: het oordeel van de F8-poort, alleen LEZEN (CORS zoals /rek.json): {mag, reden, t}. Geen adres, geen inhoud.
+            try:
+                with open(os.path.join(REK, 'f8-poort.json')) as fh: f8p = json.loads(fh.read() or '{}')
+            except Exception: f8p = {'mag': False, 'reden': 'de F8-poort heeft nog niet gekeken', 't': 0}
+            self._cors_json(200, json.dumps({'mag': f8p.get('mag') is True, 'reden': str(f8p.get('reden') or '')[:160], 't': int(f8p.get('t') or 0)}))
         elif p.path == '/besluiten.json':
             # 678 (21 nov): de echte besluiten voor de eigenaar en het korte verslag van het brein, alleen LEZEN (CORS), voor Live in Veronica
             try:
@@ -6633,6 +6640,7 @@ TSRE = re.compile(r'^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$')
 IDRE = re.compile(r'^[a-z0-9]{12,40}$')
 nu = time.time()
 best = {}
+VOL = {}
 # 623d: diagnose-tellers, zodat "de lijst is leeg" een OORZAAK krijgt (relay onbereikbaar vs. niets ontsleutelbaar vs. geen adres).
 DIAG = os.environ.get('REK_DIAG')
 n_raw = 0; n_dec = 0; n_adr = 0; diag_bases = []
@@ -6675,6 +6683,8 @@ for base in bases:
         t = (d.get('t', 0) / 1000.0) if d.get('t') else float(m.get('time') or 0)
         if t and (nu - t) > venster:
             continue
+        if os.environ.get('REK_F8'):   # 678/102: de hele hartslag bewaren voor de F8-poort (de nieuwste per toestel)
+            if (i not in VOL) or (t > VOL[i][0]): VOL[i] = (t, d)
         ips = [a for a in (d.get('adressen') or []) if isinstance(a, str) and IPRE.match(a)]
         # #8: het Tailscale-adres (100.64-100.127) als EERSTE route, boven de wifi-adressen -- rek_verbind_lijst probeert de IP's
         # in deze volgorde, dus op een gastnetwerk komt de telefoon via Tailscale binnen ook als zijn wifi-adres onbruikbaar is.
@@ -6692,6 +6702,39 @@ for base in bases:
         prev = best.get(i)
         if (prev is None) or (t > prev[0]):
             best[i] = (t, ips, poort, naam)
+if os.environ.get('REK_F8'):
+    # 678/102: DE F8-POORT -- dezelfde regel als f8poort.js in Veronica (grenzen: instappen tot 37 °C, eruit boven 38 °C; hartslag hoogstens
+    # 180 s oud; aan de lader; hetzelfde wifi-net (/24) als een verse rektelefoon -- Tailscale alleen telt niet). De F8 wordt hier alleen
+    # GELEZEN (zijn eigen hartslag); nooit adb, nooit bestuurd, nooit baas.
+    TEMP_START, TEMP_STOP, VERS_S = 37, 38, 180
+    vorig = os.environ.get('REK_F8_VORIG') == '1'
+    def net_van(h):
+        l = h.get('locatie') or {}
+        mm = re.match(r'^(\d+\.\d+\.\d+)(\.\d+)?(/24)?$', str(l.get('net') or '')) if isinstance(l, dict) else None
+        if mm and not TSRE.match(mm.group(1) + '.0'): return mm.group(1)
+        for a in (h.get('adressen') or []):
+            if isinstance(a, str) and IPRE.match(a): return '.'.join(a.split('.')[:3])
+        return None
+    f8 = None; rek = []
+    for i, (t, h) in VOL.items():
+        if (nu - t) > VERS_S: continue
+        if h.get('dagelijks') is True: f8 = (t, h) if (f8 is None or t > f8[0]) else f8
+        else: rek.append(h)
+    def oordeel():
+        if f8 is None: return False, 'geen verse hartslag van de F8'
+        h = f8[1]
+        if h.get('laadt') is not True: return False, 'de F8 ligt niet aan de lader'
+        tp = h.get('temp')
+        if not isinstance(tp, (int, float)): return False, 'de temperatuur van de F8 is onbekend'
+        grens = TEMP_STOP if vorig else TEMP_START
+        if tp > grens: return False, 'de F8 is te warm (%.1f °C, grens %d °C)' % (tp, grens)
+        eigen = net_van(h)
+        if not eigen: return False, 'het wifi-net van de F8 is onbekend'
+        if eigen not in [x for x in (net_van(r) for r in rek) if x]: return False, 'de F8 staat niet bij het rek (ander wifi-net)'
+        return True, 'aan de lader, bij het rek, %.1f °C' % tp
+    mag, reden = oordeel()
+    print(json.dumps({'mag': mag, 'reden': reden, 't': int(nu * 1000), 'grensStart': TEMP_START, 'grensStop': TEMP_STOP}))
+    sys.exit(0)
 for i, (t, ips, poort, naam) in best.items():
     age = int(max(0, nu - t)) if t else -1
     print('\t'.join([','.join(ips[:4]), str(poort), i, naam, str(age)]))
@@ -11396,6 +11439,7 @@ for x in n["lessen"]:
   # 678 (23 nov): in het verslag de kop en alleen de FOUTE vragen (hoogstens tien) -- de hele tabel van veertig rijen duwde de rest van het
   # verslag over de grens van de relay. De volledige tabel blijft in het bestand op deze computer.
   printf '\n## De vaste toets (40 vragen, lesrij 11)\n'; if [ -s "$TOETS_F" ]; then { sed -n '1,/^| vraag /p' "$TOETS_F" | grep -v '^| vraag '; grep '^| .* | fout' "$TOETS_F" | head -n 10 | sed 's/^/fout: /'; n="$(grep -c '^| .* | fout' "$TOETS_F")"; [ "${n:-0}" -gt 10 ] && echo "(en nog $((n - 10)) fout)"; } | sed 's/^/    /'; else printf '    nog niet gemeten\n'; fi
+  printf '\n## F8 in het rek (alleen aan de lader, bij het rek, koeler dan 37 °C; boven 38 °C eruit)\n'; { [ -s "$F8_POORT_F" ] && sed -n 's/.*"mag": \(true\|false\), "reden": "\([^"]*\)".*/    \1: \2/p' "$F8_POORT_F" | sed 's/^    true:/    doet mee:/; s/^    false:/    doet niet mee:/'; } || printf '    nog niet gekeken\n'
   printf '\n## Controle-proef (een tweede model uit een andere familie)\n'; sed 's/^/    /' "$CONTROLE_PROEF_F" 2>/dev/null || printf '    nog niet gedaan\n'
   { local cps; cps="$(sed -n 2p "$REK_MAP/controle-proef.start" 2>/dev/null | tr -cd '0-9')"; [ -n "$cps" ] && printf '    (een nieuwe controle-proef is begonnen om %s; de tabel hierboven is de vorige uitslag)\n' "$(date -d "@$cps" '+%d-%m %H:%M' 2>/dev/null)"; }
   # 678 (24 nov): de opslag per rektelefoon VOORAAN -- de modelproef en de controle-proef liepen vast op "te weinig ruimte"
@@ -12088,6 +12132,26 @@ surf_zoek_alle() {   # $1 zoekterm
   logregel "Surf op alle telefoons: een zoekopdracht verdeeld over $n telefoon(s)."
 }
 # <<< SURFTELEFOON
+# >>> F8-POORT (678/102, 27 nov, eigenaar: "de F8 ook in het rek, maar alleen als hij bij het rek staat, aan de oplader ligt en de
+# temperatuur onder de veilige grens blijft; te warm of van de lader = meteen stoppen en uit de trap. Nooit baas, nooit bestuurd.")
+# De waakhond (elke console-ronde) leest de hartslag van de F8 van de relay -- ALLEEN LEZEN, nooit adb -- en schrijft het oordeel in
+# f8-poort.json. Veronica leest dat op /f8.json en laat de F8 alleen meedoen als ARTEMIS EN haar eigen regel (f8poort.js) ja zeggen.
+# Bij elke omslag een regel in het logboek en een melding (zonder adres of inhoud).
+F8_POORT_F="$REK_MAP/f8-poort.json"
+f8_poort_tik() {
+  local vorig="0" uit oud nieuw
+  grep -q '"mag": true' "$F8_POORT_F" 2>/dev/null && vorig="1"
+  uit="$(REK_F8=1 REK_F8_VORIG="$vorig" rek_lijst_rauw 2>/dev/null | tail -1)"
+  case "$uit" in '{'*) : ;; *) uit='{"mag": false, "reden": "de relay gaf geen hartslagen (geen onderwerp of geen verbinding)", "t": 0}' ;; esac
+  printf '%s\n' "$uit" >"$F8_POORT_F.t" && mv -f "$F8_POORT_F.t" "$F8_POORT_F"
+  nieuw="$(printf '%s' "$uit" | sed -n 's/.*"mag": \(true\|false\).*/\1/p')"; oud="$([ "$vorig" = 1 ] && echo true || echo false)"
+  if [ "$nieuw" != "$oud" ]; then
+    local r; r="$(printf '%s' "$uit" | sed -n 's/.*"reden": "\([^"]*\)".*/\1/p')"
+    if [ "$nieuw" = true ]; then logregel "F8: doet mee in het rek ($r)."; relay_meld "De F8 doet mee in het rek: $r." >/dev/null 2>&1 || true
+    else logregel "F8: uit het rek gehaald ($r)."; relay_meld "De F8 is uit het rek gehaald: $r." >/dev/null 2>&1 || true; fi
+  fi
+}
+# <<< F8-POORT
 # >>> WIFI-WACHTER (678, 23 nov, eigenaar: "na een verhuizing wil ik zelf niets meer met de hand doen")
 # Zeven stukken, in de volgorde van de eigenaar:
 #  1) wifi_check: per telefoon via adb -- Android-versie, wifi aan/uit, opgeslagen netwerken, zichtbare netwerken en de REDEN als Android een
@@ -13235,7 +13299,8 @@ case "${1:-status}" in
   surf-aan) surf_aan ;;                          # 678 (23 nov): de surftelefoon (verdeler pauzeert, scherm in een eigen venster)
   surf-uit) surf_uit ;;
   surf-zoek) surf_zoek "${2:-}" ;;
-  surf-zoek-alle) surf_zoek_alle "${2:-}" ;;            # 678/100: de zoekopdracht in de browser van elke telefoon die op de wand mag                # de term komt nooit in een logboek
+  surf-zoek-alle) surf_zoek_alle "${2:-}" ;;
+  f8-poort-tik) f8_poort_tik ;;                    # 678/102: de F8 alleen aan de lader, bij het rek en koel genoeg            # 678/100: de zoekopdracht in de browser van elke telefoon die op de wand mag                # de term komt nooit in een logboek
   brein-tweetegelijk) brein_tweetegelijk ;;      # 678 (23 nov): meten of het brein twee vragen tegelijk sneller doet (alleen meten)
   brein-modelproef) brein_modelproef ;;             # 678 (16 nov): onderzoek stap 3/6, deel 2 punt 3 -- andere breinen gemeten (snelheid + beide lesrijen)               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
   versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
