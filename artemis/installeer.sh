@@ -1524,6 +1524,34 @@ def brein_vraag(lijf, timeout=180):
             if poging == 0 and brein_forward(): continue
             return None
     return None
+# 678/102b (27 nov, eigenaar: "de F8 is nu ook het brein van de lokale AI, met de voorwaarden"): DE F8 ALS BREIN. Zolang de F8-poort
+# (f8-poort.json, de waakhond, hoogstens drie minuten oud) ja zegt EN een modelpoort kent, gaat een vraag EERST naar het model van de F8 --
+# over het eigen wifi, met de rij-code als sleutel, nooit adb. Geen antwoord binnen de tijd = gewoon het brein op het rek (de terugval).
+def f8_doel():
+    try:
+        with open(os.path.join(REK, 'f8-poort.json')) as fh: d = json.loads(fh.read() or '{}')
+    except Exception:
+        return None
+    if d.get('mag') is not True or (time.time() * 1000 - int(d.get('t') or 0)) > 180000: return None
+    a = d.get('adres'); po = d.get('poort')
+    if not (isinstance(a, str) and re.match(r'^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\.[\d.]+$', a)) or po not in (8000, 8081): return None
+    return a, po
+def f8_vraag(msgs, mt, temperatuur, timeout=120):
+    doel = f8_doel()
+    if not doel: return None
+    try:
+        with open(os.path.join(REK, 'rek-token.conf')) as fh: tok = fh.read().strip()
+    except Exception:
+        tok = ''
+    lijf = json.dumps({'messages': msgs, 'max_tokens': mt, 'temperature': temperatuur, 'stream': False}).encode()
+    try:
+        req = urllib.request.Request('http://%s:%d/v1/chat/completions' % doel, data=lijf, headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok})
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as r:
+            j = json.loads(r.read(4000000).decode('utf-8', 'replace'))
+        if not brein_tekst(j['choices'][0]['message']).strip(): return None
+        return j
+    except Exception:
+        return None
 # 678 (17 nov, eigenaar: "de vier telefoons moeten echt samen een brein vormen, en blijven werken als er een wegvalt"): DE INVALLER. Het brein
 # lag op 16/17 nov dertien uur stil terwijl de controle en de verdeler gewoon draaiden -- en Veronica kreeg al die tijd "het brein
 # antwoordt niet". Nu: antwoordt het brein niet, of is het BEZIG met een andere vraag (llama-server doet er een tegelijk, -np 1), dan valt
@@ -2794,9 +2822,13 @@ class H(BaseHTTPRequestHandler):
                                                      'bron': bron_i, 'model': model_i, 'invaller': waarom, 'controle_id': None})); return
                 if waarom == 'weg':
                     self._cors_json(503, json.dumps({'fout': 'Het brein antwoordt niet, en de controle en de verdeler ook niet. ARTEMIS probeert het brein vanzelf opnieuw te starten.'})); return
+            via_f8 = False
+            if not les:   # 678/102b: EERST de F8 als hij mag (de poort); een les meet altijd het brein op het rek zelf
+                r = f8_vraag(msgs, mt + (denk_budget(diep) if denk else 0), 0.6 if denk else 0.7)
+                via_f8 = r is not None
             with BREIN_BEZIG_SLOT: BREIN_BEZIG[0] += 1
             try:
-              if denk:   # 678 (17 nov): eerst nadenken, met een tijdslimiet; leeg of te laat = alsnog direct
+              if denk and r is None:   # 678 (17 nov): eerst nadenken, met een tijdslimiet; leeg of te laat = alsnog direct
                 # 678 (22 nov, eigenaar, punt 8): EEN DENKGRENS van 256 tot 512 tokens (denk_budget). Was het denken op voor er een antwoord
                 # stond, dan antwoordt het brein ZONDER nadenken, met zijn eigen aantekeningen tot dan toe erbij (denk_vervolg) -- het denkwerk
                 # gaat niet verloren en het blijft binnen de grens.
@@ -2902,13 +2934,13 @@ class H(BaseHTTPRequestHandler):
                 if kc and kc.get('oordeel') == 'twijfel':
                     v = brein_verbeter(vraag_tekst, tekst, kc.get('zin') or '', brein_kennis_voor(vraag_tekst))
                     if v: tekst = v; kc = dict(kc, verbeterd=True)
-            if isinstance(tps, (int, float)):
+            if isinstance(tps, (int, float)) and not via_f8:   # 678/102b: het tempo van de F8 is niet dat van het brein op het rek
                 try:
                     with open(os.path.join(REK, 'brein-tps'), 'w') as fh: fh.write('%.2f %d\n' % (tps, int(time.time())))
                 except Exception: pass
             self._cors_json(200, json.dumps({'tekst': tekst, 'tps': round(tps, 2) if isinstance(tps, (int, float)) else None, 'ms': ms, 'controle_id': cid,
                                              'nagedacht': bool(denk), 'keur': (kc or {}).get('oordeel') if kc else None, 'verbeterd': bool(kc and kc.get('verbeterd')),
-                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'herhaling': herh, 'herkans': herkans, 'bron': ('internet via ' + zoek_via) if zoek_via else None, 'zoek': (ZOEK_DIAG[0] or None) if not prive else None, 'prive': prive}))   # _bronnen staat er alleen in als het kanaal erom vroeg
+                                             'kennis_op': KENNIS_OP[0], 'offline': OFFLINE[0] > time.time(), 'leeg': leeg, 'herhaling': herh, 'herkans': herkans, 'bron': ('internet via ' + zoek_via) if zoek_via else ('de F8 (het brein)' if via_f8 else None), 'f8': via_f8, 'zoek': (ZOEK_DIAG[0] or None) if not prive else None, 'prive': prive}))   # _bronnen staat er alleen in als het kanaal erom vroeg
             return
         if p.path in ('/rekdok', '/rekdok-uitslag'):
             # 678 (15 nov): DE REKDOKTER VAN VERONICA mag een paar ARTEMIS-handelingen vragen. ALLEEN deze lijst en ALLEEN met de rij-code
@@ -6733,7 +6765,17 @@ if os.environ.get('REK_F8'):
         if eigen not in [x for x in (net_van(r) for r in rek) if x]: return False, 'de F8 staat niet bij het rek (ander wifi-net)'
         return True, 'aan de lader, bij het rek, %.1f °C' % tp
     mag, reden = oordeel()
-    print(json.dumps({'mag': mag, 'reden': reden, 't': int(nu * 1000), 'grensStart': TEMP_START, 'grensStop': TEMP_STOP}))
+    # 678/102b: waar het brein van de F8 te bereiken is -- zijn wifi-adres in het net van het rek, en de poort van zijn model: 8081 als zijn
+    # eigen motor aan en klaar is, anders 8000 (OlliteRT, het gast-brein) als hij zegt dat dat mag. Geen model = de F8 doet mee, maar
+    # niet als brein.
+    adres = None; mpoort = None
+    if mag:
+        h = f8[1]; eigen = net_van(h)
+        adres = next((a for a in (h.get('adressen') or []) if isinstance(a, str) and IPRE.match(a) and '.'.join(a.split('.')[:3]) == eigen), None)
+        mo = h.get('motor') or {}; ga = h.get('gast') or {}
+        if isinstance(mo, dict) and mo.get('aan') is True and mo.get('klaar') is True: mpoort = 8081
+        elif isinstance(ga, dict) and ga.get('mag') is True: mpoort = 8000
+    print(json.dumps({'mag': mag, 'reden': reden, 't': int(nu * 1000), 'grensStart': TEMP_START, 'grensStop': TEMP_STOP, 'adres': adres, 'poort': mpoort}))
     sys.exit(0)
 for i, (t, ips, poort, naam) in best.items():
     age = int(max(0, nu - t)) if t else -1
