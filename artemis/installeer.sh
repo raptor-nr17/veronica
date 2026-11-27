@@ -590,7 +590,7 @@ socket.create_connection = _verbinding
 KENNIS_OP = ['']
 def brein_gezond():
     try:
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=3) as r:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=6) as r:   # 678/105: via Tailscale haalt 3 s het niet altijd
             return b'ok' in r.read(200)
     except Exception:
         return False
@@ -1519,7 +1519,9 @@ def brein_vraag(lijf, timeout=180):
         try:
             req = urllib.request.Request('http://127.0.0.1:%d/v1/chat/completions' % BREIN_LOK, data=data, headers={'Content-Type': 'application/json'})
             with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as r:
-                return json.loads(r.read(4000000).decode('utf-8', 'replace'))
+                j = json.loads(r.read(4000000).decode('utf-8', 'replace'))
+            BREIN_OK_T[0] = time.time()   # 678/105: een antwoord is het beste bewijs dat hij gezond is
+            return j
         except Exception:
             if poging == 0 and brein_forward(): continue
             return None
@@ -1531,14 +1533,26 @@ def brein_vraag(lijf, timeout=180):
 # verzonnen of verborgen. Tijdens een les nooit (die meet het brein zelf).
 BREIN_BEZIG = [0]
 BREIN_BEZIG_SLOT = threading.Lock()
+# 678/105 (28 nov): "antwoordt: NEE" terwijl het brein gewoon draaide (5,62 tok/s via Tailscale). Via Tailscale haalt /health de 2 s niet
+# altijd -- en dan legde de console eerst de doorsturing opnieuw (tot 15 s) en gaf de vraag daarna aan een INVALLER (de controle of de
+# verdeler): trager EN dommer. Nu: 6 s (zoals de controle en de verdeler sinds 23 nov), en heeft het brein in de laatste minuut nog
+# geantwoord, dan is hij gezond zonder nieuwe check.
+BREIN_OK_T = [0.0]
 def brein_gezond():
+    if time.time() - BREIN_OK_T[0] < 60: return True
     try:
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=2) as r: return b'ok' in r.read(200)
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=6) as r:
+            ok = b'ok' in r.read(200)
+        if ok: BREIN_OK_T[0] = time.time()
+        return ok
     except Exception:
         return brein_forward() and brein_gezond_kaal()
 def brein_gezond_kaal():
     try:
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=2) as r: return b'ok' in r.read(200)
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % BREIN_LOK, timeout=6) as r:
+            ok = b'ok' in r.read(200)
+        if ok: BREIN_OK_T[0] = time.time()
+        return ok
     except Exception: return False
 def rol_vraag(poort, msgs, mt, timeout):
     lijf = json.dumps({'messages': msgs, 'max_tokens': mt, 'stream': False, 'cache_prompt': True, 'temperature': 0.6, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
@@ -1761,7 +1775,9 @@ def lus():
                 threading.Thread(target=doe_args, args=(['brein-modelproef'], 21600), daemon=True).start()   # 678 (16 nov): de modelproef (eens per kandidatenlijst; downloads gaan door waar ze stopten)
             if RONDE % 30 == 11:
                 threading.Thread(target=doe_args, args=(['rem-uit'], 300), daemon=True).start()   # 678 (16 nov): de Android-rem uit (een keer per telefoon)   # 678 (16 nov): een nieuwe proef-JARVIS en de spraaktest, zonder knop
-            threading.Thread(target=doe_args, args=(['f8-poort-tik'], 50), daemon=True).start()   # 678/102: elke ronde (elke minuut) de F8-poort
+            threading.Thread(target=doe_args, args=(['f8-poort-tik'], 50), daemon=True).start()
+            if RONDE % 5 == 2:
+                threading.Thread(target=doe_args, args=(['artemis-model-tik'], 120), daemon=True).start()   # 678/104: ARTEMIS denkt met het brein op het rek, nooit de F8   # 678/102: elke ronde (elke minuut) de F8-poort
             if RONDE % 5 == 3:
                 threading.Thread(target=doe_args, args=(['stand-tik'], 900), daemon=True).start()   # 678 (16 nov): het standverslag (alleen bij verandering of na een uur)
             threading.Thread(target=doe_args, args=(['les-hervat-tik'], 60), daemon=True).start()   # 678 (20 nov): een onderbroken les (slaap, of geen antwoorden) opnieuw
@@ -2309,6 +2325,11 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         p = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(p.query)
         if p.path == '/lokaal-zet':
+            # 678/104 (27 nov, eigenaar: "de F8 er helemaal buiten"): ARTEMIS denkt altijd met het brein op het rek (artemis_model_brein);
+            # een ander modeladres van buiten zetten kan niet meer -- zo komt de F8 er ook langs deze weg nooit weer in.
+            ln0 = int(self.headers.get('Content-Length', 0) or 0)
+            if ln0: self.rfile.read(min(ln0, 20000))
+            self._cors(409, 'ARTEMIS denkt met het brein op het rek; een ander model zetten kan niet meer (de F8 staat erbuiten).'); return
             # 592b: Veronica (die de hartslag/relay kent) geeft het modeladres van een TELEFOON door -- het model draait NOOIT
             # op deze Chromebook (1,6 GB vrij; en het maakt hem traag). Alleen een LOKAAL/LAN-adres wordt aangenomen; geen
             # publiek internet-adres (anders zou een willekeurige website ARTEMIS naar zijn eigen model kunnen sturen).
@@ -3520,7 +3541,7 @@ start_proxy() {
   local reserve="[]"; [ -s "$REK_MAP/reserve-modellen.json" ] && reserve="$(cat "$REK_MAP/reserve-modellen.json")"
   # 592p: is de F8 een LAN-adres (niet 127.0.0.1 via adb)? Dan mag de proxy hem bij een IP-wissel zelf terugvinden op het subnet.
   # Een eerder teruggevonden adres (f8-gevonden.conf) is recenter dan de conf, dus daar beginnen we.
-  local f8lan=0; case "$base" in http://127.0.0.1:*|http://localhost:*) : ;; http://*) f8lan=1 ;; esac
+  local f8lan=0   # 678/104: NOOIT meer een model op het LAN terugzoeken (dat vond de F8); het hoofdmodel is het brein op het rek
   if [ "$f8lan" = 1 ] && [ -s "$F8_GEVONDEN_F" ]; then base="$(cat "$F8_GEVONDEN_F")"; fi
   # 592p: de /24-prefixes van de Chromebook meegeven zodat de proxy de F8 op het LAN kan terugvinden -- GEEN vast IP in de code.
   # 608: scan BEIDE wifi's -- het eigen net van de Chromebook PLUS elk net waar ooit een telefoon zat (hoofdwifi en gastnet),
@@ -3537,9 +3558,42 @@ start_proxy() {
   proxy_draait
 }
 
+# 678/104 (27 nov, eigenaar: "de F8 er helemaal buiten: ARTEMIS-model naar het brein op het rek, de F8 uit de reserve-keten, beheerder en
+# Zoek telefoons nooit de F8"). HET DENKMODEL VAN ARTEMIS IS HET BREIN OP HET REK: de adb-doorsturing naar de brein-telefoon op deze computer
+# (127.0.0.1:$BREIN_POORT_LOK, die de brein-waakhond in de lucht houdt). artemis_model_brein zet lokaal-model.conf daarop als hij iets
+# anders zegt (een LAN-adres van de F8, een oude doorsturing), vergeet een teruggevonden F8-adres, en schrijft artemis.jsonc opnieuw.
+# 0 = er is iets omgezet (dan moet ARTEMIS opnieuw starten), 1 = het stond al goed of er is (nog) geen brein.
+artemis_model_brein() {
+  local want model base
+  want="http://127.0.0.1:${BREIN_POORT_LOK:-18093}/v1"
+  model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$model" ] || return 1
+  base="$(sed -n 's/^BASE_URL=//p' "$REK_MAP/lokaal-model.conf" 2>/dev/null | head -1)"
+  if [ "$base" = "$want" ] && grep -qx "MODEL=$model" "$REK_MAP/lokaal-model.conf" 2>/dev/null && [ ! -s "$F8_GEVONDEN_F" ]; then return 1; fi
+  printf 'BASE_URL=%s\nMODEL=%s\nTOKEN=local\n' "$want" "$model" >"$REK_MAP/lokaal-model.conf"
+  chmod 600 "$REK_MAP/lokaal-model.conf" 2>/dev/null || true
+  rm -f "$F8_GEVONDEN_F" 2>/dev/null || true
+  schrijf_artemis_jsonc 2>/dev/null || true
+  logregel "ARTEMIS denkt nu met het brein op het rek ($model); de F8 staat erbuiten."
+  return 0
+}
+artemis_model_tik() {   # de console-lus: omgezet en ARTEMIS draait = ARTEMIS stoppen; start_stil zet hem met het brein weer aan
+  artemis_model_brein || return 0
+  artemis_draait 2>/dev/null && stop_artemis >/dev/null 2>&1 || true
+}
+# De adressen van de F8 (uit zijn EIGEN hartslag op de relay: dagelijks = ja), plus de eerder geziene -- zodat de reserve-keten, de
+# LAN-zoekronde en /lokaal-zet hem overslaan. Alleen lezen; nooit adb.
+F8_IPS_F="$REK_MAP/f8-ips"
+f8_ips() {
+  local nieuw; nieuw="$(REK_F8_IPS=1 rek_lijst_rauw 2>/dev/null)"
+  { [ -s "$F8_IPS_F" ] && cat "$F8_IPS_F"; printf '%s\n' "$nieuw"; } | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u | tail -20 >"$F8_IPS_F.t" 2>/dev/null && mv -f "$F8_IPS_F.t" "$F8_IPS_F"
+  cat "$F8_IPS_F" 2>/dev/null
+}
+
 # De ECHTE start (geen teller-reset, geen AANF-touch). Aangeroepen door start() (mens) en start_stil() (console-lus).
 start_kern() {
   [ -d "$ARTEMIS_MAP" ] || { zeg "ARTEMIS staat er niet. Draai eerst installeer.sh."; return 1; }
+  artemis_model_brein >/dev/null 2>&1 || true   # 678/104: altijd het brein op het rek, nooit de F8
   [ -s "$TOEG" ] || { zeg "Er staat nog geen rektelefoon op de lijst. Sluit er een aan (kabel + USB-foutopsporing); de console vindt hem vanzelf."; return 1; }
   # 678: ZONDER lokaal model en ZONDER Gemini kan ARTEMIS niet denken -- en we laten hem dan NIET stilletjes op Gemini terugvallen.
   if [ ! -s "$REK_MAP/lokaal-model.conf" ] && [ ! -f "$GEM_AAN_F" ]; then
@@ -6360,6 +6414,9 @@ f8_hosts() {
   done
 }
 f8_zoek() {
+  # 678/104: de F8 staat buiten het rek (keuze van de eigenaar) -- hij wordt niet meer als model gezocht. ARTEMIS denkt met het brein op het rek.
+  artemis_model_brein >/dev/null 2>&1 || true
+  zeg "De F8 staat buiten het rek en wordt niet meer als model gezocht. ARTEMIS denkt met het brein op het rek."; return 0
   command -v curl >/dev/null 2>&1 || { zeg "curl ontbreekt."; return 1; }
   # 592s: de F8 draait nu JARVIS. Die biedt zijn model aan op poort 8081 (de EIGEN motor, met de rij-code als sleutel), niet
   # alleen OlliteRT op 8000. Dus scannen we BEIDE poorten (8000 eerst: open OlliteRT heeft voorrang), en op 8081 sturen we de
@@ -6478,8 +6535,10 @@ rek_scan_json() {   # argument: de F8-base om uit te sluiten. Echoot een JSON-ar
     kand="$kand
 $(f8_hosts | T="$tok" xargs -P 50 -I{} sh -c 'b="$1"; { curl -fsS -m 1 "$b/models" >/dev/null 2>&1 || { [ -n "$T" ] && curl -fsS -m 1 -H "Authorization: Bearer $T" "$b/models" >/dev/null 2>&1; }; } && echo "$b"' _ "http://{}:$p/v1" 2>/dev/null)"
   done
+  local f8i; f8i=" $(f8_ips 2>/dev/null | tr '\n' ' ') "
   for b in $(printf '%s\n' "$kand" | sed '/^$/d' | sort -u); do
     [ "$b" = "$f8" ] && continue
+    case "$f8i" in *" $(printf '%s' "$b" | sed 's#http://##; s#:.*##') "*) continue ;; esac   # 678/104: nooit de F8 in de reserve-keten
     m="$(curl -fsS -m 3 "$b/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"; used=""
     if [ -z "$m" ] && [ -n "$tok" ]; then
       m="$(curl -fsS -m 3 -H "Authorization: Bearer $tok" "$b/models" 2>/dev/null | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
@@ -6683,7 +6742,7 @@ for base in bases:
         t = (d.get('t', 0) / 1000.0) if d.get('t') else float(m.get('time') or 0)
         if t and (nu - t) > venster:
             continue
-        if os.environ.get('REK_F8'):   # 678/102: de hele hartslag bewaren voor de F8-poort (de nieuwste per toestel)
+        if os.environ.get('REK_F8') or os.environ.get('REK_F8_IPS'):   # 678/102: de hele hartslag bewaren (F8-poort en F8-adressen)
             if (i not in VOL) or (t > VOL[i][0]): VOL[i] = (t, d)
         ips = [a for a in (d.get('adressen') or []) if isinstance(a, str) and IPRE.match(a)]
         # #8: het Tailscale-adres (100.64-100.127) als EERSTE route, boven de wifi-adressen -- rek_verbind_lijst probeert de IP's
@@ -6702,6 +6761,15 @@ for base in bases:
         prev = best.get(i)
         if (prev is None) or (t > prev[0]):
             best[i] = (t, ips, poort, naam)
+if os.environ.get('REK_F8_IPS'):
+    # 678/104: de wifi-adressen van de F8 (zijn eigen hartslag zegt dagelijks = ja), een per regel -- om hem overal over te slaan
+    uit = set()
+    for i, (t, h) in VOL.items():
+        if h.get('dagelijks') is True:
+            for a in (h.get('adressen') or []):
+                if isinstance(a, str) and IPRE.match(a): uit.add(a)
+    for a in sorted(uit): print(a)
+    sys.exit(0)
 if os.environ.get('REK_F8'):
     # 678/102: DE F8-POORT -- dezelfde regel als f8poort.js in Veronica (grenzen: instappen tot 37 °C, eruit boven 38 °C; hartslag hoogstens
     # 180 s oud; aan de lader; hetzelfde wifi-net (/24) als een verse rektelefoon -- Tailscale alleen telt niet). De F8 wordt hier alleen
@@ -7235,9 +7303,9 @@ status() {
     if [ -f "$ALLEEN_KIJKEN_F" ]; then zeg "Alleen-kijken: AAN -- het model mag alleen Home indrukken. ('Alleen kijken: uit' om te laten handelen.)"
     else zeg "Alleen-kijken: uit -- het model mag handelen; het vangnet (NOODSTOP/Stop/Verwijder/Uninstall + bank/kluis/betaal/crypto) blijft altijd aan."; fi
     # 592L/592r: de reserve-keten en welk model nu antwoordt. De vangnet-regels gelden rondom ELK model in de keten.
-    local keten="F8"; [ -s "$REK_MAP/reserve-modellen.json" ] && keten="$keten -> rektelefoon(s)"
+    local keten="het brein op het rek"; [ -s "$REK_MAP/reserve-modellen.json" ] && keten="$keten -> andere rektelefoon(s)"
     [ -f "$ARTEMIS_MAP/.env" ] && grep -q '^GEMINI_API_KEY=.' "$ARTEMIS_MAP/.env" 2>/dev/null && keten="$keten -> Gemini (gemini-3.8-flash, dan 3.6)"
-    zeg "Reserve-keten (592L): $keten. Per verzoek wordt het eerste bereikbare model gekozen; zodra de F8 weer antwoordt gaat het vanzelf terug."
+    zeg "Reserve-keten (592L): $keten. Per verzoek wordt het eerste bereikbare model gekozen; de F8 doet nooit mee (keuze van de eigenaar)."
     # 592r: elke gekoppelde rektelefoon met zijn model, en of hij nu antwoordt. ('Rektelefoons koppelen' scant het LAN opnieuw.)
     if [ -s "$REK_MAP/reserve-modellen.json" ] && command -v curl >/dev/null 2>&1; then
       printf '%s' "$(cat "$REK_MAP/reserve-modellen.json")" | grep -oE '"base":"[^"]*","token":"[^"]*","model":"[^"]*"' | while IFS= read -r r; do
@@ -8889,7 +8957,7 @@ brein_start_kern() {
   "$ADB" -s "$s" forward --remove tcp:"$BREIN_POORT_LOK" >/dev/null 2>&1 || true
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
   for i in $(seq 1 80); do
-    curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { ok=1; break; }
+    curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { ok=1; break; }
     sleep 3
   done
   if [ "$ok" = 1 ]; then
@@ -9120,7 +9188,7 @@ except Exception: print("")' 2>/dev/null | tr -d '\r\n ')"
   # server op de poort (een oude, met een ander of onbekend model), met of zonder "aan". De waakhond zag "antwoordt" en deed niets, en de rol
   # werd nooit meer opgezet. Nu: dan de rol opnieuw opzetten (die stopt eerst de oude server), hoogstens eens per zes uur, niet tijdens een les.
   if [ -s "$BREIN_VAST_F" ] && grep -q '"stand":"fout"' "$BREIN_STAND_F" 2>/dev/null && ! les_loopt \
-     && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+     && curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
     local tz nz; nz="$(date +%s)"; tz="$(head -1 "$REK_MAP/tegenstrijdig.t" 2>/dev/null | tr -cd '0-9')"
     if [ $((nz - ${tz:-0})) -ge 21600 ]; then
       printf '%s\n' "$nz" >"$REK_MAP/tegenstrijdig.t"
@@ -9130,7 +9198,7 @@ except Exception: print("")' 2>/dev/null | tr -d '\r\n ')"
     fi
   fi
   if [ ! -f "$BREIN_AAN_F" ]; then
-    if [ -s "$BREIN_VAST_F" ] && ! grep -q '"stand":"uit"' "$BREIN_STAND_F" 2>/dev/null && ! curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+    if [ -s "$BREIN_VAST_F" ] && ! grep -q '"stand":"uit"' "$BREIN_STAND_F" 2>/dev/null && ! curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
       local t0 nu; nu="$(date +%s)"; t0="$(head -1 "$REK_MAP/brein-poging.t" 2>/dev/null | tr -cd '0-9')"; t0="${t0:-0}"
       if [ $((nu - t0)) -ge 600 ]; then
         printf '%s\n' "$nu" >"$REK_MAP/brein-poging.t"
@@ -9139,7 +9207,7 @@ except Exception: print("")' 2>/dev/null | tr -d '\r\n ')"
     fi
     return 0
   fi
-  if curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+  if curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
     rm -f "$REK_MAP/brein-stil.t"
     # 678 (16 nov): EEN VAK. Zonder -np 1 verdeelt llama-server de context over meerdere vakken (4096 = 4 x 1024 tokens: de kennisbank + vraag +
     # antwoord passen dan net niet) en delen gelijktijdige vragen de rekenkracht. Draait er nog een oude server met meer vakken, dan EEN keer
@@ -9186,7 +9254,7 @@ except Exception: print(0)' 2>/dev/null)"
     return 0
   fi
   brein_doorsturing >/dev/null 2>&1
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { rm -f "$REK_MAP/brein-stil.t"; return 0; }
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { rm -f "$REK_MAP/brein-stil.t"; return 0; }
   local s m bin i ok=0 vorig mem
   s="$(brein_nu)"; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
   [ -n "$s" ] && [ -n "$m" ] || return 0   # de telefoon is nu niet bereikbaar via adb (kabel of draadloos): dan kan ik niets
@@ -9213,7 +9281,7 @@ except Exception: print(0)' 2>/dev/null)"
   brein_binaire_zet "$s" >/dev/null 2>&1 || true   # 678: bij een herstart ook de beste llama-server (dotprod als het kan)
   "$ADB" -s "$s" shell "$(brein_start_cmd "$m" "$(head -1 "$REK_MAP/brein-ctx" 2>/dev/null | tr -cd '0-9' | grep . || echo "$BREIN_CONTEXT")")" >/dev/null 2>&1
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
-  for i in $(seq 1 80); do curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { ok=1; break; }; sleep 3; done
+  for i in $(seq 1 80); do curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && { ok=1; break; }; sleep 3; done
   if [ "$ok" = 1 ]; then brein_stand klaar "${BREIN_HET:-Het brein} draait op $(toestel_naam "$s") (vanzelf herstart)." "$s" "$m" "$mem"; zeg "Brein: vanzelf herstart op $(toestel_naam "$s")."
   else brein_stand fout "${BREIN_HET:-Het brein} lag stil en kwam bij het herstarten niet op (zie Log)." "$s" "$m" "$mem"; fi
   rm -rf "$REK_MAP/brein.lock"
@@ -9245,7 +9313,7 @@ brein_poging_achtergrond() {
 brein_status() {
   local h st s nu
   export BREIN_ALLEEN_KIJKEN=1
-  h="$(curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null)"
+  h="$(curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null)"   # 678/105: 6 s, zoals de controle en de verdeler (via Tailscale haalde 3 s het niet)
   st="$(STAND="$BREIN_STAND_F" python3 -I -c 'import json,os
 try: d=json.load(open(os.environ["STAND"]))
 except Exception: d={}
@@ -10084,7 +10152,7 @@ toets_tik() {   # een keer per model en toetsversie (en daarna eens per week) va
     logregel "Toets: $(head -1 "$REK_MAP/brein-model" 2>/dev/null) haalde in de modelproef al $eerder/40; die telt, niet nog eens."
     return 0
   fi
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   printf '%s\n%s\n' "$m" "$(date +%s)" >"$REK_MAP/brein-toets.sig"
   brein_toets >/dev/null 2>&1
   # 678 (23 nov): kwam de toets niet rond (geen uitslag, of bij meer dan een kwart van de vragen geen antwoord), dan telt hij NIET als gedaan
@@ -10116,7 +10184,7 @@ redeneer_tik() {   # een keer per model (en daarna eens per week) vanzelf, allee
   local sig m t; m="$(head -1 "$REK_MAP/brein-model" 2>/dev/null) meet3"; sig="$(head -1 "$REK_MAP/brein-redeneer.sig" 2>/dev/null)"
   t="$(sed -n 2p "$REK_MAP/brein-redeneer.sig" 2>/dev/null | tr -cd '0-9')"
   [ "$sig" = "$m" ] && [ $(( $(date +%s) - ${t:-0} )) -lt 604800 ] && return 0
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   printf '%s\n%s\n' "$m" "$(date +%s)" >"$REK_MAP/brein-redeneer.sig"
   brein_redeneer >/dev/null 2>&1
 }
@@ -10126,8 +10194,8 @@ brein_les() {
   # 678 (19 nov): rij 4 t/m 8 zijn GEGEVENS-rijen; lesrij 5 is de VASTE vragenset (elke nacht, vaste_les_tik), een nieuwe set gaat naar 6, 7 of 8
   case "$rij" in 1|2|3|10|11) : ;; 4|5|6|7|8) [ -s "$REK_MAP/lesrij$rij.json" ] || { zeg "Brein-les: lesrij $rij heeft nog geen vragen (die komen via het kanaal)."; return 0; } ;;
     9) [ -s "$REK_MAP/fout-dagboek.jsonl" ] || { zeg "Brein-les: het fout-dagboek is leeg."; return 0; } ;; *) rij=1 ;; esac
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || brein_doorsturing >/dev/null 2>&1
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || { zeg "Brein-les: het brein antwoordt niet (druk eerst op Brein: status)."; return 0; }
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || brein_doorsturing >/dev/null 2>&1
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || { zeg "Brein-les: het brein antwoordt niet (druk eerst op Brein: status)."; return 0; }
   if les_loopt; then zeg "Brein-les: er loopt al een les."; return 0; fi
   rm -rf "$REK_MAP/brein-les.lock"; mkdir "$REK_MAP/brein-les.lock" 2>/dev/null || { zeg "Brein-les: er loopt al een les."; return 0; }
   printf '%s\n' "$$" >"$REK_MAP/brein-les.lock/pid"   # 678 (17 nov): het slot draagt het procesnummer (les_loopt)
@@ -10527,7 +10595,7 @@ les_hervat_tik() {
   if [ -n "$(find "$LES_HERVAT_F" -mmin +360 2>/dev/null)" ]; then rm -f "$LES_HERVAT_F"; logregel "De les die opnieuw zou beginnen wachtte langer dan zes uur op het brein; ik laat hem vallen."; return 0; fi
   les_loopt && return 0
   p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   read -r id rij na h <"$LES_HERVAT_F" || true
   rm -f "$LES_HERVAT_F"
   printf '%s %s %s' "$id" "$rij" "$na" | grep -Eq '^(-|v[0-9]{1,9}) [1-9] (-|1)$' || return 0
@@ -10774,7 +10842,7 @@ brein_belasting() {   # $1 serienummer -> "belasting 1,8; klok grote kern 2,40 G
 }
 brein_meet() {   # [label] -> een regel in brein-meet.log
   les_loopt && return 0
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s kern bouw model sig t0 nu
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
   kern="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/kernen.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
@@ -10828,7 +10896,7 @@ brein_tweetegelijk() {
   [ -f "$REK_MAP/les-wacht" ] && return 0
   [ -s "$REK_MAP/modelproef.sig" ] || return 0   # eerst de modelproef (die kiest het model waar dit over gaat)
   slot_levend "$REK_MAP/controleproef.lock" && return 0
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s model bouw ctx basis sig vrij regel
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
   model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
@@ -10896,13 +10964,13 @@ brein_herstart_met() {   # $1 serienummer [$2 model] -> de server opnieuw, met $
   sleep 3
   "$ADB" -s "$s" shell "$(brein_start_cmd "$m" "$ctx")" >/dev/null 2>&1
   "$ADB" -s "$s" forward tcp:"$BREIN_POORT_LOK" tcp:"$BREIN_POORT_TEL" >/dev/null 2>&1
-  for i in $(seq 1 80); do curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && return 0; sleep 3; done
+  for i in $(seq 1 80); do curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' && return 0; sleep 3; done
   return 1
 }
 brein_proefbank() {
   les_loopt && return 0
   [ -f "$REK_MAP/les-wacht" ] && return 0   # 678 (17 nov): er wacht een les; die gaat voor
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s model bouw sig huidig best best_tps tps kand regel oud_ifs
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
   model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
@@ -11030,7 +11098,7 @@ brein_modelproef() {
   les_loopt && return 0
   [ -f "$REK_MAP/les-wacht" ] && return 0   # 678 (17 nov): er wacht een les; die gaat voor
   [ -s "$REK_MAP/proefbank.sig" ] || return 0   # eerst de vlaggen (stap 4+5)
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   local s sig oud_m oud_mx regel repo naam sha lokaal mx pad dpad r tps score best_m best_mx best_tps best_score basis_tps grens drep dnaam dsha k mem
   s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
   sig="$(printf '%s|v5' "$BREIN_MODELPROEF_KANDIDATEN" | sha256sum | cut -c1-16)"   # 678/97 (25 nov): v5 = MTP zonder mlock, met een schone telling van mislukte metingen; 678 (17 nov): v2 = na de meetslot-fix; v3 (23 nov) = na de toets-botsing (08:59: toets 0/40 zonder te meten); v4 (24 nov) = na de opruimer-fix (drie kandidaten kregen "te weinig ruimte" terwijl de oude opruimer de modellen wiste; nu 60 GB vrij)
@@ -11234,7 +11302,7 @@ zelfstandig_tik() {
   les_loopt && return 0
   p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
   slot_levend "$REK_MAP/zelfstandig.lock" && return 0
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   printf '%s\n' "$nu" >"$REK_MAP/zelfstandig.t"
   logregel "Zelfstandigheidsproef: vanzelf (elke vier uur)."
   ( setsid "$0" zelfstandig "" </dev/null >>"$REK_MAP/console-zelfstandig.log" 2>&1 & ) 2>/dev/null
@@ -11251,7 +11319,7 @@ vaste_les_tik() {
   les_loopt && return 0
   p="$(head -1 "$REK_MAP/brein.lock/pid" 2>/dev/null | tr -cd '0-9')"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && return 0
   slot_levend "$REK_MAP/zelfstandig.lock" && return 0
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   printf '%s\n' "$dag" >"$REK_MAP/vasteles.t"
   logregel "Vaste les: lesrij 5 vanzelf (elke nacht)."
   ( LES_ALLEEN_NA=1 setsid "$0" brein-les "" 5 </dev/null >>"$REK_MAP/console-brein-les.log" 2>&1 & ) 2>/dev/null
@@ -11607,7 +11675,7 @@ stand_tik() {
   # minuten wachten, en samen met de rest liep het verslag in zijn tijdslimiet -- het werd nooit verstuurd (stil sinds 16 nov 21:11).
   sam=""; local st0; st0="$(stat -c %Y "$REK_MAP/stand-samenvatting.poging" 2>/dev/null || stat -c %Y "$REK_MAP/stand-samenvatting" 2>/dev/null || echo 0)"
   if [ "${1:-}" != --nu ] && [ $((nu - st0)) -lt 3600 ]; then sam="$(cat "$REK_MAP/stand-samenvatting" 2>/dev/null)"
-  elif ! les_loopt && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+  elif ! les_loopt && curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
     : >"$REK_MAP/stand-samenvatting.poging"
     sam="$(kort_verslag)"   # 678 (21 nov): het brein schrijft met {plekhouders}, de code vult de getallen in (geen verzonnen getal meer)
     [ -n "$sam" ] && { printf '%s\n' "$sam" >"$REK_MAP/stand-samenvatting"; chmod 600 "$REK_MAP/stand-samenvatting" 2>/dev/null || true; }
@@ -11659,7 +11727,7 @@ kanaal_tik() {
   base="$(head -1 "$REK_RELAY_F" 2>/dev/null | tr -d '\r\n ')"
   [ -n "$code" ] || return 0
   case "$base" in https://*.workers.dev|https://*.workers.dev/) : ;; *) return 0 ;; esac
-  curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
   mkdir "$REK_MAP/kanaal.lock" 2>/dev/null || { [ -n "$(find "$REK_MAP/kanaal.lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] && rm -rf "$REK_MAP/kanaal.lock"; return 0; }
   rek_zorg_crypto >/dev/null 2>&1 || true
   CPOORT="$CONSOLE_POORT" SLEUTELF="$REK_MAP/brein-sleutel" CODE="$code" BASE="$base" GEZIEN="$KANAAL_GEZIEN_F" STAND="$BREIN_STAND_F" KENNIS="$KENNIS_LOKAAL/$BREIN_KENNIS_NAAM" AREK="$BIN_SELF/artemis-rek" LESLOG="$REK_MAP/console-brein-les.log" LESLOT="$REK_MAP/brein-les.lock" BSLOT="$REK_MAP/brein.lock" LESWACHT="$REK_MAP/les-wacht" BREIN="http://127.0.0.1:$BREIN_POORT_LOK" "$(rek_py)" -I - <<'PY' 2>/dev/null || true
@@ -12869,7 +12937,7 @@ zelfronde() {
       # 678 (17 nov, eigenaar: "het brein meldt zich soms niet bij de relay"): de BREIN-telefoon meldt zich met opzet niet -- JARVIS op
       # de voorgrond kostte het brein ~1 GB en zakte de snelheid van ~5 naar 0,66 tok/s (gemeten 16 nov). Antwoordt het brein (ARTEMIS ziet die
       # telefoon zelf via adb), dan telt hij als gemeld, met die reden erbij; antwoordt het brein niet, dan blijft het een echte NEE.
-      if [ "$m" = nee ] && [ "$idv" = "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && curl -fsS -m 3 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+      if [ "$m" = nee ] && [ "$idv" = "$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')" ] && curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
         ok=$((ok + 1)); bmeld="$naam is de brein-telefoon: JARVIS staat daar met opzet op de achtergrond (het geheugen is voor het brein), en het brein antwoordt. "
         continue
       fi
@@ -13327,7 +13395,8 @@ case "${1:-status}" in
   surf-zoek) surf_zoek "${2:-}" ;;
   surf-zoek-alle) surf_zoek_alle "${2:-}" ;;
   f8-poort) f8_poort_schakel "${2:-}" ;;          # 678/103: de F8-poort aan of dicht (dicht is de standaard)
-  f8-poort-tik) f8_poort_tik ;;                    # 678/102: de F8 alleen aan de lader, bij het rek en koel genoeg            # 678/100: de zoekopdracht in de browser van elke telefoon die op de wand mag                # de term komt nooit in een logboek
+  f8-poort-tik) f8_poort_tik ;;
+  artemis-model-tik) artemis_model_tik ;;            # 678/104: het denkmodel van ARTEMIS = het brein op het rek                    # 678/102: de F8 alleen aan de lader, bij het rek en koel genoeg            # 678/100: de zoekopdracht in de browser van elke telefoon die op de wand mag                # de term komt nooit in een logboek
   brein-tweetegelijk) brein_tweetegelijk ;;      # 678 (23 nov): meten of het brein twee vragen tegelijk sneller doet (alleen meten)
   brein-modelproef) brein_modelproef ;;             # 678 (16 nov): onderzoek stap 3/6, deel 2 punt 3 -- andere breinen gemeten (snelheid + beide lesrijen)               # 678 (16 nov): onderzoek stap 4+5, een voor een gemeten (flash attention + KV q8_0, mlock)                           # 678 (16 nov): phantom process killer en batterijbesparing uit op de rektelefoons (nooit de F8)                   # 678 (16 nov): een nieuwere proef-JARVIS zelf op de proeftelefoon, daarna zelf de spraaktest
   versie-kijk) versie_kijk ;;                       # 678 (16 nov): elke minuut naar artemis/versie.txt kijken; anders meteen bijwerken                  # 678 (16 nov): het standverslag (zelf, zonder Cowork)
