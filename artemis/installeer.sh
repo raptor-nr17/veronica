@@ -222,6 +222,7 @@ F8_GEVONDEN_F="$REK_MAP/f8-gevonden.conf"        # 592p: het teruggevonden LAN-a
 DRAADLOOS_F="$REK_MAP/draadloos"                 # 596: onthouden draadloze adb-adressen (ip:5555) zodat de minuut-scan ze na een herstart weer verbindt
 KLAAR_F="$REK_MAP/klaargezet"                    # 667d: toestel-id's die al VOLLEDIG zijn klaargezet (telefoon_klaarzetten), zodat de auto-lus ze niet opnieuw doet
 BIJWERK_GEDAAN=''                                # 678m: gezet door jarvis_bijwerk_een zodra een telefoon ECHT een nieuwe JARVIS kreeg; dan zet klaarzetten er daarna Tailscale op
+KLAAR_UITSLAG_F="$REK_MAP/klaarzet-uitslag"      # 678/121: per telefoon EEN nagemeten regel (recht, 5555, wifi, Tailscale, JARVIS)
 KLAAR_LOCK="$REK_MAP/klaarzetten.lock"           # 667d: lock zodat de auto-klaarzet-lus niet twee keer tegelijk draait
 SCAN5555_T="$REK_MAP/scan5555.t"                 # 606: tijdstip van de laatste subnet-scan op poort 5555 (rem: eens per ~180 s)
 TS_BRUG_F="$REK_MAP/tailscale-bruggen"           # 678: socat-bruggen (lport 100.x pid) zodat adb de rektelefoons op hun VASTE 100.x bereikt, over elk netwerk
@@ -1804,6 +1805,8 @@ def lus():
                 threading.Thread(target=doe_args, args=(['brein-meet'], 1500), daemon=True).start()   # 678 (17 nov): de vaste snelheidsmeting, los van het verslag
             if RONDE % 10 == 5:
                 threading.Thread(target=doe_args, args=(['stem-adb-vanzelf'], 5400), daemon=True).start()   # 678 (17 nov): het stemmodel via de kabel, als JARVIS het zelf niet binnenkrijgt
+            if RONDE % 15 == 6:
+                threading.Thread(target=doe_args, args=(['brein-leesproef'], 2400), daemon=True).start()   # 678/123: de leesproef (eens per opstelling, na de cacheproef)
             if RONDE % 15 == 4:
                 threading.Thread(target=doe_args, args=(['brein-cacheproef'], 2400), daemon=True).start()   # 678/111: de cacheproef (eens per opstelling, na de proefbank)
             if RONDE % 15 == 8:
@@ -3430,21 +3433,56 @@ kabel_koppel() {
 # 667d: argument "auto" = de minuut-lus roept dit aan. Dan slaat hij telefoons over die AL klaargezet zijn (KLAAR_F, per toestel-id),
 # en zwijgt hij als er niets NIEUWS aan de kabel hangt -- zo hoeft niemand ooit op de knop te drukken (de eigenaar doet niets). Een lock
 # voorkomt dat twee lussen tegelijk draaien. De knop (zonder "auto") doet altijd alles, ook een telefoon die al klaar is.
+# 678/121 (28 nov, eigenaar: "de log laat voor een rektelefoon niet zien of 5555, wifi en JARVIS-start gelukt zijn"). De stappen van het klaarzetten
+# zeiden wat er GEPROBEERD was ("vast op ip:5555" ook als het verbinden mislukte), en dat stuk viel bovendien uit het korte console-log. Nu
+# na elke telefoon EEN regel die alles NAMEET: het recht voor JARVIS (dumpsys), 5555 (antwoordt adb op ip:5555), wifi (met internet?),
+# Tailscale (een 100.x) en JARVIS (draait het proces). Die regels komen onderaan de uitvoer en in de Status (klaarzet-uitslag).
+# 678/121: in de auto-lus telt "al klaargezet" alleen als de nagemeten uitslag er is en geen NEE draagt bij het recht, 5555 of JARVIS.
+# Anders opnieuw -- hoogstens eens per zes uur per telefoon, zodat een blijvende NEE geen lus wordt.
+klaar_compleet() {   # $1 toestel-id -> 0 = niets meer te doen
+  local id="$1" r t nu
+  grep -qxF "$id" "$KLAAR_F" 2>/dev/null || return 1
+  r="$(awk -F'\t' -v k="$id" '$1==k{print $2; exit}' "$KLAAR_UITSLAG_F" 2>/dev/null)"
+  if [ -n "$r" ] && ! printf '%s' "$r" | grep -qE 'herstart NEE|5555 NEE|JARVIS NEE'; then return 0; fi
+  nu="$(date +%s)"; t="$(awk -v k="$id" '$1==k{print $2; exit}' "$REK_MAP/klaar-opnieuw" 2>/dev/null)"; case "$t" in ''|*[!0-9]*) t=0 ;; esac
+  [ $((nu - t)) -lt "${KLAAR_OPNIEUW_S:-21600}" ] && return 0
+  { awk -v k="$id" '$1!=k' "$REK_MAP/klaar-opnieuw" 2>/dev/null; printf '%s %s\n' "$id" "$nu"; } >"$REK_MAP/klaar-opnieuw.t" && mv -f "$REK_MAP/klaar-opnieuw.t" "$REK_MAP/klaar-opnieuw"
+  return 1
+}
+klaar_controle() {   # $1 serienummer, $2 naam, $3 wifi-ip -> een regel (ook in KLAAR_UITSLAG_F, per toestel-id)
+  local s="$1" naam="$2" ip="$3" id r w t j v5 regel
+  id="$(toestel_id "$s")"
+  if "$ADB" -s "$s" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | grep -q 'WRITE_SECURE_SETTINGS: granted=true'; then r=ja; else r=NEE; fi
+  v5=NEE
+  if [ -n "$ip" ]; then
+    "$ADB" connect "$ip:5555" >/dev/null 2>&1 || true
+    [ "$(timeout 10 "$ADB" -s "$ip:5555" get-state 2>/dev/null | tr -d '\r\n ')" = device ] && v5="ja ($ip:5555)"
+  fi
+  case "$(tel_wifi_stand "$s" 2>/dev/null)" in ok) w="ja, met internet${ip:+ ($ip)}" ;; geen-internet) w="ZONDER internet" ;; onbekend) w="verbonden (internet niet te meten)" ;; *) w=NEE ;; esac
+  t="$(tel_ts_ip "$s" 2>/dev/null)"; t="${t:-NEE}"
+  sleep "${KLAAR_JARVIS_WACHT_S:-3}"
+  [ -n "$(timeout 10 "$ADB" -s "$s" shell pidof "$JARVIS_PKG" 2>/dev/null | tr -d '\r\n ')" ] && j=draait || j=NEE
+  regel="$naam: recht voor 5555 na herstart $r | 5555 $v5 | wifi $w | Tailscale $t | JARVIS $j"
+  touch "$KLAAR_UITSLAG_F" 2>/dev/null; chmod 600 "$KLAAR_UITSLAG_F" 2>/dev/null || true
+  { awk -F'\t' -v k="$id" '$1!=k' "$KLAAR_UITSLAG_F" 2>/dev/null; printf '%s\t%s %s\n' "$id" "$(date '+%d-%m %H:%M')" "$regel"; } >"$KLAAR_UITSLAG_F.t" && mv -f "$KLAAR_UITSLAG_F.t" "$KLAAR_UITSLAG_F"
+  logregel "Klaarzetten nagemeten -- $regel"
+  printf '%s' "$regel"
+}
 telefoon_klaarzetten() {
   local auto=''; [ "${1:-}" = "auto" ] && auto=1
   "$ADB" start-server >/dev/null 2>&1 || true
-  local regels s staat id naam ip rel relmaj n=0
+  local regels s staat id naam ip rel relmaj n=0 uitslagen=""
   regels="$("$ADB" devices 2>/dev/null | awk 'NR>1 && NF>=2 {print $1" "$2}')"
   if [ -z "$regels" ]; then [ -n "$auto" ] || zeg "Geen telefoon via de kabel te zien. Sluit de telefoon met USB aan, deel hem in ChromeOS met Linux, en zet USB-foutopsporing aan (op sommige telefoons ook 'USB-foutopsporing (beveiligingsinstellingen)')."; return 1; fi
   # 667d (auto): is er wel een NIEUWE, niet-F8, toegestane telefoon in 'device'-stand die nog niet klaargezet is? Zo niet: stil weg.
   if [ -n "$auto" ]; then
-    local nieuw='' did
+    local nieuw='' did; KLAAR_DOEN=''
     while read -r s staat; do
       [ -n "$s" ] || continue; case "$s" in *:*) continue ;; esac
       [ "$staat" = "device" ] || continue; is_f8 "$s" && continue
       did="$(toestel_id "$s")"
-      [ -s "$KLAAR_F" ] && grep -qxF "$did" "$KLAAR_F" 2>/dev/null && continue
-      nieuw=1; break
+      klaar_compleet "$did" && continue
+      nieuw=1; KLAAR_DOEN="${KLAAR_DOEN:-} $did"
     done <<<"$regels"
     [ -n "$nieuw" ] || return 0
     # een lock, zodat twee minuut-lussen niet tegelijk dezelfde telefoon klaarzetten
@@ -3464,7 +3502,7 @@ telefoon_klaarzetten() {
     if [ "$staat" != "device" ]; then [ -n "$auto" ] || zeg "$s: nog niet toegestaan over de kabel. Zet USB-foutopsporing aan en tik 'Toestaan' op de telefoon (op sommige telefoons ook 'USB-foutopsporing (beveiligingsinstellingen)')."; continue; fi
     id="$(toestel_id "$s")"; naam="$(toestel_naam "$s")"
     # in de auto-lus: alleen wat nog niet klaar is (de knop doet alles opnieuw)
-    if [ -n "$auto" ] && [ -s "$KLAAR_F" ] && grep -qxF "$id" "$KLAAR_F" 2>/dev/null; then continue; fi
+    if [ -n "$auto" ]; then case " ${KLAAR_DOEN:-} " in *" $id "*) : ;; *) continue ;; esac; fi   # 678/121: alleen wat de poort hierboven koos
     # fysieke toestemming (kabel + Toestaan) = op de lijst, zodat de draadloze stappen hem later herkennen.
     toegestaan "$id" || { printf '%s\n' "$id" >>"$TOEG"; logregel "Klaarzetten: $naam op de lijst."; }
     zeg "== $naam klaarzetten =="
@@ -3505,6 +3543,8 @@ telefoon_klaarzetten() {
     # 9b (678 stap 1): meteen Tailscale aanmelden met de bewaarde auth-key, zonder tik -- zo is een nieuwe telefoon: kabel erin,
     # USB-foutopsporing aan, verder niets. Alleen als er een sleutel staat; anders doet het §678m-blok hieronder de inloglink-weg.
     if ts_authkey_lees >/dev/null; then zeg "  - Tailscale aanmelden met de auth-key:"; ts_authkey_een "$s" "$naam" || true; fi
+    uitslagen="${uitslagen}  $(klaar_controle "$s" "$naam" "$ip")
+"
     # 667d: onthoud dat deze telefoon VOLLEDIG is klaargezet, zodat de auto-lus hem niet opnieuw doet.
     touch "$KLAAR_F" 2>/dev/null; chmod 600 "$KLAAR_F" 2>/dev/null || true
     grep -qxF "$id" "$KLAAR_F" 2>/dev/null || printf '%s\n' "$id" >>"$KLAAR_F"
@@ -3522,6 +3562,7 @@ telefoon_klaarzetten() {
   fi
   zeg "== JARVIS-versie per telefoon (na bijwerken) =="   # 678p: de uitkomst -- staat ook in Status (klaarzet-versies)
   jarvis_versies
+  [ -n "$uitslagen" ] && { zeg "== Nagemeten per telefoon (678/121) =="; zeg "${uitslagen%$'\n'}"; }   # als laatste, zodat het in het korte log blijft
   if [ "$n" -gt 0 ]; then zeg "Klaar: $n telefoon(s) volledig klaargezet. De kabel mag eruit; ik vind ze terug via 5555 en JARVIS meldt zich bij de relay."; else [ -n "$auto" ] || zeg "Geen telefoon klaargezet (alleen de F8, of niets toegestaan aan de kabel)."; fi
 }
 
@@ -4927,6 +4968,25 @@ def _noteer_actief(be):
         except Exception:
             pass
     _notuleer('[actief] ' + be.get('naam', '?'))
+    _tel_antwoord(be.get('soort') or 'lokaal')
+
+# 678/124 (28 nov, eigenaar: "taken die nu naar Gemini gaan naar de lokale AI"). Gemini staat standaard UIT en is alleen de laatste terugval;
+# om te zien of er toch iets heen gaat telt de proxy per dag de antwoorden per soort (lokaal / gemini). Alleen getallen, in een bestand naast
+# ACTIEF_FILE; de Status leest het. Nooit een vraag of antwoord.
+def _tel_antwoord(soort):
+    if not ACTIEF_FILE: return
+    pad = ACTIEF_FILE + '.dag'
+    try:
+        with open(pad) as f: d = json.load(f)
+    except Exception: d = {}
+    dag = _gt.strftime('%Y-%m-%d')
+    if d.get('dag') != dag: d = {'dag': dag}
+    k = 'gemini' if soort == 'gemini' else 'lokaal'
+    d[k] = int(d.get(k) or 0) + 1
+    try:
+        with open(pad + '.t', 'w') as f: json.dump(d, f)
+        os.replace(pad + '.t', pad)
+    except Exception: pass
 
 def _leesactief():
     try:
@@ -5966,6 +6026,22 @@ bh_onthoud_ips() {
 #  - over een Tailscale-tunnel (127.0.0.1:56xx): NIET (die verbinding loopt al naar 5555; een herstart van adbd zou hem verbreken).
 # Nooit de F8, alleen telefoons van de lijst, alleen de adb-instellingen en het recht van JARVIS.
 BH_VAST_F="$REK_MAP/beheerder-vast"
+# 678/122 (28 nov, eigenaar: "twee rektelefoons herstart-vast zonder kabel en zonder nieuwe APK"): HERSTART-VAST = het recht voor JARVIS (dan zet de
+# boot-ontvanger van JARVIS draadloze foutopsporing na een herstart zelf weer aan) + draadloze foutopsporing nu aan. Daarna vindt ARTEMIS de
+# telefoon terug: op een hoofdwifi via mDNS (de koppeling blijft), en zet 5555 opnieuw. bh_vast_stand meet dat per telefoon na voor de Status.
+BH_VAST_STAND_F="$REK_MAP/beheerder-vast-stand"
+bh_vast_stand() {   # $1 serienummer, $2 toestel-id
+  local s="$1" id="$2" r g p naam
+  naam="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"
+  "$ADB" -s "$s" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | grep -q 'WRITE_SECURE_SETTINGS: granted=true' && r=ja || r=NEE
+  [ "$("$ADB" -s "$s" shell settings get global adb_wifi_enabled 2>/dev/null | tr -d '\r ')" = 1 ] && g=aan || g=UIT
+  p="$("$ADB" -s "$s" shell getprop service.adb.tcp.port 2>/dev/null | tr -d '\r ')"
+  touch "$BH_VAST_STAND_F" 2>/dev/null; chmod 600 "$BH_VAST_STAND_F" 2>/dev/null || true
+  { awk -F'\t' -v k="$id" '$1!=k' "$BH_VAST_STAND_F" 2>/dev/null
+    printf '%s\t%s %s: %s (recht voor JARVIS %s, draadloze foutopsporing %s, 5555 %s)\n' "$id" "$(date '+%d-%m %H:%M')" "${naam:-$id}" \
+      "$([ "$r" = ja ] && [ "$g" = aan ] && echo 'herstart-vast' || echo 'NOG NIET herstart-vast')" "$r" "$g" "$([ "$p" = 5555 ] && echo nu aan || echo 'nu uit (komt terug via mDNS of de kabel)')"
+  } >"$BH_VAST_STAND_F.t" && mv -f "$BH_VAST_STAND_F.t" "$BH_VAST_STAND_F"
+}
 bh_vastzet() {
   local s id nu t relmaj g tp ip
   nu="$(date +%s)"
@@ -5988,6 +6064,7 @@ bh_vastzet() {
     g="$("$ADB" -s "$s" shell settings get global adb_wifi_enabled 2>/dev/null | tr -d '\r ')"
     [ "$g" = 1 ] || "$ADB" -s "$s" shell settings put global adb_wifi_enabled 1 >/dev/null 2>&1 || true
     tp="$("$ADB" -s "$s" shell getprop service.adb.tcp.port 2>/dev/null | tr -d '\r ')"
+    bh_vast_stand "$s" "$id"   # 678/122: nagemeten in de Status
     [ "$tp" = 5555 ] && continue
     case "$s" in
       127.0.0.1:*) : ;;
@@ -7406,6 +7483,10 @@ status() {
   gemini_stand
   # 678/108 (28 nov): de vaste snelheidsmeting van het brein ook hier (Cowork ziet het verslag alleen in de console zolang Actions op slot zit):
   # de laatste drie metingen met "eerste woord ... met cache ...".
+  # 678/122: per rektelefoon of hij herstart-vast is (nagemeten door de beheerder)
+  if [ -s "$BH_VAST_STAND_F" ]; then zeg "Herstart-vast (nagemeten door de beheerder):"; while IFS=$'\t' read -r _i _r; do [ -n "$_r" ] && zeg "  $_r"; done <"$BH_VAST_STAND_F"; fi
+  # 678/121: de laatste nagemeten uitslag van het klaarzetten, per telefoon
+  if [ -s "$KLAAR_UITSLAG_F" ]; then zeg "Klaarzetten, nagemeten (laatste keer per telefoon):"; while IFS=$'\t' read -r _i _r; do [ -n "$_r" ] && zeg "  $_r"; done <"$KLAAR_UITSLAG_F"; fi
   # 678/110: welke rektelefoon de beheerder mist, en WAAROM (zie bh_waarom)
   if [ -s "$BEHEERDER_WAAROM_F" ]; then zeg "Weg volgens de beheerder:"; while IFS=$'\t' read -r _i _w; do [ -n "$_i" ] && zeg "  $_i ($(_bh_get "$_i" "$BEHEERDER_GEMIST_F") rondes): $_w"; done <"$BEHEERDER_WAAROM_F"; fi
   if [ -s "$BREIN_MEET_F" ]; then zeg "Snelheid van het brein (laatste drie metingen):"; tail -n 3 "$BREIN_MEET_F" 2>/dev/null | while IFS= read -r L; do zeg "  $L"; done; fi
@@ -7488,6 +7569,10 @@ status() {
     local keten="het brein op het rek"; [ -s "$REK_MAP/reserve-modellen.json" ] && keten="$keten -> andere rektelefoon(s)"
     [ -f "$ARTEMIS_MAP/.env" ] && grep -q '^GEMINI_API_KEY=.' "$ARTEMIS_MAP/.env" 2>/dev/null && keten="$keten -> Gemini (gemini-3.8-flash, dan 3.6)"
     zeg "Reserve-keten (592L): $keten. Per verzoek wordt het eerste bereikbare model gekozen; de F8 doet nooit mee (keuze van de eigenaar)."
+    # 678/124: hoeveel ARTEMIS-antwoorden er vandaag lokaal kwamen en hoeveel via Gemini (alleen getallen)
+    if [ -s "$ACTIEF_F.dag" ]; then zeg "Vandaag beantwoord: $(python3 -I -c 'import json,sys,time
+d=json.load(open(sys.argv[1]))
+print("%d lokaal, %d via Gemini" % (int(d.get("lokaal") or 0), int(d.get("gemini") or 0)) if d.get("dag")==time.strftime("%Y-%m-%d") else "nog niets")' "$ACTIEF_F.dag" 2>/dev/null || echo onbekend)."; fi
     # 592r: elke gekoppelde rektelefoon met zijn model, en of hij nu antwoordt. ('Rektelefoons koppelen' scant het LAN opnieuw.)
     if [ -s "$REK_MAP/reserve-modellen.json" ] && command -v curl >/dev/null 2>&1; then
       printf '%s' "$(cat "$REK_MAP/reserve-modellen.json")" | grep -oE '"base":"[^"]*","token":"[^"]*","model":"[^"]*"' | while IFS= read -r r; do
@@ -8780,7 +8865,10 @@ brein_start_cmd() {   # $1 model, $2 context -> de opdracht voor adb shell
   # dan de oude regel: max-frequentie minstens 90% van de hoogste. Geen GPU (Vulkan/OpenCL): de grafische chips (Mali/IMG) zijn hier trager dan
   # de processor; de server is alleen voor de CPU gebouwd, en -ngl 0 zegt het nog eens.
   local x BREIN_DRADEN; x="$(brein_extra)"; BREIN_DRADEN="$(BREIN_DRADEN="${BREIN_DRADEN_STD:-4}" brein_draden)"
-  printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; echo \"\${P:+\$mk} \$n\" > kernen.txt; C=; $BREIN_MAP_TEL/llama-server --help 2>&1 | grep -q -e --cache-ram && C=\"--cache-ram ${BREIN_CACHE_RAM:-0}\"; $BREIN_MAP_TEL/llama-server --help 2>&1 | grep -q -e --ctx-checkpoints && C=\"\$C --ctx-checkpoints 0\"; if [ -n \"\$C\" ]; then echo '$BREIN_CRAM_MERK' > cram.txt; else rm -f cram.txt; fi; (setsid nohup \$P $BREIN_MAP_TEL/llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja\${C:+ \$C}${x:+ $x} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
+  # 678/123: --lees-alle is ONZE markering (geen llama.cpp-vlag): niet vastzetten op de grote kernen en het LEZEN van de vraag (-tb) over
+  # alle kernen. Lezen is rekenwerk, schrijven hangt aan het geheugen; de leesproef meet of dat per saldo wint.
+  local la=''; case " $x " in *" --lees-alle "*) la=1; x="$(printf '%s' " $x " | sed 's/ --lees-alle / /g; s/^ *//; s/ *$//')" ;; esac
+  printf '%s' "cd $BREIN_MAP_TEL && k=0; n=0; p=-1; while IFS=: read a b; do a=\$(echo \$a); b=\$(echo \$b); case \"\$a\" in processor) p=\$b ;; 'CPU part') case \"\$b\" in 0xd03|0xd05|0xd46|0xd80) : ;; *) [ \$p -ge 0 ] 2>/dev/null && { k=\$((k | (1 << p))); n=\$((n + 1)); } ;; esac ;; esac; done < /proc/cpuinfo; if [ \$n -lt 1 ]; then m=0; for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -gt \$m ] 2>/dev/null && m=\$v; done; t=\$((m * 9 / 10)); for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do v=\$(cat \$f 2>/dev/null || echo 0); [ \$v -ge \$t ] 2>/dev/null || continue; c=\${f#/sys/devices/system/cpu/cpu}; c=\${c%%/*}; k=\$((k | (1 << c))); n=\$((n + 1)); done; fi; [ \$n -ge 1 ] || n=$BREIN_DRADEN; [ \$n -le $BREIN_DRADEN ] || n=$BREIN_DRADEN; mk=\$(printf %x \$k); P=''; [ \$k -gt 0 ] && taskset \$mk true >/dev/null 2>&1 && P=\"taskset \$mk\"; ${la:+P=''; TB=\"-tb \$(nproc)\"; }echo \"\${P:+\$mk} \$n\" > kernen.txt;${la:+ echo lees-alle >> kernen.txt;} C=; $BREIN_MAP_TEL/llama-server --help 2>&1 | grep -q -e --cache-ram && C=\"--cache-ram ${BREIN_CACHE_RAM:-0}\"; $BREIN_MAP_TEL/llama-server --help 2>&1 | grep -q -e --ctx-checkpoints && C=\"\$C --ctx-checkpoints 0\"; ${la:+C=\"\$C \$TB\"; }if [ -n \"\$C\" ]; then echo '$BREIN_CRAM_MERK' > cram.txt; else rm -f cram.txt; fi; (setsid nohup \$P $BREIN_MAP_TEL/llama-server -m $1 -t \$n -c $2 -ngl 0 -np 1 --jinja\${C:+ \$C}${x:+ $x} --host 127.0.0.1 --port $BREIN_POORT_TEL > server.log 2>&1 &)"
 }
 # 678 (16 nov, onderzoek stap 3): WELKE LLAMA-SERVER. De APK draagt er twee: libllamaserver.so (kale armv8.0, draait overal) en
 # libllamaserver_dp.so (armv8.2 met dotprod en fp16: sdot/udot en de snelle Q4_0-paden). Meldt de telefoon 'asimddp' in /proc/cpuinfo, dan de
@@ -11336,6 +11424,52 @@ brein_cacheproef() {
   rm -rf "$REK_MAP/brein.lock"
   logregel "Cacheproef klaar: gekozen ${best:-geen extra vlaggen} (nieuwe vraag $best_n s tot het eerste woord, schrijven $best_t tok/s)."
 }
+# 678/123 (28 nov, eigenaar: "het eerste woord bij een koude lange vraag korter"). Het vaste begin raakt nu de cache (678/114); bij een lange
+# NIEUWE vraag is wat overblijft het LEZEN van de vraag zelf. Dat is rekenwerk, en de server staat vast op de grote kernen (voor het schrijven,
+# dat aan het geheugen hangt). DE LEESPROEF: eens per opstelling, na de cacheproef, de vaste meting met en zonder --lees-alle (het lezen over
+# alle kernen, -tb). Houden ALLEEN als het lezen minstens 25% sneller wordt en het schrijven hoogstens 5% trager. Anders blijft alles zo.
+leesproef_lees() {   # meetregel -> "lezen schrijven" (leeg als de regel niet compleet is)
+  printf '%s' "$1" | sed -n 's/.*| lezen \([0-9.]*\) tok\/s.*schrijven \([0-9.]*\) tok.*/\1 \2/p'
+}
+brein_leesproef() {
+  les_loopt && return 0
+  [ -f "$REK_MAP/les-wacht" ] && return 0
+  [ -s "$REK_MAP/cacheproef.sig" ] || return 0   # eerst de cacheproef
+  slot_levend "$REK_MAP/controleproef.lock" && return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  local s model bouw sig huidig basis w l0 s0 l1 s1 regel
+  s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
+  model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  bouw="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
+  huidig="$(head -1 "$REK_MAP/brein-extra" 2>/dev/null | tr -cd 'A-Za-z0-9_+ .=-')"
+  basis="$(printf ' %s ' "$huidig" | sed 's/ --lees-alle / /g; s/^ *//; s/ *$//')"
+  sig="$model|${bouw:-basis}|$basis|l1"
+  [ "$(head -1 "$REK_MAP/leesproef.sig" 2>/dev/null)" = "$sig" ] && return 0
+  brein_slot_neem || return 0
+  logregel "Leesproef: begint ($model); leest het brein een lange vraag sneller met alle kernen? Het brein is een paar minuten weg."
+  [ "$huidig" = "$basis" ] || brein_herstart_met_proef "$s" "$basis"
+  w="$(leesproef_lees "$(BREIN_PROEF="$basis" brein_meet --nu 2>/dev/null | tail -1)")"; l0="${w%% *}"; s0="${w##* }"
+  if [ -z "$w" ]; then
+    logregel "Leesproef: de meting van de huidige opstelling kwam niet rond; NIET afgevinkt, de volgende keer opnieuw."
+    BREIN_PROEF="$huidig" brein_herstart_met "$s" >/dev/null 2>&1 || true; rm -rf "$REK_MAP/brein.lock"; return 0
+  fi
+  local best="$basis"
+  if BREIN_PROEF="$basis --lees-alle" brein_herstart_met "$s"; then
+    w="$(leesproef_lees "$(BREIN_PROEF="$basis --lees-alle" brein_meet --nu 2>/dev/null | tail -1)")"; l1="${w%% *}"; s1="${w##* }"
+    if [ -z "$w" ]; then logregel "Leesproef: met alle kernen kwam er geen meting; niet gekozen."
+    elif awk "BEGIN{exit !($l1 >= $l0 * 1.25 && $s1 >= $s0 * 0.95)}" 2>/dev/null; then
+      best="$basis --lees-alle"; logregel "Leesproef: alle kernen wint (lezen $l1 in plaats van $l0 tok/s, schrijven $s1 tok/s)."
+    else logregel "Leesproef: alle kernen scheelt te weinig of schrijft trager (lezen $l1 tegen $l0, schrijven $s1 tegen $s0 tok/s); niet gekozen."; fi
+  else
+    logregel "Leesproef: llama-server startte niet met alle kernen; overgeslagen."
+  fi
+  best="$(printf '%s' "$best" | sed 's/^ *//; s/ *$//')"
+  printf '%s\n' "$best" >"$REK_MAP/brein-extra"
+  brein_herstart_met "$s" || logregel "Leesproef: de gekozen opstelling startte niet; de waakhond probeert het opnieuw."
+  printf '%s\n' "$sig" >"$REK_MAP/leesproef.sig"
+  rm -rf "$REK_MAP/brein.lock"
+  logregel "Leesproef klaar: gekozen ${best:-geen extra vlaggen}."
+}
 brein_herstart_met_proef() { BREIN_PROEF="$2" brein_herstart_met "$1" >/dev/null 2>&1 || true; }
 # 678 (16 nov, onderzoek stap 3 deel 2, stap 6 en deel 2 punt 3): DE MODELPROEF. Na de proefbank (de vlaggen staan goed) probeert ARTEMIS
 # andere breinen op DEZELFDE manier: snelheid met de vaste meting, slimheid met beide lesrijen (alleen het echte pad, 20 vragen, de code kijkt
@@ -13734,7 +13868,8 @@ case "${1:-status}" in
   rem-uit) rek_rem_uit ;;
   brein-meet) brein_meet ;;                         # 678 (17 nov): de vaste snelheidsmeting (eigen taak, niet meer binnen het verslag)
   brein-proefbank) brein_proefbank ;;
-  brein-cacheproef) brein_cacheproef ;;             # 678/111: kan het brein het vaste begin hergebruiken (--swa-full / checkpoints, gemeten)
+  brein-cacheproef) brein_cacheproef ;;
+  brein-leesproef) brein_leesproef ;;               # 678/123: leest het brein een lange vraag sneller met alle kernen (gemeten)             # 678/111: kan het brein het vaste begin hergebruiken (--swa-full / checkpoints, gemeten)
   surf-aan) surf_aan ;;                          # 678 (23 nov): de surftelefoon (verdeler pauzeert, scherm in een eigen venster)
   surf-uit) surf_uit ;;
   surf-zoek) surf_zoek "${2:-}" ;;
