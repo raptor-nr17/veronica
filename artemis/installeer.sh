@@ -1526,8 +1526,29 @@ def brein_wie():
         return ''
     m = re.sub(r'\.gguf$', '', str(d.get('model') or ''))
     return ('Jij bent het taalmodel %s%s; noem jezelf zo als ernaar gevraagd wordt.' % (m, (', en je draait op de telefoon ' + str(d.get('telefoon'))) if d.get('telefoon') else '')) if m else ''
+# 678/114 (28 nov, eigenaar: "maak het vaste begin van elke ARTEMIS-vraag identiek zodat de cache altijd raakt"). Gemeten om 07:47: eerste woord
+# 71 s zonder cache, 0,3 s met. Het brein heeft EEN vak (-np 1): elke vraag met een ANDER begin (het verbeteren, de rekenhulp, vertalen, zoeken
+# zetten elk hun eigen systeemtekst) gooide het bewaarde begin weg, en de volgende vraag van Veronica las alles opnieuw. Nu begint ELKE vraag
+# aan het brein met precies begintekst(); wat die vraag zelf als systeemtekst had, komt daarachter. Regels die al in het vaste begin staan
+# (de kern van de kennis, de naam van het model) gaan er bij de rest af, zodat niets dubbel staat.
+def vast_begin(lijf):
+    if not isinstance(lijf, dict) or not isinstance(lijf.get('messages'), list) or not lijf['messages']: return lijf
+    b = begintekst()
+    if not b: return lijf
+    m = [dict(x) if isinstance(x, dict) else x for x in lijf['messages']]
+    if isinstance(m[0], dict) and m[0].get('role') == 'system':
+        c = str(m[0].get('content') or '')
+        if c.startswith(b): return lijf
+        w = brein_wie()
+        if w: c = c.replace(w, '')
+        vast = set(r.strip() for r in kennis_vast().splitlines() if r.strip())
+        rest = '\n'.join(r for r in c.splitlines() if r.strip() not in vast).strip()
+        m[0] = dict(m[0], content=b + ('\n\n' + rest if rest else ''))
+    else:
+        m.insert(0, {'role': 'system', 'content': b})
+    return dict(lijf, messages=m)
 def brein_vraag(lijf, timeout=180):
-    data = json.dumps(lijf).encode()
+    data = json.dumps(vast_begin(lijf)).encode()
     for poging in (0, 1):
         try:
             req = urllib.request.Request('http://127.0.0.1:%d/v1/chat/completions' % BREIN_LOK, data=data, headers={'Content-Type': 'application/json'})
@@ -5926,14 +5947,45 @@ bh_onthoud_ips() {
 }
 bh_poort_stand() {   # ip -> open | dicht (geweigerd: de telefoon is er, adb draadloos staat uit) | stil (geen antwoord)
   local e rc
+  # 678/115: een Tailscale-adres (100.64-100.127) bereikt Crostini NIET rechtstreeks (userspace-networking); dan via "tailscale nc".
+  # Blijft nc open staan tot de tijdslimiet, dan is er verbonden (open); een weigering komt meteen terug.
+  case "$1" in 100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*)
+    command -v tailscale >/dev/null 2>&1 || { printf 'stil'; return; }
+    e="$(timeout 5 tailscale nc "$1" 5555 </dev/null 2>&1)"; rc=$?
+    [ "$rc" -eq 124 ] && { printf 'open'; return; }
+    case "$e" in *efused*) printf 'dicht' ;; *) printf 'stil' ;; esac
+    return ;;
+  esac
   e="$(timeout 4 bash -c "exec 3<>/dev/tcp/$1/5555" 2>&1)"; rc=$?
   [ "$rc" -eq 0 ] && { printf 'open'; return; }
   case "$e" in *efused*) printf 'dicht' ;; *) printf 'stil' ;; esac
 }
+# 678/115 (28 nov, de Cat: "reden onbekend: geen adres bekend sinds deze versie"). Zonder onthouden adres kijkt de beheerder op TAILSCALE:
+# welke peers van het tailnet zijn online, en wat zegt poort 5555 daar? Peers die nu al via een brug verbonden zijn en adressen van de F8
+# tellen niet mee. Zo staat er toch iets wat te doen is (bv. "100.x online, 5555 geweigerd = adb draadloos staat uit op die telefoon").
+bh_waarom_ts() {
+  command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1 || {
+    printf 'reden onbekend: ik ken nog geen adres van deze telefoon (hij was niet verbonden sinds deze versie), en Tailscale draait hier niet'; return; }
+  local zelf ip rest st uit="" n=0 verb
+  zelf="$(tailscale ip -4 2>/dev/null | head -1)"
+  verb="$(awk '{print $2}' "$TS_BRUG_F" 2>/dev/null | tr '\n' ' ')"
+  while read -r ip rest; do
+    case "$ip" in 100.*) ;; *) continue ;; esac
+    [ "$ip" = "$zelf" ] && continue
+    grep -qxF "$ip" "$F8_IPS_F" 2>/dev/null && continue
+    case " $verb " in *" $ip "*) "$ADB" devices 2>/dev/null | grep -q "^127.0.0.1:$(awk -v i="$ip" '$2==i{print $1; exit}' "$TS_BRUG_F" 2>/dev/null)[[:space:]]*device" && continue ;; esac
+    case "$rest" in *offline*) uit="$uit; $ip offline"; n=$((n+1)); continue ;; esac
+    st="$(bh_poort_stand "$ip")"
+    case "$st" in open) uit="$uit; $ip online, 5555 open" ;; dicht) uit="$uit; $ip online, 5555 geweigerd (adb draadloos uit)" ;; *) uit="$uit; $ip online, 5555 geeft geen antwoord" ;; esac
+    n=$((n+1))
+  done < <(tailscale status 2>/dev/null)
+  [ "$n" -gt 0 ] || { printf 'geen adres van deze telefoon bekend, en op Tailscale staat geen andere telefoon die niet al verbonden is'; return; }
+  printf 'geen eigen adres bekend; op Tailscale%s' "$(printf '%s' "$uit" | sed 's/^;/:/')"
+}
 bh_waarom() {   # $1 = id, $2 = de relay-lijst (rek_lijst_rauw) -> een zin
   local id="$1" rauw="$2" ips ip st hart=0 open=0 dicht=0
   ips="$(_bh_get "$id" "$BEHEERDER_IPS_F")"
-  [ -n "$ips" ] || { printf 'reden onbekend: ik ken nog geen adres van deze telefoon (hij was niet verbonden sinds deze versie)'; return; }
+  [ -n "$ips" ] || { bh_waarom_ts; return; }
   for ip in ${ips//,/ }; do
     printf '%s\n' "$rauw" | awk -F'\t' -v ip="$ip" '{n=split($1,a,","); for(i=1;i<=n;i++) if(a[i]==ip) f=1} END{exit !f}' && hart=1
     st="$(bh_poort_stand "$ip")"
