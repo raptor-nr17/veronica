@@ -1343,23 +1343,36 @@ def kennis_woorden(t):   # de eerste vier letters als eenvoudige stam: "warm" vi
 # geheugen, per tekst); per vraag alleen de vraag zelf. De regels die in BETEKENIS het dichtst bij de vraag liggen gaan mee (met een klein
 # voordeel voor gedeelde woorden). Antwoordt de Cat niet, of te traag, dan de woordregel van hiervoor -- er gaat nooit iets verloren.
 BIBLIO_LOK = 18097
+BIBRES_LOK = 18098   # 678/107: de reserve-bibliothecaris op de controle-telefoon (alleen als de Cat weg is)
 KENNIS_VEC = {}
+BIB_BRON = [None]
+def _bib_gezond(poort):
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:%d/health' % poort, timeout=6) as r: return b'ok' in r.read(200)
+    except Exception: return False
+def bib_poort():
+    # de Cat als hij antwoordt, anders de reserve; wisselt de bron, dan gaan de bewaarde vectoren weg (twee modellen nooit door elkaar)
+    p = BIBLIO_LOK if _bib_gezond(BIBLIO_LOK) else (BIBRES_LOK if _bib_gezond(BIBRES_LOK) else BIBLIO_LOK)
+    if BIB_BRON[0] != p:
+        KENNIS_VEC.clear(); BIB_BRON[0] = p
+    return p
 def bibliothecaris_embed(teksten, timeout=6):
     try:
         op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         lijf = json.dumps({'input': list(teksten)}).encode()
     except Exception:
         return None
+    poort = bib_poort()
     for poging in (0, 1):
         try:
-            with op.open(urllib.request.Request('http://127.0.0.1:%d/v1/embeddings' % BIBLIO_LOK, data=lijf, headers={'Content-Type': 'application/json'}), timeout=timeout) as r:
+            with op.open(urllib.request.Request('http://127.0.0.1:%d/v1/embeddings' % poort, data=lijf, headers={'Content-Type': 'application/json'}), timeout=timeout) as r:
                 j = json.loads(r.read(20000000).decode('utf-8', 'replace'))
             d = sorted(j.get('data') or [], key=lambda x: x.get('index', 0))
             v = [x.get('embedding') for x in d]
             return v if len(v) == len(teksten) and all(isinstance(x, list) and x for x in v) else None
         except Exception:
             try:
-                if poging == 0 and 'OK' in doe_args(['bibliothecaris-doorsturing'], 15): continue
+                if poging == 0 and poort == BIBLIO_LOK and 'OK' in doe_args(['bibliothecaris-doorsturing'], 15): continue
             except Exception:
                 pass
             return None
@@ -1760,6 +1773,7 @@ def lus():
                 threading.Thread(target=doe_args, args=(['controle-waak'], 330), daemon=True).start()   # 678 (15 nov): en de controle-telefoon
                 threading.Thread(target=doe_args, args=(['verdeler-waak'], 330), daemon=True).start()   # 678 (16 nov): en de verdeler
                 threading.Thread(target=doe_args, args=(['bibliothecaris-waak'], 330), daemon=True).start()   # 678 (17 nov, stap 5): en de bibliothecaris op de Cat
+                threading.Thread(target=doe_args, args=(['bibreserve-tik'], 330), daemon=True).start()   # 678/107: de reserve als de Cat weg is
             threading.Thread(target=doe_args, args=(['versie-kijk'], 200), daemon=True).start()   # 678 (16 nov): een nieuwe versie binnen een paar minuten
             if RONDE % 5 == 1:
                 threading.Thread(target=doe_args, args=(['proef-vanzelf'], 3600), daemon=True).start()
@@ -4851,7 +4865,7 @@ F8_GEVONDEN_FILE = os.environ.get('F8_GEVONDEN_FILE', '')              # hier on
 def _backends():
     lijst = []
     if F8_BASE:
-        lijst.append({'naam': 'F8', 'soort': 'lokaal', 'base': F8_BASE, 'token': F8_TOKEN, 'model': None})
+        lijst.append({'naam': 'het brein op het rek', 'soort': 'lokaal', 'base': F8_BASE, 'token': F8_TOKEN, 'model': None})   # 678/106: het hoofdmodel is het brein (de naam F8_BASE is historisch)
     try:
         # PROXY_RESERVE: JSON-lijst reserve-telefoons met dezelfde E4B op het LAN, bv. [{"naam":"Cat","base":"http://ip:8081/v1","token":"<rij-code>"}]
         for r in json.loads(os.environ.get('PROXY_RESERVE', '') or '[]'):
@@ -5459,7 +5473,7 @@ def _chat_naar_model(pad, body):
         if be['soort'] == 'lokaal' and info.get('onbereikbaar'):
             # 592p: de F8 is weg -- misschien alleen een ander IP (ander wifi). Scan het LAN, en als de F8 ergens anders
             # antwoordt, gebruik dat adres METEEN. Zo gaan we NOOIT naar Gemini zolang de F8 te vinden is.
-            if be['naam'] == 'F8' and F8_LAN:
+            if be['naam'] == 'het brein op het rek' and F8_LAN:   # F8_LAN staat sinds 678/104 altijd uit
                 nieuw = _vind_f8_lan()
                 if nieuw and nieuw.rstrip('/') != be['base']:
                     _notuleer('[f8] nieuw LAN-adres gevonden: ' + nieuw + ' (was ' + be['base'] + ')')
@@ -5627,13 +5641,14 @@ cat_kijk() {
 # 678 (24 nov): de adb-kladmap opruimen ZONDER de modellen van een rol die hier draait. Weg: losse bestanden bovenin /data/local/tmp
 # (apk-restjes, meetbestanden, het meetmodel) en de map van een rol waarvan deze telefoon NIET (meer) de vaste telefoon is. Blijft: de map
 # van elke rol die deze telefoon nu heeft. Alleen deze vier namen; nooit iets anders dan /data/local/tmp.
-REK_ROLMAPPEN_TEL="brein controle verdeler bibliothecaris"
+REK_ROLMAPPEN_TEL="brein controle verdeler bibliothecaris bibreserve"
 rek_rol_pin() {   # $1 rol -> het serienummer van de vaste telefoon van die rol (of niets)
   case "$1" in
     brein) head -1 "$REK_MAP/brein-vast" 2>/dev/null ;;
     controle) head -1 "$REK_MAP/controle/brein-vast" 2>/dev/null ;;
     verdeler) head -1 "$REK_MAP/verdeler/brein-vast" 2>/dev/null ;;
     bibliothecaris) head -1 "$REK_MAP/bibliothecaris/brein-vast" 2>/dev/null ;;
+    bibreserve) head -1 "$REK_MAP/controle/brein-vast" 2>/dev/null ;;   # 678/107: de reserve hoort bij de controle-telefoon
   esac | tr -d '\r\n '
 }
 rek_tmp_ruim() {   # $1 adb-serienummer, $2 toestel-id -> zegt welke rolmappen weg zijn
@@ -9800,7 +9815,7 @@ controle_proef() {   # de hele proef; schrijft CONTROLE_PROEF_F en controle/geko
   # 678 (23 nov): de proef van 22 nov gaf het huidige model 10/27 met 778 ms per oordeel -- veel te snel voor een 3B-model op deze telefoon: de
   # controle antwoordde bij de meeste gevallen NIET, en dat telde als fout. Nu apart geteld; antwoordt hij bij meer dan een kwart niet, dan is de
   # meting ONGELDIG (geen score, geen wissel) en probeert de proef het later opnieuw.
-  local hgeen kgeen ongeldig="" onderbroken=""
+  local hgeen kgeen ongeldig="" onderbroken="" resultaten=""
   r="$(controle_proef_score)"; read -r hg tot hms hgeen _ hmis _hg <<<"${r:--1 27 0 27 - - -}"
   if [ "${hgeen:-0}" -gt $(( ${tot:-27} / 4 )) ]; then
     regels="| ${huidig:-?} (huidig) | ongeldig: geen antwoord bij $hgeen van $tot (de controle was niet bereikbaar) | | geen antwoord: $_hg |"$'\n'; ongeldig=1; hg=-1
@@ -9824,9 +9839,19 @@ except Exception: print("")' "$CONTROLE_MAP/brein-stand.json" 2>/dev/null)"
     r="$(controle_proef_score)"; read -r goed tot ms kgeen _ kmis _kg <<<"${r:--1 27 0 27 - - -}"
     if [ "${kgeen:-0}" -gt $(( ${tot:-27} / 4 )) ]; then regels="$regels| $model | ongeldig: geen antwoord bij $kgeen van $tot | | geen antwoord: $_kg |"$'\n'; ongeldig=1; continue; fi
     regels="$regels| $model | $goed/$tot | $ms ms | $kmis${_kg:+$([ "$_kg" != - ] && printf '; geen antwoord: %s' "$_kg")} |"$'\n'
+    resultaten="$resultaten$paar|$goed|$ms|$model"$'\n'
     logregel "Controle-proef: $model haalde $goed/$tot (gemiddeld $ms ms per oordeel)."
     if [ "$goed" -gt "$bestg" ] || { [ "$goed" = "$bestg" ] && [ "$ms" -lt "$bestms" ]; }; then best="$paar"; bestg="$goed"; bestms="$ms"; bestm="$model"; fi
   done
+  # 678/106 (28 nov): SNELHEID TELT MEE. Ronde 4 koos gemma-4-E2B (25/27) met 57 s per oordeel, terwijl gemma-3-4b 24/27 haalde in 25 s.
+  # Een kandidaat die hoogstens EEN punt lager scoort en minstens TWEE keer zo snel is, wint -- de snelste daarvan.
+  local alt
+  if [ -n "$best" ] && [ "${bestms:-0}" -gt 0 ]; then
+    alt="$(printf '%s' "$resultaten" | awk -F'|' -v bg="$bestg" -v bm="$bestms" 'NF>=4 && $2+0>=bg-1 && $3*2<=bm {print $3"|"$0}' | sort -t'|' -k1,1n | head -1 | cut -d'|' -f2-)"
+    if [ -n "$alt" ]; then
+      best="$(printf '%s' "$alt" | cut -d'|' -f1)"; bestg="$(printf '%s' "$alt" | cut -d'|' -f2)"; bestms="$(printf '%s' "$alt" | cut -d'|' -f3)"; bestm="$(printf '%s' "$alt" | cut -d'|' -f4)"
+    fi
+  fi
   local besluit
   if [ -n "$ongeldig" ] && [ "$hg" -lt 0 ]; then
     besluit="Geen wissel: de meting van het huidige model was ONGELDIG (de controle antwoordde niet). Over zes uur opnieuw."
@@ -9858,7 +9883,8 @@ controle_proef_tik() {   # de console-lus: een keer per kandidatenlijst, los van
   # 678 (21 nov): ronde 2 = de scherpere gevallen (de eerste ronde gaf iedereen 12/14); een nieuwe ronde = dit getal ophogen
   # 678/95 (24 nov): ronde 3 = nog een keer na het leegmaken van de opslag (drie kandidaten werden door een les niet gemeten)
   # 678/101 (26 nov): ronde 4 = de handtekening van ronde 3 was door de oude code al bij de START gezet van een proef die nooit afkwam
-  local sig; sig="$(printf '%s|%s|ronde4' "$CONTROLE_KANDIDATEN" "$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")" | sha256sum | cut -c1-16)"
+  # 678/106 (28 nov): ronde 5 = opnieuw kiezen met de snelheid erbij (ronde 4 koos een model van 57 s per oordeel)
+  local sig; sig="$(printf '%s|%s|ronde5' "$CONTROLE_KANDIDATEN" "$(familie_van "$(head -1 "$REK_MAP/brein-model" 2>/dev/null)")" | sha256sum | cut -c1-16)"
   [ "$(head -1 "$REK_MAP/controle-proef.sig" 2>/dev/null)" = "$sig" ] && return 0
   [ -s "$CONTROLE_MAP/brein-vast" ] || return 0
   # 678 (23 nov, eigenaar: eerst de modelproef, dan de vaste toets): NIET terwijl een proef het brein vasthoudt, en pas als de vaste toets van het
@@ -9968,6 +9994,63 @@ bibliothecaris_rol() {
   als_bibliothecaris brein_rol
 }
 bibliothecaris_waak() { bibliothecaris_kies >/dev/null 2>&1 || return 0; als_bibliothecaris brein_waak; }
+# 678/107 (28 nov, eigenaar: "bouw de bibliothecaris als reserve op de S10, naast de controle"). DE RESERVE-BIBLIOTHECARIS. Valt de Cat weg
+# (kabel los, USB niet doorgegeven), dan zoekt het brein zijn kennis alleen nog op woorden. Nu: antwoordt de bibliothecaris TIEN MINUTEN niet,
+# dan start dezelfde embeddingserver op de telefoon van de CONTROLE -- in een eigen map en op een eigen poort (8098, hier 18098), zodat de
+# controle er niets van merkt (de waakhond telt en stopt servers per map). Komt de Cat terug, dan gaat de reserve weer uit en is het geheugen
+# van de controle-telefoon weer helemaal vrij. Nooit de F8, nooit de brein-telefoon; de controle-telefoon wordt NIET schoongeveegd.
+BIBRES_MAP="$REK_MAP/bibreserve"
+BIBRES_POORT_LOK=18098
+BIBRES_NA_S="${BIBRES_NA_S:-600}"
+als_bibreserve() {
+  (
+    mkdir -p "$BIBRES_MAP" 2>/dev/null; chmod 700 "$BIBRES_MAP" 2>/dev/null || true
+    [ -e "$REK_MAP/rek-token.conf" ] && ln -sf "$REK_MAP/rek-token.conf" "$BIBRES_MAP/rek-token.conf"
+    BREIN_MINI_OK=1
+    BREIN_MODELLEN='ggml-org/embeddinggemma-300M-GGUF Q8_0;nomic-ai/nomic-embed-text-v2-moe-GGUF Q4_0'
+    REK_MAP_BASIS="$REK_MAP"
+    REK_MAP="$BIBRES_MAP"
+    BREIN_POORT_TEL=8098; BREIN_POORT_LOK="$BIBRES_POORT_LOK"; BREIN_MAP_TEL="/data/local/tmp/bibreserve"; BREIN_CONTEXT=2048
+    BREIN_VAST_F="$REK_MAP/brein-vast"; BREIN_AAN_F="$REK_MAP/brein-aan"; BREIN_ID_F="$REK_MAP/brein-id.conf"; BREIN_STAND_F="$REK_MAP/brein-stand.json"
+    BREIN_BRUG_F="$REK_MAP/brein-brug"; BREIN_BRUG_POORT=5624; BREIN_DIAG_F="$REK_MAP/brein-route.log"
+    BREIN_GEEN_VEGEN=1; BREIN_CMD_ROL=bibreserve-rol; BREIN_LABEL="Bibliothecaris (reserve)"; BREIN_ROLNAAM=bibreserve; BREIN_HET="De reserve-bibliothecaris"
+    printf -- '--embedding\n' >"$REK_MAP/brein-model-extra"
+    "$@"
+  )
+}
+bibreserve_kies() {   # de vaste telefoon van de CONTROLE; nooit de F8, nooit de brein-telefoon
+  local c b
+  c="$(head -1 "$CONTROLE_MAP/brein-vast" 2>/dev/null | tr -d '\r\n ')"; b="$(head -1 "$BREIN_VAST_F" 2>/dev/null | tr -d '\r\n ')"
+  [ -n "$c" ] && [ "$c" != "$b" ] || return 1
+  mkdir -p "$BIBRES_MAP"; chmod 700 "$BIBRES_MAP" 2>/dev/null || true
+  [ "$(head -1 "$BIBRES_MAP/brein-vast" 2>/dev/null | tr -d '\r\n ')" = "$c" ] || printf '%s\n' "$c" >"$BIBRES_MAP/brein-vast"
+  chmod 600 "$BIBRES_MAP/brein-vast" 2>/dev/null || true
+}
+bibreserve_rol() { bibreserve_kies || { zeg "Reserve-bibliothecaris: er is geen controle-telefoon."; return 0; }; als_bibreserve brein_rol; }
+bibreserve_tik() {   # de console-lus: de Cat weg (>= BIBRES_NA_S) = de reserve aan; de Cat terug = de reserve uit
+  local nu t0
+  nu="$(date +%s)"
+  if curl -fsS -m 6 "http://127.0.0.1:$BIBLIO_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
+    rm -f "$REK_MAP/bibliothecaris-weg.t"
+    if [ -f "$BIBRES_MAP/brein-aan" ]; then
+      als_bibreserve brein_stop >/dev/null 2>&1 || true; rm -f "$BIBRES_MAP/brein-aan"
+      logregel "Bibliothecaris: de Cat antwoordt weer; de reserve op de controle-telefoon is gestopt."
+    fi
+    return 0
+  fi
+  [ -s "$REK_MAP/bibliothecaris-weg.t" ] || printf '%s\n' "$nu" >"$REK_MAP/bibliothecaris-weg.t"
+  t0="$(head -1 "$REK_MAP/bibliothecaris-weg.t" | tr -cd '0-9')"; t0="${t0:-$nu}"
+  [ $((nu - t0)) -ge "$BIBRES_NA_S" ] || return 0
+  bibreserve_kies || return 0
+  if curl -fsS -m 6 "http://127.0.0.1:$BIBRES_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then return 0; fi
+  if [ ! -f "$BIBRES_MAP/brein-aan" ]; then
+    logregel "Bibliothecaris: de Cat antwoordt al $(( (nu - t0) / 60 )) minuten niet; de reserve start op de controle-telefoon (eigen map en poort, de controle blijft draaien)."
+    ( setsid "$0" bibreserve-rol </dev/null >>"$REK_MAP/console-bibreserve-rol.log" 2>&1 & ) 2>/dev/null
+  else
+    als_bibreserve brein_waak >/dev/null 2>&1 || true
+  fi
+}
+
 # 678 (16 nov, onderzoek deel 2 punt 4): EEN KEER OPNIEUW KIEZEN. Een rol kiest zijn model alleen bij het starten; de waakhond herstart met het model
 # dat er al was. Is de modellijst van een rol veranderd (ROL_MODELKEUS_VERSIE), dan start ARTEMIS die rol EEN keer opnieuw zodat hij uit de
 # nieuwe lijst kiest. Niet tijdens een les; de keuze staat daarna in de status en de vaste meting van die rol.
@@ -13385,6 +13468,8 @@ case "${1:-status}" in
   bibliothecaris-stop) als_bibliothecaris brein_stop ;;
   bibliothecaris-doorsturing) als_bibliothecaris brein_doorsturing ;;
   bibliothecaris-waak) bibliothecaris_waak ;;
+  bibreserve-rol) bibreserve_rol ;;                # 678/107: de reserve-bibliothecaris op de controle-telefoon
+  bibreserve-tik) bibreserve_tik ;;
   stand-tik) stand_tik "${2:-}" ;;
   proef-vanzelf) proef_vanzelf ;;
   rem-uit) rek_rem_uit ;;
