@@ -12999,9 +12999,16 @@ verhuis_ronde() {
   zeg "Verhuisronde ($waarom): wifi, Tailscale, het rek via Tailscale, koppelen, rij-code en rollen."
   printf '%s Verhuisronde (%s) begonnen.\n' "$(date '+%d-%m %H:%M')" "$waarom" >"$VERHUIS_F" 2>/dev/null || true
   # eerst wat al in adb hangt (snel: Tailscale aan), pas daarna het trage zoeken naar draadloze telefoons
+  # 678/120 (28 nov, voor de verhuizing): na een verhuizing hangt er nog GEEN telefoon in adb -- deze lus liep dan over een lege lijst, en de
+  # telefoons die daarna via Tailscale of de relay terugkwamen werden nooit nagekeken (wifi, Tailscale, lockdown). Nu loopt hij een tweede keer
+  # NA het opnieuw verbinden, voor wie er nog niet bij was (op toestel-id), en zet de beheerder ze daarna herstart-vast (bh_vastzet).
+  local gedaan=""
+  verhuis_lus() {
   for s in $(verbonden); do
+    case " $gedaan " in *" $(toestel_id "$s") "*) continue ;; esac
     is_f8 "$s" && continue
     toegestaan "$(toestel_id "$s")" || continue
+    gedaan="$gedaan $(toestel_id "$s")"
     naam="$(toestel_naam "$s" | tr -cd 'A-Za-z0-9 ._-')"; naam="${naam:-een telefoon}"; n=$((n + 1))
     tel_ontgrendel "$s" || slot="$slot $naam"   # een herstarte telefoon staat op het vergrendelscherm: zonder code zelf wegvegen
     w="$(tel_wifi_stand "$s")"
@@ -13021,9 +13028,13 @@ verhuis_ronde() {
     case "$ts" in AAN*) logregel "Verhuisronde: Tailscale stond uit op $naam; ik heb hem weer aangezet (${ts#AAN })." ;; NIET) logregel "Verhuisronde: Tailscale ging niet vanzelf aan op $naam." ;; esac
     { printf '%s Verhuisronde (%s) loopt nog...\n' "$(date '+%d-%m %H:%M')" "$waarom"; printf '%s' "$regels"; } >"$VERHUIS_F" 2>/dev/null || true   # tussenstand: wat al gedaan is gaat nooit verloren
   done
+  }
+  verhuis_lus
   zeg "${regels%$'\n'}"
   verbind_draadloos >/dev/null 2>&1 || true; rek_verbind_lijst >/dev/null 2>&1 || true   # daarna het trage zoeken (draadloze telefoons die nog niet in adb hingen)
   rek_via_tailscale >/dev/null 2>&1 || true
+  verhuis_lus   # 678/120: nu ook de telefoons die net via Tailscale of de relay terugkwamen
+  BH_VAST_RUST=0 bh_vastzet >/dev/null 2>&1 || true   # 678/120: en meteen herstart-vast (het recht voor JARVIS, draadloze foutopsporing)
   kabel_koppel_auto >/dev/null 2>&1 || true
   RIJCODE_WACHT_S=0 rijcode_auto >/dev/null 2>&1 || true
   for r in brein-waak controle-waak verdeler-waak bibliothecaris-waak; do ( setsid "$0" "$r" </dev/null >/dev/null 2>&1 & ) 2>/dev/null; done   # de rollen starten los (kan minuten duren)
