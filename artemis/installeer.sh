@@ -3348,6 +3348,17 @@ scan_5555() {
   onthoud_wifi_adb   # 599: alleen toegestane, niet-F8 endpoints onthouden
 }
 
+# 678/117 (28 nov, de verdeler: "JARVIS starten lukte niet (open hem een keer met de hand)"). Het starten kwam twee seconden na "adb tcpip 5555",
+# en dat herstart adbd: de kabelverbinding was dan nog niet terug. En "monkey" mag op sommige telefoons niet (invoer nabootsen staat daar
+# apart op slot). Nu: eerst wachten tot de telefoon er weer is (hoogstens 20 s), dan "am start" op de startscherm-activiteit van JARVIS,
+# en pas als dat niet lukt monkey. Nooit de F8 (de aanroepers slaan hem over), alleen het pakket van JARVIS.
+jarvis_open() {   # $1 serienummer -> 0 = JARVIS gestart
+  local s="$1" comp
+  timeout 20 "$ADB" -s "$s" wait-for-device >/dev/null 2>&1 || true
+  comp="$("$ADB" -s "$s" shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$JARVIS_PKG" 2>/dev/null | tr -d '\r' | grep '/' | tail -1)"
+  if [ -n "$comp" ] && "$ADB" -s "$s" shell am start -n "$comp" 2>/dev/null | tr -d '\r' | grep -qv -e 'Error' -e 'Exception'; then return 0; fi
+  "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 2>/dev/null | grep -q 'Events injected: 1'
+}
 # (4) KOPPELEN VANAF DE KABEL, HERSTART-VAST (Android 11+ Draadloze foutopsporing). Een rektelefoon die één keer via de kabel is
 # toegestaan (adb-stand 'device') krijgt: (a) het recht WRITE_SECURE_SETTINGS voor JARVIS, zodat de JARVIS-boot-herinschakeling de
 # draadloze foutopsporing na een herstart ZELF weer aanzet; (b) draadloze foutopsporing AAN (adb_wifi_enabled=1). De adb-sleutel van
@@ -3484,7 +3495,7 @@ telefoon_klaarzetten() {
       zeg "  - draadloze foutopsporing aan${ip:+ (wifi $ip)}."
     fi
     # 8. JARVIS starten.
-    "$ADB" -s "$s" shell monkey -p "$JARVIS_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 && zeg "  - JARVIS gestart." || zeg "  - JARVIS starten lukte niet (open hem één keer met de hand)."
+    jarvis_open "$s" && zeg "  - JARVIS gestart." || zeg "  - JARVIS starten lukte niet (open hem één keer met de hand)."
     # 9. Nakijken: zit hij op wifi (niet mobiele data)? Zo niet: de wifi van DEZE plek zelf doorgeven (als die bewaard is).
     if [ -n "$ip" ]; then zeg "  - staat op wifi ($ip); hij hoort zich nu bij de relay te melden."; else
       zeg "  - geen wifi-adres; ik probeer de wifi van deze plek zelf door te geven."
@@ -5945,6 +5956,48 @@ bh_onthoud_ips() {
     [ -n "$ips" ] && _bh_set "$id" "$BEHEERDER_IPS_F" "$ips"
   done
 }
+# 678/118 (28 nov, eigenaar: "laat de beheerder 5555 herstart-vast zetten zonder kabel waar dat kan"). Het recht WRITE_SECURE_SETTINGS en
+# draadloze foutopsporing kregen tot nu toe alleen de telefoons die aan de kabel klaargezet werden. "pm grant" en "settings" werken over ELKE
+# adb-verbinding -- ook de Tailscale-tunnel. Dus zet de beheerder ze bij elke verbonden rektelefoon (hoogstens eens per zes uur), en dan zet
+# JARVIS na een herstart 5555 zelf terug (de boot-ontvanger). Staat 5555 niet (getprop), dan:
+#  - over de kabel: "adb tcpip 5555";
+#  - over draadloze foutopsporing (ip:poort, niet 5555): ook "adb tcpip 5555" en meteen opnieuw verbinden op ip:5555 -- precies wat JARVIS
+#    zelf ook doet;
+#  - over een Tailscale-tunnel (127.0.0.1:56xx): NIET (die verbinding loopt al naar 5555; een herstart van adbd zou hem verbreken).
+# Nooit de F8, alleen telefoons van de lijst, alleen de adb-instellingen en het recht van JARVIS.
+BH_VAST_F="$REK_MAP/beheerder-vast"
+bh_vastzet() {
+  local s id nu t relmaj g tp ip
+  nu="$(date +%s)"
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; case "$id" in ''|adb:*) continue ;; esac
+    grep -qxF "$id" "$TOEG" 2>/dev/null || continue
+    t="$(_bh_get "$id" "$BH_VAST_F")"; case "$t" in ''|*[!0-9]*) t=0 ;; esac
+    [ $((nu - t)) -lt "${BH_VAST_RUST:-21600}" ] && continue
+    _bh_set "$id" "$BH_VAST_F" "$nu"
+    relmaj="$("$ADB" -s "$s" shell getprop ro.build.version.release 2>/dev/null | tr -d '\r ' | cut -d. -f1)"; case "$relmaj" in ''|*[!0-9]*) relmaj=0 ;; esac
+    [ "$relmaj" -ge 11 ] || continue
+    if ! "$ADB" -s "$s" shell dumpsys package "$JARVIS_PKG" 2>/dev/null | grep -q 'WRITE_SECURE_SETTINGS: granted=true'; then
+      if "$ADB" -s "$s" shell pm grant "$JARVIS_PKG" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1; then
+        zeg "Beheerder: $id: JARVIS mag nu na een herstart zelf poort 5555 terugzetten (zonder kabel gezet)."
+      else
+        zeg "Beheerder: $id: kon JARVIS het recht voor 5555 niet geven (heeft hij een oude versie?)."
+      fi
+    fi
+    g="$("$ADB" -s "$s" shell settings get global adb_wifi_enabled 2>/dev/null | tr -d '\r ')"
+    [ "$g" = 1 ] || "$ADB" -s "$s" shell settings put global adb_wifi_enabled 1 >/dev/null 2>&1 || true
+    tp="$("$ADB" -s "$s" shell getprop service.adb.tcp.port 2>/dev/null | tr -d '\r ')"
+    [ "$tp" = 5555 ] && continue
+    case "$s" in
+      127.0.0.1:*) : ;;
+      *:5555) : ;;
+      *:*) ip="${s%%:*}"
+           "$ADB" -s "$s" tcpip 5555 >/dev/null 2>&1 && { sleep 3; "$ADB" connect "$ip:5555" >/dev/null 2>&1 || true; zeg "Beheerder: $id: poort 5555 gezet (zonder kabel, via draadloze foutopsporing)."; } ;;
+      *)   "$ADB" -s "$s" tcpip 5555 >/dev/null 2>&1 && { timeout 20 "$ADB" -s "$s" wait-for-device >/dev/null 2>&1 || true; zeg "Beheerder: $id: poort 5555 gezet (via de kabel)."; } ;;
+    esac
+  done
+}
 bh_poort_stand() {   # ip -> open | dicht (geweigerd: de telefoon is er, adb draadloos staat uit) | stil (geen antwoord)
   local e rc
   # 678/115: een Tailscale-adres (100.64-100.127) bereikt Crostini NIET rechtstreeks (userspace-networking); dan via "tailscale nc".
@@ -6112,6 +6165,7 @@ beheerder_ronde() {
   verwacht="$(grep -cvE '^\s*$' "$TOEG" 2>/dev/null | tr -d ' ')"; case "$verwacht" in ''|*[!0-9]*) verwacht=0 ;; esac
   nu_ids="$(_bh_verbonden_ids | tr '\n' ' ')"
   bh_onthoud_ips   # 678/110: de adressen van wie nu verbonden is, voor als hij later wegvalt
+  bh_vastzet       # 678/118: elke verbonden rektelefoon herstart-vast (het recht voor JARVIS, draadloze foutopsporing), ook zonder kabel
   local rauw_bh="" rauw_gehaald=0 waarom
   while read -r id; do
     [ -n "$id" ] || continue
@@ -10146,6 +10200,7 @@ bibreserve_tik() {   # de console-lus: de Cat weg (>= BIBRES_NA_S) = de reserve 
   nu="$(date +%s)"
   if curl -fsS -m 6 "http://127.0.0.1:$BIBLIO_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then
     rm -f "$REK_MAP/bibliothecaris-weg.t"
+    rm -f "$BIBRES_MAP/rol.t"
     if [ -f "$BIBRES_MAP/brein-aan" ]; then
       als_bibreserve brein_stop >/dev/null 2>&1 || true; rm -f "$BIBRES_MAP/brein-aan"
       logregel "Bibliothecaris: de Cat antwoordt weer; de reserve op de controle-telefoon is gestopt."
@@ -10158,8 +10213,18 @@ bibreserve_tik() {   # de console-lus: de Cat weg (>= BIBRES_NA_S) = de reserve 
   bibreserve_kies || return 0
   if curl -fsS -m 6 "http://127.0.0.1:$BIBRES_POORT_LOK/health" 2>/dev/null | grep -q '"ok"'; then return 0; fi
   if [ ! -f "$BIBRES_MAP/brein-aan" ]; then
-    logregel "Bibliothecaris: de Cat antwoordt al $(( (nu - t0) / 60 )) minuten niet; de reserve start op de controle-telefoon (eigen map en poort, de controle blijft draaien)."
-    ( setsid "$0" bibreserve-rol </dev/null >>"$REK_MAP/console-bibreserve-rol.log" 2>&1 & ) 2>/dev/null
+    # 678/116 (28 nov): de reserve startte elke zes minuten opnieuw, ook als hij al bezig was. "brein-aan" komt pas als de rol HELEMAAL
+    # gelukt is; zolang het model nog overgaat (over Tailscale langer dan een tik) of als de rol mislukte, startte elke tik een nieuwe
+    # poging ernaast. Nu: loopt de vorige poging nog (procesnummer), dan niets; mislukte hij, dan pas na BIBRES_HERPOGING_S opnieuw.
+    local pid tp
+    pid="$(head -1 "$BIBRES_MAP/rol.pid" 2>/dev/null | tr -cd '0-9')"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
+    tp="$(head -1 "$BIBRES_MAP/rol.t" 2>/dev/null | tr -cd '0-9')"
+    if [ -n "$tp" ] && [ $((nu - tp)) -lt "${BIBRES_HERPOGING_S:-1800}" ]; then return 0; fi
+    if [ -n "$tp" ]; then logregel "Bibliothecaris: de vorige poging voor de reserve lukte niet (zie console-bibreserve-rol.log); ik probeer het opnieuw."
+    else logregel "Bibliothecaris: de Cat antwoordt al $(( (nu - t0) / 60 )) minuten niet; de reserve start op de controle-telefoon (eigen map en poort, de controle blijft draaien)."; fi
+    printf '%s\n' "$nu" >"$BIBRES_MAP/rol.t"
+    ( setsid "$0" bibreserve-rol </dev/null >>"$REK_MAP/console-bibreserve-rol.log" 2>&1 & printf '%s\n' "$!" >"$BIBRES_MAP/rol.pid" ) 2>/dev/null
   else
     als_bibreserve brein_waak >/dev/null 2>&1 || true
   fi
@@ -11084,6 +11149,9 @@ except Exception as e:
 with open(os.environ['UIT'], 'a') as fh: fh.write(regel + '\n')
 print(regel)
 PY
+  # 678/119 (28 nov): de meting van 11:11 mislukte (RemoteDisconnected) en kwam pas zes uur later terug -- de handtekening stond er al. Een
+  # mislukte meting telt niet: bij de volgende meetronde opnieuw.
+  tail -1 "$BREIN_MEET_F" 2>/dev/null | grep -q '| meting mislukt (' && rm -f "$REK_MAP/brein-meet.sig"
   rm -rf "$REK_MAP/brein-meet.lock"
 }
 # 678 (23 nov, eigenaar: "ja", op het voorstel het brein TWEE VRAGEN TEGELIJK te laten beantwoorden). EERST METEN, dan pas iets omzetten.
