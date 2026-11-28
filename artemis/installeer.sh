@@ -1783,6 +1783,8 @@ def lus():
                 threading.Thread(target=doe_args, args=(['brein-meet'], 1500), daemon=True).start()   # 678 (17 nov): de vaste snelheidsmeting, los van het verslag
             if RONDE % 10 == 5:
                 threading.Thread(target=doe_args, args=(['stem-adb-vanzelf'], 5400), daemon=True).start()   # 678 (17 nov): het stemmodel via de kabel, als JARVIS het zelf niet binnenkrijgt
+            if RONDE % 15 == 4:
+                threading.Thread(target=doe_args, args=(['brein-cacheproef'], 2400), daemon=True).start()   # 678/111: de cacheproef (eens per opstelling, na de proefbank)
             if RONDE % 15 == 8:
                 threading.Thread(target=doe_args, args=(['brein-tweetegelijk'], 3600), daemon=True).start()   # 678 (23 nov): twee vragen tegelijk meten (eens per opstelling, na de modelproef)
             if RONDE % 15 == 13:
@@ -2936,7 +2938,12 @@ class H(BaseHTTPRequestHandler):
                 kc = controle_oordeel(vraag_tekst, tekst, brein_kennis_voor(vraag_tekst))
                 if kc and kc.get('oordeel') == 'twijfel':
                     v = brein_verbeter(vraag_tekst, tekst, kc.get('zin') or '', brein_kennis_voor(vraag_tekst))
-                    if v: tekst = v; kc = dict(kc, verbeterd=True)
+                    if v:
+                        # 678/109 (28 nov, lesrij 9: 0 van 3 "de controle twijfelt nog"): het oordeel bleef op twijfel staan, ook na het verbeteren --
+                        # het VERBETERDE antwoord werd nooit nagekeken. Nu kijkt de controle het EEN keer opnieuw na; dat oordeel telt.
+                        tekst = v
+                        k2 = controle_oordeel(vraag_tekst, tekst, brein_kennis_voor(vraag_tekst))
+                        kc = dict(k2 if k2 else kc, verbeterd=True)
             if isinstance(tps, (int, float)):
                 try:
                     with open(os.path.join(REK, 'brein-tps'), 'w') as fh: fh.write('%.2f %d\n' % (tps, int(time.time())))
@@ -5893,6 +5900,50 @@ BEHEERDER_GEMIST_F="$REK_MAP/beheerder-gemist"
 BEHEERDER_ESC_F="$REK_MAP/beheerder-escalatie"
 _bh_get() { awk -v k="$1" '$1==k{print $2; exit}' "$2" 2>/dev/null; }
 _bh_set() { local k="$1" f="$2" v="$3"; touch "$f" 2>/dev/null; chmod 600 "$f" 2>/dev/null || true; awk -v k="$k" '$1!=k' "$f" 2>/dev/null >"$f.t" || true; printf '%s %s\n' "$k" "$v" >>"$f.t"; mv -f "$f.t" "$f" 2>/dev/null || true; }
+# 678/110 (28 nov, eigenaar: "kijk waarom de verdeler wegvalt" -- 114 rondes weg, en de beheerder zei alleen "kabel of tik"). WAAROM IS HIJ WEG.
+# Zolang een telefoon verbonden is onthoudt de beheerder zijn adressen (wifi en Tailscale, uit de telefoon zelf). Valt hij weg, dan kijkt hij op
+# die adressen: klopt JARVIS nog via de relay, en wat zegt poort 5555 (open / geweigerd = adb draadloos uit / stil = niet te bereiken)? Dat geeft
+# EEN zin met de reden, in de Status en in de vraag aan de eigenaar. Alleen kijken; nooit de F8 (die staat niet op de lijst en wordt overgeslagen).
+BEHEERDER_IPS_F="$REK_MAP/beheerder-ips"
+BEHEERDER_WAAROM_F="$REK_MAP/beheerder-waarom"
+_bh_waarom_get() { awk -F'\t' -v k="$1" '$1==k{print $2; exit}' "$BEHEERDER_WAAROM_F" 2>/dev/null; }
+_bh_waarom_set() {
+  local f="$BEHEERDER_WAAROM_F"; touch "$f" 2>/dev/null; chmod 600 "$f" 2>/dev/null || true
+  awk -F'\t' -v k="$1" '$1!=k' "$f" 2>/dev/null >"$f.t" || true
+  [ -n "$2" ] && printf '%s\t%s\n' "$1" "$2" >>"$f.t"
+  mv -f "$f.t" "$f" 2>/dev/null || true
+}
+bh_onthoud_ips() {
+  local s id ips
+  for s in $(verbonden); do
+    is_f8 "$s" && continue
+    id="$(toestel_id "$s")"; case "$id" in ''|adb:*) continue ;; esac
+    grep -qxF "$id" "$TOEG" 2>/dev/null || continue
+    ips="$("$ADB" -s "$s" shell ip -4 -o addr show 2>/dev/null | tr -d '\r' | awk '{a=$4; sub(/\/.*/, "", a); if (a !~ /^127\./) print a}' \
+          | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u | tr '\n' ',' | sed 's/,$//')"
+    [ -n "$ips" ] && _bh_set "$id" "$BEHEERDER_IPS_F" "$ips"
+  done
+}
+bh_poort_stand() {   # ip -> open | dicht (geweigerd: de telefoon is er, adb draadloos staat uit) | stil (geen antwoord)
+  local e rc
+  e="$(timeout 4 bash -c "exec 3<>/dev/tcp/$1/5555" 2>&1)"; rc=$?
+  [ "$rc" -eq 0 ] && { printf 'open'; return; }
+  case "$e" in *efused*) printf 'dicht' ;; *) printf 'stil' ;; esac
+}
+bh_waarom() {   # $1 = id, $2 = de relay-lijst (rek_lijst_rauw) -> een zin
+  local id="$1" rauw="$2" ips ip st hart=0 open=0 dicht=0
+  ips="$(_bh_get "$id" "$BEHEERDER_IPS_F")"
+  [ -n "$ips" ] || { printf 'reden onbekend: ik ken nog geen adres van deze telefoon (hij was niet verbonden sinds deze versie)'; return; }
+  for ip in ${ips//,/ }; do
+    printf '%s\n' "$rauw" | awk -F'\t' -v ip="$ip" '{n=split($1,a,","); for(i=1;i<=n;i++) if(a[i]==ip) f=1} END{exit !f}' && hart=1
+    st="$(bh_poort_stand "$ip")"
+    case "$st" in open) open=1 ;; dicht) dicht=1 ;; esac
+  done
+  if [ "$open" = 1 ]; then printf 'poort 5555 staat open, maar adb verbindt niet: op de telefoon "Toestaan" tikken, of een keer de kabel'
+  elif [ "$dicht" = 1 ]; then printf 'de telefoon is op het net%s, maar adb draadloos staat uit (meestal na een herstart): een keer de kabel zet het terug' "$([ "$hart" = 1 ] && printf ' en JARVIS klopt')"
+  elif [ "$hart" = 1 ]; then printf 'JARVIS klopt nog via de relay, maar de telefoon is van hieruit niet te bereiken: ander wifi, of Tailscale staat uit op de telefoon'
+  else printf 'de telefoon zwijgt helemaal (geen hartslag op zijn laatste adres, geen antwoord): accu leeg, uit, of geen wifi'; fi
+}
 # de id's die NU draadloos/kabel verbonden zijn (nooit de F8, nooit een leeg/half-verbonden toestel)
 _bh_verbonden_ids() {
   local s id naam
@@ -6008,9 +6059,11 @@ beheerder_ronde() {
   bh_migreer_adres_ids
   verwacht="$(grep -cvE '^\s*$' "$TOEG" 2>/dev/null | tr -d ' ')"; case "$verwacht" in ''|*[!0-9]*) verwacht=0 ;; esac
   nu_ids="$(_bh_verbonden_ids | tr '\n' ' ')"
+  bh_onthoud_ips   # 678/110: de adressen van wie nu verbonden is, voor als hij later wegvalt
+  local rauw_bh="" rauw_gehaald=0 waarom
   while read -r id; do
     [ -n "$id" ] || continue
-    case " $nu_ids " in *" $id "*) _bh_set "$id" "$BEHEERDER_GEMIST_F" 0; continue ;; esac   # gezond: teller terug op 0
+    case " $nu_ids " in *" $id "*) _bh_set "$id" "$BEHEERDER_GEMIST_F" 0; _bh_waarom_set "$id" ""; continue ;; esac   # gezond: teller terug op 0
     # weg -> zelf draadloos terughalen (nooit de F8; dit raakt alleen 5555/relay-adressen)
     zeg "Beheerder: $id is weg -- ik haal hem draadloos terug."
     verbind_draadloos >/dev/null 2>&1 || true
@@ -6018,10 +6071,13 @@ beheerder_ronde() {
     bh_ts_herstel   # 678 (12 nov): ook de Tailscale-weg (de telefoons die alleen via hun vaste 100.x bereikbaar zijn), met rem
     nu_ids2="$(_bh_verbonden_ids | tr '\n' ' ')"
     if case " $nu_ids2 " in *" $id "*) true ;; *) false ;; esac; then
-      hersteld=$((hersteld+1)); _bh_set "$id" "$BEHEERDER_GEMIST_F" 0
+      hersteld=$((hersteld+1)); _bh_set "$id" "$BEHEERDER_GEMIST_F" 0; _bh_waarom_set "$id" ""
       zeg "Beheerder: $id is weer verbonden."
     else
       weg=$((weg+1)); nodig="$nodig $id"
+      [ "$rauw_gehaald" = 1 ] || { rauw_bh="$(rek_lijst_rauw 2>/dev/null)"; rauw_gehaald=1; }
+      waarom="$(bh_waarom "$id" "$rauw_bh")"; _bh_waarom_set "$id" "$waarom"
+      zeg "Beheerder: $id blijft weg -- $waarom."
       local g; g="$(_bh_get "$id" "$BEHEERDER_GEMIST_F")"; case "$g" in ''|*[!0-9]*) g=0 ;; esac
       _bh_set "$id" "$BEHEERDER_GEMIST_F" $((g+1))
     fi
@@ -6037,8 +6093,8 @@ beheerder_ronde() {
     esc="$(_bh_get "$id" "$BEHEERDER_ESC_F")"; case "$esc" in ''|*[!0-9]*) esc=0 ;; esac
     [ "$esc" -gt 0 ] && [ $((now - esc)) -lt "${BEHEERDER_ESC_RUST:-3600}" ] && continue
     _bh_set "$id" "$BEHEERDER_ESC_F" "$now"
-    relay_meld "Beheerder: ik krijg telefoon $id al $g keer niet draadloos terug. Sluit hem even met de USB-kabel aan de Chromebook aan (dan zet ik hem vanzelf klaar), of zet Tailscale en het scherm op de telefoon aan en tik hem één keer aan. De andere telefoons draaien door." || true
-    zeg "Beheerder: $id al $g rondes weg -- aan de eigenaar gevraagd via Veronica (kabel of tik nodig)."
+    relay_meld "Beheerder: ik krijg telefoon $id al $g keer niet draadloos terug. Sluit hem even met de USB-kabel aan de Chromebook aan (dan zet ik hem vanzelf klaar), of zet Tailscale en het scherm op de telefoon aan en tik hem één keer aan. Wat ik zie: $(_bh_waarom_get "$id"). De andere telefoons draaien door." || true
+    zeg "Beheerder: $id al $g rondes weg -- aan de eigenaar gevraagd via Veronica (kabel of tik nodig). Reden: $(_bh_waarom_get "$id")."
   done
   zeg "Beheerder-ronde klaar: $verwacht verwacht, $hersteld hersteld, $weg nog weg."
 }
@@ -7242,6 +7298,11 @@ gemini_uit() {
 gemini_wissel() { if [ -f "$GEM_AAN_F" ]; then gemini_uit; else gemini_aan; fi; }
 status() {
   gemini_stand
+  # 678/108 (28 nov): de vaste snelheidsmeting van het brein ook hier (Cowork ziet het verslag alleen in de console zolang Actions op slot zit):
+  # de laatste drie metingen met "eerste woord ... met cache ...".
+  # 678/110: welke rektelefoon de beheerder mist, en WAAROM (zie bh_waarom)
+  if [ -s "$BEHEERDER_WAAROM_F" ]; then zeg "Weg volgens de beheerder:"; while IFS=$'\t' read -r _i _w; do [ -n "$_i" ] && zeg "  $_i ($(_bh_get "$_i" "$BEHEERDER_GEMIST_F") rondes): $_w"; done <"$BEHEERDER_WAAROM_F"; fi
+  if [ -s "$BREIN_MEET_F" ]; then zeg "Snelheid van het brein (laatste drie metingen):"; tail -n 3 "$BREIN_MEET_F" 2>/dev/null | while IFS= read -r L; do zeg "  $L"; done; fi
   if artemis_draait; then
     local p poorten open_poort; p="$(artemis_pid)"   # 592j: echte pid -- ook als het pid-bestand leeg/verouderd is maar 8000 luistert
     zeg "ARTEMIS draait (pid ${p:-onbekend})."
@@ -9388,7 +9449,8 @@ print(d.get("telefoon") or "-"); print(d.get("model") or "-"); print("" if d.get
     cpu="$("$ADB" -s "$s" shell top -b -n 1 -m 8 -o %CPU,NAME 2>/dev/null | tr -d '\r' | awk '$1 ~ /^[0-9.]+$/ && $1+0 >= 5 {printf "%s %d%%; ", $2, $1}' | head -c 300)"
     [ -n "$cpu" ] && zeg "  wat er nu rekent (procent van een kern): $cpu"
   fi
-  read -r tps tt <"$REK_MAP/brein-tps" 2>/dev/null || true
+  # 678/113: "2>/dev/null" NA de omleiding helpt niet (bash meldt het ontbrekende bestand eerst); de verdeler heeft geen brein-tps
+  tps=""; tt=""; [ -s "$REK_MAP/brein-tps" ] && read -r tps tt <"$REK_MAP/brein-tps"
   if [ -n "${tps:-}" ]; then
     zeg "  snelheid: $tps tok/s (laatst gemeten $(date -d "@${tt:-0}" '+%d-%m %H:%M' 2>/dev/null))"
     if awk "BEGIN{exit !(${tps} < 2)}" 2>/dev/null; then
@@ -10947,19 +11009,24 @@ import os, json, time, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try: kennis = open(os.environ['KENNIS']).read()[:4500]
 except Exception: kennis = 'Je bent het brein van een rek oude telefoons.'
-def een(cache):
-    lijf = json.dumps({'messages': [{'role': 'system', 'content': kennis}, {'role': 'user', 'content': 'Leg in vijf korte zinnen uit wat het rek doet.'}],
-                       'max_tokens': 96, 'ignore_eos': True, 'temperature': 0, 'stream': False, 'cache_prompt': cache, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
+def een(cache, vraag='Leg in vijf korte zinnen uit wat het rek doet.', mt=96):
+    lijf = json.dumps({'messages': [{'role': 'system', 'content': kennis}, {'role': 'user', 'content': vraag}],
+                       'max_tokens': mt, 'ignore_eos': True, 'temperature': 0, 'stream': False, 'cache_prompt': cache, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
     r = op.open(urllib.request.Request(os.environ['BREIN'] + '/v1/chat/completions', data=lijf, headers={'Content-Type': 'application/json'}), timeout=600)
     return json.loads(r.read(4000000).decode('utf-8', 'replace')).get('timings') or {}
 try:
     # 678 (21 nov): EEN run van 96 tokens gaf 3,8 tot 5,1 tok/s -- een drukke seconde op de telefoon (een installatie, een ander proces) telt dan
     # zwaar mee. Nu: de eerste run (zonder cache) voor het lezen, en DRIE schrijfrondes met cache; de MIDDELSTE telt, de spreiding staat erbij.
-    a = een(False); b = een(True); c = [x.get('predicted_per_second') or 0 for x in (a, b, een(True))]
+    a = een(False); b = een(True); d = een(True); c = [x.get('predicted_per_second') or 0 for x in (a, b, d)]
     c.sort(); spr = (c[-1] - c[0]) if c else 0
-    regel = '%s | %s | lezen %.1f tok/s (%d tokens) | schrijven %.2f tok/s (middelste van 3, spreiding %.2f) | eerste woord %.1f s, met cache %.1f s%s' % (
+    # 678/111 (28 nov, eigenaar: "het eerste woord met cache duurt 70-85 s"): "met cache" is nu de snelste van de twee herhalingen, en er komt
+    # een NIEUWE VRAAG achter met hetzelfde vaste begin -- dat is het echte gebruik. Hoeveel tokens hij daarvoor opnieuw moest lezen laat zien of
+    # het vaste begin hergebruikt werd (bijna alle tokens = de cache werkte niet; een paar tientallen = wel).
+    n = een(True, 'Noem in een zin wat de controle-telefoon doet.', 8)
+    regel = '%s | %s | lezen %.1f tok/s (%d tokens) | schrijven %.2f tok/s (middelste van 3, spreiding %.2f) | eerste woord %.1f s, met cache %.1f s | nieuwe vraag %.1f s (%d tokens gelezen)%s' % (
         time.strftime('%d-%m %H:%M'), os.environ['LABEL'], a.get('prompt_per_second') or 0, a.get('prompt_n') or 0,
-        c[1], spr, (a.get('prompt_ms') or 0) / 1000, (b.get('prompt_ms') or 0) / 1000, (' | ' + os.environ['BELAST']) if os.environ.get('BELAST') else '')
+        c[1], spr, (a.get('prompt_ms') or 0) / 1000, min((b.get('prompt_ms') or 0), (d.get('prompt_ms') or 0)) / 1000,
+        (n.get('prompt_ms') or 0) / 1000, n.get('prompt_n') or 0, (' | ' + os.environ['BELAST']) if os.environ.get('BELAST') else '')
 except Exception as e:
     regel = '%s | %s | meting mislukt (%s)' % (time.strftime('%d-%m %H:%M'), os.environ['LABEL'], type(e).__name__)
 with open(os.environ['UIT'], 'a') as fh: fh.write(regel + '\n')
@@ -11089,6 +11156,67 @@ brein_proefbank() {
   rm -rf "$REK_MAP/brein.lock"
   logregel "Proefbank klaar: gekozen ${best:-geen extra vlaggen} (schrijven $best_tps tok/s); alle metingen staan onder Snelheid van het brein."
 }
+# 678/111 (28 nov, eigenaar: "ga door met de versnelling"): DE CACHEPROEF. Op 22 nov gingen de context-checkpoints uit (--ctx-checkpoints 0)
+# om het geheugen vast te houden. Maar de breinen van nu (Gemma: sliding-window; Qwen3.5: hybride met Gated DeltaNet) kunnen het vaste begin
+# dan NIET hergebruiken: llama.cpp leest elke vraag opnieuw vanaf het begin (gemeten: eerste woord "met cache" 70-85 s). Eens per opstelling
+# probeert ARTEMIS twee kandidaten bovenop de gekozen vlaggen: --swa-full (de hele KV voor de sliding-window-lagen, dan werkt elk gedeeld begin)
+# en een paar checkpoints. Gemeten met de vaste meting (de NIEUWE VRAAG met hetzelfde begin). Een kandidaat blijft ALLEEN als de nieuwe vraag
+# minstens 30% eerder begint, het schrijven hoogstens 10% trager wordt EN er minstens CACHEPROEF_MIN_VRIJ_KB vrij blijft. Start de server er
+# niet mee (een oudere llama-server kent de vlag niet), dan overgeslagen. Nooit tijdens een les; het brein-slot houdt de waakhond tegen.
+BREIN_CACHEPROEF_KANDIDATEN='--swa-full|--ctx-checkpoints 3'
+CACHEPROEF_MIN_VRIJ_KB="${CACHEPROEF_MIN_VRIJ_KB:-500000}"
+cacheproef_lees() {   # een meetregel -> "nieuw_s tps" (leeg als de regel niet compleet is)
+  printf '%s' "$1" | sed -n 's/.*schrijven \([0-9.]*\) tok.*nieuwe vraag \([0-9.]*\) s.*/\2 \1/p'
+}
+brein_cacheproef() {
+  les_loopt && return 0
+  [ -f "$REK_MAP/les-wacht" ] && return 0
+  [ -s "$REK_MAP/proefbank.sig" ] || return 0   # eerst de proefbank (die zet de basisvlaggen)
+  slot_levend "$REK_MAP/controleproef.lock" && return 0
+  curl -fsS -m 6 "http://127.0.0.1:$BREIN_POORT_LOK/health" 2>/dev/null | grep -q '"ok"' || return 0
+  local s model bouw sig huidig basis best best_n best_t regel w n t vrij kand oud_ifs
+  s="$(brein_nu)"; [ -n "$s" ] && ! is_f8 "$s" || return 0
+  model="$(head -1 "$REK_MAP/brein-model" 2>/dev/null | tr -d '\r\n ')"
+  bouw="$("$ADB" -s "$s" shell "cat $BREIN_MAP_TEL/bouw.txt 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)"
+  huidig="$(head -1 "$REK_MAP/brein-extra" 2>/dev/null | tr -cd 'A-Za-z0-9_+ .=-')"
+  # de basis = de gekozen vlaggen zonder een eerdere cache-keuze (zo meet elke kandidaat tegen hetzelfde)
+  basis="$(printf '%s' "$huidig" | sed 's/--swa-full//; s/--ctx-checkpoints [0-9]*//; s/  */ /g; s/^ *//; s/ *$//')"
+  sig="$model|${bouw:-basis}|$basis|c1"
+  [ "$(head -1 "$REK_MAP/cacheproef.sig" 2>/dev/null)" = "$sig" ] && return 0
+  brein_slot_neem || return 0
+  logregel "Cacheproef: begint ($model); kan het brein het vaste begin hergebruiken? Het brein is een paar minuten weg."
+  [ "$huidig" = "$basis" ] || brein_herstart_met_proef "$s" "$basis"
+  regel="$(BREIN_PROEF="$basis" brein_meet --nu 2>/dev/null | tail -1)"
+  w="$(cacheproef_lees "$regel")"; best="$basis"; best_n="${w%% *}"; best_t="${w##* }"
+  if [ -z "$w" ]; then
+    logregel "Cacheproef: de meting van de huidige opstelling kwam niet rond; NIET afgevinkt, de volgende keer opnieuw."
+    BREIN_PROEF="$huidig" brein_herstart_met "$s" >/dev/null 2>&1 || true; rm -rf "$REK_MAP/brein.lock"; return 0
+  fi
+  oud_ifs="$IFS"; IFS='|'
+  for kand in $BREIN_CACHEPROEF_KANDIDATEN; do
+    IFS="$oud_ifs"
+    if BREIN_PROEF="$basis $kand" brein_herstart_met "$s"; then
+      regel="$(BREIN_PROEF="$basis $kand" brein_meet --nu 2>/dev/null | tail -1)"
+      vrij="$(mem_vrij_kb "$s" | tr -cd '0-9')"; w="$(cacheproef_lees "$regel")"; n="${w%% *}"; t="${w##* }"
+      if [ -z "$w" ]; then logregel "Cacheproef: '$kand' gaf geen meting; overgeslagen."
+      elif [ "${vrij:-0}" -lt "$CACHEPROEF_MIN_VRIJ_KB" ]; then logregel "Cacheproef: '$kand' laat te weinig geheugen vrij ($(( ${vrij:-0} / 1024 )) MB); overgeslagen."
+      elif awk "BEGIN{exit !($n <= $best_n * 0.7 && $t >= $best_t * 0.9)}" 2>/dev/null; then
+        logregel "Cacheproef: '$kand' wint (nieuwe vraag $n s in plaats van $best_n s, schrijven $t tok/s)."; best="$basis $kand"; best_n="$n"; best_t="$t"
+      else logregel "Cacheproef: '$kand' scheelt te weinig (nieuwe vraag $n s, schrijven $t tok/s); niet gekozen."; fi
+    else
+      logregel "Cacheproef: llama-server startte niet met '$kand'; overgeslagen."
+    fi
+    IFS='|'
+  done
+  IFS="$oud_ifs"
+  best="$(printf '%s' "$best" | sed 's/^ *//; s/ *$//')"
+  printf '%s\n' "$best" >"$REK_MAP/brein-extra"
+  brein_herstart_met "$s" || logregel "Cacheproef: de gekozen opstelling startte niet; de waakhond probeert het opnieuw."
+  printf '%s\n' "$sig" >"$REK_MAP/cacheproef.sig"
+  rm -rf "$REK_MAP/brein.lock"
+  logregel "Cacheproef klaar: gekozen ${best:-geen extra vlaggen} (nieuwe vraag $best_n s tot het eerste woord, schrijven $best_t tok/s)."
+}
+brein_herstart_met_proef() { BREIN_PROEF="$2" brein_herstart_met "$1" >/dev/null 2>&1 || true; }
 # 678 (16 nov, onderzoek stap 3 deel 2, stap 6 en deel 2 punt 3): DE MODELPROEF. Na de proefbank (de vlaggen staan goed) probeert ARTEMIS
 # andere breinen op DEZELFDE manier: snelheid met de vaste meting, slimheid met beide lesrijen (alleen het echte pad, 20 vragen, de code kijkt
 # na). Kandidaten (de bestandsnamen en sha256 GEMETEN op een runner, model-meten.yml run 7 -- nooit geraden):
@@ -13475,6 +13603,7 @@ case "${1:-status}" in
   rem-uit) rek_rem_uit ;;
   brein-meet) brein_meet ;;                         # 678 (17 nov): de vaste snelheidsmeting (eigen taak, niet meer binnen het verslag)
   brein-proefbank) brein_proefbank ;;
+  brein-cacheproef) brein_cacheproef ;;             # 678/111: kan het brein het vaste begin hergebruiken (--swa-full / checkpoints, gemeten)
   surf-aan) surf_aan ;;                          # 678 (23 nov): de surftelefoon (verdeler pauzeert, scherm in een eigen venster)
   surf-uit) surf_uit ;;
   surf-zoek) surf_zoek "${2:-}" ;;
